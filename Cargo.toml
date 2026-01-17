@@ -3,8 +3,8 @@ name = "robocodec"
 version = "0.1.0"
 edition = "2021"
 authors = ["Strata Contributors"]
-license = "Apache-2.0"
-repository = "https://github.com/yourusername/strata"
+license = "MulanPSL-2.0"
+repository = "https://github.com/archebase/robocodec"
 description = "Schema-driven message codec supporting CDR, protobuf, and JSON"
 
 [dependencies]
