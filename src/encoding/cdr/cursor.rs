@@ -21,10 +21,15 @@ pub const CDR_HEADER_SIZE: usize = 4;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use robocodec::encoding::cdr::cursor::CdrCursor;
+///
 /// let data = vec![0x00, 0x01, 0x00, 0x00, 0x2A, 0x00, 0x00, 0x00]; // CDR header + value
 /// let mut cursor = CdrCursor::new(&data)?;
 /// assert_eq!(cursor.read_u32()?, 42);
+/// # Ok(())
+/// # }
 /// ```
 pub struct CdrCursor<'a> {
     /// The data buffer (includes CDR header)

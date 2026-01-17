@@ -13,9 +13,10 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use robocodec::{RoboRewriter, RewriteOptions};
-//! use robocodec::format::mcap::transform::TransformBuilder;
+//! use robocodec::transform::TransformBuilder;
 //!
 //! // Simple rewrite (auto-detect format from extension)
 //! let mut rewriter = RoboRewriter::open("input.mcap")?;
@@ -30,12 +31,14 @@
 //!     );
 //! let mut rewriter = RoboRewriter::with_options("input.mcap", options)?;
 //! rewriter.rewrite("output.mcap")?;
+//! # Ok(())
+//! # }
 //! ```
 
 use std::path::Path;
 
 use crate::core::{CodecError, Result};
-use crate::format::mcap::transform::TransformPipeline;
+use crate::transform::TransformPipeline;
 
 /// Options for rewrite operations.
 ///
@@ -71,9 +74,10 @@ impl RewriteOptions {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use robocodec::RewriteOptions;
-    /// use robocodec::format::mcap::transform::TransformBuilder;
+    /// use robocodec::transform::TransformBuilder;
     ///
     /// let options = RewriteOptions::default()
     ///     .with_transforms(
@@ -82,6 +86,8 @@ impl RewriteOptions {
     ///             .with_type_rename("foo/Bar", "baz/Bar")
     ///             .build()
     ///     );
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn with_transforms(mut self, pipeline: TransformPipeline) -> Self {
         self.transforms = Some(pipeline);
@@ -183,7 +189,8 @@ pub fn detect_format(path: &Path) -> Option<&'static str> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use robocodec::RoboRewriter;
 ///
 /// // MCAP format (detected from .mcap extension)
@@ -193,13 +200,15 @@ pub fn detect_format(path: &Path) -> Option<&'static str> {
 /// // BAG format (detected from .bag extension)
 /// let mut rewriter = RoboRewriter::open("data.bag")?;
 /// rewriter.rewrite("output.bag")?;
+/// # Ok(())
+/// # }
 /// ```
 pub enum RoboRewriter {
     /// MCAP format rewriter
-    Mcap(crate::format::mcap::rewriter::McapRewriter, std::path::PathBuf),
+    Mcap(crate::format::rewriter::McapRewriter, std::path::PathBuf),
 
     /// BAG format rewriter
-    Bag(crate::format::bag::rewriter::BagRewriter, std::path::PathBuf),
+    Bag(crate::format::rewriter::BagRewriter, std::path::PathBuf),
 }
 
 impl RoboRewriter {
@@ -243,11 +252,11 @@ impl RoboRewriter {
         let path_buf = path_ref.to_path_buf();
         match detect_format(path_ref) {
             Some("mcap") => Ok(RoboRewriter::Mcap(
-                crate::format::mcap::rewriter::McapRewriter::with_options(options),
+                crate::format::rewriter::McapRewriter::with_options(options),
                 path_buf,
             )),
             Some("bag") => Ok(RoboRewriter::Bag(
-                crate::format::bag::rewriter::BagRewriter::with_options(options),
+                crate::format::rewriter::BagRewriter::with_options(options),
                 path_buf,
             )),
             _ => Err(CodecError::encode(
@@ -295,7 +304,7 @@ impl RoboRewriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::format::mcap::transform::TransformBuilder;
+    use crate::transform::TransformBuilder;
 
     #[test]
     fn test_detect_format_mcap() {
@@ -325,10 +334,18 @@ mod tests {
     fn test_detect_format_case_insensitive() {
         // Test that detection is case-sensitive (only lowercase is supported)
         let path = Path::new("test.MCAP");
-        assert_eq!(detect_format(path), None, "Should not detect uppercase .MCAP");
+        assert_eq!(
+            detect_format(path),
+            None,
+            "Should not detect uppercase .MCAP"
+        );
 
         let path = Path::new("test.Bag");
-        assert_eq!(detect_format(path), None, "Should not detect mixed case .Bag");
+        assert_eq!(
+            detect_format(path),
+            None,
+            "Should not detect mixed case .Bag"
+        );
     }
 
     #[test]
@@ -362,7 +379,10 @@ mod tests {
     fn test_rewrite_options_with_empty_transforms() {
         let pipeline = TransformPipeline::new();
         let options = RewriteOptions::default().with_transforms(pipeline);
-        assert!(!options.has_transforms(), "Empty pipeline should return false for has_transforms");
+        assert!(
+            !options.has_transforms(),
+            "Empty pipeline should return false for has_transforms"
+        );
     }
 
     #[test]

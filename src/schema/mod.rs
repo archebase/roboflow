@@ -29,8 +29,8 @@ pub enum SchemaFormat {
 }
 
 impl SchemaFormat {
-    /// Create from string.
-    pub fn from_str(s: &str) -> Option<Self> {
+    /// Parse from string.
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "msg" => Some(SchemaFormat::Msg),
             "idl" => Some(SchemaFormat::Idl),
@@ -53,23 +53,23 @@ mod tests {
 
     #[test]
     fn test_schema_format_from_str_msg() {
-        assert_eq!(SchemaFormat::from_str("msg"), Some(SchemaFormat::Msg));
-        assert_eq!(SchemaFormat::from_str("MSG"), Some(SchemaFormat::Msg));
-        assert_eq!(SchemaFormat::from_str("Msg"), Some(SchemaFormat::Msg));
+        assert_eq!(SchemaFormat::parse("msg"), Some(SchemaFormat::Msg));
+        assert_eq!(SchemaFormat::parse("MSG"), Some(SchemaFormat::Msg));
+        assert_eq!(SchemaFormat::parse("Msg"), Some(SchemaFormat::Msg));
     }
 
     #[test]
     fn test_schema_format_from_str_idl() {
-        assert_eq!(SchemaFormat::from_str("idl"), Some(SchemaFormat::Idl));
-        assert_eq!(SchemaFormat::from_str("IDL"), Some(SchemaFormat::Idl));
-        assert_eq!(SchemaFormat::from_str("Idl"), Some(SchemaFormat::Idl));
+        assert_eq!(SchemaFormat::parse("idl"), Some(SchemaFormat::Idl));
+        assert_eq!(SchemaFormat::parse("IDL"), Some(SchemaFormat::Idl));
+        assert_eq!(SchemaFormat::parse("Idl"), Some(SchemaFormat::Idl));
     }
 
     #[test]
     fn test_schema_format_from_str_unknown() {
-        assert_eq!(SchemaFormat::from_str("unknown"), None);
-        assert_eq!(SchemaFormat::from_str(""), None);
-        assert_eq!(SchemaFormat::from_str("xml"), None);
+        assert_eq!(SchemaFormat::parse("unknown"), None);
+        assert_eq!(SchemaFormat::parse(""), None);
+        assert_eq!(SchemaFormat::parse("xml"), None);
     }
 
     #[test]
@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn test_parse_with_encoding_reexport() {
-        // Verify legacy re-export
+        // Verify parse_with_encoding re-export
         let schema = parse_with_encoding("test/Type", "int32 value", "ros1msg");
         assert!(schema.is_ok());
     }

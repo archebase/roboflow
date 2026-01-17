@@ -4,11 +4,14 @@
 //!
 //! ## Example
 //!
-//! ```ignore
-//! use robocodec::json::JsonDecoder;
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use robocodec::encoding::json::decoder::JsonDecoder;
 //!
 //! let decoder = JsonDecoder::new();
 //! let decoded = decoder.decode(r#"{"x": 1, "y": 2}"#)?;
+//! # Ok(())
+//! # }
 //! ```
 
 use std::collections::HashMap;

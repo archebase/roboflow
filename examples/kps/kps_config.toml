@@ -1,0 +1,300 @@
+# Kps Dataset Conversion Configuration (v1.2 compliant)
+#
+# This configuration file defines how to convert robotics data (MCAP/BAG)
+# to the Kps dataset format with the full HDF5 hierarchical structure.
+#
+# Usage:
+#   cargo run --bin convert --features kps-hdf5 -- to-kps input.mcap ./output kps_config.toml
+
+[dataset]
+# Dataset name (e.g., "Kuavo4Pro-Dexhand-Housekeeper1")
+name = "robot_dataset"
+# Target frames per second for resampling
+fps = 30
+# Robot type (optional, matches Kps's predefined types)
+robot_type = "custom_robot"
+
+# Output format configuration
+[output]
+# Which formats to generate: "hdf5" (v1.2 compliant) and/or "parquet" (v3.0)
+formats = ["hdf5"]
+# How to encode images: "mp4" (for parquet) or "raw" (embedded in HDF5)
+image_format = "raw"
+# Maximum frames to process (None = unlimited)
+# max_frames = 10000
+
+# =============================================================================
+# Topic to Kps HDF5 feature mappings
+# =============================================================================
+# Each mapping connects an MCAP topic to a specific HDF5 dataset path.
+# The HDF5 structure follows the v1.2 specification:
+#   /action/effector/position, /action/joint/position, /state/joint/position, etc.
+#
+# You can specify either:
+# 1. `feature` - Kps feature name (will be mapped to HDF5 path automatically)
+# 2. `hdf5_path` - Direct HDF5 dataset path for explicit control
+# 3. `field` - Field name within the message to extract (optional)
+
+# =============================================================================
+# Camera/Video mappings
+# =============================================================================
+
+[[mappings]]
+topic = "/camera/hand/right/color"
+feature = "observation.camera_hand_right"
+type = "image"
+
+[[mappings]]
+topic = "/camera/hand/left/color"
+feature = "observation.camera_hand_left"
+type = "image"
+
+[[mappings]]
+topic = "/camera/head/color"
+feature = "observation.camera_head"
+type = "image"
+
+# =============================================================================
+# Joint state mappings (Dual arm - 14 DOF)
+# =============================================================================
+
+[[mappings]]
+topic = "/joint_states"
+feature = "observation.joint_position"
+type = "state"
+# Maps to: state/joint/position
+
+[[mappings]]
+topic = "/joint_states"
+feature = "observation.joint_velocity"
+type = "state"
+field = "velocity"
+# Maps to: state/joint/velocity
+
+[[mappings]]
+topic = "/joint_states"
+feature = "observation.joint_effort"
+type = "state"
+field = "effort"
+# Maps to: state/joint/effort
+
+# =============================================================================
+# Action commands
+# =============================================================================
+
+[[mappings]]
+topic = "/command/joint_states"
+feature = "action.joint_position"
+type = "action"
+# Maps to: action/joint/position
+
+[[mappings]]
+topic = "/command/joint_states"
+feature = "action.joint_velocity"
+type = "action"
+field = "velocity"
+# Maps to: action/joint/velocity
+
+# =============================================================================
+# End effector (Gripper/DexHand) mappings
+# =============================================================================
+
+[[mappings]]
+topic = "/gripper/left/state"
+feature = "observation.gripper_left"
+type = "state"
+# Maps to: state/effector/position (first element for left gripper)
+
+[[mappings]]
+topic = "/gripper/right/state"
+feature = "observation.gripper_right"
+type = "state"
+# Maps to: state/effector/position (second element for right gripper)
+
+[[mappings]]
+topic = "/gripper/left/command"
+feature = "action.gripper_left"
+type = "action"
+# Maps to: action/effector/position
+
+[[mappings]]
+topic = "/gripper/right/command"
+feature = "action.gripper_right"
+type = "action"
+# Maps to: action/effector/position
+
+# =============================================================================
+# DexHand mappings (6 DOF per hand)
+# =============================================================================
+
+[[mappings]]
+topic = "/dexhand/left/state"
+feature = "observation.dexhand_left"
+type = "state"
+# Maps to: state/effector/position (12 DOF: left 6, right 6)
+
+[[mappings]]
+topic = "/dexhand/right/state"
+feature = "observation.dexhand_right"
+type = "state"
+
+# =============================================================================
+# Leg joint mappings (12 DOF - for humanoid robots)
+# =============================================================================
+
+[[mappings]]
+topic = "/leg/joint_states"
+feature = "observation.leg_position"
+type = "state"
+# Maps to: state/leg/position
+
+[[mappings]]
+topic = "/leg/joint_states"
+feature = "observation.leg_velocity"
+type = "state"
+# Maps to: state/leg/velocity
+
+# =============================================================================
+# Head joint mappings
+# =============================================================================
+
+[[mappings]]
+topic = "/head/joint_states"
+feature = "observation.head_position"
+type = "state"
+# Maps to: state/head/position
+
+[[mappings]]
+topic = "/head/joint_states"
+feature = "observation.head_velocity"
+type = "state"
+# Maps to: state/head/velocity
+
+# =============================================================================
+# Waist/torso joint mappings
+# =============================================================================
+
+[[mappings]]
+topic = "/waist/joint_states"
+feature = "observation.waist_position"
+type = "state"
+# Maps to: state/waist/position
+
+[[mappings]]
+topic = "/waist/joint_states"
+feature = "observation.waist_velocity"
+type = "state"
+# Maps to: state/waist/velocity
+
+# =============================================================================
+# Base/robot odometry mappings
+# =============================================================================
+
+[[mappings]]
+topic = "/odom"
+feature = "observation.robot_velocity"
+type = "state"
+# Maps to: state/robot/velocity [linear, angular]
+
+[[mappings]]
+topic = "/odom"
+feature = "observation.robot_orientation"
+type = "state"
+field = "orientation"
+# Maps to: state/robot/orientation [x,y,z,w] quaternion
+
+# =============================================================================
+# End effector pose mappings (Cartesian)
+# =============================================================================
+
+[[mappings]]
+topic = "/ee/left/pose"
+feature = "observation.end_effector_position"
+type = "state"
+# Maps to: state/end/position (first element for left)
+
+[[mappings]]
+topic = "/ee/right/pose"
+feature = "observation.end_effector_position"
+type = "state"
+# Maps to: state/end/position (second element for right)
+
+[[mappings]]
+topic = "/ee/left/orientation"
+feature = "observation.end_effector_orientation"
+type = "state"
+# Maps to: state/end/orientation
+
+# =============================================================================
+# Timestamp mappings
+# =============================================================================
+
+[[mappings]]
+topic = "/timestamp"
+feature = "observation.timestamp"
+type = "timestamp"
+
+# =============================================================================
+# Direct HDF5 path mappings (explicit control)
+# =============================================================================
+# For advanced users who want to specify exact HDF5 dataset paths
+# Use this when the automatic feature mapping doesn't meet your needs
+
+# [[mappings]]
+# topic = "/custom/joint/topic"
+# feature = "observation.custom_joint"  # Optional, can be empty
+# hdf5_path = "state/joint/position"     # Direct HDF5 path
+# type = "state"
+# field = "custom_data"                  # Extract this field from message
+
+# =============================================================================
+# Notes
+# =============================================================================
+#
+# 1. Joint name correspondence:
+#    - The `names` dataset for each joint group (joint, leg, head, waist, effector)
+#      is automatically populated with default URDF joint names.
+#    - To customize, create a custom schema in your conversion code using
+#      KpsHdf5Schema::with_urdf_joint_names()
+#
+# 2. Data types:
+#    - All joint data is stored as float32 in HDF5
+#    - Timestamps are stored as int64 (nanoseconds, Unix time)
+#    - Joint names are stored as variable-length strings
+#
+# 3. HDF5 structure created:
+#    /timestamps                          # Aligned timestamps
+#    /action/effector/position          # End effector commands
+#    /action/effector/names             # End effector joint names
+#    /action/joint/position             # Arm joint commands
+#    /action/joint/velocity             # Arm joint velocities
+#    /action/joint/names                # Arm joint names (URDF)
+#    /action/leg/position               # Leg joint commands
+#    /action/leg/velocity               # Leg joint velocities
+#    /action/leg/names                  # Leg joint names (URDF)
+#    /action/head/position              # Head joint commands
+#    /action/head/velocity              # Head joint velocities
+#    /action/head/names                 # Head joint names (URDF)
+#    /action/waist/position             # Waist joint commands
+#    /action/waist/velocity             # Waist joint velocities
+#    /action/waist/names                # Waist joint names (URDF)
+#    /action/robot/velocity             # Base velocity commands
+#    /action/robot/orientation          # Base orientation commands
+#    /state/joint/position              # Arm joint measurements
+#    /state/joint/velocity              # Arm joint velocities
+#    /state/joint/effort                # Arm joint effort/torque
+#    /state/joint/names                 # Arm joint names (URDF)
+#    /state/leg/position                # Leg joint measurements
+#    /state/leg/velocity                # Leg joint velocities
+#    /state/leg/names                   # Leg joint names (URDF)
+#    /state/head/position               # Head joint measurements
+#    /state/head/velocity               # Head joint velocities
+#    /state/head/effort                 # Head joint effort
+#    /state/head/names                  # Head joint names (URDF)
+#    /state/waist/position              # Waist joint measurements
+#    /state/waist/velocity              # Waist joint velocities
+#    /state/waist/names                 # Waist joint names (URDF)
+#    /state/robot/velocity              # Base velocity measurement
+#    /state/robot/orientation           # Base orientation measurement
+#    /state/effector/position           # End effector measurements
+#    /state/effector/names              # End effector joint names (URDF)

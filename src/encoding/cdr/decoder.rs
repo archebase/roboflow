@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 
-use crate::schema::{FieldType, MessageSchema, PrimitiveType as IdlPrimitiveType};
 use crate::core::{CodecError, CodecValue, DecodedMessage, PrimitiveType, Result as CoreResult};
+use crate::schema::{FieldType, MessageSchema, PrimitiveType as IdlPrimitiveType};
 
 use super::cursor::{CdrCursor, CDR_HEADER_SIZE};
 use super::plan::{DecodeOp, DecodePlan, ElementType};
@@ -186,7 +186,7 @@ impl CdrDecoder {
     }
 
     /// Lock the plan cache, centralizing error handling.
-    fn lock_cache(&self) -> CoreResult<std::sync::MutexGuard<HashMap<String, DecodePlan>>> {
+    fn lock_cache(&self) -> CoreResult<std::sync::MutexGuard<'_, HashMap<String, DecodePlan>>> {
         self.plan_cache
             .lock()
             .map_err(|e| CodecError::Other(format!("Plan cache lock poisoned: {e}")))

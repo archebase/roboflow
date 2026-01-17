@@ -9,10 +9,10 @@ use prost_reflect::{
 };
 use prost_types::FileDescriptorSet;
 
+use crate::core::{CodecError, CodecValue, DecodedMessage, Result};
 use crate::encoding::transform::SchemaMetadata;
 use crate::encoding::DynCodec;
 use crate::Encoding;
-use crate::core::{CodecError, CodecValue, DecodedMessage, Result};
 
 /// Protobuf codec using prost-reflect for dynamic message encoding/decoding.
 ///
@@ -411,11 +411,11 @@ impl DynCodec for ProtobufCodec {
 mod tests {
     use super::*;
     use prost::Message;
+    use prost_types::field_descriptor_proto::{Label, Type as ProtoType};
     use prost_types::{
         DescriptorProto, EnumDescriptorProto, EnumValueDescriptorProto, FieldDescriptorProto,
         FileDescriptorProto, FileDescriptorSet,
     };
-    use prost_types::field_descriptor_proto::{Label, Type as ProtoType};
     use std::collections::HashMap;
 
     // =========================================================================
@@ -898,9 +898,9 @@ mod tests {
         // Manually encode all scalar fields
         let mut encoded = Vec::new();
 
-        // double_field (tag 0x09): value 3.14
+        // double_field (tag 0x09): value 3.125
         encoded.push(0x09);
-        encoded.extend_from_slice(&3.14f64.to_le_bytes());
+        encoded.extend_from_slice(&3.125f64.to_le_bytes());
 
         // float_field (tag 0x15): value 2.71
         encoded.push(0x15);
@@ -943,19 +943,16 @@ mod tests {
 
         assert_eq!(
             decoded.get("double_field"),
-            Some(&CodecValue::Float64(3.14))
+            Some(&CodecValue::Float64(3.125))
         );
-        assert_eq!(
-            decoded.get("float_field"),
-            Some(&CodecValue::Float32(2.71))
-        );
+        assert_eq!(decoded.get("float_field"), Some(&CodecValue::Float32(2.71)));
         assert_eq!(decoded.get("int64_field"), Some(&CodecValue::Int64(-12345)));
-        assert_eq!(decoded.get("uint64_field"), Some(&CodecValue::UInt64(12345)));
-        assert_eq!(decoded.get("int32_field"), Some(&CodecValue::Int32(-100)));
         assert_eq!(
-            decoded.get("uint32_field"),
-            Some(&CodecValue::UInt32(200))
+            decoded.get("uint64_field"),
+            Some(&CodecValue::UInt64(12345))
         );
+        assert_eq!(decoded.get("int32_field"), Some(&CodecValue::Int32(-100)));
+        assert_eq!(decoded.get("uint32_field"), Some(&CodecValue::UInt32(200)));
         assert_eq!(decoded.get("bool_field"), Some(&CodecValue::Bool(true)));
         assert_eq!(
             decoded.get("string_field"),
@@ -1017,7 +1014,10 @@ mod tests {
 
         let mut decoded = DecodedMessage::new();
         decoded.insert("int_field".to_string(), CodecValue::Int32(42));
-        decoded.insert("string_field".to_string(), CodecValue::String("hello".to_string()));
+        decoded.insert(
+            "string_field".to_string(),
+            CodecValue::String("hello".to_string()),
+        );
         decoded.insert("bool_field".to_string(), CodecValue::Bool(true));
 
         let result = codec.encode_dynamic(&decoded, &schema);
@@ -1027,15 +1027,15 @@ mod tests {
 
         // Verify round-trip
         let decoded_again = codec.decode_dynamic(&encoded, &schema).unwrap();
-        assert_eq!(
-            decoded_again.get("int_field"),
-            Some(&CodecValue::Int32(42))
-        );
+        assert_eq!(decoded_again.get("int_field"), Some(&CodecValue::Int32(42)));
         assert_eq!(
             decoded_again.get("string_field"),
             Some(&CodecValue::String("hello".to_string()))
         );
-        assert_eq!(decoded_again.get("bool_field"), Some(&CodecValue::Bool(true)));
+        assert_eq!(
+            decoded_again.get("bool_field"),
+            Some(&CodecValue::Bool(true))
+        );
     }
 
     #[test]
@@ -1087,10 +1087,7 @@ mod tests {
 
         // Verify round-trip
         let decoded_again = codec.decode_dynamic(&encoded, &schema).unwrap();
-        assert_eq!(
-            decoded_again.get("enum_field"),
-            Some(&CodecValue::Int32(1))
-        );
+        assert_eq!(decoded_again.get("enum_field"), Some(&CodecValue::Int32(1)));
     }
 
     #[test]
@@ -1258,8 +1255,7 @@ mod tests {
     }
 
     #[test]
-    fn test_protobuf_codec_encode_with_unsupported_nested_struct_for_non_message_field(
-    ) {
+    fn test_protobuf_codec_encode_with_unsupported_nested_struct_for_non_message_field() {
         let mut codec = ProtobufCodec::new();
         let fds_bytes = create_simple_fds();
         let schema = SchemaMetadata::protobuf("test.SimpleMessage".to_string(), fds_bytes);

@@ -10,12 +10,16 @@
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// # fn main() {
+/// use robocodec::encoding::cdr::calculator::CdrCalculator;
+///
 /// let mut calc = CdrCalculator::new();
 /// calc.int32();    // 4 bytes
 /// calc.int32();    // 4 bytes
 /// calc.string(5);  // 4 (length) + 5 + 1 (null) = 10 bytes
 /// assert_eq!(calc.size(), 18);
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct CdrCalculator {

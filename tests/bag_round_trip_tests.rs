@@ -3,12 +3,14 @@
 //! Usage:
 //!   cargo test -p robocodec --test bag_round_trip_tests -- --nocapture
 
-use robocodec::format::bag::BagRewriter as BagBagRewriter;
-use robocodec::format::mcap::transform::TransformBuilder;
-use robocodec::format::mcap::transform::TransformPipeline;
-use robocodec::reader::{BagFormatReader, FormatReader};
+use robocodec::format::rewriter::BagRewriter as BagBagRewriter;
+use robocodec::format::writer::ParallelMcapWriter;
+use robocodec::io::formats::BagFormat;
+use robocodec::io::traits::FormatReader;
+use robocodec::transform::TransformBuilder;
+use robocodec::transform::TransformPipeline;
 use robocodec::RewriteOptions;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::BufWriter;
 use std::path::Path;
 
@@ -21,19 +23,21 @@ struct ChannelSnapshot {
 }
 
 impl ChannelSnapshot {
-    fn from_channel_info(channel: &robocodec::format::mcap::ChannelInfo) -> Self {
+    fn from_channel_info(channel: &robocodec::io::metadata::ChannelInfo) -> Self {
         Self {
             topic: channel.topic.clone(),
             message_type: channel.message_type.clone(),
-            // Note: BagFormatReader doesn't provide message_count in ChannelInfo
-            // We'll use 0 as placeholder
-            message_count: 0,
+            // Use the actual message_count from IoChannelInfo
+            message_count: channel.message_count,
         }
     }
 }
 
 /// Collect all channels from a reader into a map by topic.
-fn collect_channels(reader: &BagFormatReader) -> BTreeMap<String, ChannelSnapshot> {
+fn collect_channels<R>(reader: &R) -> BTreeMap<String, ChannelSnapshot>
+where
+    R: FormatReader,
+{
     reader
         .channels()
         .values()
@@ -43,16 +47,11 @@ fn collect_channels(reader: &BagFormatReader) -> BTreeMap<String, ChannelSnapsho
 
 /// Count all messages in a bag file.
 fn count_bag_messages(path: &str) -> Result<usize, Box<dyn std::error::Error>> {
-    use robocodec::reader::{BagRawMessageIter, FormatReader};
-    let reader = BagFormatReader::open(path)?;
-    let channels = FormatReader::channels(&reader).clone();
-    let conn_id_map = reader.conn_id_map().clone();
-
-    let iter = BagRawMessageIter::new(path.to_string(), channels, conn_id_map);
-    let mut stream = iter.into_stream()?;
+    let reader = BagFormat::open(path)?;
+    let iter = reader.iter_raw()?;
 
     let mut count = 0;
-    while let Some(result) = stream.next() {
+    for result in iter {
         let _msg = result?;
         count += 1;
     }
@@ -61,13 +60,13 @@ fn count_bag_messages(path: &str) -> Result<usize, Box<dyn std::error::Error>> {
 
 /// Count all messages in an MCAP file.
 fn count_mcap_messages(path: &str) -> Result<usize, Box<dyn std::error::Error>> {
-    use robocodec::format::mcap::McapReader;
+    use robocodec::format::McapReader;
     let reader = McapReader::open(path)?;
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
 
     let mut count = 0;
-    while let Some(result) = stream.next() {
+    for result in stream {
         let _msg = result?;
         count += 1;
     }
@@ -84,7 +83,7 @@ fn test_round_trip_read_bag() {
     }
 
     // Step 1: Read original bag file to capture topics
-    let reader_original = BagFormatReader::open(input_path);
+    let reader_original = BagFormat::open(input_path);
     assert!(
         reader_original.is_ok(),
         "Should open original file: {:?}",
@@ -118,7 +117,7 @@ fn test_round_trip_bag_rewrite() {
     }
 
     // Step 1: Read original file
-    let reader_original = BagFormatReader::open(input_path).unwrap();
+    let reader_original = BagFormat::open(input_path).unwrap();
     let original_channels = collect_channels(&reader_original);
 
     println!("Original channels from BAG:");
@@ -140,7 +139,7 @@ fn test_round_trip_bag_rewrite() {
     println!("  Passthrough: {}", stats.passthrough_count);
 
     // Step 3: Read output to verify it's valid
-    let reader_output = BagFormatReader::open(output_path);
+    let reader_output = BagFormat::open(output_path);
     assert!(
         reader_output.is_ok(),
         "Should open output file: {:?}",
@@ -175,7 +174,7 @@ fn test_round_trip_topic_rename() {
     }
 
     // Step 1: Read original file to capture topics
-    let reader_original = BagFormatReader::open(input_path).unwrap();
+    let reader_original = BagFormat::open(input_path).unwrap();
     let original_channels = collect_channels(&reader_original);
 
     println!("Original channels from BAG:");
@@ -185,7 +184,7 @@ fn test_round_trip_topic_rename() {
 
     // Pick the first topic to rename
     let first_topic = original_channels.keys().next();
-    let first_topic = match first_topic {
+    let first_topic: String = match first_topic {
         Some(t) => t.clone(),
         None => {
             eprintln!("Skipping test: no channels found in BAG file");
@@ -215,7 +214,7 @@ fn test_round_trip_topic_rename() {
     println!("  Topics renamed: {}", stats.topics_renamed);
 
     // Step 3: Read the output file to verify transformations
-    let reader_output = BagFormatReader::open(output_path).unwrap();
+    let reader_output = BagFormat::open(output_path).unwrap();
     let output_channels = collect_channels(&reader_output);
 
     println!("\nOutput channels from rewritten BAG:");
@@ -249,7 +248,7 @@ fn test_round_trip_type_rename_with_verification() {
     }
 
     // Step 1: Read original file
-    let reader_original = BagFormatReader::open(input_path).unwrap();
+    let reader_original = BagFormat::open(input_path).unwrap();
     let original_channels = collect_channels(&reader_original);
 
     println!("Original channels from BAG:");
@@ -272,7 +271,7 @@ fn test_round_trip_type_rename_with_verification() {
     println!("\nFound packages: {:?}", types);
 
     // Pick a package to rename (if any exist)
-    let package_to_rename = match types.iter().next() {
+    let package_to_rename: String = match types.iter().next() {
         Some(p) if !p.is_empty() => p.clone(),
         _ => {
             eprintln!("Skipping test: no suitable package found to rename");
@@ -308,7 +307,7 @@ fn test_round_trip_type_rename_with_verification() {
     println!("  Types renamed: {}", stats.types_renamed);
 
     // Step 3: Read output and verify transformations
-    let reader_output = BagFormatReader::open(output_path).unwrap();
+    let reader_output = BagFormat::open(output_path).unwrap();
     let output_channels = collect_channels(&reader_output);
 
     println!("\nOutput channels from rewritten BAG:");
@@ -318,7 +317,10 @@ fn test_round_trip_type_rename_with_verification() {
 
     // Step 4: Verify all types in the package were renamed
     for (topic, channel) in &output_channels {
-        if channel.message_type.starts_with(&format!("{}/", package_to_rename)) {
+        if channel
+            .message_type
+            .starts_with(&format!("{}/", package_to_rename))
+        {
             panic!(
                 "Found type in package '{}' that wasn't renamed: {} -> {}",
                 package_to_rename, topic, channel.message_type
@@ -353,7 +355,7 @@ fn test_round_trip_combined_topic_and_type_rename() {
     }
 
     // Step 1: Read original file
-    let reader_original = BagFormatReader::open(input_path).unwrap();
+    let reader_original = BagFormat::open(input_path).unwrap();
     let original_channels = collect_channels(&reader_original);
 
     println!("Original channels from BAG:");
@@ -371,7 +373,7 @@ fn test_round_trip_combined_topic_and_type_rename() {
     println!("Original types: {:?}", original_types);
 
     // Get first topic and first package for renaming
-    let first_topic = match original_topics.iter().next() {
+    let first_topic: String = match original_topics.iter().next() {
         Some(t) => t.clone(),
         None => {
             eprintln!("Skipping test: no topics found in BAG file");
@@ -382,7 +384,7 @@ fn test_round_trip_combined_topic_and_type_rename() {
     let renamed_topic = format!("{}/combined_rename", first_topic);
 
     // Get package to rename
-    let package_to_rename = original_types
+    let package_to_rename: String = original_types
         .iter()
         .filter_map(|t| t.split('/').next())
         .find(|p| !p.is_empty())
@@ -391,10 +393,7 @@ fn test_round_trip_combined_topic_and_type_rename() {
 
     let new_package = format!("combined_{}", package_to_rename);
 
-    println!(
-        "\nRenaming topic '{}' to '{}'",
-        first_topic, renamed_topic
-    );
+    println!("\nRenaming topic '{}' to '{}'", first_topic, renamed_topic);
     println!(
         "Renaming package '{}' to '{}'",
         package_to_rename, new_package
@@ -423,7 +422,7 @@ fn test_round_trip_combined_topic_and_type_rename() {
     println!("  Types renamed: {}", stats.types_renamed);
 
     // Step 3: Read output and verify
-    let reader_output = BagFormatReader::open(output_path).unwrap();
+    let reader_output = BagFormat::open(output_path).unwrap();
     let output_channels = collect_channels(&reader_output);
 
     println!("\nOutput channels from rewritten BAG:");
@@ -457,6 +456,7 @@ fn test_round_trip_combined_topic_and_type_rename() {
     // Verify type renames
     if stats.types_renamed > 0 {
         for msg_type in &output_types {
+            let msg_type: &String = msg_type;
             if msg_type.starts_with(&format!("{}/", package_to_rename)) {
                 panic!(
                     "Found type in package '{}' that wasn't renamed: {}",
@@ -501,7 +501,7 @@ fn test_round_trip_roborewriter_facade() {
     println!("  Messages: {}", stats.message_count);
 
     // Step 3: Verify output file is readable
-    let reader_output = BagFormatReader::open(output_path);
+    let reader_output = BagFormat::open(output_path);
     assert!(
         reader_output.is_ok(),
         "Should open output file: {:?}",
@@ -520,7 +520,7 @@ struct ChannelWithCallerid {
 }
 
 impl ChannelWithCallerid {
-    fn from_channel_info(channel: &robocodec::format::mcap::ChannelInfo) -> Self {
+    fn from_channel_info(channel: &robocodec::io::metadata::ChannelInfo) -> Self {
         Self {
             topic: channel.topic.clone(),
             callerid: channel.callerid.clone(),
@@ -530,7 +530,10 @@ impl ChannelWithCallerid {
 }
 
 /// Collect all channels with their callerids from a reader.
-fn collect_channels_with_callerid(reader: &BagFormatReader) -> Vec<ChannelWithCallerid> {
+fn collect_channels_with_callerid<R>(reader: &R) -> Vec<ChannelWithCallerid>
+where
+    R: FormatReader,
+{
     reader
         .channels()
         .values()
@@ -550,7 +553,7 @@ fn test_round_trip_callerid_preservation() {
     }
 
     // Step 1: Read original file to capture callerids
-    let reader_original = BagFormatReader::open(input_path).unwrap();
+    let reader_original = BagFormat::open(input_path).unwrap();
     let original_channels = collect_channels_with_callerid(&reader_original);
 
     println!("Original channels with callerids:");
@@ -562,8 +565,10 @@ fn test_round_trip_callerid_preservation() {
     }
 
     // Find topics with multiple callerids
-    let mut topic_callerids: std::collections::BTreeMap<String, std::collections::BTreeSet<Option<String>>> =
-        std::collections::BTreeMap::new();
+    let mut topic_callerids: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeSet<Option<String>>,
+    > = std::collections::BTreeMap::new();
     for ch in &original_channels {
         topic_callerids
             .entry(ch.topic.clone())
@@ -578,7 +583,12 @@ fn test_round_trip_callerid_preservation() {
 
     println!("\nTopics with multiple callerids:");
     for (topic, callerids) in &multi_callerid_topics {
-        println!("  {} has {} unique callerids: {:?}", topic, callerids.len(), callerids);
+        println!(
+            "  {} has {} unique callerids: {:?}",
+            topic,
+            callerids.len(),
+            callerids
+        );
     }
 
     // Step 2: Rewrite without transformations
@@ -593,7 +603,7 @@ fn test_round_trip_callerid_preservation() {
     println!("  Messages: {}", stats.message_count);
 
     // Step 3: Read output and verify callerids are preserved
-    let reader_output = BagFormatReader::open(output_path).unwrap();
+    let reader_output = BagFormat::open(output_path).unwrap();
     let output_channels = collect_channels_with_callerid(&reader_output);
 
     println!("\nOutput channels with callerids:");
@@ -613,13 +623,11 @@ fn test_round_trip_callerid_preservation() {
 
     // Verify all callerids are preserved
     for orig_ch in &original_channels {
-        let found = output_channels
-            .iter()
-            .any(|out_ch| {
-                out_ch.topic == orig_ch.topic
-                    && out_ch.callerid == orig_ch.callerid
-                    && out_ch.message_type == orig_ch.message_type
-            });
+        let found = output_channels.iter().any(|out_ch| {
+            out_ch.topic == orig_ch.topic
+                && out_ch.callerid == orig_ch.callerid
+                && out_ch.message_type == orig_ch.message_type
+        });
 
         assert!(
             found,
@@ -629,8 +637,10 @@ fn test_round_trip_callerid_preservation() {
     }
 
     // Verify multi-callerid topics are preserved
-    let mut output_topic_callerids: std::collections::BTreeMap<String, std::collections::BTreeSet<Option<String>>> =
-        std::collections::BTreeMap::new();
+    let mut output_topic_callerids: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeSet<Option<String>>,
+    > = std::collections::BTreeMap::new();
     for ch in &output_channels {
         output_topic_callerids
             .entry(ch.topic.clone())
@@ -662,7 +672,7 @@ fn test_round_trip_multiple_tf_connections() {
     }
 
     // Step 1: Read original and count /tf connections
-    let reader_original = BagFormatReader::open(input_path).unwrap();
+    let reader_original = BagFormat::open(input_path).unwrap();
     let tf_channels: Vec<_> = reader_original
         .channels()
         .values()
@@ -692,7 +702,7 @@ fn test_round_trip_multiple_tf_connections() {
     assert!(result.is_ok(), "Rewrite should succeed: {:?}", result.err());
 
     // Step 3: Verify /tf connections are preserved
-    let reader_output = BagFormatReader::open(output_path).unwrap();
+    let reader_output = BagFormat::open(output_path).unwrap();
     let output_tf_channels: Vec<_> = reader_output
         .channels()
         .values()
@@ -710,8 +720,10 @@ fn test_round_trip_multiple_tf_connections() {
         "/tf channel count should be preserved"
     );
 
-    let output_tf_callerids: std::collections::BTreeSet<Option<String>> =
-        output_tf_channels.iter().map(|ch| ch.callerid.clone()).collect();
+    let output_tf_callerids: std::collections::BTreeSet<Option<String>> = output_tf_channels
+        .iter()
+        .map(|ch| ch.callerid.clone())
+        .collect();
 
     assert_eq!(
         tf_callerids, output_tf_callerids,
@@ -733,7 +745,7 @@ fn test_round_trip_with_transform_preserves_callerid() {
     }
 
     // Step 1: Read original file
-    let reader_original = BagFormatReader::open(input_path).unwrap();
+    let reader_original = BagFormat::open(input_path).unwrap();
     let original_channels = collect_channels_with_callerid(&reader_original);
 
     // Find a topic to rename (pick /tf if it exists)
@@ -759,7 +771,7 @@ fn test_round_trip_with_transform_preserves_callerid() {
         assert!(result.is_ok(), "Rewrite should succeed: {:?}", result.err());
 
         // Verify callerids are preserved
-        let reader_output = BagFormatReader::open(output_path).unwrap();
+        let reader_output = BagFormat::open(output_path).unwrap();
         let output_channels = collect_channels_with_callerid(&reader_output);
 
         assert_eq!(
@@ -769,13 +781,11 @@ fn test_round_trip_with_transform_preserves_callerid() {
         );
 
         for orig_ch in &original_channels {
-            let found = output_channels
-                .iter()
-                .any(|out_ch| {
-                    out_ch.topic == orig_ch.topic
-                        && out_ch.callerid == orig_ch.callerid
-                        && out_ch.message_type == orig_ch.message_type
-                });
+            let found = output_channels.iter().any(|out_ch| {
+                out_ch.topic == orig_ch.topic
+                    && out_ch.callerid == orig_ch.callerid
+                    && out_ch.message_type == orig_ch.message_type
+            });
             assert!(
                 found,
                 "Channel (topic={}, callerid={:?}, type={}) not found in output",
@@ -809,13 +819,10 @@ fn test_round_trip_with_transform_preserves_callerid() {
     assert!(result.is_ok(), "Rewrite should succeed: {:?}", result.err());
 
     let stats = result.unwrap();
-    println!(
-        "\nTopics renamed: {}",
-        stats.topics_renamed
-    );
+    println!("\nTopics renamed: {}", stats.topics_renamed);
 
     // Step 3: Verify callerids are preserved in renamed topic
-    let reader_output = BagFormatReader::open(output_path).unwrap();
+    let reader_output = BagFormat::open(output_path).unwrap();
     let output_channels = collect_channels_with_callerid(&reader_output);
 
     // Original topic should not exist
@@ -837,8 +844,10 @@ fn test_round_trip_with_transform_preserves_callerid() {
         renamed_topic
     );
 
-    let renamed_tf_callerids: std::collections::BTreeSet<Option<String>> =
-        renamed_tf_channels.iter().map(|ch| ch.callerid.clone()).collect();
+    let renamed_tf_callerids: std::collections::BTreeSet<Option<String>> = renamed_tf_channels
+        .iter()
+        .map(|ch| ch.callerid.clone())
+        .collect();
 
     println!("Renamed /tf callerids: {:?}", renamed_tf_callerids);
 
@@ -864,20 +873,32 @@ fn test_round_trip_test_23_bag() {
     // It's a real-world example from the leaf-2022-03-18-gyor.bag file
 
     // Step 1: Read original file
-    let reader_original = BagFormatReader::open(input_path).unwrap();
+    let reader_original = BagFormat::open(input_path).unwrap();
     let original_channels = collect_channels_with_callerid(&reader_original);
 
     println!("Original channels from leaf_gyor BAG:");
     for ch in &original_channels {
         let callerid_info = ch.callerid.as_deref().unwrap_or("none");
-        println!("  {} (callerid: {}) -> {}", ch.topic, callerid_info, ch.message_type);
+        println!(
+            "  {} (callerid: {}) -> {}",
+            ch.topic, callerid_info, ch.message_type
+        );
     }
 
-    let original_tf_count = original_channels.iter().filter(|ch| ch.topic == "/tf").count();
-    let original_diagnostics_count = original_channels.iter().filter(|ch| ch.topic == "/diagnostics").count();
+    let original_tf_count = original_channels
+        .iter()
+        .filter(|ch| ch.topic == "/tf")
+        .count();
+    let original_diagnostics_count = original_channels
+        .iter()
+        .filter(|ch| ch.topic == "/diagnostics")
+        .count();
 
     println!("\nOriginal /tf connections: {}", original_tf_count);
-    println!("Original /diagnostics connections: {}", original_diagnostics_count);
+    println!(
+        "Original /diagnostics connections: {}",
+        original_diagnostics_count
+    );
 
     // Verify we have multiple /tf and /diagnostics connections
     assert!(
@@ -903,20 +924,32 @@ fn test_round_trip_test_23_bag() {
     println!("  Messages: {}", stats.message_count);
 
     // Step 3: Read output and verify callerid preservation
-    let reader_output = BagFormatReader::open(output_path).unwrap();
+    let reader_output = BagFormat::open(output_path).unwrap();
     let output_channels = collect_channels_with_callerid(&reader_output);
 
     println!("\nOutput channels from leaf_gyor BAG:");
     for ch in &output_channels {
         let callerid_info = ch.callerid.as_deref().unwrap_or("none");
-        println!("  {} (callerid: {}) -> {}", ch.topic, callerid_info, ch.message_type);
+        println!(
+            "  {} (callerid: {}) -> {}",
+            ch.topic, callerid_info, ch.message_type
+        );
     }
 
-    let output_tf_count = output_channels.iter().filter(|ch| ch.topic == "/tf").count();
-    let output_diagnostics_count = output_channels.iter().filter(|ch| ch.topic == "/diagnostics").count();
+    let output_tf_count = output_channels
+        .iter()
+        .filter(|ch| ch.topic == "/tf")
+        .count();
+    let output_diagnostics_count = output_channels
+        .iter()
+        .filter(|ch| ch.topic == "/diagnostics")
+        .count();
 
     println!("\nOutput /tf connections: {}", output_tf_count);
-    println!("Output /diagnostics connections: {}", output_diagnostics_count);
+    println!(
+        "Output /diagnostics connections: {}",
+        output_diagnostics_count
+    );
 
     // Verify same number of connections
     assert_eq!(
@@ -929,10 +962,16 @@ fn test_round_trip_test_23_bag() {
     );
 
     // Verify callerids are preserved for /tf
-    let original_tf_callerids: std::collections::BTreeSet<Option<String>> =
-        original_channels.iter().filter(|ch| ch.topic == "/tf").map(|ch| ch.callerid.clone()).collect();
-    let output_tf_callerids: std::collections::BTreeSet<Option<String>> =
-        output_channels.iter().filter(|ch| ch.topic == "/tf").map(|ch| ch.callerid.clone()).collect();
+    let original_tf_callerids: std::collections::BTreeSet<Option<String>> = original_channels
+        .iter()
+        .filter(|ch| ch.topic == "/tf")
+        .map(|ch| ch.callerid.clone())
+        .collect();
+    let output_tf_callerids: std::collections::BTreeSet<Option<String>> = output_channels
+        .iter()
+        .filter(|ch| ch.topic == "/tf")
+        .map(|ch| ch.callerid.clone())
+        .collect();
 
     println!("\nOriginal /tf callerids: {:?}", original_tf_callerids);
     println!("Output /tf callerids: {:?}", output_tf_callerids);
@@ -943,12 +982,21 @@ fn test_round_trip_test_23_bag() {
     );
 
     // Verify callerids are preserved for /diagnostics
-    let original_diag_callerids: std::collections::BTreeSet<Option<String>> =
-        original_channels.iter().filter(|ch| ch.topic == "/diagnostics").map(|ch| ch.callerid.clone()).collect();
-    let output_diag_callerids: std::collections::BTreeSet<Option<String>> =
-        output_channels.iter().filter(|ch| ch.topic == "/diagnostics").map(|ch| ch.callerid.clone()).collect();
+    let original_diag_callerids: std::collections::BTreeSet<Option<String>> = original_channels
+        .iter()
+        .filter(|ch| ch.topic == "/diagnostics")
+        .map(|ch| ch.callerid.clone())
+        .collect();
+    let output_diag_callerids: std::collections::BTreeSet<Option<String>> = output_channels
+        .iter()
+        .filter(|ch| ch.topic == "/diagnostics")
+        .map(|ch| ch.callerid.clone())
+        .collect();
 
-    println!("\nOriginal /diagnostics callerids: {:?}", original_diag_callerids);
+    println!(
+        "\nOriginal /diagnostics callerids: {:?}",
+        original_diag_callerids
+    );
     println!("Output /diagnostics callerids: {:?}", output_diag_callerids);
 
     assert_eq!(
@@ -971,7 +1019,7 @@ fn test_bag_to_mcap_to_bag_with_transforms() {
     }
 
     // Step 1: Read original BAG file to capture topics
-    let reader_original = BagFormatReader::open(input_bag).unwrap();
+    let reader_original = BagFormat::open(input_bag).unwrap();
     let original_channels = collect_channels(&reader_original);
 
     println!("Original channels from BAG:");
@@ -984,7 +1032,7 @@ fn test_bag_to_mcap_to_bag_with_transforms() {
     println!("Original message count: {}", original_msg_count);
 
     // Pick the first topic to rename
-    let first_topic = match original_channels.keys().next() {
+    let first_topic: String = match original_channels.keys().next() {
         Some(t) => t.clone(),
         None => {
             eprintln!("Skipping test: no channels found in BAG file");
@@ -1009,7 +1057,7 @@ fn test_bag_to_mcap_to_bag_with_transforms() {
     mcap_to_bag_conversion(temp_mcap, &pipeline, output_bag).unwrap();
 
     // Step 5: Read output BAG to verify transformations
-    let reader_output = BagFormatReader::open(output_bag).unwrap();
+    let reader_output = BagFormat::open(output_bag).unwrap();
     let output_channels = collect_channels(&reader_output);
 
     println!("\nOutput channels from round-trip BAG:");
@@ -1042,7 +1090,7 @@ fn test_bag_to_mcap_to_bag_with_transforms() {
 
 #[test]
 fn test_mcap_to_bag_to_mcap_with_transforms() {
-    use robocodec::format::mcap::{McapReader, McapRewriteEngine};
+    use robocodec::format::{McapReader, McapRewriteEngine};
 
     let input_mcap = "tests/fixtures/robocodec_test_0.mcap";
     let temp_bag = "/tmp/robocodec_test_0_to_bag.bag";
@@ -1074,7 +1122,7 @@ fn test_mcap_to_bag_to_mcap_with_transforms() {
     println!("Original message count: {}", original_msg_count);
 
     // Pick the first topic to rename
-    let first_topic = match original_channels.keys().next() {
+    let first_topic: String = match original_channels.keys().next() {
         Some(t) => t.clone(),
         None => {
             eprintln!("Skipping test: no channels found in MCAP file");
@@ -1140,27 +1188,29 @@ fn bag_to_mcap_conversion(
     pipeline: &TransformPipeline,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::reader::{BagFormatReader, BagRawMessageIter, FormatReader};
-
-    let reader = BagFormatReader::open(input)?;
+    let reader = BagFormat::open(input)?;
     let channels = FormatReader::channels(&reader).clone();
-    let conn_id_map = reader.conn_id_map().clone();
 
     let output_file = std::fs::File::create(output)?;
-    let mut mcap_writer = mcap::Writer::new(BufWriter::new(output_file))?;
+    let mut mcap_writer = ParallelMcapWriter::new(BufWriter::new(output_file))?;
 
-    let mut schema_ids: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
-    let mut channel_ids: std::collections::HashMap<u16, u16> = std::collections::HashMap::new();
-    let mut sequences: std::collections::HashMap<u16, u32> = std::collections::HashMap::new();
+    let mut schema_ids: HashMap<String, u16> = HashMap::new();
+    let mut channel_ids: HashMap<u16, u16> = HashMap::new();
     let mut msg_count = 0;
 
     // Apply transforms and add schemas and channels
     for (&ch_id, channel) in &channels {
-        let (transformed_type, transformed_schema) = pipeline.transform_type(&channel.message_type, channel.schema.as_deref());
-        let transformed_topic = pipeline.transform_topic(&channel.topic).unwrap_or_else(|| channel.topic.clone());
+        let (transformed_type, transformed_schema) =
+            pipeline.transform_type(&channel.message_type, channel.schema.as_deref());
+        let transformed_topic = pipeline
+            .transform_topic(&channel.topic)
+            .unwrap_or_else(|| channel.topic.clone());
 
         // Use the transformed schema if available, otherwise use the original
-        let schema_text = transformed_schema.as_deref().or(channel.schema.as_deref()).unwrap_or("");
+        let schema_text = transformed_schema
+            .as_deref()
+            .or(channel.schema.as_deref())
+            .unwrap_or("");
         let schema_bytes = schema_text.as_bytes();
 
         // Check if schema already exists, and if not, add it with proper error handling
@@ -1170,7 +1220,9 @@ fn bag_to_mcap_conversion(
             } else {
                 let id = mcap_writer
                     .add_schema(&transformed_type, "ros1msg", schema_bytes)
-                    .map_err(|e| format!("Failed to add schema for type {}: {}", transformed_type, e))?;
+                    .map_err(|e| {
+                        format!("Failed to add schema for type {}: {}", transformed_type, e)
+                    })?;
                 schema_ids.insert(transformed_type.clone(), id);
                 id
             }
@@ -1183,47 +1235,40 @@ fn bag_to_mcap_conversion(
                 schema_id,
                 &transformed_topic,
                 &channel.encoding,
-                &BTreeMap::new(),
+                &HashMap::new(),
             )
             .map_err(|e| format!("Failed to add channel: {e}"))?;
 
         channel_ids.insert(ch_id, channel_id);
-        sequences.insert(channel_id, 0);
     }
 
-    // Copy messages using BagRawMessageIter
-    let iter = BagRawMessageIter::new(input.to_string(), channels.clone(), conn_id_map);
-    let mut stream = iter.into_stream()?;
+    // Copy messages using iter_raw
+    let iter = reader.iter_raw()?;
 
-    while let Some(result) = stream.next() {
+    for result in iter {
         let (msg, _channel) = result?;
 
         let out_ch_id = match channel_ids.get(&msg.channel_id) {
             Some(&id) => id,
             None => {
-                eprintln!("Warning: Unknown channel_id {}, skipping message", msg.channel_id);
+                eprintln!(
+                    "Warning: Unknown channel_id {}, skipping message",
+                    msg.channel_id
+                );
                 continue;
             }
         };
 
-        let seq = *sequences.get(&out_ch_id).unwrap_or(&0);
-        mcap_writer.write_to_known_channel(
-            &mcap::records::MessageHeader {
-                channel_id: out_ch_id,
-                sequence: seq,
-                log_time: msg.log_time,
-                publish_time: msg.publish_time,
-            },
-            &msg.data,
-        )?;
-
-        sequences.insert(out_ch_id, seq + 1);
+        mcap_writer.write_message(out_ch_id, msg.log_time, msg.publish_time, &msg.data)?;
         msg_count += 1;
     }
 
-    drop(mcap_writer);
+    mcap_writer.finish()?;
 
-    println!("  Converted {} messages from BAG to MCAP: {}", msg_count, output);
+    println!(
+        "  Converted {} messages from BAG to MCAP: {}",
+        msg_count, output
+    );
 
     Ok(())
 }
@@ -1234,7 +1279,7 @@ fn mcap_to_bag_conversion(
     pipeline: &TransformPipeline,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::format::mcap::{McapReader, McapRewriteEngine};
+    use robocodec::format::{McapReader, McapRewriteEngine};
     use robocodec::BagWriter;
 
     let mcap_reader = McapReader::open(input)?;
@@ -1247,6 +1292,7 @@ fn mcap_to_bag_conversion(
     let mut msg_count = 0;
 
     // Add transformed connections
+    #[allow(clippy::explicit_counter_loop)]
     for (&ch_id, channel) in mcap_reader.channels() {
         let transformed_topic = engine
             .get_transformed_topic(ch_id)
@@ -1265,20 +1311,29 @@ fn mcap_to_bag_conversion(
             };
             (type_name, definition)
         } else {
-            (channel.message_type.clone(), channel.schema.clone().unwrap_or_default())
+            (
+                channel.message_type.clone(),
+                channel.schema.clone().unwrap_or_default(),
+            )
         };
 
         let callerid = channel.callerid.as_deref().unwrap_or("");
-        writer.add_connection_with_callerid(conn_id, &transformed_topic, &message_type, &message_definition, callerid)?;
+        writer.add_connection_with_callerid(
+            conn_id,
+            &transformed_topic,
+            &message_type,
+            &message_definition,
+            callerid,
+        )?;
         channel_ids.insert(ch_id, conn_id);
         conn_id += 1;
     }
 
     // Copy messages
     let iter = mcap_reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_conn_id = match channel_ids.get(&msg.channel_id) {
@@ -1293,7 +1348,10 @@ fn mcap_to_bag_conversion(
 
     writer.finish()?;
 
-    println!("  Converted {} messages from MCAP to BAG: {}", msg_count, output);
+    println!(
+        "  Converted {} messages from MCAP to BAG: {}",
+        msg_count, output
+    );
 
     Ok(())
 }
@@ -1312,7 +1370,7 @@ fn test_round_trip_robocodec_test_17_bag_read() {
     }
 
     // Read the bag file
-    let reader = BagFormatReader::open(input_path);
+    let reader = BagFormat::open(input_path);
     assert!(
         reader.is_ok(),
         "Should open robocodec_test_24.bag: {:?}",
@@ -1327,10 +1385,7 @@ fn test_round_trip_robocodec_test_17_bag_read() {
     }
 
     // Verify we have channels
-    assert!(
-        !channels.is_empty(),
-        "Should have at least one channel"
-    );
+    assert!(!channels.is_empty(), "Should have at least one channel");
 
     // Count messages
     let msg_count = count_bag_messages(input_path);
@@ -1345,9 +1400,11 @@ fn test_round_trip_robocodec_test_17_bag_read() {
     // Verify we extracted exactly 2 messages per topic
     let expected_count = channels.len() * 2;
     assert_eq!(
-        msg_count, expected_count,
+        msg_count,
+        expected_count,
         "Should have exactly 2 messages per topic ({} topics = {} messages)",
-        channels.len(), expected_count
+        channels.len(),
+        expected_count
     );
 
     println!("\nrobocodec_test_17.bag read test passed!");
@@ -1364,27 +1421,30 @@ fn test_round_trip_robocodec_test_17_bag_rewrite() {
     }
 
     // Read original
-    let reader_original = BagFormatReader::open(input_path).unwrap();
+    let reader_original = BagFormat::open(input_path).unwrap();
     let original_channels = collect_channels(&reader_original);
     let original_msg_count = count_bag_messages(input_path).unwrap();
 
-    println!("Original: {} channels, {} messages", original_channels.len(), original_msg_count);
+    println!(
+        "Original: {} channels, {} messages",
+        original_channels.len(),
+        original_msg_count
+    );
 
     // Rewrite without transformations
     let options = RewriteOptions::default();
     let mut rewriter = BagBagRewriter::with_options(options);
     let result = rewriter.rewrite(input_path, output_path);
-    assert!(
-        result.is_ok(),
-        "Rewrite should succeed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Rewrite should succeed: {:?}", result.err());
 
     let stats = result.unwrap();
-    println!("Rewrite stats: {} channels, {} messages", stats.channel_count, stats.message_count);
+    println!(
+        "Rewrite stats: {} channels, {} messages",
+        stats.channel_count, stats.message_count
+    );
 
     // Verify output is valid and readable
-    let reader_output = BagFormatReader::open(output_path);
+    let reader_output = BagFormat::open(output_path);
     assert!(
         reader_output.is_ok(),
         "Output should be readable: {:?}",

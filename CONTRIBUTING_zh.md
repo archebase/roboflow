@@ -1,0 +1,141 @@
+# 贡献指南
+
+感谢您对 Robocodec 项目的关注！本文档提供了为该项目做贡献的指导原则和说明。
+
+## 行为准则
+
+请在所有互动中保持尊重和建设性。详情请参阅 [CODE_OF_CONDUCT_zh.md](CODE_OF_CONDUCT_zh.md)。
+
+## 如何贡献
+
+### 报告错误
+
+在创建错误报告之前，请先检查现有 issue 以避免重复。创建错误报告时，请包含：
+
+- **清晰的标题和描述**：总结问题
+- **重现步骤**：重现错误的详细步骤
+- **预期行为**：您期望发生什么
+- **实际行为**：实际发生了什么
+- **环境信息**：操作系统、Rust 版本、Python 版本（如适用）
+- **日志/错误信息**：任何相关的错误信息或堆栈跟踪
+- **测试文件**：如果适用，提供可重现问题的示例数据文件
+
+### 建议新功能
+
+我们欢迎功能建议！请提供：
+
+- **清晰的描述**：描述您提议的功能
+- **用例**：解释用例以及为什么该功能有用
+- **考虑的替代方案**：您考虑过的任何其他解决方案
+
+### 提交 Pull Request
+
+#### 准备工作
+
+1. Fork 本仓库
+2. 克隆您的 fork 并添加上游远程仓库：
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/robocodec.git
+   cd robocodec
+   git remote add upstream https://github.com/archebase/robocodec.git
+   ```
+
+3. 为您的更改创建分支：
+   ```bash
+   git checkout -b feature/your-feature-name
+   # 或
+   git checkout -b fix/your-bug-fix
+   ```
+
+#### 进行更改
+
+1. **遵循现有代码风格**：项目使用标准的 Rust 格式
+2. **编写测试**：为新功能或错误修复添加测试
+3. **更新文档**：更新相关文档、注释和 README
+4. **提交信息**：使用清晰、描述性的提交信息：
+   ```
+   feat: 添加对 XYZ 格式的支持
+   fix: 处理 CDR 解码器中的边界情况
+   docs: 更新安装说明
+   ```
+
+#### 测试
+
+提交前运行测试套件：
+
+```bash
+# 运行 Rust 测试
+cargo test --all-features
+
+# 运行 Python 测试（如适用）
+maturin develop && pytest
+
+# 运行 clippy
+cargo clippy --all-features -- -D warnings
+
+# 检查格式
+cargo fmt -- --check
+```
+
+#### 提交
+
+1. 将您的分支推送到 fork
+2. 创建 Pull Request 到 `main` 分支
+3. 填写 Pull Request 模板
+4. 等待审核并处理反馈意见
+
+## 开发流程
+
+### 项目结构
+
+```
+robocodec/
+├── src/
+│   ├── bin/          # 命令行工具
+│   ├── codec/        # 编解码器实现
+│   ├── core/         # 核心类型和错误
+│   ├── encoding/     # 编码/解码实现
+│   ├── format/       # 文件格式处理器
+│   ├── schema/       # 模式解析器
+│   └── python/       # Python 绑定
+├── python/           # Python 包
+├── tests/            # 集成测试
+└── examples/         # 示例代码
+```
+
+### 添加功能
+
+1. **新的编解码器支持**：添加到 `src/codec/` 并更新 `src/core/registry.rs`
+2. **新的文件格式**：添加到 `src/format/`，实现 Reader/Writer 接口
+3. **新的模式格式**：将解析器添加到 `src/schema/`
+4. **CLI 工具**：添加二进制文件到 `src/bin/` 并更新 Cargo.toml
+
+### Python 绑定
+
+Python 绑定通过 PyO3 管理。当添加需要暴露给 Python 的 Rust API 时：
+
+1. 添加 `#[pyfunction]` 或 `#[pymethods]` 属性
+2. 在 `src/python/mod.rs` 中注册
+3. 如需要，在 `python/robocodec/` 中添加类型存根
+4. 更新 Python 文档
+
+### 测试指南
+
+- **单元测试**：测试单个函数和模块
+- **集成测试**：测试端到端功能
+- **往返测试**：验证编解码一致性
+- **跨语言测试**：验证 Rust 和 Python API 的对等性
+
+## 发布流程
+
+维护者遵循以下发布流程：
+
+1. 更新 `Cargo.toml` 中的版本号
+2. 更新 CHANGELOG.md
+3. 创建 git 标签
+4. 发布到 crates.io
+5. 构建并发布 Python 包到 PyPI
+
+## 有问题？
+
+欢迎创建 issue 来询问或讨论贡献相关的问题。

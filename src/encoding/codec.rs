@@ -13,13 +13,16 @@
 //!
 //! ## Example
 //!
-//! ```ignore
-//! use robocodec::encoding::{CodecFactory, Encoding};
+//! ```no_run
+//! use robocodec::encoding::CodecFactory;
+//! use robocodec::Encoding;
 //!
-//! let factory = CodecFactory::new();
-//! let codec = factory.get_codec(Encoding::Protobuf)?;
-//! let decoded = codec.decode(&data, &schema)?;
-//! let encoded = codec.encode(&decoded, &schema)?;
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut factory = CodecFactory::new();
+//! let codec = factory.get_codec_mut(Encoding::Cdr)?;
+//! let _encoding_type = codec.encoding_type();
+//! # Ok(())
+//! # }
 //! ```
 
 use std::collections::HashMap;

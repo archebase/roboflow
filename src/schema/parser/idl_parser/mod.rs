@@ -2,17 +2,17 @@
 //!
 //! This module handles parsing of OMG IDL v4.1 format files.
 
+use crate::core::CodecError;
+use crate::core::Result as CoreResult;
 use crate::schema::ast::MessageSchema;
 use crate::schema::ast::{Field, FieldType, MessageType, PrimitiveType};
 use crate::schema::parser::msg_parser::RosVersion;
-use crate::core::CodecError;
-use crate::core::Result as CoreResult;
 use pest::Parser;
 use pest_derive::Parser;
 
 /// Pest parser for OMG IDL schema files.
 #[derive(Parser)]
-#[grammar = "omg_idl.pest"] // Path relative to src/ directory
+#[grammar = "schema/parser/idl_parser/omg_idl.pest"] // Path relative to src/ directory
 pub struct IdlParser;
 
 /// Parse pure OMG IDL format.

@@ -1,0 +1,48 @@
+[
+    {
+        "episode_id": "53p21GB-2000",
+        "scene_name": "Housekeeper",
+        "sub_scene_name": "Kitchen",
+        "init_scene_text": "外卖袋放置在桌面左或右侧，外卖盒凌乱摆放在桌面左或右侧，垃圾桶放置在桌子的左或右侧",
+        "english_init_scene_text": "The takeout bag is placed on the left or right side of the desk, takeout boxes are cluttered on the left or right side of the desk, and the trash can is positioned on the left or right side of the desk.",
+        "task_name": "收拾外卖盒",
+        "english_task_name": "Dispose of takeout containers",
+        "data_type": "常规",
+        "episode_status": "approved",
+        "data_gen_mode": "real_machine",
+        "sn_code": "A2D0001AB00029",
+        "sn_name": "宇树-H1-Dexhand",
+        "label_info": {
+            "action_config": [
+                {
+                    "start_frame": 215,
+                    "end_frame": 511,
+                    "timestamp_utc": "2025-06-16T02:22:48.391668+00:00",
+                    "action_text": "左臂拿起桌面上的外卖袋",
+                    "skill": "Pick",
+                    "is_mistake": false,
+                    "english_action_text": "Pick up the takeout bag on the table with left arm."
+                },
+                {
+                    "start_frame": 511,
+                    "end_frame": 724,
+                    "timestamp_utc": "2025-06-16T02:22:57.681320+00:00",
+                    "action_text": "右臂拿起桌面上的圆形外卖盒",
+                    "skill": "Pick",
+                    "is_mistake": false,
+                    "english_action_text": "Take the round takeout container on the table with right arm."
+                },
+                {
+                    "start_frame": 724,
+                    "end_frame": 963,
+                    "timestamp_utc": "2025-06-16T02:23:08.268534+00:00",
+                    "action_text": "用右臂把拿着的圆形外卖盒装进左臂拿着的外卖袋中",
+                    "skill": "Place",
+                    "is_mistake": false,
+                    "english_action_text": "Place the held round takeout container into the takeout bag held by left arm with right arm."
+                }
+            ],
+            "key_frame": []
+        }
+    }
+]

@@ -4,9 +4,9 @@
 //! with separator lines and headers. The format strips these headers and
 //! parses the content as pure OMG IDL.
 
+use crate::core::Result as CoreResult;
 use crate::schema::ast::MessageSchema;
 use crate::schema::parser::idl_parser;
-use crate::core::Result as CoreResult;
 
 /// Check if a line is a ROS2 IDL separator line (75 or more '=' characters).
 ///
@@ -34,7 +34,10 @@ fn is_idl_header_line(line: &str) -> bool {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use robocodec::schema::parser::ros2_idl_parser::parse;
+///
 /// let ros2_idl = r#"
 /// ================================================================================
 /// IDL: std_msgs/msg/Header
@@ -45,7 +48,9 @@ fn is_idl_header_line(line: &str) -> bool {
 /// };
 /// "#;
 ///
-/// let schema = parse("std_msgs/Header", ros2_idl).unwrap();
+/// let schema = parse("std_msgs/Header", ros2_idl)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn parse(name: &str, definition: &str) -> CoreResult<MessageSchema> {
     let cleaned = normalize_ros2_idl(definition);

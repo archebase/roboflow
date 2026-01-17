@@ -251,7 +251,6 @@ impl CdrSchemaTransformer {
             String::new()
         }
     }
-
 }
 
 impl Default for CdrSchemaTransformer {
@@ -772,7 +771,10 @@ mod tests {
     fn test_schema_metadata_cdr_constructor() {
         let schema = SchemaMetadata::cdr("foo/Msg".to_string(), "int32 value".to_string());
         match schema {
-            SchemaMetadata::Cdr { type_name, schema_text } => {
+            SchemaMetadata::Cdr {
+                type_name,
+                schema_text,
+            } => {
                 assert_eq!(type_name, "foo/Msg");
                 assert_eq!(schema_text, "int32 value");
             }
@@ -785,7 +787,11 @@ mod tests {
         let fds = vec![0x08, 0x01];
         let schema = SchemaMetadata::protobuf("bar/Msg".to_string(), fds.clone());
         match schema {
-            SchemaMetadata::Protobuf { type_name, file_descriptor_set, schema_text } => {
+            SchemaMetadata::Protobuf {
+                type_name,
+                file_descriptor_set,
+                schema_text,
+            } => {
                 assert_eq!(type_name, "bar/Msg");
                 assert_eq!(file_descriptor_set, fds);
                 assert!(schema_text.is_none());
@@ -798,9 +804,14 @@ mod tests {
     fn test_schema_metadata_protobuf_with_text_constructor() {
         let fds = vec![0x08, 0x01];
         let text = Some("message Msg {}".to_string());
-        let schema = SchemaMetadata::protobuf_with_text("baz/Msg".to_string(), fds.clone(), text.clone());
+        let schema =
+            SchemaMetadata::protobuf_with_text("baz/Msg".to_string(), fds.clone(), text.clone());
         match schema {
-            SchemaMetadata::Protobuf { type_name, file_descriptor_set, schema_text } => {
+            SchemaMetadata::Protobuf {
+                type_name,
+                file_descriptor_set,
+                schema_text,
+            } => {
                 assert_eq!(type_name, "baz/Msg");
                 assert_eq!(file_descriptor_set, fds);
                 assert_eq!(schema_text, text);
@@ -811,9 +822,13 @@ mod tests {
 
     #[test]
     fn test_schema_metadata_json_constructor() {
-        let schema = SchemaMetadata::json("pux/Type".to_string(), "{\"type\": \"object\"}".to_string());
+        let schema =
+            SchemaMetadata::json("pux/Type".to_string(), "{\"type\": \"object\"}".to_string());
         match schema {
-            SchemaMetadata::Json { type_name, schema_text } => {
+            SchemaMetadata::Json {
+                type_name,
+                schema_text,
+            } => {
                 assert_eq!(type_name, "pux/Type");
                 assert_eq!(schema_text, "{\"type\": \"object\"}");
             }
@@ -862,7 +877,7 @@ mod tests {
 
     #[test]
     fn test_cdr_transformer_default() {
-        let transformer = CdrSchemaTransformer::default();
+        let transformer = CdrSchemaTransformer;
         assert_eq!(transformer.encoding(), Encoding::Cdr);
     }
 
@@ -909,7 +924,8 @@ mod tests {
         let schema = "sensor_msgs/msg/Header header\nsensor_msgs/msg/String string\n";
 
         // Use full type names with message suffix to get proper prefix extraction
-        let rewritten = transformer.rewrite_schema(schema, "sensor_msgs/msg/Header", "my_msgs/msg/Header");
+        let rewritten =
+            transformer.rewrite_schema(schema, "sensor_msgs/msg/Header", "my_msgs/msg/Header");
         assert!(rewritten.contains("my_msgs/msg/Header header"));
         assert!(rewritten.contains("my_msgs/msg/String string"));
         assert!(!rewritten.contains("sensor_msgs/msg/"));
@@ -981,7 +997,7 @@ mod tests {
 
     #[test]
     fn test_protobuf_transformer_default() {
-        let transformer = ProtobufSchemaTransformer::default();
+        let transformer = ProtobufSchemaTransformer;
         assert_eq!(transformer.encoding(), Encoding::Protobuf);
     }
 

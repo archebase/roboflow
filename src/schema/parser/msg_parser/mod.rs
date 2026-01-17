@@ -9,10 +9,10 @@
 //! - Nested types: package/MessageName
 //! - Comments (# style)
 
-use crate::schema::ast::MessageSchema;
-use crate::schema::ast::{Field, FieldType, MessageType, PrimitiveType};
 use crate::core::CodecError;
 use crate::core::Result as CoreResult;
+use crate::schema::ast::MessageSchema;
+use crate::schema::ast::{Field, FieldType, MessageType, PrimitiveType};
 use pest::Parser;
 use pest_derive::Parser;
 
@@ -65,7 +65,7 @@ impl RosVersion {
 
 /// Pest parser for ROS .msg schema files.
 #[derive(Parser)]
-#[grammar = "msg.pest"] // Path relative to src/ directory
+#[grammar = "schema/parser/msg_parser/msg.pest"] // Path relative to src/ directory
 pub struct MsgParser;
 
 /// Parse classic ROS .msg format (auto-detects ROS version from type name).
@@ -87,13 +87,126 @@ pub fn parse_with_encoding(
     parse_with_version(name, definition, ros_version)
 }
 
+/// Preprocess schema to convert indented inline type definitions to standard MSG format.
+///
+/// Converts:
+/// ```text
+/// geometry_msgs/Vector3 linear
+///   float64 x
+///   float64 y
+///   float64 z
+/// ```
+///
+/// To:
+/// ```text
+/// geometry_msgs/Vector3 linear
+/// ===
+/// MSG: geometry_msgs/Vector3
+/// float64 x
+/// float64 y
+/// float64 z
+/// ```
+fn preprocess_indented_schema(definition: &str) -> String {
+    let lines: Vec<&str> = definition.lines().collect();
+    let mut root_lines: Vec<String> = Vec::new();
+    let mut nested_types: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut current_nested_type: Option<String> = None;
+
+    for line in lines {
+        let trimmed = line.trim();
+
+        // Skip empty lines and comments
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            if current_nested_type.is_none() {
+                root_lines.push(line.to_string());
+            }
+            continue;
+        }
+
+        // Check if line starts with whitespace (indented)
+        let is_indented = line.starts_with(' ') || line.starts_with('\t');
+
+        if is_indented {
+            // This is a field of the current nested type
+            if let Some(ref type_name) = current_nested_type {
+                nested_types
+                    .entry(type_name.clone())
+                    .or_default()
+                    .push(trimmed.to_string());
+            }
+        } else {
+            // Non-indented line - this is a root field
+            current_nested_type = None;
+            root_lines.push(line.to_string());
+
+            // Check if this field references a nested type (not a primitive)
+            // Format: "package/Type fieldname" or "Type fieldname"
+            if let Some(nested_type) = extract_nested_type(trimmed) {
+                current_nested_type = Some(nested_type);
+            }
+        }
+    }
+
+    // Build the final schema with dependency blocks
+    let mut result = root_lines.join("\n");
+
+    for (type_name, fields) in nested_types {
+        if !fields.is_empty() {
+            result.push_str("\n===\nMSG: ");
+            result.push_str(&type_name);
+            result.push('\n');
+            result.push_str(&fields.join("\n"));
+            result.push('\n');
+        }
+    }
+
+    result
+}
+
+/// Extract nested type name from a field declaration, if any.
+/// Returns None for primitive types.
+fn extract_nested_type(line: &str) -> Option<String> {
+    // Skip constants (contain '=')
+    if line.contains('=') {
+        return None;
+    }
+
+    // Split on whitespace to get the type part
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.is_empty() {
+        return None;
+    }
+
+    let type_part = parts[0];
+
+    // Remove array suffix if present
+    let base_type = type_part.split('[').next().unwrap_or(type_part);
+
+    // Check if it's a nested type (contains '/' or is not a primitive)
+    let primitives = [
+        "bool", "boolean", "byte", "char", "int8", "int16", "int32", "int64", "uint8", "uint16",
+        "uint32", "uint64", "float32", "float64", "float", "double", "string", "wstring", "time",
+        "duration",
+    ];
+
+    if primitives.contains(&base_type) {
+        None
+    } else {
+        Some(base_type.to_string())
+    }
+}
+
 /// Parse classic ROS .msg format with explicit ROS version.
 pub fn parse_with_version(
     name: &str,
     definition: &str,
     ros_version: RosVersion,
 ) -> CoreResult<MessageSchema> {
-    let pairs = MsgParser::parse(Rule::schema, definition)
+    // Preprocess to convert indented format to standard MSG format
+    let definition = preprocess_indented_schema(definition);
+
+    let pairs = MsgParser::parse(Rule::schema, &definition)
         .map_err(|e| CodecError::parse("msg schema", format!("{e}")))?;
 
     let mut schema = MessageSchema::new(name.to_string());

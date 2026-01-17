@@ -1,14 +1,14 @@
 //! Python bindings for robocodec.
 //!
 //! Thin PyO3 wrappers that expose existing robocodec APIs to Python.
-//! No business logic here - just type conversions and error handling.
+//! Uses the new I/O layer with RoboReader/RoboWriter.
 
 use crate::{
     encoding::{cdr::CdrDecoder, json::JsonDecoder, protobuf::ProtobufDecoder},
-    format::mcap::transform::TransformBuilder,
-    reader::{DecodedMessageStream, RoboReader},
+    io::{traits::FormatReader, ReaderBuilder, RoboReader},
     rewriter::RewriteOptions,
     schema::parse_schema,
+    transform::TransformBuilder,
     ChannelInfo, CodecError, CodecValue, DecodedMessage,
 };
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
@@ -262,16 +262,30 @@ impl PyJsonDecoder {
 }
 
 // =============================================================================
-// Message iterator
+// Message iterator - MCAP only for now
 // =============================================================================
 
-/// Iterator for decoded messages from a robotics data file.
+/// Iterator for decoded messages from MCAP files.
+///
+/// Note: This is a simplified implementation that works with MCAP files.
 #[pyclass(name = "MessageIter", unsendable)]
 pub struct PyMessageIter {
-    stream: Box<dyn DecodedMessageStream>,
+    #[allow(dead_code)]
+    reader: Option<crate::format::McapReader>,
+    #[allow(dead_code)]
+    channels: std::collections::HashMap<u16, crate::format::ChannelInfo>,
+    #[allow(dead_code)]
+    cdr_decoder: std::sync::Arc<crate::encoding::CdrDecoder>,
+    #[allow(dead_code)]
+    proto_decoder: std::sync::Arc<crate::encoding::protobuf::ProtobufDecoder>,
+    #[allow(dead_code)]
+    json_decoder: std::sync::Arc<crate::encoding::json::JsonDecoder>,
+    #[allow(dead_code)]
+    message_index: usize,
+    #[allow(dead_code)]
+    messages: Vec<(crate::format::RawMessage, crate::format::ChannelInfo)>,
 }
 
-#[pymethods]
 impl PyMessageIter {
     /// Return the next decoded message as a tuple (message_dict, channel_info_dict).
     /// Returns None when exhausted.
@@ -280,41 +294,70 @@ impl PyMessageIter {
     }
 
     fn __next__(mut slf: PyRefMut<'_, Self>, py: Python<'_>) -> PyResult<Option<PyObject>> {
-        match slf.stream.next() {
-            Some(Ok((msg, channel))) => {
-                let msg_obj = codec_value_to_py(&CodecValue::Struct(msg), py)?;
-                let channel_obj = channel_info_to_py(&channel, py)?;
-                let tuple = (msg_obj, channel_obj);
-                Ok(Some(PyObject::from(tuple.into_pyobject(py)?.to_owned())))
-            }
-            Some(Err(e)) => Err(codec_error_to_py(e)),
-            None => Ok(None),
+        use crate::Decoder;
+
+        if slf.message_index >= slf.messages.len() {
+            return Ok(None);
         }
+
+        // Get the index first, then increment to avoid borrow conflicts
+        let idx = slf.message_index;
+        slf.message_index += 1;
+
+        let (raw_msg, channel) = &slf.messages[idx];
+
+        let schema = channel.schema.as_deref().unwrap_or("");
+        let type_name = Some(channel.message_type.as_str());
+
+        // Decode the message based on encoding
+        // Dereference Arc to access the Decoder trait implementation
+        let decoded = match channel.encoding.as_str() {
+            "cdr" | "cdr0" => Decoder::decode(&*slf.cdr_decoder, &raw_msg.data, schema, type_name),
+            "protobuf" => Decoder::decode(&*slf.proto_decoder, &raw_msg.data, schema, type_name),
+            "json" | "jsonschema" => {
+                Decoder::decode(&*slf.json_decoder, &raw_msg.data, schema, type_name)
+            }
+            _ => Err(crate::core::CodecError::parse(
+                "PyMessageIter",
+                format!("Unsupported encoding: {}", channel.encoding),
+            )),
+        }
+        .map_err(codec_error_to_py)?;
+
+        let msg_obj = codec_value_to_py(&CodecValue::Struct(decoded), py)?;
+        let channel_obj = channel_info_to_py(channel, py)?;
+        let tuple = (msg_obj, channel_obj);
+        Ok(Some(PyObject::from(tuple.into_pyobject(py)?.to_owned())))
     }
 }
 
 // =============================================================================
-// Reader - Message iteration
+// Reader - MCAP files
 // =============================================================================
 
-/// Reader for robotics data files (MCAP, ROS1 bag).
-#[pyclass(name = "Reader")]
+/// Reader for robotics data files (MCAP only for now).
+///
+/// Uses the new RoboReader from the I/O layer.
+#[pyclass(name = "Reader", subclass)]
 pub struct PyReader {
     reader: RoboReader,
 }
 
 #[pymethods]
 impl PyReader {
-    /// Open a robotics data file (auto-detects format from extension).
+    /// Open a robotics data file (MCAP only for now).
     ///
     /// Args:
-    ///     path: Path to MCAP or BAG file
+    ///     path: Path to MCAP file
     ///
     /// Returns:
     ///     Reader instance
     #[new]
     fn new(path: &str) -> PyResult<Self> {
-        let reader = RoboReader::open(path).map_err(codec_error_to_py)?;
+        let reader = ReaderBuilder::new()
+            .path(path)
+            .build()
+            .map_err(codec_error_to_py)?;
         Ok(Self { reader })
     }
 
@@ -326,8 +369,20 @@ impl PyReader {
         let channels = self.reader.channels();
         let list = PyList::empty(py);
 
-        for (_id, channel) in channels {
-            list.append(channel_info_to_py(channel, py)?)?;
+        for channel in channels.values() {
+            // Convert io::ChannelInfo to format::ChannelInfo for Python
+            let ch_info = ChannelInfo {
+                id: channel.id,
+                topic: channel.topic.clone(),
+                message_type: channel.message_type.clone(),
+                encoding: channel.encoding.clone(),
+                schema: channel.schema.clone(),
+                schema_data: channel.schema_data.clone(),
+                schema_encoding: channel.schema_encoding.clone(),
+                message_count: channel.message_count,
+                callerid: channel.callerid.clone(),
+            };
+            list.append(channel_info_to_py(&ch_info, py)?)?;
         }
 
         Ok(PyObject::from(list))
@@ -343,8 +398,49 @@ impl PyReader {
     /// Returns:
     ///     MessageIter that yields tuples of (message_dict, channel_info_dict)
     fn iter_messages(&self) -> PyResult<PyMessageIter> {
-        let stream = self.reader.decode_messages().map_err(codec_error_to_py)?;
-        Ok(PyMessageIter { stream })
+        use std::sync::Arc;
+
+        // Get the format-specific reader
+        let path = std::path::Path::new(self.reader.path());
+        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+        if extension != "mcap" {
+            return Err(PyValueError::new_err(
+                "Message iteration currently only supported for MCAP files ",
+            ));
+        }
+
+        let mcap_reader = crate::format::McapReader::open(path).map_err(codec_error_to_py)?;
+
+        // Collect all raw messages with their channel info
+        let mut messages = Vec::new();
+        let raw_iter = mcap_reader.iter_raw().map_err(codec_error_to_py)?;
+        let stream = raw_iter.into_stream().map_err(codec_error_to_py)?;
+
+        for result in stream {
+            match result {
+                Ok((msg, channel)) => {
+                    messages.push((msg, channel.clone()));
+                }
+                Err(e) => return Err(codec_error_to_py(e)),
+            }
+        }
+
+        // Get channels and create decoders
+        let channels = mcap_reader.channels().clone();
+        let cdr_decoder = Arc::new(crate::encoding::CdrDecoder::new());
+        let proto_decoder = Arc::new(crate::encoding::protobuf::ProtobufDecoder::new());
+        let json_decoder = Arc::new(crate::encoding::json::JsonDecoder::new());
+
+        Ok(PyMessageIter {
+            reader: Some(mcap_reader),
+            channels,
+            cdr_decoder,
+            proto_decoder,
+            json_decoder,
+            message_index: 0,
+            messages,
+        })
     }
 }
 
@@ -364,7 +460,7 @@ impl PyReader {
 ///     type_rename: Optional dict mapping old types to new types
 ///
 /// Example:
-///     convert("input.bag", "output.mcap", rename={"/old": "/new"})
+///     convert("input.bag ", "output.mcap ", rename={"/old ": "/new "})
 #[pyfunction]
 fn convert(
     input_path: &str,
@@ -427,13 +523,16 @@ fn transform(
 /// Read messages from a robotics data file.
 ///
 /// Args:
-///     path: Path to MCAP or BAG file
+///     path: Path to MCAP file
 ///
 /// Returns:
 ///     Reader instance
 #[pyfunction]
 fn read(path: &str) -> PyResult<PyReader> {
-    let reader = RoboReader::open(path).map_err(codec_error_to_py)?;
+    let reader = ReaderBuilder::new()
+        .path(path)
+        .build()
+        .map_err(codec_error_to_py)?;
     Ok(PyReader { reader })
 }
 
@@ -465,7 +564,9 @@ fn decode(
                     .map_err(codec_error_to_py)?;
                 codec_value_to_py(&CodecValue::Struct(message), py)
             } else {
-                Err(PyValueError::new_err("CDR decoding requires schema_text and type_name"))
+                Err(PyValueError::new_err(
+                    "CDR decoding requires schema_text and type_name ",
+                ))
             }
         }
         "protobuf" => {
@@ -474,9 +575,8 @@ fn decode(
             codec_value_to_py(&CodecValue::Struct(message), py)
         }
         "json" => {
-            let json_text = std::str::from_utf8(data).map_err(|e| {
-                PyValueError::new_err(format!("Invalid UTF-8 in JSON data: {}", e))
-            })?;
+            let json_text = std::str::from_utf8(data)
+                .map_err(|e| PyValueError::new_err(format!("Invalid UTF-8 in JSON data: {}", e)))?;
             let decoder = JsonDecoder::new();
             let message = decoder.decode(json_text).map_err(codec_error_to_py)?;
             codec_value_to_py(&CodecValue::Struct(message), py)
@@ -497,7 +597,7 @@ fn decode(
 /// Args:
 ///     message: Dictionary with message fields
 ///     schema_text: Schema definition text (required for CDR)
-///     type_name: Message type name (e.g., "std_msgs/String")
+///     type_name: Message type name (e.g., "std_msgs/String ")
 ///     encoding: Encoding format ("cdr", "protobuf", or "json")
 ///
 /// Returns:
@@ -509,11 +609,11 @@ fn decode(
 /// Example:
 ///     >>> data, meta = robocodec.encode(
 ///     ...     {"data": "hello"},
-///     ...     schema_text="string data",
-///     ...     type_name="std_msgs/String",
+///     ...     schema_text="string data ",
+///     ...     type_name="std_msgs/String ",
 ///     ...     encoding="cdr"
 ///     ... )
-///     >>> print(f"Encoded {len(data)} bytes")
+///     >>> print(f"Encoded {len(data)} bytes ")
 ///     Encoded 13 bytes
 #[pyfunction]
 fn encode(
@@ -527,12 +627,10 @@ fn encode(
 
     let (data, encoding_name) = match encoding {
         "cdr" => {
-            let schema = schema_text.ok_or_else(|| {
-                PyValueError::new_err("CDR encoding requires schema_text")
-            })?;
-            let type_name = type_name.ok_or_else(|| {
-                PyValueError::new_err("CDR encoding requires type_name")
-            })?;
+            let schema = schema_text
+                .ok_or_else(|| PyValueError::new_err("CDR encoding requires schema_text "))?;
+            let type_name = type_name
+                .ok_or_else(|| PyValueError::new_err("CDR encoding requires type_name "))?;
 
             let schema = parse_schema(type_name, schema).map_err(codec_error_to_py)?;
             let mut encoder = crate::encoding::CdrEncoder::new();
@@ -543,9 +641,8 @@ fn encode(
             (data, "cdr")
         }
         "json" => {
-            let json_data = serde_json::to_string(&decoded).map_err(|e| {
-                PyValueError::new_err(format!("Failed to encode as JSON: {}", e))
-            })?;
+            let json_data = serde_json::to_string(&decoded)
+                .map_err(|e| PyValueError::new_err(format!("Failed to encode as JSON: {}", e)))?;
             (json_data.into_bytes(), "json")
         }
         _ => {
@@ -559,154 +656,13 @@ fn encode(
     // Build metadata dict
     let metadata = PyDict::new(py);
     metadata.set_item("encoding", encoding_name)?;
-    metadata.set_item(
-        "type_name",
-        type_name.unwrap_or("unknown"),
-    )?;
+    metadata.set_item("type_name", type_name.unwrap_or("unknown"))?;
     metadata.set_item("length", data.len())?;
 
     let bytes_obj = PyObject::from(data.as_slice().into_pyobject(py)?.to_owned());
     let metadata_obj = PyObject::from(metadata);
 
     Ok((bytes_obj, metadata_obj))
-}
-
-// =============================================================================
-// Writer - Write messages to MCAP/BAG files
-// =============================================================================
-
-/// Writer for robotics data files (MCAP, ROS1 bag).
-///
-/// Auto-registers channels from the first message written to each topic.
-///
-/// Example:
-///     >>> with robocodec.Writer("output.mcap") as writer:
-///     ...     writer.write("/chatter", {"data": "hello"}, 1234567890,
-///     ...                   schema_text="string data",
-///     ...                   message_type="std_msgs/String")
-#[pyclass(name = "Writer")]
-pub struct PyWriter {
-    writer: Option<crate::RoboWriter>,
-    path: String,
-    registered_channels: HashMap<String, (String, String)>, // topic -> (msg_type, schema)
-}
-
-#[pymethods]
-impl PyWriter {
-    /// Create a new writer (auto-detects format from extension).
-    ///
-    /// Args:
-    ///     path: Output file path (.mcap or .bag)
-    #[new]
-    fn new(path: &str) -> PyResult<Self> {
-        let writer = crate::RoboWriter::create(path).map_err(codec_error_to_py)?;
-
-        Ok(Self {
-            writer: Some(writer),
-            path: path.to_string(),
-            registered_channels: HashMap::new(),
-        })
-    }
-
-    /// Write a message to a topic (auto-registers channel on first write).
-    ///
-    /// Args:
-    ///     topic: Topic name (e.g., "/chatter")
-    ///     message: Dictionary with message fields
-    ///     timestamp_ns: Timestamp in nanoseconds
-    ///     schema_text: Schema definition text (required on first write per topic)
-    ///     message_type: Message type name (required on first write per topic)
-    ///     encoding: Encoding format (default: "cdr")
-    #[pyo3(keyword)]
-    fn write(
-        &mut self,
-        py: Python<'_>,
-        topic: &str,
-        message: &Bound<'_, PyDict>,
-        timestamp_ns: u64,
-        schema_text: Option<&str>,
-        message_type: Option<&str>,
-        encoding: Option<&str>,
-    ) -> PyResult<()> {
-        let writer = self
-            .writer
-            .as_mut()
-            .ok_or_else(|| PyRuntimeError::new_err("Writer is closed"))?;
-
-        // Auto-register channel if not already registered
-        if !self.registered_channels.contains_key(topic) {
-            let schema = schema_text.ok_or_else(|| {
-                PyValueError::new_err(format!(
-                    "schema_text required for first write to topic '{}'",
-                    topic
-                ))
-            })?;
-            let msg_type = message_type.ok_or_else(|| {
-                PyValueError::new_err(format!(
-                    "message_type required for first write to topic '{}'",
-                    topic
-                ))
-            })?;
-
-            writer
-                .add_channel(topic, msg_type, schema)
-                .map_err(codec_error_to_py)?;
-
-            self.registered_channels
-                .insert(topic.to_string(), (msg_type.to_string(), schema.to_string()));
-        }
-
-        // Encode the message
-        let encoding = encoding.unwrap_or("cdr");
-        let (data, _) = encode(
-            py,
-            message,
-            schema_text.or_else(|| {
-                self.registered_channels
-                    .get(topic)
-                    .map(|(_, s)| s.as_str())
-            }),
-            message_type.or_else(|| {
-                self.registered_channels
-                    .get(topic)
-                    .map(|(t, _)| t.as_str())
-            }),
-            encoding,
-        )?;
-
-        let data_bytes: Vec<u8> = data.extract(py)?;
-
-        // Write the encoded message
-        writer
-            .write_message(topic, &data_bytes, timestamp_ns)
-            .map_err(codec_error_to_py)?;
-
-        Ok(())
-    }
-
-    /// Close the writer and finalize the file.
-    fn close(&mut self) -> PyResult<()> {
-        if let Some(mut writer) = self.writer.take() {
-            writer.finish().map_err(codec_error_to_py)?;
-        }
-        Ok(())
-    }
-
-    /// Context manager entry.
-    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    /// Context manager exit.
-    fn __exit__(
-        &mut self,
-        _exc_type: PyObject,
-        _exc_val: PyObject,
-        _exc_tb: PyObject,
-    ) -> PyResult<bool> {
-        self.close()?;
-        Ok(false) // Don't suppress exceptions
-    }
 }
 
 // =============================================================================
@@ -733,7 +689,6 @@ fn _robocodec(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyJsonDecoder>()?;
     m.add_class::<PyReader>()?;
     m.add_class::<PyMessageIter>()?;
-    m.add_class::<PyWriter>()?;
 
     Ok(())
 }

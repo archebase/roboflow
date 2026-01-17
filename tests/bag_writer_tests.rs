@@ -13,8 +13,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use robocodec::format::bag::{BagMessage, BagWriter};
-use robocodec::reader::{BagFormatReader, FormatReader, RoboReader};
+use robocodec::format::writer::{BagMessage, BagWriter};
+use robocodec::io::formats::BagFormat;
+use robocodec::io::traits::FormatReader;
 
 // ============================================================================
 // Test Fixtures
@@ -249,7 +250,7 @@ fn test_add_duplicate_topic_is_idempotent() {
     writer.finish().unwrap();
 
     // Verify by reading the bag
-    let reader = BagFormatReader::open(&path);
+    let reader = BagFormat::open(&path);
     assert!(reader.is_ok());
     let reader = reader.unwrap();
     assert_eq!(
@@ -316,7 +317,7 @@ fn test_write_multiple_messages_same_connection() {
     writer.finish().unwrap();
 
     // Verify messages were written
-    let reader = BagFormatReader::open(&path).unwrap();
+    let reader = BagFormat::open(&path).unwrap();
     // Note: message_count may not be accurate for BagFormatReader
     assert_eq!(reader.channels().len(), 1);
 }
@@ -345,7 +346,7 @@ fn test_write_messages_multiple_connections() {
     writer.finish().unwrap();
 
     // Verify both connections exist
-    let reader = BagFormatReader::open(&path).unwrap();
+    let reader = BagFormat::open(&path).unwrap();
     assert_eq!(reader.channels().len(), 2);
 }
 
@@ -443,7 +444,7 @@ fn test_round_trip_single_message() {
     writer.finish().unwrap();
 
     // Read it back
-    let reader = BagFormatReader::open(&path).unwrap();
+    let reader = BagFormat::open(&path).unwrap();
     let channels = reader.channels();
 
     assert_eq!(channels.len(), 1, "should have 1 channel");
@@ -488,7 +489,7 @@ fn test_round_trip_multiple_connections() {
     writer.finish().unwrap();
 
     // Read back and verify
-    let reader = BagFormatReader::open(&path).unwrap();
+    let reader = BagFormat::open(&path).unwrap();
     let channels = reader.channels();
 
     assert_eq!(channels.len(), 3, "should have 3 channels");
@@ -525,7 +526,7 @@ fn test_round_trip_topic_types_match() {
     writer.finish().unwrap();
 
     // Read back and verify types
-    let reader = BagFormatReader::open(&path).unwrap();
+    let reader = BagFormat::open(&path).unwrap();
 
     let chatter = reader.channel_by_topic("/chatter");
     assert!(chatter.is_some(), "/chatter should exist");
@@ -568,17 +569,15 @@ fn test_round_trip_message_data_preserved() {
     assert!(path.exists(), "bag file should exist");
 
     // Read back and verify message data is preserved
-    let robo_reader = RoboReader::open(&path).unwrap();
-    let raw_iter = robo_reader.iter_raw_bag().unwrap();
-    let mut raw_stream = raw_iter.into_stream().unwrap();
+    let reader = BagFormat::open(&path).unwrap();
+    let raw_iter = reader.iter_raw().unwrap();
 
     // Collect all messages
     let mut messages: Vec<(u64, Vec<u8>)> = Vec::new();
-    while let Some(result) = raw_stream.next() {
+    for result in raw_iter {
         match result {
             Ok((raw_msg, _channel)) => {
                 // raw_msg.data contains the message payload directly
-                // (no ROS headers included in BagRawMessageStream's data)
                 messages.push((raw_msg.log_time, raw_msg.data.clone()));
             }
             Err(e) => {
@@ -640,7 +639,7 @@ fn test_round_trip_multiple_connections_with_data() {
     writer.finish().unwrap();
 
     // Read back and verify
-    let reader = BagFormatReader::open(&path).unwrap();
+    let reader = BagFormat::open(&path).unwrap();
     assert_eq!(reader.channels().len(), 2, "should have 2 channels");
 
     // Verify topics exist
@@ -651,14 +650,14 @@ fn test_round_trip_multiple_connections_with_data() {
     assert!(numbers.is_some(), "/numbers should exist");
 
     // Use raw message iterator to verify data
-    let robo_reader = RoboReader::open(&path).unwrap();
-    let raw_iter = robo_reader.iter_raw_bag().unwrap();
-    let mut raw_stream = raw_iter.into_stream().unwrap();
+    use robocodec::io::traits::FormatReader;
+    let raw_reader = BagFormat::open(&path).unwrap();
+    let raw_iter = raw_reader.iter_raw().unwrap();
 
     let mut messages_by_topic: std::collections::HashMap<String, Vec<u8>> =
         std::collections::HashMap::new();
 
-    while let Some(result) = raw_stream.next() {
+    for result in raw_iter {
         match result {
             Ok((raw_msg, channel)) => {
                 // raw_msg.data contains the message payload directly
@@ -776,7 +775,7 @@ fn test_finish_creates_valid_file() {
     assert_eq!(contents.len(), 4096, "file should be properly closed");
 
     // Verify it can be read back
-    let reader = BagFormatReader::open(&path);
+    let reader = BagFormat::open(&path);
     assert!(reader.is_ok(), "finished bag should be readable");
 }
 
@@ -818,7 +817,7 @@ fn test_add_connection_after_finish_fails() {
     }
 
     // Verify the bag is complete and can be read
-    let reader = BagFormatReader::open(&path).unwrap();
+    let reader = BagFormat::open(&path).unwrap();
     assert_eq!(
         reader.channels().len(),
         1,
@@ -918,7 +917,7 @@ fn test_topic_with_special_characters() {
     writer.finish().unwrap();
 
     // Verify topics are readable
-    let reader = BagFormatReader::open(&path).unwrap();
+    let reader = BagFormat::open(&path).unwrap();
     assert_eq!(reader.channels().len(), 3);
 }
 
@@ -940,7 +939,7 @@ fn test_single_message_per_chunk_threshold() {
     writer.finish().unwrap();
 
     // Verify file is valid
-    let reader = BagFormatReader::open(&path);
+    let reader = BagFormat::open(&path);
     assert!(reader.is_ok(), "bag should be readable");
 }
 
@@ -966,7 +965,7 @@ fn test_message_definition_preserved() {
     writer.finish().unwrap();
 
     // Read back and check schema
-    let reader = BagFormatReader::open(&path).unwrap();
+    let reader = BagFormat::open(&path).unwrap();
     let channel = reader.channel_by_topic("/custom").unwrap();
 
     assert_eq!(

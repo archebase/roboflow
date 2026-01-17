@@ -381,6 +381,46 @@ impl fmt::Display for CodecError {
 
 impl std::error::Error for CodecError {}
 
+impl From<std::io::Error> for CodecError {
+    fn from(err: std::io::Error) -> Self {
+        CodecError::EncodeError {
+            codec: "IO".to_string(),
+            message: err.to_string(),
+        }
+    }
+}
+
+// Forward KPS writer errors to codec errors
+#[cfg(feature = "kps-hdf5")]
+impl From<crate::io::kps::writers::KpsWriterError> for CodecError {
+    fn from(err: crate::io::kps::writers::KpsWriterError) -> Self {
+        CodecError::EncodeError {
+            codec: "KpsWriter".to_string(),
+            message: err.to_string(),
+        }
+    }
+}
+
+#[cfg(all(feature = "kps-parquet", not(feature = "kps-hdf5")))]
+impl From<crate::io::kps::writers::KpsWriterError> for CodecError {
+    fn from(err: crate::io::kps::writers::KpsWriterError) -> Self {
+        CodecError::EncodeError {
+            codec: "KpsWriter".to_string(),
+            message: err.to_string(),
+        }
+    }
+}
+
+// Forward time alignment errors to codec errors
+impl From<crate::pipeline::kps::traits::time_alignment::TimeAlignError> for CodecError {
+    fn from(err: crate::pipeline::kps::traits::time_alignment::TimeAlignError) -> Self {
+        CodecError::EncodeError {
+            codec: "TimeAligner".to_string(),
+            message: err.to_string(),
+        }
+    }
+}
+
 /// Result type for codec operations.
 pub type Result<T> = std::result::Result<T, CodecError>;
 

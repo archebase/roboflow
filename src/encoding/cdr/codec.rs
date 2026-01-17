@@ -1,11 +1,11 @@
 //! CDR codec implementation wrapping existing decoder/encoder.
 
+use crate::core::{CodecError, DecodedMessage, Result};
+use crate::encoding::transform::SchemaMetadata;
 use crate::encoding::CdrDecoder;
 use crate::encoding::CdrEncoder;
-use crate::encoding::transform::SchemaMetadata;
 use crate::encoding::DynCodec;
 use crate::Encoding;
-use crate::core::{CodecError, DecodedMessage, Result};
 
 /// CDR codec wrapper implementing the unified codec interface.
 ///

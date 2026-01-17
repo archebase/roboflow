@@ -406,7 +406,13 @@ mod tests {
             },
             count: Some(10),
         };
-        assert!(matches!(op, DecodeOp::ReadArray { element_type: ElementType::Nested { .. }, .. }));
+        assert!(matches!(
+            op,
+            DecodeOp::ReadArray {
+                element_type: ElementType::Nested { .. },
+                ..
+            }
+        ));
     }
 
     #[test]

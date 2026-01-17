@@ -4,9 +4,9 @@
 //! https://github.com/emulated-devices/rtps-cdr/blob/main/src/CdrWriter.ts
 
 use super::{calculator::CdrCalculator, CDR_HEADER_SIZE};
-use crate::schema::{FieldType, MessageSchema, PrimitiveType as IdlPrimitiveType};
 use crate::core::Result as CoreResult;
 use crate::core::{CodecValue, DecodedMessage};
+use crate::schema::{FieldType, MessageSchema, PrimitiveType as IdlPrimitiveType};
 
 /// Default initial capacity for the encoder buffer.
 const DEFAULT_CAPACITY: usize = 16;
@@ -93,11 +93,15 @@ impl Default for EncapsulationKind {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// # fn main() {
+/// use robocodec::encoding::cdr::encoder::CdrEncoder;
+///
 /// let mut encoder = CdrEncoder::new();
 /// encoder.int32(42);
 /// encoder.string("hello");
 /// let data = encoder.finish();
+/// # }
 /// ```
 pub struct CdrEncoder {
     /// Output buffer
@@ -457,13 +461,21 @@ impl CdrEncoder {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use robocodec::encoding::cdr::encoder::CdrEncoder;
+    /// use robocodec::{parse_schema, DecodedMessage};
+    /// use robocodec::encoding::cdr::decoder::CdrDecoder;
+    ///
     /// let schema = parse_schema("TestMsg", "int32 value\nfloat64 data")?;
-    /// let decoded = decoder.decode(&schema, &raw_data)?;
+    /// # let raw_data = vec![0u8; 100];
+    /// let decoded = CdrDecoder::new().decode(&schema, &raw_data, Some("TestMsg"))?;
     ///
     /// let mut encoder = CdrEncoder::new();
     /// encoder.encode_message(&decoded, &schema, "TestMsg")?;
     /// let normalized_data = encoder.finish();
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn encode_message(
         &mut self,
@@ -539,7 +551,11 @@ impl CdrEncoder {
         Ok(())
     }
 
-    /// Encode a primitive value.
+    /// Encode a primitive value with automatic type coercion.
+    ///
+    /// This method handles automatic type coercion from Python's native types:
+    /// - Python int (Int64) -> int8/int16/int32/uint8/uint16/uint32 with bounds checking
+    /// - Python float (Float64) -> float32 with precision loss
     fn encode_primitive(&mut self, value: &CodecValue, prim: IdlPrimitiveType) -> CoreResult<()> {
         match prim {
             IdlPrimitiveType::Bool => {
@@ -550,74 +566,44 @@ impl CdrEncoder {
                 }
             }
             IdlPrimitiveType::Int8 => {
-                if let CodecValue::Int8(i) = value {
-                    self.int8(*i)?;
-                } else {
-                    return self.type_mismatch("int8", value);
-                }
+                let i = self.coerce_to_i8(value)?;
+                self.int8(i)?;
             }
             IdlPrimitiveType::Int16 => {
-                if let CodecValue::Int16(i) = value {
-                    self.int16(*i)?;
-                } else {
-                    return self.type_mismatch("int16", value);
-                }
+                let i = self.coerce_to_i16(value)?;
+                self.int16(i)?;
             }
             IdlPrimitiveType::Int32 => {
-                if let CodecValue::Int32(i) = value {
-                    self.int32(*i)?;
-                } else {
-                    return self.type_mismatch("int32", value);
-                }
+                let i = self.coerce_to_i32(value)?;
+                self.int32(i)?;
             }
             IdlPrimitiveType::Int64 => {
-                if let CodecValue::Int64(i) = value {
-                    self.int64(*i)?;
-                } else {
-                    return self.type_mismatch("int64", value);
-                }
+                let i = self.coerce_to_i64(value)?;
+                self.int64(i)?;
             }
             IdlPrimitiveType::UInt8 | IdlPrimitiveType::Byte => {
-                if let CodecValue::UInt8(u) = value {
-                    self.uint8(*u)?;
-                } else {
-                    return self.type_mismatch("uint8", value);
-                }
+                let u = self.coerce_to_u8(value)?;
+                self.uint8(u)?;
             }
             IdlPrimitiveType::UInt16 => {
-                if let CodecValue::UInt16(u) = value {
-                    self.uint16(*u)?;
-                } else {
-                    return self.type_mismatch("uint16", value);
-                }
+                let u = self.coerce_to_u16(value)?;
+                self.uint16(u)?;
             }
             IdlPrimitiveType::UInt32 => {
-                if let CodecValue::UInt32(u) = value {
-                    self.uint32(*u)?;
-                } else {
-                    return self.type_mismatch("uint32", value);
-                }
+                let u = self.coerce_to_u32(value)?;
+                self.uint32(u)?;
             }
             IdlPrimitiveType::UInt64 => {
-                if let CodecValue::UInt64(u) = value {
-                    self.uint64(*u)?;
-                } else {
-                    return self.type_mismatch("uint64", value);
-                }
+                let u = self.coerce_to_u64(value)?;
+                self.uint64(u)?;
             }
             IdlPrimitiveType::Float32 => {
-                if let CodecValue::Float32(f) = value {
-                    self.float32(*f)?;
-                } else {
-                    return self.type_mismatch("float32", value);
-                }
+                let f = self.coerce_to_f32(value)?;
+                self.float32(f)?;
             }
             IdlPrimitiveType::Float64 => {
-                if let CodecValue::Float64(f) = value {
-                    self.float64(*f)?;
-                } else {
-                    return self.type_mismatch("float64", value);
-                }
+                let f = self.coerce_to_f64(value)?;
+                self.float64(f)?;
             }
             IdlPrimitiveType::String | IdlPrimitiveType::WString => {
                 if let CodecValue::String(s) = value {
@@ -627,11 +613,8 @@ impl CdrEncoder {
                 }
             }
             IdlPrimitiveType::Char => {
-                if let CodecValue::Int8(i) = value {
-                    self.int8(*i)?;
-                } else {
-                    return self.type_mismatch("char", value);
-                }
+                let i = self.coerce_to_i8(value)?;
+                self.int8(i)?;
             }
             IdlPrimitiveType::Time => {
                 if let CodecValue::Timestamp(nanos) = value {
@@ -662,6 +645,249 @@ impl CdrEncoder {
             }
         }
         Ok(())
+    }
+
+    /// Coerce a CodecValue to i8 with bounds checking.
+    fn coerce_to_i8(&self, value: &CodecValue) -> CoreResult<i8> {
+        match value {
+            CodecValue::Int8(i) => Ok(*i),
+            CodecValue::Int16(i) => {
+                i8::try_from(*i).map_err(|_| self.overflow_error("int8", value))
+            }
+            CodecValue::Int32(i) => {
+                i8::try_from(*i).map_err(|_| self.overflow_error("int8", value))
+            }
+            CodecValue::Int64(i) => {
+                i8::try_from(*i).map_err(|_| self.overflow_error("int8", value))
+            }
+            CodecValue::UInt8(u) => {
+                i8::try_from(*u).map_err(|_| self.overflow_error("int8", value))
+            }
+            CodecValue::UInt16(u) => {
+                i8::try_from(*u).map_err(|_| self.overflow_error("int8", value))
+            }
+            CodecValue::UInt32(u) => {
+                i8::try_from(*u).map_err(|_| self.overflow_error("int8", value))
+            }
+            CodecValue::UInt64(u) => {
+                i8::try_from(*u).map_err(|_| self.overflow_error("int8", value))
+            }
+            _ => Err(self.coerce_error("int8", value)),
+        }
+    }
+
+    /// Coerce a CodecValue to i16 with bounds checking.
+    fn coerce_to_i16(&self, value: &CodecValue) -> CoreResult<i16> {
+        match value {
+            CodecValue::Int8(i) => Ok(i16::from(*i)),
+            CodecValue::Int16(i) => Ok(*i),
+            CodecValue::Int32(i) => {
+                i16::try_from(*i).map_err(|_| self.overflow_error("int16", value))
+            }
+            CodecValue::Int64(i) => {
+                i16::try_from(*i).map_err(|_| self.overflow_error("int16", value))
+            }
+            CodecValue::UInt8(u) => Ok(i16::from(*u)),
+            CodecValue::UInt16(u) => {
+                i16::try_from(*u).map_err(|_| self.overflow_error("int16", value))
+            }
+            CodecValue::UInt32(u) => {
+                i16::try_from(*u).map_err(|_| self.overflow_error("int16", value))
+            }
+            CodecValue::UInt64(u) => {
+                i16::try_from(*u).map_err(|_| self.overflow_error("int16", value))
+            }
+            _ => Err(self.coerce_error("int16", value)),
+        }
+    }
+
+    /// Coerce a CodecValue to i32 with bounds checking.
+    fn coerce_to_i32(&self, value: &CodecValue) -> CoreResult<i32> {
+        match value {
+            CodecValue::Int8(i) => Ok(i32::from(*i)),
+            CodecValue::Int16(i) => Ok(i32::from(*i)),
+            CodecValue::Int32(i) => Ok(*i),
+            CodecValue::Int64(i) => {
+                i32::try_from(*i).map_err(|_| self.overflow_error("int32", value))
+            }
+            CodecValue::UInt8(u) => Ok(i32::from(*u)),
+            CodecValue::UInt16(u) => Ok(i32::from(*u)),
+            CodecValue::UInt32(u) => {
+                i32::try_from(*u).map_err(|_| self.overflow_error("int32", value))
+            }
+            CodecValue::UInt64(u) => {
+                i32::try_from(*u).map_err(|_| self.overflow_error("int32", value))
+            }
+            _ => Err(self.coerce_error("int32", value)),
+        }
+    }
+
+    /// Coerce a CodecValue to i64.
+    fn coerce_to_i64(&self, value: &CodecValue) -> CoreResult<i64> {
+        match value {
+            CodecValue::Int8(i) => Ok(i64::from(*i)),
+            CodecValue::Int16(i) => Ok(i64::from(*i)),
+            CodecValue::Int32(i) => Ok(i64::from(*i)),
+            CodecValue::Int64(i) => Ok(*i),
+            CodecValue::UInt8(u) => Ok(i64::from(*u)),
+            CodecValue::UInt16(u) => Ok(i64::from(*u)),
+            CodecValue::UInt32(u) => Ok(i64::from(*u)),
+            CodecValue::UInt64(u) => {
+                i64::try_from(*u).map_err(|_| self.overflow_error("int64", value))
+            }
+            _ => Err(self.coerce_error("int64", value)),
+        }
+    }
+
+    /// Coerce a CodecValue to u8 with bounds checking.
+    fn coerce_to_u8(&self, value: &CodecValue) -> CoreResult<u8> {
+        match value {
+            CodecValue::UInt8(u) => Ok(*u),
+            CodecValue::UInt16(u) => {
+                u8::try_from(*u).map_err(|_| self.overflow_error("uint8", value))
+            }
+            CodecValue::UInt32(u) => {
+                u8::try_from(*u).map_err(|_| self.overflow_error("uint8", value))
+            }
+            CodecValue::UInt64(u) => {
+                u8::try_from(*u).map_err(|_| self.overflow_error("uint8", value))
+            }
+            CodecValue::Int8(i) => {
+                u8::try_from(*i).map_err(|_| self.overflow_error("uint8", value))
+            }
+            CodecValue::Int16(i) => {
+                u8::try_from(*i).map_err(|_| self.overflow_error("uint8", value))
+            }
+            CodecValue::Int32(i) => {
+                u8::try_from(*i).map_err(|_| self.overflow_error("uint8", value))
+            }
+            CodecValue::Int64(i) => {
+                u8::try_from(*i).map_err(|_| self.overflow_error("uint8", value))
+            }
+            _ => Err(self.coerce_error("uint8", value)),
+        }
+    }
+
+    /// Coerce a CodecValue to u16 with bounds checking.
+    fn coerce_to_u16(&self, value: &CodecValue) -> CoreResult<u16> {
+        match value {
+            CodecValue::UInt8(u) => Ok(u16::from(*u)),
+            CodecValue::UInt16(u) => Ok(*u),
+            CodecValue::UInt32(u) => {
+                u16::try_from(*u).map_err(|_| self.overflow_error("uint16", value))
+            }
+            CodecValue::UInt64(u) => {
+                u16::try_from(*u).map_err(|_| self.overflow_error("uint16", value))
+            }
+            CodecValue::Int8(i) => {
+                u16::try_from(*i).map_err(|_| self.overflow_error("uint16", value))
+            }
+            CodecValue::Int16(i) => {
+                u16::try_from(*i).map_err(|_| self.overflow_error("uint16", value))
+            }
+            CodecValue::Int32(i) => {
+                u16::try_from(*i).map_err(|_| self.overflow_error("uint16", value))
+            }
+            CodecValue::Int64(i) => {
+                u16::try_from(*i).map_err(|_| self.overflow_error("uint16", value))
+            }
+            _ => Err(self.coerce_error("uint16", value)),
+        }
+    }
+
+    /// Coerce a CodecValue to u32 with bounds checking.
+    fn coerce_to_u32(&self, value: &CodecValue) -> CoreResult<u32> {
+        match value {
+            CodecValue::UInt8(u) => Ok(u32::from(*u)),
+            CodecValue::UInt16(u) => Ok(u32::from(*u)),
+            CodecValue::UInt32(u) => Ok(*u),
+            CodecValue::UInt64(u) => {
+                u32::try_from(*u).map_err(|_| self.overflow_error("uint32", value))
+            }
+            CodecValue::Int8(i) => {
+                u32::try_from(*i).map_err(|_| self.overflow_error("uint32", value))
+            }
+            CodecValue::Int16(i) => {
+                u32::try_from(*i).map_err(|_| self.overflow_error("uint32", value))
+            }
+            CodecValue::Int32(i) => {
+                u32::try_from(*i).map_err(|_| self.overflow_error("uint32", value))
+            }
+            CodecValue::Int64(i) => {
+                u32::try_from(*i).map_err(|_| self.overflow_error("uint32", value))
+            }
+            _ => Err(self.coerce_error("uint32", value)),
+        }
+    }
+
+    /// Coerce a CodecValue to u64 with bounds checking.
+    fn coerce_to_u64(&self, value: &CodecValue) -> CoreResult<u64> {
+        match value {
+            CodecValue::UInt8(u) => Ok(u64::from(*u)),
+            CodecValue::UInt16(u) => Ok(u64::from(*u)),
+            CodecValue::UInt32(u) => Ok(u64::from(*u)),
+            CodecValue::UInt64(u) => Ok(*u),
+            CodecValue::Int8(i) => {
+                u64::try_from(*i).map_err(|_| self.overflow_error("uint64", value))
+            }
+            CodecValue::Int16(i) => {
+                u64::try_from(*i).map_err(|_| self.overflow_error("uint64", value))
+            }
+            CodecValue::Int32(i) => {
+                u64::try_from(*i).map_err(|_| self.overflow_error("uint64", value))
+            }
+            CodecValue::Int64(i) => {
+                u64::try_from(*i).map_err(|_| self.overflow_error("uint64", value))
+            }
+            _ => Err(self.coerce_error("uint64", value)),
+        }
+    }
+
+    /// Coerce a CodecValue to f32.
+    fn coerce_to_f32(&self, value: &CodecValue) -> CoreResult<f32> {
+        match value {
+            CodecValue::Float32(f) => Ok(*f),
+            CodecValue::Float64(f) => Ok(*f as f32), // Allow precision loss
+            CodecValue::Int8(i) => Ok(*i as f32),
+            CodecValue::Int16(i) => Ok(*i as f32),
+            CodecValue::Int32(i) => Ok(*i as f32),
+            CodecValue::Int64(i) => Ok(*i as f32),
+            CodecValue::UInt8(u) => Ok(*u as f32),
+            CodecValue::UInt16(u) => Ok(*u as f32),
+            CodecValue::UInt32(u) => Ok(*u as f32),
+            CodecValue::UInt64(u) => Ok(*u as f32),
+            _ => Err(self.coerce_error("float32", value)),
+        }
+    }
+
+    /// Coerce a CodecValue to f64.
+    fn coerce_to_f64(&self, value: &CodecValue) -> CoreResult<f64> {
+        match value {
+            CodecValue::Float32(f) => Ok(f64::from(*f)),
+            CodecValue::Float64(f) => Ok(*f),
+            CodecValue::Int8(i) => Ok(f64::from(*i)),
+            CodecValue::Int16(i) => Ok(f64::from(*i)),
+            CodecValue::Int32(i) => Ok(f64::from(*i)),
+            CodecValue::Int64(i) => Ok(*i as f64),
+            CodecValue::UInt8(u) => Ok(f64::from(*u)),
+            CodecValue::UInt16(u) => Ok(f64::from(*u)),
+            CodecValue::UInt32(u) => Ok(f64::from(*u)),
+            CodecValue::UInt64(u) => Ok(*u as f64),
+            _ => Err(self.coerce_error("float64", value)),
+        }
+    }
+
+    /// Create an overflow error for type coercion.
+    fn overflow_error(&self, expected: &str, actual: &CodecValue) -> crate::core::CodecError {
+        crate::core::CodecError::encode(
+            "CDR",
+            format!("Value {actual:?} overflows target type {expected}"),
+        )
+    }
+
+    /// Create a coercion error for incompatible types.
+    fn coerce_error(&self, expected: &str, actual: &CodecValue) -> crate::core::CodecError {
+        crate::core::CodecError::encode("CDR", format!("Cannot coerce {actual:?} to {expected}"))
     }
 
     /// Encode an array value.

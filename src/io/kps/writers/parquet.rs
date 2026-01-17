@@ -1,0 +1,446 @@
+//! Streaming Parquet writer for Kps datasets.
+//!
+//! This writer implements the [`KpsWriter`] trait for Parquet format,
+//! supporting frame-by-frame writing for pipeline integration.
+
+use std::collections::HashMap;
+use std::path::Path;
+
+use crate::io::kps::config::KpsConfig;
+use crate::io::kps::writers::base::{
+    AlignedFrame, ImageData, KpsWriter, KpsWriterError, WriterStats,
+};
+use crate::io::metadata::ChannelInfo;
+
+/// Streaming Parquet writer for Kps datasets.
+///
+/// This writer supports frame-by-frame writing for pipeline integration.
+/// Data is buffered in memory and flushed to Parquet files periodically.
+pub struct StreamingParquetWriter {
+    /// Episode ID for this writer.
+    episode_id: usize,
+
+    /// Output directory path.
+    output_dir: std::path::PathBuf,
+
+    /// Number of frames written.
+    frame_count: usize,
+
+    /// Number of images encoded.
+    images_encoded: usize,
+
+    /// Number of state records written.
+    state_records: usize,
+
+    /// Whether initialized.
+    initialized: bool,
+
+    /// Image shapes tracking.
+    image_shapes: HashMap<String, (usize, usize)>,
+
+    /// State dimensions tracking.
+    state_dims: HashMap<String, usize>,
+
+    /// Channel info by topic.
+    channels: HashMap<String, ChannelInfo>,
+
+    /// Kps config.
+    config: Option<KpsConfig>,
+
+    /// Start time for duration calculation.
+    start_time: Option<std::time::Instant>,
+
+    /// Buffer for observation data.
+    observation_buffer: HashMap<String, Vec<f32>>,
+
+    /// Buffer for action data.
+    action_buffer: HashMap<String, Vec<f32>>,
+
+    /// Buffer for image data (stored as raw bytes).
+    image_buffer: HashMap<String, Vec<ImageData>>,
+
+    /// Frames per Parquet file (sharding).
+    frames_per_shard: usize,
+
+    /// Output bytes written.
+    output_bytes: u64,
+}
+
+impl StreamingParquetWriter {
+    /// Create a new Parquet writer for the specified output directory.
+    pub fn create(
+        output_dir: impl AsRef<Path>,
+        episode_id: usize,
+        config: &KpsConfig,
+    ) -> Result<Self, KpsWriterError> {
+        let output_dir = output_dir.as_ref();
+
+        // Create directory structure for Parquet format
+        let data_dir = output_dir.join("data");
+        let videos_dir = output_dir.join("videos");
+        let meta_dir = output_dir.join("meta");
+
+        std::fs::create_dir_all(&data_dir).map_err(|e| KpsWriterError::Io(e))?;
+        std::fs::create_dir_all(&videos_dir).map_err(|e| KpsWriterError::Io(e))?;
+        std::fs::create_dir_all(&meta_dir).map_err(|e| KpsWriterError::Io(e))?;
+
+        Ok(Self {
+            episode_id,
+            output_dir: output_dir.to_path_buf(),
+            frame_count: 0,
+            images_encoded: 0,
+            state_records: 0,
+            initialized: false,
+            image_shapes: HashMap::new(),
+            state_dims: HashMap::new(),
+            channels: HashMap::new(),
+            config: Some(config.clone()),
+            start_time: None,
+            observation_buffer: HashMap::new(),
+            action_buffer: HashMap::new(),
+            image_buffer: HashMap::new(),
+            frames_per_shard: 10000, // Default shard size
+            output_bytes: 0,
+        })
+    }
+
+    /// Set the number of frames per Parquet shard.
+    pub fn with_frames_per_shard(mut self, frames: usize) -> Self {
+        self.frames_per_shard = frames;
+        self
+    }
+
+    /// Write a Parquet file from buffered data.
+    #[cfg(feature = "kps-parquet")]
+    fn write_parquet_shard(&mut self) -> Result<(), KpsWriterError> {
+        use polars::prelude::*;
+
+        if self.observation_buffer.is_empty() && self.action_buffer.is_empty() {
+            return Ok(());
+        }
+
+        let shard_num = self.frame_count / self.frames_per_shard;
+
+        // Create a DataFrame from buffered observations
+        let mut series_vec = Vec::new();
+
+        for (feature, values) in &self.observation_buffer {
+            let series = Series::new(feature, values.as_slice());
+            series_vec.push(series);
+        }
+
+        for (feature, values) in &self.action_buffer {
+            let series = Series::new(feature, values.as_slice());
+            series_vec.push(series);
+        }
+
+        if !series_vec.is_empty() {
+            let df =
+                DataFrame::new(series_vec).map_err(|e| KpsWriterError::Parquet(e.to_string()))?;
+
+            // Write to Parquet file
+            let path = self
+                .output_dir
+                .join(format!("data/shard_{:04}.parquet", shard_num));
+
+            let mut file = std::fs::File::create(&path).map_err(|e| KpsWriterError::Io(e))?;
+
+            ParquetWriter::new(&mut file)
+                .finish(&mut df.clone())
+                .map_err(|e| KpsWriterError::Parquet(e.to_string()))?;
+
+            // Track output size
+            if let Ok(metadata) = std::fs::metadata(&path) {
+                self.output_bytes += metadata.len();
+            }
+        }
+
+        // Clear buffers
+        self.observation_buffer.clear();
+        self.action_buffer.clear();
+
+        Ok(())
+    }
+
+    /// Write metadata files (info.json, episode.jsonl).
+    fn write_metadata_files(&self, config: &KpsConfig) -> Result<(), KpsWriterError> {
+        use crate::io::kps::info;
+
+        // Write info.json
+        info::write_info_json(
+            &self.output_dir,
+            config,
+            self.frame_count as u64,
+            &self.image_shapes,
+            &self.state_dims,
+        )
+        .map_err(|e| KpsWriterError::Encoding(e.to_string()))?;
+
+        // Write episode.jsonl
+        info::write_episode_json(
+            &self.output_dir,
+            self.episode_id,
+            0,
+            self.frame_count as u64 * 1_000_000_000 / config.dataset.fps as u64,
+            self.frame_count,
+        )
+        .map_err(|e| KpsWriterError::Encoding(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Process images for video encoding.
+    ///
+    /// Uses ffmpeg to encode buffered images as MP4 videos.
+    /// Falls back to individual PPM files if ffmpeg is not available.
+    fn process_images(&mut self) -> Result<(), KpsWriterError> {
+        use crate::io::kps::video_encoder::{Mp4Encoder, VideoFrame, VideoFrameBuffer};
+
+        if self.image_buffer.is_empty() {
+            return Ok(());
+        }
+
+        let videos_dir = self.output_dir.join("videos");
+        std::fs::create_dir_all(&videos_dir).map_err(|e| KpsWriterError::Io(e))?;
+
+        let fps = self.config.as_ref().map(|c| c.dataset.fps).unwrap_or(30);
+
+        // Create encoder with FPS from config
+        let encoder = Mp4Encoder::new().with_config(
+            crate::io::kps::video_encoder::VideoEncoderConfig::default().with_fps(fps),
+        );
+
+        // Process each camera's images
+        for (feature_name, images) in self.image_buffer.drain() {
+            if images.is_empty() {
+                continue;
+            }
+
+            let mut buffer = VideoFrameBuffer::new();
+
+            // Convert ImageData to VideoFrame
+            for img in images {
+                if img.width > 0 && img.height > 0 {
+                    let video_frame = VideoFrame::new(img.width, img.height, img.data);
+                    // Try to add to buffer, skip if invalid
+                    if buffer.add_frame(video_frame).is_err() {
+                        tracing::warn!(
+                            feature = %feature_name,
+                            "Skipping invalid frame (inconsistent dimensions)"
+                        );
+                    }
+                }
+            }
+
+            if !buffer.is_empty() {
+                let clean_name = sanitize_feature_name(&feature_name);
+
+                match encoder.encode_buffer_or_save_images(&buffer, &videos_dir, &clean_name) {
+                    Ok(output_paths) => {
+                        self.images_encoded += buffer.len();
+                        tracing::debug!(
+                            feature = %feature_name,
+                            frames = buffer.len(),
+                            output = ?output_paths,
+                            "Encoded camera images"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            feature = %feature_name,
+                            error = %e,
+                            "Failed to encode video, images will not be saved"
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Sanitize a feature name for use as a filename.
+    fn sanitize_feature_name(name: &str) -> String {
+        name.replace('.', "_")
+            .replace('/', "_")
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    }
+}
+
+impl KpsWriter for StreamingParquetWriter {
+    fn initialize(
+        &mut self,
+        config: &KpsConfig,
+        channels: &HashMap<u16, ChannelInfo>,
+    ) -> Result<(), KpsWriterError> {
+        // Store config and channels
+        self.config = Some(config.clone());
+        for ch in channels.values() {
+            self.channels.insert(ch.topic.clone(), ch.clone());
+        }
+
+        // Initialize buffers for each mapped feature
+        for mapping in &config.mappings {
+            let feature_name = mapping
+                .feature
+                .strip_prefix("observation.")
+                .or_else(|| mapping.feature.strip_prefix("action."))
+                .unwrap_or(&mapping.feature);
+
+            if mapping.feature.starts_with("observation.")
+                && matches!(mapping.mapping_type, crate::io::kps::MappingType::State)
+            {
+                self.observation_buffer
+                    .insert(feature_name.to_string(), Vec::new());
+            } else if mapping.feature.starts_with("action.") {
+                self.action_buffer
+                    .insert(feature_name.to_string(), Vec::new());
+            }
+        }
+
+        self.initialized = true;
+        self.start_time = Some(std::time::Instant::now());
+
+        Ok(())
+    }
+
+    fn write_frame(&mut self, frame: &AlignedFrame) -> Result<(), KpsWriterError> {
+        if !self.initialized {
+            return Err(KpsWriterError::InvalidData(
+                "Writer not initialized".to_string(),
+            ));
+        }
+
+        // Buffer states
+        for (feature, values) in &frame.states {
+            let feature_name = feature.strip_prefix("observation.").unwrap_or(feature);
+
+            // Update dimension tracking
+            self.state_dims
+                .insert(feature_name.to_string(), values.len());
+
+            if let Some(buffer) = self.observation_buffer.get_mut(feature_name) {
+                buffer.extend(values);
+            }
+        }
+
+        // Buffer actions
+        for (feature, values) in &frame.actions {
+            let feature_name = feature.strip_prefix("action.").unwrap_or(feature);
+
+            // Update dimension tracking
+            self.state_dims
+                .insert(feature_name.to_string(), values.len());
+
+            if let Some(buffer) = self.action_buffer.get_mut(feature_name) {
+                buffer.extend(values);
+            }
+        }
+
+        // Buffer images
+        for (feature, data) in &frame.images {
+            let feature_name = feature.strip_prefix("observation.").unwrap_or(feature);
+
+            // Update shape tracking
+            if data.width > 0 && data.height > 0 {
+                self.image_shapes.insert(
+                    feature_name.to_string(),
+                    (data.width as usize, data.height as usize),
+                );
+            }
+
+            self.image_buffer
+                .entry(feature_name.to_string())
+                .or_insert_with(Vec::new)
+                .push(data.clone());
+        }
+
+        self.frame_count += 1;
+        self.state_records += frame.states.len() + frame.actions.len();
+
+        // Check if we should write a shard
+        if self.frame_count % self.frames_per_shard == 0 {
+            #[cfg(feature = "kps-parquet")]
+            {
+                self.write_parquet_shard()?;
+            }
+            self.process_images()?;
+        }
+
+        Ok(())
+    }
+
+    fn finalize(
+        &mut self,
+        config: &KpsConfig,
+        _camera_params: Option<&crate::io::kps::camera_params::CameraParamCollector>,
+    ) -> Result<WriterStats, KpsWriterError> {
+        // Write final shard
+        #[cfg(feature = "kps-parquet")]
+        {
+            if !self.observation_buffer.is_empty() || !self.action_buffer.is_empty() {
+                self.write_parquet_shard()?;
+            }
+        }
+
+        // Process remaining images
+        self.process_images()?;
+
+        // Write metadata files
+        self.write_metadata_files(config)?;
+
+        let duration = self
+            .start_time
+            .map(|t| t.elapsed().as_secs_f64())
+            .unwrap_or(0.0);
+
+        Ok(WriterStats {
+            frames_written: self.frame_count,
+            images_encoded: self.images_encoded,
+            state_records: self.state_records,
+            output_bytes: self.output_bytes,
+            duration_sec: duration,
+        })
+    }
+
+    fn frame_count(&self) -> usize {
+        self.frame_count
+    }
+
+    fn is_initialized(&self) -> bool {
+        self.initialized
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_writer() {
+        let temp_dir = std::env::temp_dir();
+        let config = KpsConfig {
+            dataset: crate::io::kps::DatasetConfig {
+                name: "test".to_string(),
+                fps: 30,
+                robot_type: None,
+            },
+            mappings: vec![],
+            output: crate::io::kps::OutputConfig::default(),
+        };
+
+        let result = StreamingParquetWriter::create(&temp_dir, 0, &config);
+        #[cfg(feature = "kps-parquet")]
+        assert!(result.is_ok());
+        #[cfg(not(feature = "kps-parquet"))]
+        assert!(result.is_err());
+    }
+}

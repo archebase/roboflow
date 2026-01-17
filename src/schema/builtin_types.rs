@@ -131,12 +131,15 @@ fn builtin_header_msg() -> MessageType {
 ///
 /// # Examples
 ///
-/// ```ignore
-/// use crate::idl::builtin_types;
+/// ```no_run
+/// # fn main() {
+/// use robocodec::schema::builtin_types;
 ///
 /// for builtin_type in builtin_types::get_all() {
-///     schema.add_type(builtin_type);
+///     // Add builtin type to your schema
+///     println!("Adding builtin type: {}", builtin_type.name);
 /// }
+/// # }
 /// ```
 pub fn get_all() -> Vec<MessageType> {
     vec![

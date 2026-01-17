@@ -1,0 +1,15 @@
+{
+  "enabledPlugins": {
+    "github@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": true,
+    "systems-programming@claude-code-workflows": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "c4-architecture@claude-code-workflows": true,
+    "commit-commands@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "greptile@claude-plugins-official": true,
+    "serena@claude-plugins-official": true
+  }
+}

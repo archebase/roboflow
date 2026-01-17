@@ -3,9 +3,10 @@
 //! Usage:
 //!   cargo test -p robocodec --test mcap_rename_wildcard -- --nocapture
 
-use robocodec::format::mcap::McapRewriter;
-use robocodec::format::mcap::transform::TransformBuilder;
-use robocodec::{RewriteOptions, RoboReader};
+use robocodec::format::rewriter::McapRewriter;
+use robocodec::format::McapReader;
+use robocodec::transform::TransformBuilder;
+use robocodec::RewriteOptions;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -64,7 +65,7 @@ struct ChannelSnapshot {
 }
 
 impl ChannelSnapshot {
-    fn from_channel_info(channel: &robocodec::format::mcap::ChannelInfo) -> Self {
+    fn from_channel_info(channel: &robocodec::format::reader::ChannelInfo) -> Self {
         Self {
             topic: channel.topic.clone(),
             message_type: channel.message_type.clone(),
@@ -75,7 +76,7 @@ impl ChannelSnapshot {
 }
 
 /// Collect all channels from a reader into a map by topic.
-fn collect_channels(reader: &RoboReader) -> BTreeMap<String, ChannelSnapshot> {
+fn collect_channels(reader: &McapReader) -> BTreeMap<String, ChannelSnapshot> {
     reader
         .channels()
         .values()
@@ -94,7 +95,7 @@ fn test_round_trip_topic_rename() {
     }
 
     // Step 1: Read original file to capture topics
-    let reader_original = RoboReader::open(input_path);
+    let reader_original = McapReader::open(input_path);
     assert!(
         reader_original.is_ok(),
         "Should open original file: {:?}",
@@ -105,7 +106,10 @@ fn test_round_trip_topic_rename() {
 
     println!("Original channels:");
     for (topic, ch) in &original_channels {
-        println!("  {} -> {} ({} messages)", topic, ch.message_type, ch.message_count);
+        println!(
+            "  {} -> {} ({} messages)",
+            topic, ch.message_type, ch.message_count
+        );
     }
 
     // Step 2: Apply topic rename transform
@@ -123,7 +127,7 @@ fn test_round_trip_topic_rename() {
     assert!(result.is_ok(), "Rewrite should succeed: {:?}", result.err());
 
     // Step 3: Read the output file to verify transformations
-    let reader_output = RoboReader::open(output_path);
+    let reader_output = McapReader::open(output_path);
     assert!(
         reader_output.is_ok(),
         "Should open output file: {:?}",
@@ -134,7 +138,10 @@ fn test_round_trip_topic_rename() {
 
     println!("\nTransformed channels:");
     for (topic, ch) in &output_channels {
-        println!("  {} -> {} ({} messages)", topic, ch.message_type, ch.message_count);
+        println!(
+            "  {} -> {} ({} messages)",
+            topic, ch.message_type, ch.message_count
+        );
     }
 
     // Step 4: Verify topic renames were applied
@@ -180,12 +187,15 @@ fn test_round_trip_type_rename_with_verification() {
     }
 
     // Step 1: Read original file
-    let reader_original = RoboReader::open(input_path).unwrap();
+    let reader_original = McapReader::open(input_path).unwrap();
     let original_channels = collect_channels(&reader_original);
 
     println!("Original channels:");
     for (topic, ch) in &original_channels {
-        println!("  {} -> {} ({} messages)", topic, ch.message_type, ch.message_count);
+        println!(
+            "  {} -> {} ({} messages)",
+            topic, ch.message_type, ch.message_count
+        );
     }
 
     // Step 2: Apply type rename transforms
@@ -207,12 +217,15 @@ fn test_round_trip_type_rename_with_verification() {
     println!("  Types renamed: {}", stats.types_renamed);
 
     // Step 3: Read output and verify transformations
-    let reader_output = RoboReader::open(output_path).unwrap();
+    let reader_output = McapReader::open(output_path).unwrap();
     let output_channels = collect_channels(&reader_output);
 
     println!("\nTransformed channels:");
     for (topic, ch) in &output_channels {
-        println!("  {} -> {} ({} messages)", topic, ch.message_type, ch.message_count);
+        println!(
+            "  {} -> {} ({} messages)",
+            topic, ch.message_type, ch.message_count
+        );
     }
 
     // Step 4: Verify all sensor_msgs types were renamed
@@ -256,7 +269,7 @@ fn test_round_trip_combined_topic_and_type_rename() {
     }
 
     // Step 1: Read original file
-    let reader_original = RoboReader::open(input_path).unwrap();
+    let reader_original = McapReader::open(input_path).unwrap();
     let original_channels = collect_channels(&reader_original);
     let original_topics: BTreeSet<String> = original_channels.keys().cloned().collect();
     let original_types: BTreeSet<String> = original_channels
@@ -280,7 +293,7 @@ fn test_round_trip_combined_topic_and_type_rename() {
     assert!(result.is_ok(), "Rewrite should succeed: {:?}", result.err());
 
     // Step 3: Read output and verify
-    let reader_output = RoboReader::open(output_path).unwrap();
+    let reader_output = McapReader::open(output_path).unwrap();
     let output_channels = collect_channels(&reader_output);
     let output_topics: BTreeSet<String> = output_channels.keys().cloned().collect();
     let output_types: BTreeSet<String> = output_channels
@@ -304,10 +317,7 @@ fn test_round_trip_combined_topic_and_type_rename() {
     // Verify type renames
     for msg_type in &output_types {
         if msg_type.contains("sensor_msgs") {
-            panic!(
-                "Found sensor_msgs type that wasn't renamed: {}",
-                msg_type
-            );
+            panic!("Found sensor_msgs type that wasn't renamed: {}", msg_type);
         }
     }
 

@@ -1,0 +1,48 @@
+# Type normalization configuration for robocodec fixtures
+#
+# This config maps brand-specific message types to robocodec namespace.
+# Standard ROS types (sensor_msgs, std_msgs, geometry_msgs, etc.) are kept as-is.
+
+# Strategy: Keep types in their original format (ROS2 stays ROS2, Proto stays Proto)
+# Only change the brand/package name to robocodec.
+
+# ==========================================================================
+# Type mappings for genie_msgs brand (ROS2 format)
+# ==========================================================================
+
+[type_mappings]
+# All genie_msgs types -> robocodec_msgs
+"genie_msgs/msg/ArmState" = "robocodec_msgs/msg/ArmState"
+"genie_msgs/msg/BatteryStatus" = "robocodec_msgs/msg/BatteryStatus"
+"genie_msgs/msg/EndState" = "robocodec_msgs/msg/EndState"
+"genie_msgs/msg/FaultStatus" = "robocodec_msgs/msg/FaultStatus"
+"genie_msgs/msg/HeadState" = "robocodec_msgs/msg/HeadState"
+"genie_msgs/msg/PeriStatus" = "robocodec_msgs/msg/PeriStatus"
+"genie_msgs/msg/Position" = "robocodec_msgs/msg/Position"
+"genie_msgs/msg/PublicFaultMsg" = "robocodec_msgs/msg/PublicFaultMsg"
+"genie_msgs/msg/SceneStatus" = "robocodec_msgs/msg/SceneStatus"
+"genie_msgs/msg/WaistState" = "robocodec_msgs/msg/WaistState"
+"genie_msgs/msg/WholeBodyStatus" = "robocodec_msgs/msg/WholeBodyStatus"
+
+# ==========================================================================
+# Type mappings for nmx brand (Proto format)
+# ==========================================================================
+
+"nmx.msg.CameraExtrinsic" = "robocodec.msg.CameraExtrinsic"
+"nmx.msg.Image" = "robocodec.msg.Image"
+"nmx.msg.LowdimData" = "robocodec.msg.LowdimData"
+
+# ==========================================================================
+# Type mappings for upperlimb brand (ROS1 format)
+# ==========================================================================
+
+"upperlimb/Pose" = "robocodec_msgs/Pose"
+
+# ==========================================================================
+# Topic name mappings
+# ==========================================================================
+# Map /zj_humanoid/* topics to /robocodec/*
+
+[[topic_mappings]]
+from = "/zj_humanoid/*"
+to = "/robocodec/*"

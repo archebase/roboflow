@@ -7,11 +7,15 @@
 //!
 //! ## Example
 //!
-//! ```ignore
-//! use strata_proto::ProtobufDecoder;
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use robocodec::encoding::protobuf::decoder::ProtobufDecoder;
 //!
+//! # let protobuf_bytes = vec![0u8; 100];
 //! let decoder = ProtobufDecoder::new();
 //! let decoded = decoder.decode(&protobuf_bytes)?;
+//! # Ok(())
+//! # }
 //! ```
 
 use std::collections::HashMap;
