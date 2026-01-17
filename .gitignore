@@ -45,3 +45,6 @@ ENV/
 
 # Test artifacts
 *.log
+
+# ignore pyo3
+python/robocodec-0.1.0.data/

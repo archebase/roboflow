@@ -253,7 +253,7 @@ uint32 nanosec
 
     // Second string: "left_arm_joint2" (15 chars + null = 16)
     // After first string: 4 + 4 + 16 + 1 = 25 bytes, need 3 bytes padding to align to 4
-    while data.len() % 4 != 0 {
+    while !data.len().is_multiple_of(4) {
         data.push(0);
     }
     data.extend_from_slice(&16u32.to_le_bytes());

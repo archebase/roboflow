@@ -20,33 +20,62 @@
 
 ## 安装
 
-### Rust
+> **注意**：PyPI 和 Crate 包正在准备中，即将推出。目前请克隆项目并运行本地构建。
 
-在 `Cargo.toml` 中添加 `robocodec`：
+### 前置要求
+
+- Rust 1.70 或更高版本
+- Python 3.11+（用于 Python 绑定）
+- maturin（用于构建 Python 包）
+
+### 从源码构建
+
+1. 克隆仓库：
+
+```bash
+git clone https://github.com/archebase/robocodec.git
+cd robocodec
+```
+
+2. 构建 Rust 库：
+
+```bash
+cargo build --release
+```
+
+3. 构建 Python 包：
+
+```bash
+# 如果尚未安装 maturin，请先安装
+pip install maturin
+
+# 构建并安装 Python 包
+maturin develop
+# 或用于生产构建：
+maturin build
+```
+
+### 作为 Rust 依赖使用
+
+要在 Rust 项目中使用 `robocodec`，请在 `Cargo.toml` 中添加本地依赖：
 
 ```toml
 [dependencies]
-robocodec = "0.1"
+robocodec = { path = "../robocodec" }
 ```
 
 根据需要启用可选特性：
 
 ```toml
-robocodec = { version = "0.1", features = ["python", "lerobot-all"] }
+robocodec = { path = "../robocodec", features = ["python", "lerobot-all"] }
 ```
 
-### Python
+### 使用 Python 包
 
-从 PyPI 安装：
+使用 `maturin develop` 构建后，即可使用 Python 包：
 
-```bash
-pip install robocodec
-```
-
-或从源码构建：
-
-```bash
-pip install .
+```python
+from robocodec import Reader, Writer, decode, encode
 ```
 
 ## 快速开始
@@ -149,12 +178,6 @@ binary = encode(data, schema)
 | `robocodec-extract_sample` | 创建样本数据集 |
 
 ## 开发
-
-### 前置要求
-
-- Rust 1.70 或更高版本
-- Python 3.11+（用于 Python 绑定）
-- maturin（用于构建 Python 包）
 
 ### 构建
 

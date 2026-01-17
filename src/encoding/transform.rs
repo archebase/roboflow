@@ -877,7 +877,7 @@ mod tests {
 
     #[test]
     fn test_cdr_transformer_default() {
-        let transformer = CdrSchemaTransformer::default();
+        let transformer = CdrSchemaTransformer;
         assert_eq!(transformer.encoding(), Encoding::Cdr);
     }
 
@@ -997,7 +997,7 @@ mod tests {
 
     #[test]
     fn test_protobuf_transformer_default() {
-        let transformer = ProtobufSchemaTransformer::default();
+        let transformer = ProtobufSchemaTransformer;
         assert_eq!(transformer.encoding(), Encoding::Protobuf);
     }
 

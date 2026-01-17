@@ -207,7 +207,7 @@ fn search_string(file: &str, text: &str) -> Result<(), Box<dyn std::error::Error
                 let abs_pos = start + i;
                 if abs_pos >= actual_pos && abs_pos < actual_pos + pattern.len() {
                     print!(">>>{}<<<", b as char);
-                } else if b >= 32 && b <= 126 {
+                } else if (32..=126).contains(&b) {
                     print!("{}", b as char);
                 } else if b == b'\n' {
                     print!("\\n");
@@ -414,7 +414,7 @@ fn show_values(file: &str, topic: &str, field: &str) -> Result<(), Box<dyn std::
                     "  Message {}: {} = {}",
                     found_count,
                     key,
-                    format_value(&value)
+                    format_value(value)
                 );
                 println!();
 

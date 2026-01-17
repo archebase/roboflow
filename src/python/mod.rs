@@ -298,7 +298,7 @@ impl PyMessageIter {
 // =============================================================================
 
 /// Reader for robotics data files (MCAP, ROS1 bag).
-#[pyclass(name = "Reader")]
+#[pyclass(name = "Reader", subclass)]
 pub struct PyReader {
     reader: RoboReader,
 }
@@ -326,7 +326,7 @@ impl PyReader {
         let channels = self.reader.channels();
         let list = PyList::empty(py);
 
-        for (_id, channel) in channels {
+        for channel in channels.values() {
             list.append(channel_info_to_py(channel, py)?)?;
         }
 
@@ -579,10 +579,9 @@ fn encode(
 ///     ...     writer.write("/chatter", {"data": "hello"}, 1234567890,
 ///     ...                   schema_text="string data",
 ///     ...                   message_type="std_msgs/String")
-#[pyclass(name = "Writer")]
+#[pyclass(name = "Writer", unsendable, subclass)]
 pub struct PyWriter {
     writer: Option<crate::RoboWriter>,
-    path: String,
     registered_channels: HashMap<String, (String, String)>, // topic -> (msg_type, schema)
 }
 
@@ -598,7 +597,6 @@ impl PyWriter {
 
         Ok(Self {
             writer: Some(writer),
-            path: path.to_string(),
             registered_channels: HashMap::new(),
         })
     }
@@ -612,7 +610,8 @@ impl PyWriter {
     ///     schema_text: Schema definition text (required on first write per topic)
     ///     message_type: Message type name (required on first write per topic)
     ///     encoding: Encoding format (default: "cdr")
-    #[pyo3(keyword)]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (topic, message, timestamp_ns, schema_text=None, message_type=None, encoding=None))]
     fn write(
         &mut self,
         py: Python<'_>,

@@ -20,33 +20,62 @@
 
 ## Installation
 
-### Rust
+> **Note**: PyPI and Crate packages are currently being prepared and will be available soon. For now, please clone the project and run a local build.
 
-Add `robocodec` to your `Cargo.toml`:
+### Prerequisites
+
+- Rust 1.70 or later
+- Python 3.11+ (for Python bindings)
+- maturin (for building Python package)
+
+### Building from Source
+
+1. Clone the repository:
+
+```bash
+git clone https://github.com/archebase/robocodec.git
+cd robocodec
+```
+
+2. Build Rust library:
+
+```bash
+cargo build --release
+```
+
+3. Build Python package:
+
+```bash
+# Install maturin if not already installed
+pip install maturin
+
+# Build and install Python package
+maturin develop
+# Or for production build:
+maturin build
+```
+
+### Using as Rust Dependency
+
+To use `robocodec` in your Rust project, add it as a local dependency in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-robocodec = "0.1"
+robocodec = { path = "../robocodec" }
 ```
 
 Enable optional features as needed:
 
 ```toml
-robocodec = { version = "0.1", features = ["python", "lerobot-all"] }
+robocodec = { path = "../robocodec", features = ["python", "lerobot-all"] }
 ```
 
-### Python
+### Using Python Package
 
-Install from PyPI:
+After building with `maturin develop`, you can use the Python package:
 
-```bash
-pip install robocodec
-```
-
-Or build from source:
-
-```bash
-pip install .
+```python
+from robocodec import Reader, Writer, decode, encode
 ```
 
 ## Quick Start
@@ -149,12 +178,6 @@ binary = encode(data, schema)
 | `robocodec-extract_sample` | Create sample datasets |
 
 ## Development
-
-### Prerequisites
-
-- Rust 1.70 or later
-- Python 3.11+ (for Python bindings)
-- maturin (for building Python package)
 
 ### Building
 

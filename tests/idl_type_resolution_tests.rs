@@ -6,7 +6,7 @@
 //! - `/msg/` separator (ROS2 convention): `pkg/msg/TypeName`
 //! - Short form: `pkg/TypeName`
 
-use robocodec::schema::{self, parse_schema, FieldType};
+use robocodec::schema::{parse_schema, FieldType};
 
 /// Test that type lookup works with the `/msg/` separator (ROS2 convention).
 ///

@@ -163,7 +163,7 @@ impl BagRewriter {
         // Process messages
         let path_str = input_path.as_ref().to_string_lossy().to_string();
         let iter = BagRawMessageIter::new(path_str, channels.clone(), conn_id_map);
-        let mut stream = iter.into_stream()?;
+        let stream = iter.into_stream()?;
 
         // Build a map of channel_id -> transformed type for schema lookup
         let channel_type_map: HashMap<u16, String> = channels
@@ -182,7 +182,7 @@ impl BagRewriter {
         let schemas = self.schemas.clone();
 
         // Process each message
-        while let Some(result) = stream.next() {
+        for result in stream {
             let (raw_msg, _channel_info) = match result {
                 Ok(msg) => msg,
                 Err(e) => {

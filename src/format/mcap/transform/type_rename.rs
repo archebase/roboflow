@@ -886,7 +886,7 @@ impl McapTransform for TypeRenameTransform {
             let rewritten_schema = self
                 .namespace_rewriter
                 .as_ref()
-                .and_then(|_| schema_text)
+                .and(schema_text)
                 .map(|s| {
                     let mut result = self.namespace_rewriter.as_ref().unwrap().rewrite_schema(s);
                     // Also replace the specific type that was matched

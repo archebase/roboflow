@@ -134,13 +134,13 @@ impl NormalizeConfig {
                     // Format: "pkg.nested.Type" - nested package like "nmx.msg.JointStates"
                     Ok(())
                 } else {
-                    return Err(format!(
+                    Err(format!(
                         "Invalid proto type '{type_name}': proto types should use 'package.Type' format. \
                          Examples: 'nmx.msg.JointStates' (package=nmx.msg, type=JointStates), \
                          'robocodec.msg.CameraIntrinsic'. \
                          For nested types within the same package, use underscore \
                          (e.g., 'robocodec.msg.Type_Name' not 'robocodec.msg.nested.Type')"
-                    ).into());
+                    ).into())
                 }
             }
             TypeFormat::Ros1 | TypeFormat::Ros2 | TypeFormat::Unknown => Ok(()),

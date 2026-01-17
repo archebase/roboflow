@@ -658,15 +658,16 @@ mod tests {
 
     #[test]
     fn test_rewrite_stats_can_be_updated() {
-        let mut stats = RewriteStats::default();
-        stats.message_count = 100;
-        stats.channel_count = 5;
-        stats.topics_renamed = 2;
-        stats.types_renamed = 1;
-        stats.reencoded_count = 95;
-        stats.passthrough_count = 5;
-        stats.decode_failures = 1;
-        stats.encode_failures = 0;
+        let stats = RewriteStats {
+            message_count: 100,
+            channel_count: 5,
+            topics_renamed: 2,
+            types_renamed: 1,
+            reencoded_count: 95,
+            passthrough_count: 5,
+            decode_failures: 1,
+            encode_failures: 0,
+        };
 
         assert_eq!(stats.message_count, 100);
         assert_eq!(stats.channel_count, 5);
@@ -757,8 +758,10 @@ mod tests {
         let mut rewriter = McapRewriter::new();
         let stats = rewriter.rewrite(&input_path, &output_path).unwrap();
 
-        // Stats should be populated
-        assert!(stats.message_count >= 0);
+        // Verify rewrite completed successfully
+        assert!(output_path.exists());
+        // Verify stats are tracked
+        assert!(stats.channel_count > 0, "Expected at least one channel");
 
         // Cleanup
         let _ = std::fs::remove_file(&output_path);
@@ -793,7 +796,6 @@ mod tests {
         if result.is_err() {
             // Some MCAP files may have validation issues, that's OK for this test
             // Just verify the rewriter can be constructed with transforms
-            assert!(true);
         } else {
             assert!(output_path.exists());
             // Cleanup

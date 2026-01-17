@@ -828,13 +828,25 @@ impl Iterator for BagDecodedMessageStream {
             // Timestamp is already in nanoseconds
             let _time_ns = msg_data.time;
 
-            // Decode CDR data using ROS1-specific decoder
-            // ROS1 bags have a 12-byte record header followed by CDR data
-            match self.cdr_decoder.decode_ros1_with_header(
-                &parsed_schema,
-                msg_data.data,
-                Some(&channel_info.message_type),
-            ) {
+            // Choose decoder based on encoding
+            // - "cdr" uses standard CDR decoding (for files we wrote)
+            // - "ros1msg" uses ROS1-specific decoding with header skip
+            let decoded = if channel_info.encoding == "cdr" {
+                self.cdr_decoder.decode(
+                    &parsed_schema,
+                    msg_data.data,
+                    Some(&channel_info.message_type),
+                )
+            } else {
+                // ROS1 bags have a 12-byte record header followed by CDR data
+                self.cdr_decoder.decode_ros1_with_header(
+                    &parsed_schema,
+                    msg_data.data,
+                    Some(&channel_info.message_type),
+                )
+            };
+
+            match decoded {
                 Ok(decoded) => return Some(Ok((decoded, channel_info.clone()))),
                 Err(e) => {
                     warn!(
@@ -1040,10 +1052,9 @@ impl Iterator for BagRawMessageStream {
             // - 4 bytes: CDR header
             // - Remaining bytes: actual CDR data
             //
-            // NOTE: We use from_iter to defensively copy the data instead of to_vec()
-            // because the slice comes from transmuted lifetime extension and may
-            // trigger safety checks in certain Rust versions.
-            let data: Vec<u8> = msg_data.data.iter().copied().collect();
+            // NOTE: We use to_vec() to copy the data because the slice comes from
+            // transmuted lifetime extension.
+            let data: Vec<u8> = msg_data.data.to_vec();
             return Some(Ok((
                 RawMessage {
                     channel_id,
@@ -1102,7 +1113,7 @@ impl RoboCodecRawMessageIter {
 /// Use the `RoboCodecRawMessageIter` directly instead.
 pub enum RoboCodecRawMessageStream<'a> {
     /// MCAP format stream (owns the mmap data)
-    Mcap(crate::format::mcap::RawMessageStream<'a>),
+    Mcap(Box<crate::format::mcap::RawMessageStream<'a>>),
     /// ROS1 bag format stream
     Bag(BagRawMessageStream),
 }

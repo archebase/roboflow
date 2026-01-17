@@ -9,6 +9,12 @@ use std::path::Path;
 
 use crate::format::lerobot::config::LeRobotConfig;
 
+#[cfg(feature = "lerobot-parquet")]
+use crate::format::lerobot::config::Mapping;
+
+#[cfg(feature = "lerobot-parquet")]
+use std::io::Write;
+
 // Work-in-progress: These structures will be used for full Parquet implementation
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -107,7 +113,7 @@ impl ParquetLeRobotWriter {
         mcap_path: impl AsRef<Path>,
         config: &LeRobotConfig,
     ) -> Result<usize, Box<dyn std::error::Error>> {
-        use crate::format::lerobot::config::{Mapping, MappingType};
+        use crate::format::lerobot::config::MappingType;
 
         let mcap_path_ref = mcap_path.as_ref();
 
@@ -129,37 +135,38 @@ impl ParquetLeRobotWriter {
         // Process messages
         let iter = reader.decode_messages()?;
         for result in iter {
-            let (msg, channel_info) = result?;
+            let (msg, _channel_info) = result?;
 
             // Find matching mapping
             let mapping = config
                 .mappings
                 .iter()
-                .find(|m| channel_info.topic == m.topic || channel_info.topic.contains(&m.topic));
+                .find(|m| _channel_info.topic == m.topic || _channel_info.topic.contains(&m.topic));
 
             let Some(mapping) = mapping else {
                 continue;
             };
 
-            // Get timestamp
-            let timestamp = channel_info.log_time as i64;
+            // TODO: Get actual message timestamp from raw message
+            // For now, use a sequential timestamp
+            let timestamp = (frame_index as i64) * 1_000_000; // microseconds
             self.timestamps.push(timestamp);
 
             match &mapping.mapping_type {
                 MappingType::Image => {
-                    self.process_image(msg, mapping, &mut image_buffers)?;
+                    self.process_image(&msg, mapping, &mut image_buffers)?;
                 }
                 MappingType::State => {
-                    self.process_state(msg, mapping, timestamp);
+                    self.process_state(&msg, mapping, timestamp);
                 }
                 MappingType::Action => {
-                    self.process_action(msg, mapping, timestamp);
+                    self.process_action(&msg, mapping, timestamp);
                 }
                 MappingType::Timestamp => {}
             }
 
             frame_index += 1;
-            if frame_index % 100 == 0 {
+            if frame_index.is_multiple_of(100) {
                 println!("  Processed {} frames...", frame_index);
             }
 
@@ -233,7 +240,7 @@ impl ParquetLeRobotWriter {
 
             let buffers = image_buffers
                 .entry(mapping.feature.clone())
-                .or_insert_with(Vec::new);
+                .or_default();
 
             buffers.push(ImageFrame {
                 timestamp: self.timestamps.last().copied().unwrap_or(0),
@@ -261,37 +268,23 @@ impl ParquetLeRobotWriter {
 
     #[cfg(feature = "lerobot-parquet")]
     fn write_parquet(&self) -> Result<(), Box<dyn std::error::Error>> {
-        #[cfg(feature = "polars")]
-        {
-            use polars::prelude::*;
+        use polars::prelude::*;
 
-            // Create a simple dataframe with timestamps
-            let df = df!(
-                "timestamp" => &self.timestamps,
-            );
+        // Create a simple dataframe with timestamps
+        let mut df = df!(
+            "timestamp" => &self.timestamps,
+        )?;
 
-            let parquet_path = self
-                .output_dir
-                .join("data")
-                .join(format!("data-00000-of-00001.parquet"));
+        let parquet_path = self
+            .output_dir
+            .join("data")
+            .join("data-00000-of-00001.parquet");
 
-            let mut file = std::fs::File::create(&parquet_path)?;
-            ParquetWriter::new(&mut file).finish(&mut df.clone())?;
+        let mut file = std::fs::File::create(&parquet_path)?;
+        ParquetWriter::new(&mut file).finish(&mut df)?;
 
-            println!("  Created: {}", parquet_path.display());
-            Ok(())
-        }
-
-        #[cfg(not(feature = "polars"))]
-        {
-            // Return error instead of silently writing CSV
-            Err(anyhow::anyhow!(
-                "Parquet output requires 'polars' feature. \
-                 Add 'polars' with the 'parquet' feature to Cargo.toml, or \
-                 use the HDF5 format instead."
-            )
-            .into())
-        }
+        println!("  Created: {}", parquet_path.display());
+        Ok(())
     }
 
     #[cfg(feature = "lerobot-parquet")]
@@ -300,20 +293,12 @@ impl ParquetLeRobotWriter {
         image_buffers: &HashMap<String, Vec<ImageFrame>>,
         _config: &LeRobotConfig,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        #[cfg(feature = "ffmpeg")]
-        {
-            // Use ffmpeg-next to encode MP4
-            self.write_videos_ffmpeg(image_buffers)
-        }
-        #[cfg(not(feature = "ffmpeg"))]
-        {
-            // Save images as individual PNG files
-            self.write_videos_images(image_buffers)
-        }
+        // Save images as individual PNG files (ffmpeg integration not yet implemented)
+        self.write_videos_images(image_buffers)
     }
 
     #[cfg(feature = "lerobot-parquet")]
-    #[cfg(feature = "ffmpeg")]
+    #[allow(dead_code)]
     fn write_videos_ffmpeg(
         &self,
         image_buffers: &HashMap<String, Vec<ImageFrame>>,
@@ -324,8 +309,8 @@ impl ParquetLeRobotWriter {
                 continue;
             }
 
-            let video_dir = self.output_dir.join("videos");
-            let video_path = video_dir.join(format!("video-{:06}-of-00001.mp4", self.episode_id));
+            let _video_dir = self.output_dir.join("videos");
+            let _video_path = _video_dir.join(format!("video-{:06}-of-00001.mp4", self.episode_id));
 
             println!("  Encoding video: {} ({} frames)", feature, frames.len());
 

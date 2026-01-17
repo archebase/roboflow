@@ -32,6 +32,9 @@ jobs:
       - name: Run fmt check
         run: cargo fmt -- --check
 
+      - name: Install HDF5
+        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
+
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
@@ -109,6 +112,9 @@ jobs:
 
       - name: Install maturin and pytest
         run: pip install maturin[patchelf] pytest pytest-cov
+
+      - name: Install HDF5
+        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
 
       - name: Generate Rust coverage
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info

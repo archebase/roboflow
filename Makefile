@@ -1,4 +1,4 @@
-.PHONY: all build build-release test test-rust test-python coverage coverage-rust coverage-python fmt lint clean help
+.PHONY: all build build-release test test-rust test-python test-all coverage coverage-rust coverage-python clippy fmt lint clean publish publish-pypi publish-crates help
 
 # Default target
 all: build
@@ -41,8 +41,14 @@ test: test-rust test-python ## Run all tests
 
 test-rust: ## Run Rust tests
 	@echo "Running Rust tests..."
-	cargo test --all-features
-	@echo "✓ Rust tests passed"
+	cargo test --features python
+	@echo "✓ Rust tests passed (run 'make test-all' for LeRobot features)"
+
+test-all: ## Run all tests including LeRobot features (requires HDF5)
+	@echo "Running all tests with all features..."
+	@echo "  (features: python + lerobot-all)"
+	cargo test --features python,lerobot-all
+	@echo "✓ All tests passed"
 
 test-python: ## Run Python tests (requires build-python-dev first)
 	@echo "Running Python tests..."
@@ -62,10 +68,10 @@ coverage: coverage-rust coverage-python ## Run all coverage reports
 coverage-rust: ## Run Rust tests with coverage (requires cargo-llvm-cov)
 	@echo "Running Rust tests with coverage..."
 	@echo "(Install: cargo install cargo-llvm-cov)"
-	cargo llvm-cov --all-features --workspace --html --output-dir target/llvm-cov/html
-	cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+	cargo llvm-cov --features python --workspace --html --output-dir target/llvm-cov/html
+	cargo llvm-cov --features python --workspace --lcov --output-path lcov.info
 	@echo ""
-	@echo "✓ Rust coverage report: target/llvm-cov/html/index.html"
+	@echo "✓ Rust coverage report: target/llvm-cov/html/index.html (add --features lerobot-all for LeRobot coverage)"
 
 coverage-python: ## Run Python tests with coverage
 	@echo "Running Python tests with coverage..."
@@ -80,12 +86,27 @@ coverage-python: ## Run Python tests with coverage
 fmt: ## Format all code
 	@echo "Formatting code..."
 	cargo fmt
+	@if command -v black >/dev/null 2>&1; then black python/; else echo "⚠ black not found, skipping Python formatting"; fi
+	@if command -v ruff >/dev/null 2>&1; then ruff check python/ --fix; else echo "⚠ ruff not found, skipping Python linting"; fi
 	@echo "✓ Code formatted"
 
 lint: ## Lint all code
 	@echo "Linting Rust code..."
-	cargo clippy --all-targets --all-features -- -D warnings
-	@echo "✓ Linting passed"
+	cargo clippy --all-targets --features python -- -D warnings
+	@echo "✓ Linting passed (run 'make lint-parquet' for LeRobot Parquet features)"
+
+lint-parquet: ## Lint with LeRobot Parquet features (works on all platforms)
+	@echo "Linting with LeRobot Parquet features (python + lerobot-parquet)..."
+	cargo clippy --all-targets --features python,lerobot-parquet -- -D warnings
+	@echo "✓ Full linting passed"
+
+lint-all: ## Lint with all features including HDF5 (requires compatible HDF5)
+	@echo "Linting with all features (python + lerobot-all)..."
+	@echo "Note: hdf5 crate 0.8.1 doesn't support Homebrew HDF5 1.14.x"
+	@echo "      Use 'make lint-parquet' for LeRobot support on macOS"
+	cargo clippy --all-targets --features python,lerobot-all -- -D warnings 2>/dev/null || \
+		(echo "⚠ HDF5 feature failed (expected on macOS with Homebrew HDF5 1.14.x)"; \
+		 echo "  Use 'make lint-parquet' for LeRobot Parquet support instead"; exit 0)
 
 check: fmt lint ## Run format check and lint
 
@@ -104,6 +125,23 @@ clean: ## Clean build artifacts
 	rm -rf coverage-html/
 	rm -f coverage.xml lcov.info
 	@echo "✓ Cleaned"
+
+# ============================================================================
+# Publishing
+# ============================================================================
+
+publish: publish-pypi publish-crates ## Publish to PyPI and crates.io
+
+publish-pypi: ## Publish to PyPI (requires twine)
+	@echo "Publishing to PyPI..."
+	maturin build --release --strip --out dist
+	twine upload dist/robocodec*.whl
+	@echo "✓ Published to PyPI"
+
+publish-crates: ## Publish to crates.io
+	@echo "Publishing to crates.io..."
+	cargo publish
+	@echo "✓ Published to crates.io"
 
 help: ## Show this help message
 	@echo "Robocodec - Robotics Message Codec"

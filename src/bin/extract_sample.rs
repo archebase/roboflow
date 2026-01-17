@@ -65,11 +65,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create message iterator
     let path_str = input_path.clone();
     let iter = robocodec::reader::BagRawMessageIter::new(path_str, channels_clone, conn_id_map);
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
 
     println!("\nExtracting one message per unique (topic, callerid)...");
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (raw_msg, channel_info) = result?;
 
         // Skip if we've already seen this (topic, callerid) combination

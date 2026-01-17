@@ -50,9 +50,9 @@ impl WildcardTopicMapping {
         // Build target template by replacing * with $1, $2, etc.
         let mut target_template = String::new();
         let mut group_idx = 0;
-        let mut target_chars = target.chars().peekable();
+        let target_chars = target.chars().peekable();
 
-        while let Some(c) = target_chars.next() {
+        for c in target_chars {
             if c == '*' {
                 group_idx += 1;
                 target_template.push_str(&format!("${{group{}}}", group_idx));

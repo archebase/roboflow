@@ -570,11 +570,11 @@ fn test_round_trip_message_data_preserved() {
     // Read back and verify message data is preserved
     let robo_reader = RoboReader::open(&path).unwrap();
     let raw_iter = robo_reader.iter_raw_bag().unwrap();
-    let mut raw_stream = raw_iter.into_stream().unwrap();
+    let raw_stream = raw_iter.into_stream().unwrap();
 
     // Collect all messages
     let mut messages: Vec<(u64, Vec<u8>)> = Vec::new();
-    while let Some(result) = raw_stream.next() {
+    for result in raw_stream {
         match result {
             Ok((raw_msg, _channel)) => {
                 // raw_msg.data contains the message payload directly
@@ -653,12 +653,12 @@ fn test_round_trip_multiple_connections_with_data() {
     // Use raw message iterator to verify data
     let robo_reader = RoboReader::open(&path).unwrap();
     let raw_iter = robo_reader.iter_raw_bag().unwrap();
-    let mut raw_stream = raw_iter.into_stream().unwrap();
+    let raw_stream = raw_iter.into_stream().unwrap();
 
     let mut messages_by_topic: std::collections::HashMap<String, Vec<u8>> =
         std::collections::HashMap::new();
 
-    while let Some(result) = raw_stream.next() {
+    for result in raw_stream {
         match result {
             Ok((raw_msg, channel)) => {
                 // raw_msg.data contains the message payload directly

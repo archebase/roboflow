@@ -187,10 +187,10 @@ fn extract_mcap_messages(
 
     // Copy messages
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
     let mut written = 0;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         if let Some(limit) = count {
             if written >= limit {
                 break;
@@ -256,10 +256,10 @@ fn extract_bag_messages(
 
     // Copy messages
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
     let mut written = 0;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         if let Some(limit) = count {
             if written >= limit {
                 break;
@@ -348,10 +348,10 @@ fn extract_mcap_topics(
 
     // Copy filtered messages
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
     let mut written = 0;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         if let Some(&out_ch_id) = channel_ids.get(&msg.channel_id) {
@@ -429,10 +429,10 @@ fn extract_bag_topics(
 
     // Copy filtered messages
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
     let mut written = 0;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         if let Some(&new_id) = channel_map.get(&msg.channel_id) {
@@ -487,9 +487,9 @@ fn extract_per_topic(
 
         // Copy messages up to count per topic using unified iter_raw
         let iter = reader.iter_raw()?;
-        let mut stream = iter.into_stream()?;
+        let stream = iter.into_stream()?;
 
-        while let Some(result) = stream.next() {
+        for result in stream {
             let (msg, channel) = result?;
 
             let topic = &channel.topic;
@@ -544,9 +544,9 @@ fn extract_per_topic(
 
         // Copy messages up to count per topic
         let iter = reader.iter_raw()?;
-        let mut stream = iter.into_stream()?;
+        let stream = iter.into_stream()?;
 
-        while let Some(result) = stream.next() {
+        for result in stream {
             let (msg, channel) = result?;
 
             let topic = &channel.topic;
@@ -604,11 +604,11 @@ fn create_fixture_from_bag(input: &str, name: &str) -> Result<(), Box<dyn std::e
                             if conn.id == msg.conn_id {
                                 write_fixture_mcap(
                                     name,
-                                    &msg.data,
+                                    msg.data,
                                     msg.time,
-                                    &conn.topic,
-                                    &conn.tp,
-                                    &conn.message_definition,
+                                    conn.topic,
+                                    conn.tp,
+                                    conn.message_definition,
                                 )?;
                                 return Ok(());
                             }
@@ -741,10 +741,10 @@ fn extract_mcap_time_range(
 
     // Copy messages in time range
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
     let mut written = 0;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         if msg.publish_time >= start && msg.publish_time <= end {
@@ -802,10 +802,10 @@ fn extract_bag_time_range(
 
     // Copy messages in time range
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
     let mut written = 0;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         if msg.publish_time >= start && msg.publish_time <= end {

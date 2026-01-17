@@ -205,10 +205,10 @@ fn show_messages(
     println!();
 
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
     let mut counts: HashMap<u16, usize> = HashMap::new();
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, channel_info) = result?;
         let count = counts.entry(msg.channel_id).or_insert(0);
         *count += 1;
@@ -234,10 +234,10 @@ fn show_hex_dump(
     println!();
 
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
     let mut counts: HashMap<u16, usize> = HashMap::new();
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, channel_info) = result?;
         let count = counts.entry(msg.channel_id).or_insert(0);
         *count += 1;

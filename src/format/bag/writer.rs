@@ -243,7 +243,7 @@ impl BagWriter {
                 if existing_conn
                     .callerid
                     .as_ref()
-                    .map_or(true, |s| s.is_empty())
+                    .is_none_or(|s| s.is_empty())
                 {
                     // Same topic with empty callerid already exists - skip duplicate
                     return Ok(());

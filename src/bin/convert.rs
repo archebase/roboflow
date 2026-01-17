@@ -153,9 +153,9 @@ fn convert_bag_to_mcap(input: &str, output: &str) -> Result<(), Box<dyn std::err
 
     // Convert messages using raw data to avoid decode/encode issues
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_ch_id = match channel_ids.get(&msg.channel_id) {
@@ -189,7 +189,7 @@ fn convert_bag_to_mcap(input: &str, output: &str) -> Result<(), Box<dyn std::err
         sequences.insert(out_ch_id, seq + 1);
         msg_count += 1;
 
-        if msg_count % 1000 == 0 {
+        if msg_count.is_multiple_of(1000) {
             println!("Processed {} messages...", msg_count);
         }
     }
@@ -215,13 +215,13 @@ fn convert_mcap_to_bag(input: &str, output: &str) -> Result<(), Box<dyn std::err
     println!("Channels: {}", reader.channels().len());
 
     let mut writer = robocodec::BagWriter::create(output)?;
-    let mut conn_id = 0u16;
     let mut channel_ids: HashMap<u16, u16> = HashMap::new();
     let mut msg_count = 0u64;
     let mut failures = 0u64;
 
     // Add connections, preserving callerid
-    for (&ch_id, channel) in reader.channels() {
+    for (conn_id, (&ch_id, channel)) in reader.channels().iter().enumerate() {
+        let conn_id = conn_id as u16;
         let schema = channel.schema.as_deref().unwrap_or("");
         let callerid = channel.callerid.as_deref().unwrap_or("");
         writer.add_connection_with_callerid(
@@ -232,14 +232,13 @@ fn convert_mcap_to_bag(input: &str, output: &str) -> Result<(), Box<dyn std::err
             callerid,
         )?;
         channel_ids.insert(ch_id, conn_id);
-        conn_id += 1;
     }
 
     // Convert messages using raw data
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_conn_id = match channel_ids.get(&msg.channel_id) {
@@ -257,7 +256,7 @@ fn convert_mcap_to_bag(input: &str, output: &str) -> Result<(), Box<dyn std::err
 
         msg_count += 1;
 
-        if msg_count % 1000 == 0 {
+        if msg_count.is_multiple_of(1000) {
             println!("Processed {} messages...", msg_count);
         }
     }
@@ -403,9 +402,9 @@ fn mcap_to_mcap_normalized(
 
     // Copy messages (data stays the same, only metadata is transformed)
     let iter = mcap_reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_ch_id = match channel_ids.get(&msg.channel_id) {
@@ -516,9 +515,9 @@ fn bag_to_mcap_normalized(
 
     // Copy messages using BagRawMessageIter
     let iter = BagRawMessageIter::new(input.to_string(), channels.clone(), conn_id_map);
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_ch_id = match channel_ids.get(&msg.channel_id) {
@@ -594,12 +593,12 @@ fn mcap_to_bag(
     engine.prepare_schemas(&reader, Some(pipeline))?;
 
     let mut writer = robocodec::BagWriter::create(output)?;
-    let mut conn_id = 0u16;
     let mut channel_ids: HashMap<u16, u16> = HashMap::new();
     let mut msg_count = 0;
 
     // Add transformed connections
-    for (&ch_id, channel) in reader.channels() {
+    for (conn_id, (&ch_id, channel)) in reader.channels().iter().enumerate() {
+        let conn_id = conn_id as u16;
         let transformed_topic = engine
             .get_transformed_topic(ch_id)
             .unwrap_or(&channel.topic)
@@ -633,14 +632,13 @@ fn mcap_to_bag(
             callerid,
         )?;
         channel_ids.insert(ch_id, conn_id);
-        conn_id += 1;
     }
 
     // Copy messages
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_conn_id = match channel_ids.get(&msg.channel_id) {
@@ -676,12 +674,12 @@ fn bag_to_bag(
     let conn_id_map = reader.conn_id_map().clone();
 
     let mut writer = robocodec::BagWriter::create(output)?;
-    let mut conn_id = 0u16;
     let mut channel_ids: HashMap<u16, u16> = HashMap::new();
     let mut msg_count = 0;
 
     // Build transformed connections
-    for (&ch_id, channel) in &channels {
+    for (conn_id, (&ch_id, channel)) in channels.iter().enumerate() {
+        let conn_id = conn_id as u16;
         let (transformed_type, transformed_schema) =
             pipeline.transform_type(&channel.message_type, channel.schema.as_deref());
         let transformed_topic = pipeline
@@ -700,14 +698,13 @@ fn bag_to_bag(
             callerid,
         )?;
         channel_ids.insert(ch_id, conn_id);
-        conn_id += 1;
     }
 
     // Copy messages
     let iter = BagRawMessageIter::new(input.to_string(), channels.clone(), conn_id_map);
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_conn_id = match channel_ids.get(&msg.channel_id) {

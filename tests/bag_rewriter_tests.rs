@@ -14,7 +14,6 @@ use robocodec::format::bag::{BagMessage, BagWriter};
 use robocodec::format::mcap::transform::{TransformBuilder, TransformPipeline};
 use robocodec::reader::{BagFormatReader, FormatReader};
 use robocodec::rewriter::RewriteOptions;
-use robocodec::schema::MessageSchema;
 
 // ============================================================================
 // Test Fixtures
@@ -22,9 +21,6 @@ use robocodec::schema::MessageSchema;
 
 /// Simple ROS1 message definition for std_msgs/String
 const STD_MSGS_STRING_DEF: &str = "string data";
-
-/// Simple ROS1 message definition for std_msgs/Int32
-const STD_MSGS_INT32_DEF: &str = "int32 data";
 
 /// Get a temporary directory for test files
 fn temp_dir() -> PathBuf {
@@ -188,8 +184,7 @@ fn test_rewriter_validates_invalid_schema_returns_error() {
 
     // Note: The rewriter may succeed even with invalid schema by passing through data
     // The actual behavior depends on whether the schema can be parsed
-    if result.is_ok() {
-        let stats = result.unwrap();
+    if let Ok(stats) = result {
         // If it succeeds, it likely passed through the data
         assert!(stats.passthrough_count > 0 || stats.message_count > 0);
     }

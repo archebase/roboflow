@@ -5,7 +5,7 @@ pub mod msg_parser;
 pub mod ros2_idl_parser;
 
 // Include the unified parser (has format detection and ROS2 IDL handling)
-pub mod parser;
+pub mod unified;
 
 pub use msg_parser::{parse_with_encoding, parse_with_version, RosVersion};
 pub use ros2_idl_parser::{normalize_ros2_idl, parse as parse_ros2_idl};
@@ -76,8 +76,8 @@ pub fn parse_schema_with_encoding_str(
             .map_err(|e| crate::core::CodecError::parse("schema", e.to_string()));
     }
 
-    // For other encodings, use the format-based parser from parser.rs
+    // For other encodings, use the format-based parser from unified.rs
     // which handles format detection and ROS2 IDL header stripping
-    parser::parse_schema_with_encoding(name, definition, &encoding_lower)
+    unified::parse_schema_with_encoding(name, definition, &encoding_lower)
         .map_err(|e| crate::core::CodecError::parse("schema", e.to_string()))
 }

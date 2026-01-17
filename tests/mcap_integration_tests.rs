@@ -645,17 +645,15 @@ fn test_robocodec_test_12_fixture() {
 }
 
 #[test]
+#[ignore = "TODO: decoder issues with nested types in status field - status field is being decoded as a struct instead of Int8"]
 fn test_robocodec_test_14_fixture() {
-    // TODO: This test fails due to decoder issues with nested types in status field
-    // The status field is being decoded as a struct instead of Int8
-    // This needs to be fixed in the decoder
-    let expectations = FixtureExpectations {
-        min_channels: 1,
-        min_messages: 0,
-        expected_topics: vec![],
-        skip_unsupported: true,
-    };
-    // Skip this test for now due to decoder issue
-    // run_fixture_test("robocodec_test_14", &expectations);
-    println!("  ⊘ Skipping test_robocodec_test_14_fixture - decoder issue with nested types");
+    run_fixture_test(
+        "robocodec_test_14",
+        &FixtureExpectations {
+            min_channels: 1,
+            min_messages: 0,
+            expected_topics: vec![],
+            skip_unsupported: true,
+        },
+    );
 }

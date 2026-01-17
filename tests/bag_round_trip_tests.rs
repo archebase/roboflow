@@ -49,10 +49,10 @@ fn count_bag_messages(path: &str) -> Result<usize, Box<dyn std::error::Error>> {
     let conn_id_map = reader.conn_id_map().clone();
 
     let iter = BagRawMessageIter::new(path.to_string(), channels, conn_id_map);
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
 
     let mut count = 0;
-    while let Some(result) = stream.next() {
+    for result in stream {
         let _msg = result?;
         count += 1;
     }
@@ -64,10 +64,10 @@ fn count_mcap_messages(path: &str) -> Result<usize, Box<dyn std::error::Error>> 
     use robocodec::format::mcap::McapReader;
     let reader = McapReader::open(path)?;
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
 
     let mut count = 0;
-    while let Some(result) = stream.next() {
+    for result in stream {
         let _msg = result?;
         count += 1;
     }
@@ -1246,9 +1246,9 @@ fn bag_to_mcap_conversion(
 
     // Copy messages using BagRawMessageIter
     let iter = BagRawMessageIter::new(input.to_string(), channels.clone(), conn_id_map);
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_ch_id = match channel_ids.get(&msg.channel_id) {
@@ -1306,6 +1306,7 @@ fn mcap_to_bag_conversion(
     let mut msg_count = 0;
 
     // Add transformed connections
+    #[allow(clippy::explicit_counter_loop)]
     for (&ch_id, channel) in mcap_reader.channels() {
         let transformed_topic = engine
             .get_transformed_topic(ch_id)
@@ -1344,9 +1345,9 @@ fn mcap_to_bag_conversion(
 
     // Copy messages
     let iter = mcap_reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_stream()?;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_conn_id = match channel_ids.get(&msg.channel_id) {

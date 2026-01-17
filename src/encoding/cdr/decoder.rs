@@ -186,7 +186,7 @@ impl CdrDecoder {
     }
 
     /// Lock the plan cache, centralizing error handling.
-    fn lock_cache(&self) -> CoreResult<std::sync::MutexGuard<HashMap<String, DecodePlan>>> {
+    fn lock_cache(&self) -> CoreResult<std::sync::MutexGuard<'_, HashMap<String, DecodePlan>>> {
         self.plan_cache
             .lock()
             .map_err(|e| CodecError::Other(format!("Plan cache lock poisoned: {e}")))

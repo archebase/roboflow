@@ -898,9 +898,9 @@ mod tests {
         // Manually encode all scalar fields
         let mut encoded = Vec::new();
 
-        // double_field (tag 0x09): value 3.14
+        // double_field (tag 0x09): value 3.125
         encoded.push(0x09);
-        encoded.extend_from_slice(&3.14f64.to_le_bytes());
+        encoded.extend_from_slice(&3.125f64.to_le_bytes());
 
         // float_field (tag 0x15): value 2.71
         encoded.push(0x15);
@@ -943,7 +943,7 @@ mod tests {
 
         assert_eq!(
             decoded.get("double_field"),
-            Some(&CodecValue::Float64(3.14))
+            Some(&CodecValue::Float64(3.125))
         );
         assert_eq!(decoded.get("float_field"), Some(&CodecValue::Float32(2.71)));
         assert_eq!(decoded.get("int64_field"), Some(&CodecValue::Int64(-12345)));

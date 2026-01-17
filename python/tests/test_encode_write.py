@@ -10,7 +10,6 @@ Tests cover:
 import os
 import tempfile
 import shutil
-from pathlib import Path
 
 import pytest
 import robocodec
@@ -19,6 +18,7 @@ import robocodec
 # =============================================================================
 # Test Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def temp_mcap_path():
@@ -107,6 +107,7 @@ int32 value
 # encode() Function Tests - Basic CDR Encoding
 # =============================================================================
 
+
 class TestEncodeBasicCdr:
     """Tests for basic CDR encoding with simple types."""
 
@@ -116,7 +117,7 @@ class TestEncodeBasicCdr:
             {"data": "hello world"},
             schema_text=STD_MSGS_STRING_SCHEMA,
             type_name="std_msgs/String",
-            encoding="cdr"
+            encoding="cdr",
         )
 
         assert isinstance(data, bytes)
@@ -132,7 +133,7 @@ class TestEncodeBasicCdr:
             {"data": 42},
             schema_text=STD_MSGS_INT32_SCHEMA,
             type_name="std_msgs/Int32",
-            encoding="cdr"
+            encoding="cdr",
         )
 
         assert isinstance(data, bytes)
@@ -144,7 +145,7 @@ class TestEncodeBasicCdr:
             {"data": 9_223_372_036_854_775_807},
             schema_text=STD_MSGS_INT64_SCHEMA,
             type_name="std_msgs/Int64",
-            encoding="cdr"
+            encoding="cdr",
         )
 
         assert isinstance(data, bytes)
@@ -156,7 +157,7 @@ class TestEncodeBasicCdr:
             {"data": 3.14},
             schema_text=STD_MSGS_FLOAT32_SCHEMA,
             type_name="std_msgs/Float32",
-            encoding="cdr"
+            encoding="cdr",
         )
 
         assert isinstance(data, bytes)
@@ -168,7 +169,7 @@ class TestEncodeBasicCdr:
             {"data": 2.718281828459045},
             schema_text=STD_MSGS_FLOAT64_SCHEMA,
             type_name="std_msgs/Float64",
-            encoding="cdr"
+            encoding="cdr",
         )
 
         assert isinstance(data, bytes)
@@ -180,7 +181,7 @@ class TestEncodeBasicCdr:
             {"data": True},
             schema_text=STD_MSGS_BOOL_SCHEMA,
             type_name="std_msgs/Bool",
-            encoding="cdr"
+            encoding="cdr",
         )
 
         assert isinstance(data, bytes)
@@ -194,17 +195,13 @@ class TestEncodeNestedCdr:
         """Test encoding a message with nested Header."""
         data, meta = robocodec.encode(
             {
-                "header": {
-                    "seq": 123,
-                    "stamp": 1_234_567_890,
-                    "frame_id": "base_link"
-                },
+                "header": {"seq": 123, "stamp": 1_234_567_890, "frame_id": "base_link"},
                 "name": "test_joint",
-                "value": 456
+                "value": 456,
             },
             schema_text=NESTED_MSG_SCHEMA,
             type_name="test_pkg/NestedMsg",
-            encoding="cdr"
+            encoding="cdr",
         )
 
         assert isinstance(data, bytes)
@@ -216,11 +213,11 @@ class TestEncodeNestedCdr:
         data, meta = robocodec.encode(
             {
                 "linear": {"x": 1.0, "y": 2.0, "z": 3.0},
-                "angular": {"x": 0.1, "y": 0.2, "z": 0.3}
+                "angular": {"x": 0.1, "y": 0.2, "z": 0.3},
             },
             schema_text=GEOMETRY_MSGS_TWIST_SCHEMA,
             type_name="geometry_msgs/Twist",
-            encoding="cdr"
+            encoding="cdr",
         )
 
         assert isinstance(data, bytes)
@@ -231,6 +228,7 @@ class TestEncodeNestedCdr:
 # encode() Function Tests - JSON Encoding
 # =============================================================================
 
+
 class TestEncodeJson:
     """Tests for JSON encoding."""
 
@@ -240,7 +238,7 @@ class TestEncodeJson:
             {"data": "hello"},
             schema_text=STD_MSGS_STRING_SCHEMA,
             type_name="std_msgs/String",
-            encoding="json"
+            encoding="json",
         )
 
         assert isinstance(data, bytes)
@@ -248,6 +246,7 @@ class TestEncodeJson:
         assert meta["encoding"] == "json"
         # Should be valid JSON
         import json
+
         decoded = json.loads(data)
         assert decoded["data"] == "hello"
 
@@ -255,16 +254,12 @@ class TestEncodeJson:
         """Test encoding a nested message as JSON."""
         data, meta = robocodec.encode(
             {
-                "header": {
-                    "seq": 123,
-                    "stamp": 1_234_567_890,
-                    "frame_id": "base_link"
-                },
-                "name": "test"
+                "header": {"seq": 123, "stamp": 1_234_567_890, "frame_id": "base_link"},
+                "name": "test",
             },
             schema_text=NESTED_MSG_SCHEMA,
             type_name="test_pkg/NestedMsg",
-            encoding="json"
+            encoding="json",
         )
 
         assert isinstance(data, bytes)
@@ -274,6 +269,7 @@ class TestEncodeJson:
 # =============================================================================
 # encode() Function Tests - Error Handling
 # =============================================================================
+
 
 class TestEncodeErrors:
     """Tests for encode() error handling."""
@@ -285,7 +281,7 @@ class TestEncodeErrors:
                 {"data": "test"},
                 schema_text=None,
                 type_name="std_msgs/String",
-                encoding="cdr"
+                encoding="cdr",
             )
 
     def test_encode_cdr_without_type_name(self):
@@ -295,7 +291,7 @@ class TestEncodeErrors:
                 {"data": "test"},
                 schema_text=STD_MSGS_STRING_SCHEMA,
                 type_name=None,
-                encoding="cdr"
+                encoding="cdr",
             )
 
     def test_encode_unknown_encoding(self):
@@ -305,7 +301,7 @@ class TestEncodeErrors:
                 {"data": "test"},
                 schema_text=STD_MSGS_STRING_SCHEMA,
                 type_name="std_msgs/String",
-                encoding="unknown"
+                encoding="unknown",
             )
 
     def test_encode_protobuf_not_implemented(self):
@@ -317,13 +313,14 @@ class TestEncodeErrors:
                 {"data": "test"},
                 schema_text=STD_MSGS_STRING_SCHEMA,
                 type_name="std_msgs/String",
-                encoding="protobuf"
+                encoding="protobuf",
             )
 
 
 # =============================================================================
 # encode() Function Tests - Round-Trip (encode → decode)
 # =============================================================================
+
 
 class TestEncodeRoundTrip:
     """Tests for encode → decode round-trip verification."""
@@ -337,7 +334,7 @@ class TestEncodeRoundTrip:
             original,
             schema_text=STD_MSGS_STRING_SCHEMA,
             type_name="std_msgs/String",
-            encoding="cdr"
+            encoding="cdr",
         )
 
         # Decode
@@ -345,7 +342,7 @@ class TestEncodeRoundTrip:
             data,
             schema_text=STD_MSGS_STRING_SCHEMA,
             type_name="std_msgs/String",
-            encoding="cdr"
+            encoding="cdr",
         )
 
         assert decoded["data"] == original["data"]
@@ -358,14 +355,14 @@ class TestEncodeRoundTrip:
             original,
             schema_text=STD_MSGS_INT32_SCHEMA,
             type_name="std_msgs/Int32",
-            encoding="cdr"
+            encoding="cdr",
         )
 
         decoded = robocodec.decode(
             data,
             schema_text=STD_MSGS_INT32_SCHEMA,
             type_name="std_msgs/Int32",
-            encoding="cdr"
+            encoding="cdr",
         )
 
         assert decoded["data"] == original["data"]
@@ -378,14 +375,14 @@ class TestEncodeRoundTrip:
             original,
             schema_text=STD_MSGS_FLOAT64_SCHEMA,
             type_name="std_msgs/Float64",
-            encoding="cdr"
+            encoding="cdr",
         )
 
         decoded = robocodec.decode(
             data,
             schema_text=STD_MSGS_FLOAT64_SCHEMA,
             type_name="std_msgs/Float64",
-            encoding="cdr"
+            encoding="cdr",
         )
 
         assert abs(decoded["data"] - original["data"]) < 1e-10
@@ -398,14 +395,14 @@ class TestEncodeRoundTrip:
             original,
             schema_text="string data\nint32 value",
             type_name="test/MultiField",
-            encoding="json"
+            encoding="json",
         )
 
         decoded = robocodec.decode(
             data,
             schema_text="string data\nint32 value",
             type_name="test/MultiField",
-            encoding="json"
+            encoding="json",
         )
 
         assert decoded["data"] == original["data"]
@@ -415,6 +412,7 @@ class TestEncodeRoundTrip:
 # =============================================================================
 # Writer Class Tests - MCAP Writing
 # =============================================================================
+
 
 class TestWriterMcap:
     """Tests for Writer class with MCAP format."""
@@ -441,7 +439,7 @@ class TestWriterMcap:
                 message={"data": "hello mcap"},
                 timestamp_ns=1_234_567_890,
                 schema_text=STD_MSGS_STRING_SCHEMA,
-                message_type="std_msgs/String"
+                message_type="std_msgs/String",
             )
 
         # Verify file was created
@@ -457,7 +455,7 @@ class TestWriterMcap:
                     message={"data": f"message {i}"},
                     timestamp_ns=1_234_567_890 + i * 1_000_000,
                     schema_text=STD_MSGS_STRING_SCHEMA,
-                    message_type="std_msgs/String"
+                    message_type="std_msgs/String",
                 )
 
         # Verify file was created and has content
@@ -472,14 +470,14 @@ class TestWriterMcap:
                 message={"data": "hello"},
                 timestamp_ns=1_000_000_000,
                 schema_text=STD_MSGS_STRING_SCHEMA,
-                message_type="std_msgs/String"
+                message_type="std_msgs/String",
             )
             writer.write(
                 topic="/status",
                 message={"data": 42},
                 timestamp_ns=1_000_001_000,
                 schema_text=STD_MSGS_INT32_SCHEMA,
-                message_type="std_msgs/Int32"
+                message_type="std_msgs/Int32",
             )
 
         assert os.path.exists(temp_mcap_path)
@@ -494,7 +492,7 @@ class TestWriterMcap:
                 message={"data": "test"},
                 timestamp_ns=1_000_000_000,
                 schema_text=STD_MSGS_STRING_SCHEMA,
-                message_type="std_msgs/String"
+                message_type="std_msgs/String",
             )
             # Subsequent writes to same topic don't need schema info
             # (but we still provide them in this test)
@@ -503,6 +501,7 @@ class TestWriterMcap:
 # =============================================================================
 # Writer Class Tests - BAG Writing
 # =============================================================================
+
 
 class TestWriterBag:
     """Tests for Writer class with BAG format."""
@@ -527,7 +526,7 @@ class TestWriterBag:
                 message={"data": "hello bag"},
                 timestamp_ns=1_234_567_890,
                 schema_text=STD_MSGS_STRING_SCHEMA,
-                message_type="std_msgs/String"
+                message_type="std_msgs/String",
             )
 
         assert os.path.exists(temp_bag_path)
@@ -542,7 +541,7 @@ class TestWriterBag:
                     message={"data": f"bag message {i}"},
                     timestamp_ns=1_234_567_890 + i * 1_000_000,
                     schema_text=STD_MSGS_STRING_SCHEMA,
-                    message_type="std_msgs/String"
+                    message_type="std_msgs/String",
                 )
 
         assert os.path.exists(temp_bag_path)
@@ -552,6 +551,7 @@ class TestWriterBag:
 # =============================================================================
 # Writer Class Tests - Round-Trip (write → read)
 # =============================================================================
+
 
 class TestWriterRoundTrip:
     """Tests for write → read round-trip verification."""
@@ -569,7 +569,7 @@ class TestWriterRoundTrip:
                 message=original_msg,
                 timestamp_ns=timestamp,
                 schema_text=STD_MSGS_STRING_SCHEMA,
-                message_type="std_msgs/String"
+                message_type="std_msgs/String",
             )
 
         # Read back
@@ -592,10 +592,7 @@ class TestWriterRoundTrip:
 
     def test_round_trip_mcap_multiple_messages(self, temp_mcap_path):
         """Test write → read round-trip for MCAP with multiple messages."""
-        messages = [
-            {"data": f"message_{i}"}
-            for i in range(5)
-        ]
+        messages = [{"data": f"message_{i}"} for i in range(5)]
         topic = "/multi_test"
 
         # Write
@@ -606,7 +603,7 @@ class TestWriterRoundTrip:
                     message=msg,
                     timestamp_ns=1_000_000_000 + i * 1_000_000,
                     schema_text=STD_MSGS_STRING_SCHEMA,
-                    message_type="std_msgs/String"
+                    message_type="std_msgs/String",
                 )
 
         # Read back
@@ -633,7 +630,7 @@ class TestWriterRoundTrip:
                 message=original_msg,
                 timestamp_ns=timestamp,
                 schema_text=STD_MSGS_STRING_SCHEMA,
-                message_type="std_msgs/String"
+                message_type="std_msgs/String",
             )
 
         # Read back
@@ -658,6 +655,7 @@ class TestWriterRoundTrip:
 # Writer Class Tests - Error Handling
 # =============================================================================
 
+
 class TestWriterErrors:
     """Tests for Writer error handling."""
 
@@ -678,7 +676,7 @@ class TestWriterErrors:
                     timestamp_ns=1_000_000_000,
                     # Missing schema_text and message_type
                     schema_text=None,
-                    message_type=None
+                    message_type=None,
                 )
 
     def test_writer_write_after_close(self, temp_mcap_path):
@@ -692,13 +690,14 @@ class TestWriterErrors:
                 message={"data": "test"},
                 timestamp_ns=1_000_000_000,
                 schema_text=STD_MSGS_STRING_SCHEMA,
-                message_type="std_msgs/String"
+                message_type="std_msgs/String",
             )
 
 
 # =============================================================================
 # Writer Class Tests - Auto-Registration
 # =============================================================================
+
 
 class TestWriterAutoRegistration:
     """Tests for channel auto-registration feature."""
@@ -710,12 +709,12 @@ class TestWriterAutoRegistration:
                 writer.write(
                     topic="/new_topic",
                     message={"data": "test"},
-                    timestamp_ns=1_000_000_000
+                    timestamp_ns=1_000_000_000,
                     # No schema_text or message_type
                 )
 
-    def test_auto_register_subsequent_writes_require_schema(self, temp_mcap_path):
-        """Test that subsequent writes still require schema (current behavior)."""
+    def test_auto_register_subsequent_writes_reuse_schema(self, temp_mcap_path):
+        """Test that subsequent writes can reuse the cached schema."""
         with robocodec.Writer(temp_mcap_path) as writer:
             # First write with schema (registers channel)
             writer.write(
@@ -723,22 +722,27 @@ class TestWriterAutoRegistration:
                 message={"data": "first"},
                 timestamp_ns=1_000_000_000,
                 schema_text=STD_MSGS_STRING_SCHEMA,
-                message_type="std_msgs/String"
+                message_type="std_msgs/String",
             )
 
-            # Second write to same topic still requires schema in current implementation
-            with pytest.raises(ValueError, match="schema_text"):
-                writer.write(
-                    topic="/topic1",
-                    message={"data": "second"},
-                    timestamp_ns=1_000_001_000
-                    # No schema - should fail in current implementation
-                )
+            # Second write to same topic reuses cached schema
+            writer.write(
+                topic="/topic1",
+                message={"data": "second"},
+                timestamp_ns=1_000_001_000,
+                # No schema needed - reuses cached schema
+            )
+
+        # Verify both messages were written
+        reader = robocodec.read(temp_mcap_path)
+        messages = list(reader.iter_messages())
+        assert len(messages) == 2
 
 
 # =============================================================================
 # Edge Cases and Comprehensive Tests
 # =============================================================================
+
 
 class TestEdgeCases:
     """Tests for edge cases and special scenarios."""
@@ -749,7 +753,7 @@ class TestEdgeCases:
             {"data": ""},
             schema_text=STD_MSGS_STRING_SCHEMA,
             type_name="std_msgs/String",
-            encoding="cdr"
+            encoding="cdr",
         )
         assert isinstance(data, bytes)
 
@@ -759,7 +763,7 @@ class TestEdgeCases:
             {"data": 0},
             schema_text=STD_MSGS_INT32_SCHEMA,
             type_name="std_msgs/Int32",
-            encoding="cdr"
+            encoding="cdr",
         )
         assert isinstance(data, bytes)
 
@@ -769,7 +773,7 @@ class TestEdgeCases:
             {"data": -42},
             schema_text=STD_MSGS_INT32_SCHEMA,
             type_name="std_msgs/Int32",
-            encoding="cdr"
+            encoding="cdr",
         )
         assert isinstance(data, bytes)
 
@@ -780,7 +784,7 @@ class TestEdgeCases:
             {"data": large_string},
             schema_text=STD_MSGS_STRING_SCHEMA,
             type_name="std_msgs/String",
-            encoding="cdr"
+            encoding="cdr",
         )
         assert isinstance(data, bytes)
         assert len(data) > 10000
@@ -793,7 +797,7 @@ class TestEdgeCases:
                 message={"data": ""},
                 timestamp_ns=1_000_000_000,
                 schema_text=STD_MSGS_STRING_SCHEMA,
-                message_type="std_msgs/String"
+                message_type="std_msgs/String",
             )
         assert os.path.exists(temp_mcap_path)
 
@@ -805,7 +809,7 @@ class TestEdgeCases:
                 message={"data": "test"},
                 timestamp_ns=0,
                 schema_text=STD_MSGS_STRING_SCHEMA,
-                message_type="std_msgs/String"
+                message_type="std_msgs/String",
             )
         assert os.path.exists(temp_mcap_path)
 
@@ -818,6 +822,6 @@ class TestEdgeCases:
                 message={"data": "test"},
                 timestamp_ns=large_timestamp,
                 schema_text=STD_MSGS_STRING_SCHEMA,
-                message_type="std_msgs/String"
+                message_type="std_msgs/String",
             )
         assert os.path.exists(temp_mcap_path)
