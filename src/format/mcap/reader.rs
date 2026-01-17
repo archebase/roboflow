@@ -83,13 +83,11 @@ impl McapReader {
     /// Open an MCAP file and read its metadata.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_str = path.as_ref().to_string_lossy().to_string();
-        let file = File::open(&path).map_err(|e| {
-            CodecError::encode("McapReader", format!("Failed to open file: {e}"))
-        })?;
+        let file = File::open(&path)
+            .map_err(|e| CodecError::encode("McapReader", format!("Failed to open file: {e}")))?;
 
-        let mapped = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
-            CodecError::encode("McapReader", format!("Failed to mmap file: {e}"))
-        })?;
+        let mapped = unsafe { memmap2::Mmap::map(&file) }
+            .map_err(|e| CodecError::encode("McapReader", format!("Failed to mmap file: {e}")))?;
 
         // Try to read summary, but handle files without summary gracefully
         let summary_result = mcap::Summary::read(&mapped);
@@ -130,8 +128,7 @@ impl McapReader {
                         .as_ref()
                         .and_then(|s| summary.schemas.get(&s.id));
 
-                    let schema_text =
-                        schema.and_then(|s| String::from_utf8(s.data.to_vec()).ok());
+                    let schema_text = schema.and_then(|s| String::from_utf8(s.data.to_vec()).ok());
                     let schema_data = schema.map(|s| s.data.to_vec());
                     let schema_encoding = schema.map(|s| s.encoding.clone());
 
@@ -221,13 +218,11 @@ impl McapReader {
 
     /// Iterate over raw (undecoded) messages in the MCAP file.
     pub fn iter_raw(&self) -> Result<RawMessageIter> {
-        let file = File::open(&self.path).map_err(|e| {
-            CodecError::encode("McapReader", format!("Failed to open file: {e}"))
-        })?;
+        let file = File::open(&self.path)
+            .map_err(|e| CodecError::encode("McapReader", format!("Failed to open file: {e}")))?;
 
-        let mapped = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
-            CodecError::encode("McapReader", format!("Failed to mmap file: {e}"))
-        })?;
+        let mapped = unsafe { memmap2::Mmap::map(&file) }
+            .map_err(|e| CodecError::encode("McapReader", format!("Failed to mmap file: {e}")))?;
 
         Ok(RawMessageIter {
             _mapped: mapped,
@@ -244,13 +239,11 @@ impl McapReader {
     ///
     /// An iterator yielding `(DecodedMessage, ChannelInfo)` tuples.
     pub fn decode_messages(&self) -> Result<DecodedMessageIter> {
-        let file = File::open(&self.path).map_err(|e| {
-            CodecError::encode("McapReader", format!("Failed to open file: {e}"))
-        })?;
+        let file = File::open(&self.path)
+            .map_err(|e| CodecError::encode("McapReader", format!("Failed to open file: {e}")))?;
 
-        let mapped = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
-            CodecError::encode("McapReader", format!("Failed to mmap file: {e}"))
-        })?;
+        let mapped = unsafe { memmap2::Mmap::map(&file) }
+            .map_err(|e| CodecError::encode("McapReader", format!("Failed to mmap file: {e}")))?;
 
         Ok(DecodedMessageIter {
             _mapped: mapped,
@@ -270,13 +263,11 @@ impl McapReader {
     ///
     /// An iterator yielding `(TimestampedDecodedMessage, ChannelInfo)` tuples.
     pub fn decode_messages_with_timestamp(&self) -> Result<DecodedMessageWithTimestampIter> {
-        let file = File::open(&self.path).map_err(|e| {
-            CodecError::encode("McapReader", format!("Failed to open file: {e}"))
-        })?;
+        let file = File::open(&self.path)
+            .map_err(|e| CodecError::encode("McapReader", format!("Failed to open file: {e}")))?;
 
-        let mapped = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
-            CodecError::encode("McapReader", format!("Failed to mmap file: {e}"))
-        })?;
+        let mapped = unsafe { memmap2::Mmap::map(&file) }
+            .map_err(|e| CodecError::encode("McapReader", format!("Failed to mmap file: {e}")))?;
 
         Ok(DecodedMessageWithTimestampIter {
             _mapped: mapped,

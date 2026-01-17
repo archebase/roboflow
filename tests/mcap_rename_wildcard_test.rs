@@ -3,8 +3,8 @@
 //! Usage:
 //!   cargo test -p robocodec --test mcap_rename_wildcard -- --nocapture
 
-use robocodec::format::mcap::McapRewriter;
 use robocodec::format::mcap::transform::TransformBuilder;
+use robocodec::format::mcap::McapRewriter;
 use robocodec::{RewriteOptions, RoboReader};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -105,7 +105,10 @@ fn test_round_trip_topic_rename() {
 
     println!("Original channels:");
     for (topic, ch) in &original_channels {
-        println!("  {} -> {} ({} messages)", topic, ch.message_type, ch.message_count);
+        println!(
+            "  {} -> {} ({} messages)",
+            topic, ch.message_type, ch.message_count
+        );
     }
 
     // Step 2: Apply topic rename transform
@@ -134,7 +137,10 @@ fn test_round_trip_topic_rename() {
 
     println!("\nTransformed channels:");
     for (topic, ch) in &output_channels {
-        println!("  {} -> {} ({} messages)", topic, ch.message_type, ch.message_count);
+        println!(
+            "  {} -> {} ({} messages)",
+            topic, ch.message_type, ch.message_count
+        );
     }
 
     // Step 4: Verify topic renames were applied
@@ -185,7 +191,10 @@ fn test_round_trip_type_rename_with_verification() {
 
     println!("Original channels:");
     for (topic, ch) in &original_channels {
-        println!("  {} -> {} ({} messages)", topic, ch.message_type, ch.message_count);
+        println!(
+            "  {} -> {} ({} messages)",
+            topic, ch.message_type, ch.message_count
+        );
     }
 
     // Step 2: Apply type rename transforms
@@ -212,7 +221,10 @@ fn test_round_trip_type_rename_with_verification() {
 
     println!("\nTransformed channels:");
     for (topic, ch) in &output_channels {
-        println!("  {} -> {} ({} messages)", topic, ch.message_type, ch.message_count);
+        println!(
+            "  {} -> {} ({} messages)",
+            topic, ch.message_type, ch.message_count
+        );
     }
 
     // Step 4: Verify all sensor_msgs types were renamed
@@ -304,10 +316,7 @@ fn test_round_trip_combined_topic_and_type_rename() {
     // Verify type renames
     for msg_type in &output_types {
         if msg_type.contains("sensor_msgs") {
-            panic!(
-                "Found sensor_msgs type that wasn't renamed: {}",
-                msg_type
-            );
+            panic!("Found sensor_msgs type that wasn't renamed: {}", msg_type);
         }
     }
 

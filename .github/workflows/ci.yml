@@ -58,8 +58,8 @@ jobs:
       - name: Install maturin
         run: pip install maturin[patchelf]
 
-      - name: Build Python package
-        run: maturin develop --release --features python
+      - name: Build and install Python package
+        run: maturin build --release --features python --strip && pip install target/wheels/robocodec*.whl
 
       - name: Install pytest
         run: pip install pytest pytest-cov
@@ -83,8 +83,8 @@ jobs:
       - name: Install maturin
         run: pip install maturin[patchelf] mypy
 
-      - name: Build Python package
-        run: maturin develop --release --features python
+      - name: Build and install Python package
+        run: maturin build --release --features python --strip && pip install target/wheels/robocodec*.whl
 
       - name: Run mypy
         run: mypy python/robocodec

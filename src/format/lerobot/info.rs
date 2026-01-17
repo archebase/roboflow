@@ -52,7 +52,7 @@ pub fn write_info_json(
     config: &LeRobotConfig,
     frame_count: u64,
     image_shapes: &HashMap<String, (usize, usize)>, // topic -> (width, height)
-    state_shapes: &HashMap<String, usize>,         // topic -> dimension
+    state_shapes: &HashMap<String, usize>,          // topic -> dimension
 ) -> Result<(), Box<dyn std::error::Error>> {
     let meta_dir = output_dir.join("meta");
     fs::create_dir_all(&meta_dir)?;
@@ -88,9 +88,7 @@ pub fn write_info_json(
                     (vec![7], "float32")
                 }
             }
-            crate::format::lerobot::config::MappingType::Timestamp => {
-                (vec![1], "float64")
-            }
+            crate::format::lerobot::config::MappingType::Timestamp => (vec![1], "float64"),
         };
 
         // Parse feature path (e.g., "observation.camera_0")

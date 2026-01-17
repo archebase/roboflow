@@ -116,9 +116,10 @@ impl Hdf5LeRobotWriter {
             let (msg, channel_info) = result?;
 
             // Find matching mapping
-            let mapping = config.mappings.iter().find(|m| {
-                channel_info.topic == m.topic || channel_info.topic.contains(&m.topic)
-            });
+            let mapping = config
+                .mappings
+                .iter()
+                .find(|m| channel_info.topic == m.topic || channel_info.topic.contains(&m.topic));
 
             let Some(mapping) = mapping else {
                 continue;
@@ -194,13 +195,21 @@ impl Hdf5LeRobotWriter {
                 "width" => {
                     if let CodecValue::UInt32(w) = value {
                         width = *w;
-                        self.record_image_shape(mapping.topic.clone(), width as usize, height as usize);
+                        self.record_image_shape(
+                            mapping.topic.clone(),
+                            width as usize,
+                            height as usize,
+                        );
                     }
                 }
                 "height" => {
                     if let CodecValue::UInt32(h) = value {
                         height = *h;
-                        self.record_image_shape(mapping.topic.clone(), width as usize, height as usize);
+                        self.record_image_shape(
+                            mapping.topic.clone(),
+                            width as usize,
+                            height as usize,
+                        );
                     }
                 }
                 "data" => {
@@ -329,7 +338,8 @@ impl Hdf5LeRobotWriter {
 
         for (key, value) in metadata {
             let dataspace = hdf5::dataspace::Dataspace::scalar();
-            let dataset = group.create_dataset(key, dataspace, &hdf5::datatype::DataType::VarLenUnicode)?;
+            let dataset =
+                group.create_dataset(key, dataspace, &hdf5::datatype::DataType::VarLenUnicode)?;
             dataset.write(&VarLenUnicode::new(value))?;
         }
 
@@ -381,7 +391,10 @@ impl Hdf5LeRobotWriter {
         )?;
 
         println!();
-        println!("LeRobot HDF5 dataset created: {}", self.output_dir.display());
+        println!(
+            "LeRobot HDF5 dataset created: {}",
+            self.output_dir.display()
+        );
 
         Ok(())
     }

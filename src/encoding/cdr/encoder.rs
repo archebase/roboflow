@@ -4,9 +4,9 @@
 //! https://github.com/emulated-devices/rtps-cdr/blob/main/src/CdrWriter.ts
 
 use super::{calculator::CdrCalculator, CDR_HEADER_SIZE};
-use crate::schema::{FieldType, MessageSchema, PrimitiveType as IdlPrimitiveType};
 use crate::core::Result as CoreResult;
 use crate::core::{CodecValue, DecodedMessage};
+use crate::schema::{FieldType, MessageSchema, PrimitiveType as IdlPrimitiveType};
 
 /// Default initial capacity for the encoder buffer.
 const DEFAULT_CAPACITY: usize = 16;

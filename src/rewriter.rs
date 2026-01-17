@@ -196,10 +196,16 @@ pub fn detect_format(path: &Path) -> Option<&'static str> {
 /// ```
 pub enum RoboRewriter {
     /// MCAP format rewriter
-    Mcap(crate::format::mcap::rewriter::McapRewriter, std::path::PathBuf),
+    Mcap(
+        crate::format::mcap::rewriter::McapRewriter,
+        std::path::PathBuf,
+    ),
 
     /// BAG format rewriter
-    Bag(crate::format::bag::rewriter::BagRewriter, std::path::PathBuf),
+    Bag(
+        crate::format::bag::rewriter::BagRewriter,
+        std::path::PathBuf,
+    ),
 }
 
 impl RoboRewriter {
@@ -325,10 +331,18 @@ mod tests {
     fn test_detect_format_case_insensitive() {
         // Test that detection is case-sensitive (only lowercase is supported)
         let path = Path::new("test.MCAP");
-        assert_eq!(detect_format(path), None, "Should not detect uppercase .MCAP");
+        assert_eq!(
+            detect_format(path),
+            None,
+            "Should not detect uppercase .MCAP"
+        );
 
         let path = Path::new("test.Bag");
-        assert_eq!(detect_format(path), None, "Should not detect mixed case .Bag");
+        assert_eq!(
+            detect_format(path),
+            None,
+            "Should not detect mixed case .Bag"
+        );
     }
 
     #[test]
@@ -362,7 +376,10 @@ mod tests {
     fn test_rewrite_options_with_empty_transforms() {
         let pipeline = TransformPipeline::new();
         let options = RewriteOptions::default().with_transforms(pipeline);
-        assert!(!options.has_transforms(), "Empty pipeline should return false for has_transforms");
+        assert!(
+            !options.has_transforms(),
+            "Empty pipeline should return false for has_transforms"
+        );
     }
 
     #[test]

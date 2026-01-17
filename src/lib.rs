@@ -29,8 +29,8 @@
 pub mod config;
 pub mod core;
 pub mod reader;
-pub mod writer;
 pub mod rewriter;
+pub mod writer;
 
 // =============================================================================
 // Schema parsing
@@ -53,8 +53,8 @@ pub mod format;
 
 // Core types
 pub use core::{
-    CodecError, CodecValue, DecodedMessage, PrimitiveType, Result,
-    SchemaProvider, TypeAccessor, TypeRegistry,
+    CodecError, CodecValue, DecodedMessage, PrimitiveType, Result, SchemaProvider, TypeAccessor,
+    TypeRegistry,
 };
 
 // Schema parsing
@@ -62,8 +62,8 @@ pub use schema::{parse_schema, Field, FieldType, MessageSchema, SchemaFormat};
 
 // Encoding
 pub use encoding::{
-    CdrDecoder, CdrEncoder, CodecFactory, DynCodec, JsonDecoder, MessageCodec,
-    ProtobufCodec, ProtobufDecoder,
+    CdrDecoder, CdrEncoder, CodecFactory, DynCodec, JsonDecoder, MessageCodec, ProtobufCodec,
+    ProtobufDecoder,
 };
 
 // Schema transformers
@@ -74,8 +74,8 @@ pub use encoding::{
 // File formats - MCAP
 pub use format::{
     ChannelInfo, DecodedMessageIter, DecodedMessageStream, DecodedMessageWithTimestampIter,
-    DecodedMessageWithTimestampStream, McapReader, McapRewriter, RawMessage, RawMessageIter, RawMessageStream,
-    TimestampedDecodedMessage,
+    DecodedMessageWithTimestampStream, McapReader, McapRewriter, RawMessage, RawMessageIter,
+    RawMessageStream, TimestampedDecodedMessage,
 };
 
 // Unified reader (supports both MCAP and BAG)
@@ -91,7 +91,9 @@ pub use rewriter::{detect_format, FormatRewriter, RewriteOptions, RewriteStats, 
 pub use format::{BagMessage, BagWriter};
 
 // File formats - LeRobot
-pub use format::lerobot::{Hdf5LeRobotWriter, LeRobotConfig, Mapping, MappingType, ParquetLeRobotWriter};
+pub use format::lerobot::{
+    Hdf5LeRobotWriter, LeRobotConfig, Mapping, MappingType, ParquetLeRobotWriter,
+};
 
 // MCAP transforms
 pub use format::mcap::transform::{
@@ -162,11 +164,11 @@ impl Encoding {
 
 /// Prelude module for common imports.
 pub mod prelude {
-    pub use crate::encoding::CdrDecoder;
     pub use crate::core::*;
-    pub use crate::schema::{parse_schema, SchemaFormat};
+    pub use crate::encoding::CdrDecoder;
     pub use crate::encoding::JsonDecoder;
     pub use crate::encoding::ProtobufDecoder;
+    pub use crate::schema::{parse_schema, SchemaFormat};
 }
 
 // =============================================================================

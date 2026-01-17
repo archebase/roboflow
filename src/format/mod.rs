@@ -12,8 +12,8 @@ pub mod mcap;
 pub use bag::{BagMessage, BagWriter};
 pub use mcap::{
     ChannelInfo, DecodedMessageIter, DecodedMessageStream, DecodedMessageWithTimestampIter,
-    DecodedMessageWithTimestampStream, McapReader, McapRewriter, RawMessage, RawMessageIter, RawMessageStream,
-    RewriteOptions, RewriteStats, TimestampedDecodedMessage,
+    DecodedMessageWithTimestampStream, McapReader, McapRewriter, RawMessage, RawMessageIter,
+    RawMessageStream, RewriteOptions, RewriteStats, TimestampedDecodedMessage,
 };
 
 pub use lerobot::{LeRobotConfig, Mapping, MappingType};

@@ -8,8 +8,8 @@ use std::path::Path;
 use mcap::MessageStream;
 
 use robocodec::encoding::CdrDecoder;
-use robocodec::schema::parse_schema;
 use robocodec::encoding::ProtobufDecoder;
+use robocodec::schema::parse_schema;
 
 // Import common test utilities
 mod common;

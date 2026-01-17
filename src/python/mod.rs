@@ -465,7 +465,9 @@ fn decode(
                     .map_err(codec_error_to_py)?;
                 codec_value_to_py(&CodecValue::Struct(message), py)
             } else {
-                Err(PyValueError::new_err("CDR decoding requires schema_text and type_name"))
+                Err(PyValueError::new_err(
+                    "CDR decoding requires schema_text and type_name",
+                ))
             }
         }
         "protobuf" => {
@@ -474,9 +476,8 @@ fn decode(
             codec_value_to_py(&CodecValue::Struct(message), py)
         }
         "json" => {
-            let json_text = std::str::from_utf8(data).map_err(|e| {
-                PyValueError::new_err(format!("Invalid UTF-8 in JSON data: {}", e))
-            })?;
+            let json_text = std::str::from_utf8(data)
+                .map_err(|e| PyValueError::new_err(format!("Invalid UTF-8 in JSON data: {}", e)))?;
             let decoder = JsonDecoder::new();
             let message = decoder.decode(json_text).map_err(codec_error_to_py)?;
             codec_value_to_py(&CodecValue::Struct(message), py)
@@ -527,12 +528,10 @@ fn encode(
 
     let (data, encoding_name) = match encoding {
         "cdr" => {
-            let schema = schema_text.ok_or_else(|| {
-                PyValueError::new_err("CDR encoding requires schema_text")
-            })?;
-            let type_name = type_name.ok_or_else(|| {
-                PyValueError::new_err("CDR encoding requires type_name")
-            })?;
+            let schema = schema_text
+                .ok_or_else(|| PyValueError::new_err("CDR encoding requires schema_text"))?;
+            let type_name = type_name
+                .ok_or_else(|| PyValueError::new_err("CDR encoding requires type_name"))?;
 
             let schema = parse_schema(type_name, schema).map_err(codec_error_to_py)?;
             let mut encoder = crate::encoding::CdrEncoder::new();
@@ -543,9 +542,8 @@ fn encode(
             (data, "cdr")
         }
         "json" => {
-            let json_data = serde_json::to_string(&decoded).map_err(|e| {
-                PyValueError::new_err(format!("Failed to encode as JSON: {}", e))
-            })?;
+            let json_data = serde_json::to_string(&decoded)
+                .map_err(|e| PyValueError::new_err(format!("Failed to encode as JSON: {}", e)))?;
             (json_data.into_bytes(), "json")
         }
         _ => {
@@ -559,10 +557,7 @@ fn encode(
     // Build metadata dict
     let metadata = PyDict::new(py);
     metadata.set_item("encoding", encoding_name)?;
-    metadata.set_item(
-        "type_name",
-        type_name.unwrap_or("unknown"),
-    )?;
+    metadata.set_item("type_name", type_name.unwrap_or("unknown"))?;
     metadata.set_item("length", data.len())?;
 
     let bytes_obj = PyObject::from(data.as_slice().into_pyobject(py)?.to_owned());
@@ -652,8 +647,10 @@ impl PyWriter {
                 .add_channel(topic, msg_type, schema)
                 .map_err(codec_error_to_py)?;
 
-            self.registered_channels
-                .insert(topic.to_string(), (msg_type.to_string(), schema.to_string()));
+            self.registered_channels.insert(
+                topic.to_string(),
+                (msg_type.to_string(), schema.to_string()),
+            );
         }
 
         // Encode the message
@@ -661,16 +658,8 @@ impl PyWriter {
         let (data, _) = encode(
             py,
             message,
-            schema_text.or_else(|| {
-                self.registered_channels
-                    .get(topic)
-                    .map(|(_, s)| s.as_str())
-            }),
-            message_type.or_else(|| {
-                self.registered_channels
-                    .get(topic)
-                    .map(|(t, _)| t.as_str())
-            }),
+            schema_text.or_else(|| self.registered_channels.get(topic).map(|(_, s)| s.as_str())),
+            message_type.or_else(|| self.registered_channels.get(topic).map(|(t, _)| t.as_str())),
             encoding,
         )?;
 

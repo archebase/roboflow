@@ -4,9 +4,9 @@
 //! with separator lines and headers. The format strips these headers and
 //! parses the content as pure OMG IDL.
 
+use crate::core::Result as CoreResult;
 use crate::schema::ast::MessageSchema;
 use crate::schema::parser::idl_parser;
-use crate::core::Result as CoreResult;
 
 /// Check if a line is a ROS2 IDL separator line (75 or more '=' characters).
 ///

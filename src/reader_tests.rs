@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::reader::*;
 use crate::format::mcap::ChannelInfo;
+use crate::reader::*;
 use crate::{CodecError, DecodedMessage, Result};
 
 /// Get the fixtures directory path
@@ -678,7 +678,11 @@ fn test_robo_reader_for_each_decoded() {
         Ok(())
     });
 
-    assert!(result.is_ok(), "for_each_decoded should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "for_each_decoded should succeed: {:?}",
+        result.err()
+    );
     assert!(count > 0, "Expected at least one message to be processed");
 }
 
@@ -702,7 +706,10 @@ fn test_robo_reader_for_each_decoded_stops_on_error() {
     });
 
     assert!(result.is_err(), "for_each_decoded should fail on error");
-    assert!(count >= 2, "Should process at least 2 messages before error");
+    assert!(
+        count >= 2,
+        "Should process at least 2 messages before error"
+    );
 }
 
 #[test]

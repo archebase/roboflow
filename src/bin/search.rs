@@ -11,12 +11,30 @@
 use std::env;
 
 enum Command {
-    Bytes { file: String, pattern: Vec<u8> },
-    String { file: String, text: String },
-    Topics { file: String, pattern: String },
-    Fields { file: String, topic: String },
-    Values { file: String, topic: String, field: String },
-    Stats { file: String },
+    Bytes {
+        file: String,
+        pattern: Vec<u8>,
+    },
+    String {
+        file: String,
+        text: String,
+    },
+    Topics {
+        file: String,
+        pattern: String,
+    },
+    Fields {
+        file: String,
+        topic: String,
+    },
+    Values {
+        file: String,
+        topic: String,
+        field: String,
+    },
+    Stats {
+        file: String,
+    },
 }
 
 fn parse_args(args: &[String]) -> Result<Command, String> {
@@ -109,7 +127,10 @@ fn search_bytes(file: &str, pattern: &[u8]) -> Result<(), Box<dyn std::error::Er
     let mut search_pos = 0;
 
     while search_pos + pattern.len() <= data.len() {
-        if let Some(pos) = data[search_pos..].windows(pattern.len()).position(|w| w == pattern) {
+        if let Some(pos) = data[search_pos..]
+            .windows(pattern.len())
+            .position(|w| w == pattern)
+        {
             let actual_pos = search_pos + pos;
             found_count += 1;
 
@@ -168,7 +189,10 @@ fn search_string(file: &str, text: &str) -> Result<(), Box<dyn std::error::Error
     let mut search_pos = 0;
 
     while search_pos + pattern.len() <= data.len() {
-        if let Some(pos) = data[search_pos..].windows(pattern.len()).position(|w| w == pattern) {
+        if let Some(pos) = data[search_pos..]
+            .windows(pattern.len())
+            .position(|w| w == pattern)
+        {
             let actual_pos = search_pos + pos;
             found_count += 1;
 
@@ -379,11 +403,19 @@ fn show_values(file: &str, topic: &str, field: &str) -> Result<(), Box<dyn std::
                 found_count += 1;
 
                 if found_count == 1 {
-                    println!("Found field '{}' with {} messages:", key, channel_info.topic);
+                    println!(
+                        "Found field '{}' with {} messages:",
+                        key, channel_info.topic
+                    );
                     println!();
                 }
 
-                println!("  Message {}: {} = {}", found_count, key, format_value(&value));
+                println!(
+                    "  Message {}: {} = {}",
+                    found_count,
+                    key,
+                    format_value(&value)
+                );
                 println!();
 
                 if found_count >= 10 {

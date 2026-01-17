@@ -240,7 +240,11 @@ impl BagWriter {
         // Check for duplicate topic with empty callerid (idempotent behavior)
         if let Some(&existing_conn_id) = self.topic_connection_ids.get(topic) {
             if let Some(existing_conn) = self.connections.get(&existing_conn_id) {
-                if existing_conn.callerid.as_ref().map_or(true, |s| s.is_empty()) {
+                if existing_conn
+                    .callerid
+                    .as_ref()
+                    .map_or(true, |s| s.is_empty())
+                {
                     // Same topic with empty callerid already exists - skip duplicate
                     return Ok(());
                 }

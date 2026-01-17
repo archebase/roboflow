@@ -35,7 +35,10 @@ pub trait FormatReader: Send + Sync {
     /// This is useful for ROS1 bag files where multiple connections can have
     /// the same topic name with different callerids (e.g., `/tf` from different publishers).
     fn channels_by_topic(&self, topic: &str) -> Vec<&ChannelInfo> {
-        self.channels().values().filter(|c| c.topic == topic).collect()
+        self.channels()
+            .values()
+            .filter(|c| c.topic == topic)
+            .collect()
     }
 
     /// Get total message count.
@@ -400,23 +403,24 @@ impl Iterator for McapDecodedMessageStream {
                         let schema_encoding = channel_info.schema_encoding.as_deref().unwrap_or("");
                         let is_ros1 = schema_encoding.contains("ros1");
 
-                        let parsed_schema = match crate::schema::parser::parse_schema_with_encoding_str(
-                            &channel_info.message_type,
-                            schema,
-                            schema_encoding,
-                        ) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                warn!(
-                                    context = "schema_parse",
-                                    message_type = %channel_info.message_type,
-                                    error = %e,
-                                    "Failed to parse schema"
-                                );
-                                self.skipped_count += 1;
-                                continue;
-                            }
-                        };
+                        let parsed_schema =
+                            match crate::schema::parser::parse_schema_with_encoding_str(
+                                &channel_info.message_type,
+                                schema,
+                                schema_encoding,
+                            ) {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    warn!(
+                                        context = "schema_parse",
+                                        message_type = %channel_info.message_type,
+                                        error = %e,
+                                        "Failed to parse schema"
+                                    );
+                                    self.skipped_count += 1;
+                                    continue;
+                                }
+                            };
 
                         // Use ROS1 decoder if the schema encoding indicates ROS1
                         if is_ros1 {

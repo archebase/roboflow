@@ -13,11 +13,26 @@ use std::io::BufWriter;
 use std::path::Path;
 
 enum Command {
-    Messages { output: String, count: Option<usize> },
-    Topics { output: String, topics: Vec<String> },
-    PerTopic { output: String, count: usize },
-    Fixture { name: String },
-    TimeRange { output: String, start: u64, end: u64 },
+    Messages {
+        output: String,
+        count: Option<usize>,
+    },
+    Topics {
+        output: String,
+        topics: Vec<String>,
+    },
+    PerTopic {
+        output: String,
+        count: usize,
+    },
+    Fixture {
+        name: String,
+    },
+    TimeRange {
+        output: String,
+        start: u64,
+        end: u64,
+    },
 }
 
 fn parse_args(args: &[String]) -> Result<(String, Command), String> {
@@ -103,9 +118,7 @@ fn run_extract(input: &str, cmd: Command) -> Result<(), Box<dyn std::error::Erro
                 extract_mcap_topics(input, &output, &topics)?
             }
         }
-        Command::PerTopic { output, count } => {
-            extract_per_topic(input, &output, count, &ext)?
-        }
+        Command::PerTopic { output, count } => extract_per_topic(input, &output, count, &ext)?,
         Command::Fixture { name } => {
             if ext == "bag" {
                 create_fixture_from_bag(input, &name)?
@@ -153,12 +166,21 @@ fn extract_mcap_messages(
             let encoding = channel.schema_encoding.as_deref().unwrap_or("ros2msg");
             *schema_ids
                 .entry(channel.message_type.clone())
-                .or_insert_with(|| mcap_writer.add_schema(&channel.message_type, encoding, schema.as_bytes()).unwrap_or(0))
+                .or_insert_with(|| {
+                    mcap_writer
+                        .add_schema(&channel.message_type, encoding, schema.as_bytes())
+                        .unwrap_or(0)
+                })
         } else {
             0
         };
 
-        let out_ch_id = mcap_writer.add_channel(schema_id, &channel.topic, &channel.encoding, &BTreeMap::new())?;
+        let out_ch_id = mcap_writer.add_channel(
+            schema_id,
+            &channel.topic,
+            &channel.encoding,
+            &BTreeMap::new(),
+        )?;
         channel_ids.insert(ch_id, out_ch_id);
         sequences.insert(out_ch_id, 0);
     }
@@ -223,7 +245,13 @@ fn extract_bag_messages(
     for (ch_id, channel) in reader.channels() {
         let schema = channel.schema.as_deref().unwrap_or("");
         let callerid = channel.callerid.as_deref().unwrap_or("");
-        writer.add_connection_with_callerid(*ch_id, &channel.topic, &channel.message_type, schema, callerid)?;
+        writer.add_connection_with_callerid(
+            *ch_id,
+            &channel.topic,
+            &channel.message_type,
+            schema,
+            callerid,
+        )?;
     }
 
     // Copy messages
@@ -299,12 +327,21 @@ fn extract_mcap_topics(
             let encoding = channel.schema_encoding.as_deref().unwrap_or("ros2msg");
             *schema_ids
                 .entry(channel.message_type.clone())
-                .or_insert_with(|| mcap_writer.add_schema(&channel.message_type, encoding, schema.as_bytes()).unwrap_or(0))
+                .or_insert_with(|| {
+                    mcap_writer
+                        .add_schema(&channel.message_type, encoding, schema.as_bytes())
+                        .unwrap_or(0)
+                })
         } else {
             0
         };
 
-        let out_ch_id = mcap_writer.add_channel(schema_id, &channel.topic, &channel.encoding, &BTreeMap::new())?;
+        let out_ch_id = mcap_writer.add_channel(
+            schema_id,
+            &channel.topic,
+            &channel.encoding,
+            &BTreeMap::new(),
+        )?;
         channel_ids.insert(ch_id, out_ch_id);
         sequences.insert(out_ch_id, 0);
     }
@@ -380,7 +417,13 @@ fn extract_bag_topics(
         if let Some(&new_id) = channel_map.get(&ch_id) {
             let schema = channel.schema.as_deref().unwrap_or("");
             let callerid = channel.callerid.as_deref().unwrap_or("");
-            writer.add_connection_with_callerid(new_id, &channel.topic, &channel.message_type, schema, callerid)?;
+            writer.add_connection_with_callerid(
+                new_id,
+                &channel.topic,
+                &channel.message_type,
+                schema,
+                callerid,
+            )?;
         }
     }
 
@@ -414,7 +457,12 @@ fn extract_per_topic(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let reader = robocodec::RoboReader::open(input)?;
 
-    println!("Extracting {} messages per topic from {}: {}", count, ext.to_uppercase(), input);
+    println!(
+        "Extracting {} messages per topic from {}: {}",
+        count,
+        ext.to_uppercase(),
+        input
+    );
     println!("Output: {}", output);
 
     // Track messages written per topic
@@ -428,7 +476,13 @@ fn extract_per_topic(
         for (ch_id, channel) in reader.channels() {
             let schema = channel.schema.as_deref().unwrap_or("");
             let callerid = channel.callerid.as_deref().unwrap_or("");
-            writer.add_connection_with_callerid(*ch_id, &channel.topic, &channel.message_type, schema, callerid)?;
+            writer.add_connection_with_callerid(
+                *ch_id,
+                &channel.topic,
+                &channel.message_type,
+                schema,
+                callerid,
+            )?;
         }
 
         // Copy messages up to count per topic using unified iter_raw
@@ -445,7 +499,8 @@ fn extract_per_topic(
                 continue;
             }
 
-            let bag_msg = robocodec::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
+            let bag_msg =
+                robocodec::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
             writer.write_message(&bag_msg)?;
 
             *written_for_topic += 1;
@@ -468,12 +523,21 @@ fn extract_per_topic(
                 let encoding = channel.schema_encoding.as_deref().unwrap_or("ros2msg");
                 *schema_ids
                     .entry(channel.message_type.clone())
-                    .or_insert_with(|| mcap_writer.add_schema(&channel.message_type, encoding, schema.as_bytes()).unwrap_or(0))
+                    .or_insert_with(|| {
+                        mcap_writer
+                            .add_schema(&channel.message_type, encoding, schema.as_bytes())
+                            .unwrap_or(0)
+                    })
             } else {
                 0
             };
 
-            let out_ch_id = mcap_writer.add_channel(schema_id, &channel.topic, &channel.encoding, &BTreeMap::new())?;
+            let out_ch_id = mcap_writer.add_channel(
+                schema_id,
+                &channel.topic,
+                &channel.encoding,
+                &BTreeMap::new(),
+            )?;
             channel_ids.insert(ch_id, out_ch_id);
             sequences.insert(out_ch_id, 0);
         }
@@ -513,7 +577,10 @@ fn extract_per_topic(
         drop(mcap_writer);
     }
 
-    println!("Extracted {} messages ({} per topic) to {}", written, count, output);
+    println!(
+        "Extracted {} messages ({} per topic) to {}",
+        written, count, output
+    );
 
     Ok(())
 }
@@ -535,7 +602,14 @@ fn create_fixture_from_bag(input: &str, name: &str) -> Result<(), Box<dyn std::e
                     for conn_record in bag.index_records() {
                         if let Ok(rosbag::IndexRecord::Connection(conn)) = conn_record {
                             if conn.id == msg.conn_id {
-                                write_fixture_mcap(name, &msg.data, msg.time, &conn.topic, &conn.tp, &conn.message_definition)?;
+                                write_fixture_mcap(
+                                    name,
+                                    &msg.data,
+                                    msg.time,
+                                    &conn.topic,
+                                    &conn.tp,
+                                    &conn.message_definition,
+                                )?;
                                 return Ok(());
                             }
                         }
@@ -646,12 +720,21 @@ fn extract_mcap_time_range(
             let encoding = channel.schema_encoding.as_deref().unwrap_or("ros2msg");
             *schema_ids
                 .entry(channel.message_type.clone())
-                .or_insert_with(|| mcap_writer.add_schema(&channel.message_type, encoding, schema.as_bytes()).unwrap_or(0))
+                .or_insert_with(|| {
+                    mcap_writer
+                        .add_schema(&channel.message_type, encoding, schema.as_bytes())
+                        .unwrap_or(0)
+                })
         } else {
             0
         };
 
-        let out_ch_id = mcap_writer.add_channel(schema_id, &channel.topic, &channel.encoding, &BTreeMap::new())?;
+        let out_ch_id = mcap_writer.add_channel(
+            schema_id,
+            &channel.topic,
+            &channel.encoding,
+            &BTreeMap::new(),
+        )?;
         channel_ids.insert(ch_id, out_ch_id);
         sequences.insert(out_ch_id, 0);
     }
@@ -708,7 +791,13 @@ fn extract_bag_time_range(
     for (ch_id, channel) in reader.channels() {
         let schema = channel.schema.as_deref().unwrap_or("");
         let callerid = channel.callerid.as_deref().unwrap_or("");
-        writer.add_connection_with_callerid(*ch_id, &channel.topic, &channel.message_type, schema, callerid)?;
+        writer.add_connection_with_callerid(
+            *ch_id,
+            &channel.topic,
+            &channel.message_type,
+            schema,
+            callerid,
+        )?;
     }
 
     // Copy messages in time range
@@ -720,7 +809,8 @@ fn extract_bag_time_range(
         let (msg, _channel) = result?;
 
         if msg.publish_time >= start && msg.publish_time <= end {
-            let bag_msg = robocodec::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
+            let bag_msg =
+                robocodec::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
             writer.write_message(&bag_msg)?;
             written += 1;
         }

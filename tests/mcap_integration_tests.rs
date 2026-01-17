@@ -8,8 +8,8 @@ use std::path::Path;
 use mcap::MessageStream;
 
 use robocodec::encoding::CdrDecoder;
-use robocodec::schema::parse_schema;
 use robocodec::encoding::ProtobufDecoder;
+use robocodec::schema::parse_schema;
 
 // Import common test utilities
 mod common;
@@ -398,7 +398,10 @@ fn validate_field_type(
         (robocodec::schema::ast::FieldType::Array { .. }, robocodec::CodecValue::Array(_)) => {
             // Validated as array
         }
-        (robocodec::schema::ast::FieldType::Nested(type_name), robocodec::CodecValue::Struct(map)) => {
+        (
+            robocodec::schema::ast::FieldType::Nested(type_name),
+            robocodec::CodecValue::Struct(map),
+        ) => {
             if map.is_empty() {
                 errors.push(format!(
                     "Nested type '{type_name}' for field '{field_name}' decoded as empty struct"

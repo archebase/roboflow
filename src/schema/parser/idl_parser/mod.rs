@@ -2,11 +2,11 @@
 //!
 //! This module handles parsing of OMG IDL v4.1 format files.
 
+use crate::core::CodecError;
+use crate::core::Result as CoreResult;
 use crate::schema::ast::MessageSchema;
 use crate::schema::ast::{Field, FieldType, MessageType, PrimitiveType};
 use crate::schema::parser::msg_parser::RosVersion;
-use crate::core::CodecError;
-use crate::core::Result as CoreResult;
 use pest::Parser;
 use pest_derive::Parser;
 

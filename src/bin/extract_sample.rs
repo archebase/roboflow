@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
+use robocodec::format::bag::{BagMessage, BagWriter};
 use robocodec::reader::{BagFormatReader, FormatReader};
-use robocodec::format::bag::{BagWriter, BagMessage};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
@@ -55,7 +55,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Read messages and extract one per unique (topic, callerid) combination
     // In ROS1, multiple nodes can publish to the same topic with different callerids
-    let mut topics_seen: std::collections::HashSet<(String, Option<String>)> = std::collections::HashSet::new();
+    let mut topics_seen: std::collections::HashSet<(String, Option<String>)> =
+        std::collections::HashSet::new();
     let mut messages_written = 0;
 
     let conn_id_map = reader.conn_id_map().clone();
@@ -87,7 +88,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         messages_written += 1;
         let callerid_str = channel_info.callerid.as_deref().unwrap_or("none");
-        println!("  Extracted: {} (callerid: {}, type: {})", channel_info.topic, callerid_str, channel_info.message_type);
+        println!(
+            "  Extracted: {} (callerid: {}, type: {})",
+            channel_info.topic, callerid_str, channel_info.message_type
+        );
 
         // Stop when we've extracted one message for each unique (topic, callerid)
         // The actual count may be less than channels.len() if some channels have no messages

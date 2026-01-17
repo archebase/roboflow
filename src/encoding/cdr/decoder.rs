@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 
-use crate::schema::{FieldType, MessageSchema, PrimitiveType as IdlPrimitiveType};
 use crate::core::{CodecError, CodecValue, DecodedMessage, PrimitiveType, Result as CoreResult};
+use crate::schema::{FieldType, MessageSchema, PrimitiveType as IdlPrimitiveType};
 
 use super::cursor::{CdrCursor, CDR_HEADER_SIZE};
 use super::plan::{DecodeOp, DecodePlan, ElementType};

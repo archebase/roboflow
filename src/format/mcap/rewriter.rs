@@ -16,13 +16,13 @@ use std::path::Path;
 
 use tracing::warn;
 
-use crate::encoding::CdrEncoder;
-use crate::schema::{parse_schema, MessageSchema};
 use crate::core::{CodecError, Result};
+use crate::encoding::CdrEncoder;
 use crate::rewriter::{FormatRewriter, RewriteOptions, RewriteStats};
+use crate::schema::{parse_schema, MessageSchema};
 
-use crate::format::mcap::transform::ChannelInfo as TransformChannelInfo;
 use super::McapReader;
+use crate::format::mcap::transform::ChannelInfo as TransformChannelInfo;
 
 /// MCAP file rewriter.
 ///
@@ -305,7 +305,14 @@ impl McapRewriter {
 
             // Decode and re-encode CDR messages
             if let Some(schema) = schema_opt {
-                self.rewrite_cdr_message(&mut mcap_writer, &msg, schema, new_channel_id, seq, &channel_info.topic)?;
+                self.rewrite_cdr_message(
+                    &mut mcap_writer,
+                    &msg,
+                    schema,
+                    new_channel_id,
+                    seq,
+                    &channel_info.topic,
+                )?;
             } else {
                 // No schema available, pass through as-is
                 self.write_message_raw(&mut mcap_writer, &msg, new_channel_id, seq)?;
@@ -726,11 +733,7 @@ mod tests {
         let mut rewriter = McapRewriter::new();
         let result = rewriter.rewrite(&input_path, &output_path);
 
-        assert!(
-            result.is_ok(),
-            "Rewrite should succeed: {:?}",
-            result.err()
-        );
+        assert!(result.is_ok(), "Rewrite should succeed: {:?}", result.err());
 
         let stats = result.unwrap();
         // Verify the output file was created

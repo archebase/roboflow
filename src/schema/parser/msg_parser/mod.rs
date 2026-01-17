@@ -9,10 +9,10 @@
 //! - Nested types: package/MessageName
 //! - Comments (# style)
 
-use crate::schema::ast::MessageSchema;
-use crate::schema::ast::{Field, FieldType, MessageType, PrimitiveType};
 use crate::core::CodecError;
 use crate::core::Result as CoreResult;
+use crate::schema::ast::MessageSchema;
+use crate::schema::ast::{Field, FieldType, MessageType, PrimitiveType};
 use pest::Parser;
 use pest_derive::Parser;
 

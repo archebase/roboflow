@@ -4,9 +4,9 @@
 //! - `grammar/msg.pest` for ROS .msg format
 //! - `grammar/omg_idl.pest` for OMG IDL format
 
+use crate::core::{CodecError, Result as CoreResult};
 use crate::schema::ast::MessageSchema;
 use crate::schema::builtin_types;
-use crate::core::{CodecError, Result as CoreResult};
 
 // Import separate parsers (each has its own Rule enum in its own module)
 use super::idl_parser;

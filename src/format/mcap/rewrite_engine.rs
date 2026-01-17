@@ -6,11 +6,11 @@
 
 use std::collections::HashMap;
 
-use crate::encoding::{SchemaMetadata, CodecFactory, ProtobufSchemaTransformer};
 use crate::core::Result;
-use crate::format::mcap::{ChannelInfo, RawMessage};
+use crate::encoding::{CodecFactory, ProtobufSchemaTransformer, SchemaMetadata};
 use crate::format::mcap::transform::TransformPipeline;
 use crate::format::mcap::McapReader;
+use crate::format::mcap::{ChannelInfo, RawMessage};
 
 /// Extract package name from a protobuf type name.
 ///

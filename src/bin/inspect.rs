@@ -48,10 +48,7 @@ fn parse_args(args: &[String]) -> Result<(String, Command), String> {
             Command::Schema { topic }
         }
         "messages" => {
-            let count = args
-                .get(4)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(3);
+            let count = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(3);
             Command::Messages { count }
         }
         "hex" => {
@@ -110,7 +107,10 @@ fn show_info(reader: &robocodec::RoboReader, file: &str) -> Result<(), Box<dyn s
     Ok(())
 }
 
-fn show_topics(reader: &robocodec::RoboReader, file: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn show_topics(
+    reader: &robocodec::RoboReader,
+    file: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Topics in {file} ===");
     println!();
 
@@ -180,7 +180,10 @@ fn show_schema(
 
         println!("=== {} ===", ch.topic);
         println!("Type: {}", ch.message_type);
-        println!("Encoding: {:?}", ch.schema_encoding.as_deref().unwrap_or("unknown"));
+        println!(
+            "Encoding: {:?}",
+            ch.schema_encoding.as_deref().unwrap_or("unknown")
+        );
         println!();
 
         if let Some(schema) = &ch.schema {

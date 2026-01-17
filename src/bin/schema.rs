@@ -110,14 +110,20 @@ fn list_types(reader: &robocodec::RoboReader) {
 }
 
 /// Show full schema for a specific message type.
-fn show_schema(reader: &robocodec::RoboReader, msg_type: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn show_schema(
+    reader: &robocodec::RoboReader,
+    msg_type: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut found = false;
 
     for ch in reader.channels().values() {
         if ch.message_type.contains(msg_type) {
             found = true;
             println!("=== {} @ {} ===", ch.message_type, ch.topic);
-            println!("Encoding: {:?}", ch.schema_encoding.as_deref().unwrap_or("unknown"));
+            println!(
+                "Encoding: {:?}",
+                ch.schema_encoding.as_deref().unwrap_or("unknown")
+            );
 
             if let Some(schema) = &ch.schema {
                 println!();
@@ -194,7 +200,10 @@ fn search_types(reader: &robocodec::RoboReader, pattern: &str) {
         if msg_type_lower.contains(&pattern_lower) || topic_lower.contains(&pattern_lower) {
             println!("Type: {}", ch.message_type);
             println!("Topic: {}", ch.topic);
-            println!("Encoding: {}", ch.schema_encoding.as_deref().unwrap_or("unknown"));
+            println!(
+                "Encoding: {}",
+                ch.schema_encoding.as_deref().unwrap_or("unknown")
+            );
 
             if let Some(schema) = &ch.schema {
                 let preview: String = schema.lines().take(10).collect::<Vec<_>>().join("\n");

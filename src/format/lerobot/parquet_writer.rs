@@ -132,9 +132,10 @@ impl ParquetLeRobotWriter {
             let (msg, channel_info) = result?;
 
             // Find matching mapping
-            let mapping = config.mappings.iter().find(|m| {
-                channel_info.topic == m.topic || channel_info.topic.contains(&m.topic)
-            });
+            let mapping = config
+                .mappings
+                .iter()
+                .find(|m| channel_info.topic == m.topic || channel_info.topic.contains(&m.topic));
 
             let Some(mapping) = mapping else {
                 continue;
@@ -246,24 +247,14 @@ impl ParquetLeRobotWriter {
     }
 
     #[cfg(feature = "lerobot-parquet")]
-    fn process_state(
-        &mut self,
-        _msg: &crate::DecodedMessage,
-        _mapping: &Mapping,
-        timestamp: i64,
-    ) {
+    fn process_state(&mut self, _msg: &crate::DecodedMessage, _mapping: &Mapping, timestamp: i64) {
         // Add to observation data
         // For now, just track the timestamp
         self.observation_data.push(ObservationRow { timestamp });
     }
 
     #[cfg(feature = "lerobot-parquet")]
-    fn process_action(
-        &mut self,
-        _msg: &crate::DecodedMessage,
-        _mapping: &Mapping,
-        timestamp: i64,
-    ) {
+    fn process_action(&mut self, _msg: &crate::DecodedMessage, _mapping: &Mapping, timestamp: i64) {
         // Add to action data
         self.action_data.push(ActionRow { timestamp });
     }
@@ -334,10 +325,7 @@ impl ParquetLeRobotWriter {
             }
 
             let video_dir = self.output_dir.join("videos");
-            let video_path = video_dir.join(format!(
-                "video-{:06}-of-00001.mp4",
-                self.episode_id
-            ));
+            let video_path = video_dir.join(format!("video-{:06}-of-00001.mp4", self.episode_id));
 
             println!("  Encoding video: {} ({} frames)", feature, frames.len());
 
@@ -407,7 +395,10 @@ impl ParquetLeRobotWriter {
     /// Finalize and close the writer.
     pub fn finish(self, _config: &LeRobotConfig) -> Result<(), Box<dyn std::error::Error>> {
         println!();
-        println!("LeRobot Parquet dataset created: {}", self.output_dir.display());
+        println!(
+            "LeRobot Parquet dataset created: {}",
+            self.output_dir.display()
+        );
 
         Ok(())
     }
@@ -454,10 +445,7 @@ mod tests {
         writer.record_image_shape("camera_0".to_string(), 640, 480);
         writer.record_state_dimension("joints".to_string(), 7);
 
-        assert_eq!(
-            writer.image_shapes().get("camera_0"),
-            Some(&(640, 480))
-        );
+        assert_eq!(writer.image_shapes().get("camera_0"), Some(&(640, 480)));
         assert_eq!(writer.state_shapes().get("joints"), Some(&7));
     }
 }

@@ -318,7 +318,10 @@ fn test_round_trip_type_rename_with_verification() {
 
     // Step 4: Verify all types in the package were renamed
     for (topic, channel) in &output_channels {
-        if channel.message_type.starts_with(&format!("{}/", package_to_rename)) {
+        if channel
+            .message_type
+            .starts_with(&format!("{}/", package_to_rename))
+        {
             panic!(
                 "Found type in package '{}' that wasn't renamed: {} -> {}",
                 package_to_rename, topic, channel.message_type
@@ -391,10 +394,7 @@ fn test_round_trip_combined_topic_and_type_rename() {
 
     let new_package = format!("combined_{}", package_to_rename);
 
-    println!(
-        "\nRenaming topic '{}' to '{}'",
-        first_topic, renamed_topic
-    );
+    println!("\nRenaming topic '{}' to '{}'", first_topic, renamed_topic);
     println!(
         "Renaming package '{}' to '{}'",
         package_to_rename, new_package
@@ -562,8 +562,10 @@ fn test_round_trip_callerid_preservation() {
     }
 
     // Find topics with multiple callerids
-    let mut topic_callerids: std::collections::BTreeMap<String, std::collections::BTreeSet<Option<String>>> =
-        std::collections::BTreeMap::new();
+    let mut topic_callerids: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeSet<Option<String>>,
+    > = std::collections::BTreeMap::new();
     for ch in &original_channels {
         topic_callerids
             .entry(ch.topic.clone())
@@ -578,7 +580,12 @@ fn test_round_trip_callerid_preservation() {
 
     println!("\nTopics with multiple callerids:");
     for (topic, callerids) in &multi_callerid_topics {
-        println!("  {} has {} unique callerids: {:?}", topic, callerids.len(), callerids);
+        println!(
+            "  {} has {} unique callerids: {:?}",
+            topic,
+            callerids.len(),
+            callerids
+        );
     }
 
     // Step 2: Rewrite without transformations
@@ -613,13 +620,11 @@ fn test_round_trip_callerid_preservation() {
 
     // Verify all callerids are preserved
     for orig_ch in &original_channels {
-        let found = output_channels
-            .iter()
-            .any(|out_ch| {
-                out_ch.topic == orig_ch.topic
-                    && out_ch.callerid == orig_ch.callerid
-                    && out_ch.message_type == orig_ch.message_type
-            });
+        let found = output_channels.iter().any(|out_ch| {
+            out_ch.topic == orig_ch.topic
+                && out_ch.callerid == orig_ch.callerid
+                && out_ch.message_type == orig_ch.message_type
+        });
 
         assert!(
             found,
@@ -629,8 +634,10 @@ fn test_round_trip_callerid_preservation() {
     }
 
     // Verify multi-callerid topics are preserved
-    let mut output_topic_callerids: std::collections::BTreeMap<String, std::collections::BTreeSet<Option<String>>> =
-        std::collections::BTreeMap::new();
+    let mut output_topic_callerids: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeSet<Option<String>>,
+    > = std::collections::BTreeMap::new();
     for ch in &output_channels {
         output_topic_callerids
             .entry(ch.topic.clone())
@@ -710,8 +717,10 @@ fn test_round_trip_multiple_tf_connections() {
         "/tf channel count should be preserved"
     );
 
-    let output_tf_callerids: std::collections::BTreeSet<Option<String>> =
-        output_tf_channels.iter().map(|ch| ch.callerid.clone()).collect();
+    let output_tf_callerids: std::collections::BTreeSet<Option<String>> = output_tf_channels
+        .iter()
+        .map(|ch| ch.callerid.clone())
+        .collect();
 
     assert_eq!(
         tf_callerids, output_tf_callerids,
@@ -769,13 +778,11 @@ fn test_round_trip_with_transform_preserves_callerid() {
         );
 
         for orig_ch in &original_channels {
-            let found = output_channels
-                .iter()
-                .any(|out_ch| {
-                    out_ch.topic == orig_ch.topic
-                        && out_ch.callerid == orig_ch.callerid
-                        && out_ch.message_type == orig_ch.message_type
-                });
+            let found = output_channels.iter().any(|out_ch| {
+                out_ch.topic == orig_ch.topic
+                    && out_ch.callerid == orig_ch.callerid
+                    && out_ch.message_type == orig_ch.message_type
+            });
             assert!(
                 found,
                 "Channel (topic={}, callerid={:?}, type={}) not found in output",
@@ -809,10 +816,7 @@ fn test_round_trip_with_transform_preserves_callerid() {
     assert!(result.is_ok(), "Rewrite should succeed: {:?}", result.err());
 
     let stats = result.unwrap();
-    println!(
-        "\nTopics renamed: {}",
-        stats.topics_renamed
-    );
+    println!("\nTopics renamed: {}", stats.topics_renamed);
 
     // Step 3: Verify callerids are preserved in renamed topic
     let reader_output = BagFormatReader::open(output_path).unwrap();
@@ -837,8 +841,10 @@ fn test_round_trip_with_transform_preserves_callerid() {
         renamed_topic
     );
 
-    let renamed_tf_callerids: std::collections::BTreeSet<Option<String>> =
-        renamed_tf_channels.iter().map(|ch| ch.callerid.clone()).collect();
+    let renamed_tf_callerids: std::collections::BTreeSet<Option<String>> = renamed_tf_channels
+        .iter()
+        .map(|ch| ch.callerid.clone())
+        .collect();
 
     println!("Renamed /tf callerids: {:?}", renamed_tf_callerids);
 
@@ -870,14 +876,26 @@ fn test_round_trip_test_23_bag() {
     println!("Original channels from leaf_gyor BAG:");
     for ch in &original_channels {
         let callerid_info = ch.callerid.as_deref().unwrap_or("none");
-        println!("  {} (callerid: {}) -> {}", ch.topic, callerid_info, ch.message_type);
+        println!(
+            "  {} (callerid: {}) -> {}",
+            ch.topic, callerid_info, ch.message_type
+        );
     }
 
-    let original_tf_count = original_channels.iter().filter(|ch| ch.topic == "/tf").count();
-    let original_diagnostics_count = original_channels.iter().filter(|ch| ch.topic == "/diagnostics").count();
+    let original_tf_count = original_channels
+        .iter()
+        .filter(|ch| ch.topic == "/tf")
+        .count();
+    let original_diagnostics_count = original_channels
+        .iter()
+        .filter(|ch| ch.topic == "/diagnostics")
+        .count();
 
     println!("\nOriginal /tf connections: {}", original_tf_count);
-    println!("Original /diagnostics connections: {}", original_diagnostics_count);
+    println!(
+        "Original /diagnostics connections: {}",
+        original_diagnostics_count
+    );
 
     // Verify we have multiple /tf and /diagnostics connections
     assert!(
@@ -909,14 +927,26 @@ fn test_round_trip_test_23_bag() {
     println!("\nOutput channels from leaf_gyor BAG:");
     for ch in &output_channels {
         let callerid_info = ch.callerid.as_deref().unwrap_or("none");
-        println!("  {} (callerid: {}) -> {}", ch.topic, callerid_info, ch.message_type);
+        println!(
+            "  {} (callerid: {}) -> {}",
+            ch.topic, callerid_info, ch.message_type
+        );
     }
 
-    let output_tf_count = output_channels.iter().filter(|ch| ch.topic == "/tf").count();
-    let output_diagnostics_count = output_channels.iter().filter(|ch| ch.topic == "/diagnostics").count();
+    let output_tf_count = output_channels
+        .iter()
+        .filter(|ch| ch.topic == "/tf")
+        .count();
+    let output_diagnostics_count = output_channels
+        .iter()
+        .filter(|ch| ch.topic == "/diagnostics")
+        .count();
 
     println!("\nOutput /tf connections: {}", output_tf_count);
-    println!("Output /diagnostics connections: {}", output_diagnostics_count);
+    println!(
+        "Output /diagnostics connections: {}",
+        output_diagnostics_count
+    );
 
     // Verify same number of connections
     assert_eq!(
@@ -929,10 +959,16 @@ fn test_round_trip_test_23_bag() {
     );
 
     // Verify callerids are preserved for /tf
-    let original_tf_callerids: std::collections::BTreeSet<Option<String>> =
-        original_channels.iter().filter(|ch| ch.topic == "/tf").map(|ch| ch.callerid.clone()).collect();
-    let output_tf_callerids: std::collections::BTreeSet<Option<String>> =
-        output_channels.iter().filter(|ch| ch.topic == "/tf").map(|ch| ch.callerid.clone()).collect();
+    let original_tf_callerids: std::collections::BTreeSet<Option<String>> = original_channels
+        .iter()
+        .filter(|ch| ch.topic == "/tf")
+        .map(|ch| ch.callerid.clone())
+        .collect();
+    let output_tf_callerids: std::collections::BTreeSet<Option<String>> = output_channels
+        .iter()
+        .filter(|ch| ch.topic == "/tf")
+        .map(|ch| ch.callerid.clone())
+        .collect();
 
     println!("\nOriginal /tf callerids: {:?}", original_tf_callerids);
     println!("Output /tf callerids: {:?}", output_tf_callerids);
@@ -943,12 +979,21 @@ fn test_round_trip_test_23_bag() {
     );
 
     // Verify callerids are preserved for /diagnostics
-    let original_diag_callerids: std::collections::BTreeSet<Option<String>> =
-        original_channels.iter().filter(|ch| ch.topic == "/diagnostics").map(|ch| ch.callerid.clone()).collect();
-    let output_diag_callerids: std::collections::BTreeSet<Option<String>> =
-        output_channels.iter().filter(|ch| ch.topic == "/diagnostics").map(|ch| ch.callerid.clone()).collect();
+    let original_diag_callerids: std::collections::BTreeSet<Option<String>> = original_channels
+        .iter()
+        .filter(|ch| ch.topic == "/diagnostics")
+        .map(|ch| ch.callerid.clone())
+        .collect();
+    let output_diag_callerids: std::collections::BTreeSet<Option<String>> = output_channels
+        .iter()
+        .filter(|ch| ch.topic == "/diagnostics")
+        .map(|ch| ch.callerid.clone())
+        .collect();
 
-    println!("\nOriginal /diagnostics callerids: {:?}", original_diag_callerids);
+    println!(
+        "\nOriginal /diagnostics callerids: {:?}",
+        original_diag_callerids
+    );
     println!("Output /diagnostics callerids: {:?}", output_diag_callerids);
 
     assert_eq!(
@@ -1156,11 +1201,17 @@ fn bag_to_mcap_conversion(
 
     // Apply transforms and add schemas and channels
     for (&ch_id, channel) in &channels {
-        let (transformed_type, transformed_schema) = pipeline.transform_type(&channel.message_type, channel.schema.as_deref());
-        let transformed_topic = pipeline.transform_topic(&channel.topic).unwrap_or_else(|| channel.topic.clone());
+        let (transformed_type, transformed_schema) =
+            pipeline.transform_type(&channel.message_type, channel.schema.as_deref());
+        let transformed_topic = pipeline
+            .transform_topic(&channel.topic)
+            .unwrap_or_else(|| channel.topic.clone());
 
         // Use the transformed schema if available, otherwise use the original
-        let schema_text = transformed_schema.as_deref().or(channel.schema.as_deref()).unwrap_or("");
+        let schema_text = transformed_schema
+            .as_deref()
+            .or(channel.schema.as_deref())
+            .unwrap_or("");
         let schema_bytes = schema_text.as_bytes();
 
         // Check if schema already exists, and if not, add it with proper error handling
@@ -1170,7 +1221,9 @@ fn bag_to_mcap_conversion(
             } else {
                 let id = mcap_writer
                     .add_schema(&transformed_type, "ros1msg", schema_bytes)
-                    .map_err(|e| format!("Failed to add schema for type {}: {}", transformed_type, e))?;
+                    .map_err(|e| {
+                        format!("Failed to add schema for type {}: {}", transformed_type, e)
+                    })?;
                 schema_ids.insert(transformed_type.clone(), id);
                 id
             }
@@ -1201,7 +1254,10 @@ fn bag_to_mcap_conversion(
         let out_ch_id = match channel_ids.get(&msg.channel_id) {
             Some(&id) => id,
             None => {
-                eprintln!("Warning: Unknown channel_id {}, skipping message", msg.channel_id);
+                eprintln!(
+                    "Warning: Unknown channel_id {}, skipping message",
+                    msg.channel_id
+                );
                 continue;
             }
         };
@@ -1223,7 +1279,10 @@ fn bag_to_mcap_conversion(
 
     drop(mcap_writer);
 
-    println!("  Converted {} messages from BAG to MCAP: {}", msg_count, output);
+    println!(
+        "  Converted {} messages from BAG to MCAP: {}",
+        msg_count, output
+    );
 
     Ok(())
 }
@@ -1265,11 +1324,20 @@ fn mcap_to_bag_conversion(
             };
             (type_name, definition)
         } else {
-            (channel.message_type.clone(), channel.schema.clone().unwrap_or_default())
+            (
+                channel.message_type.clone(),
+                channel.schema.clone().unwrap_or_default(),
+            )
         };
 
         let callerid = channel.callerid.as_deref().unwrap_or("");
-        writer.add_connection_with_callerid(conn_id, &transformed_topic, &message_type, &message_definition, callerid)?;
+        writer.add_connection_with_callerid(
+            conn_id,
+            &transformed_topic,
+            &message_type,
+            &message_definition,
+            callerid,
+        )?;
         channel_ids.insert(ch_id, conn_id);
         conn_id += 1;
     }
@@ -1293,7 +1361,10 @@ fn mcap_to_bag_conversion(
 
     writer.finish()?;
 
-    println!("  Converted {} messages from MCAP to BAG: {}", msg_count, output);
+    println!(
+        "  Converted {} messages from MCAP to BAG: {}",
+        msg_count, output
+    );
 
     Ok(())
 }
@@ -1327,10 +1398,7 @@ fn test_round_trip_robocodec_test_17_bag_read() {
     }
 
     // Verify we have channels
-    assert!(
-        !channels.is_empty(),
-        "Should have at least one channel"
-    );
+    assert!(!channels.is_empty(), "Should have at least one channel");
 
     // Count messages
     let msg_count = count_bag_messages(input_path);
@@ -1345,9 +1413,11 @@ fn test_round_trip_robocodec_test_17_bag_read() {
     // Verify we extracted exactly 2 messages per topic
     let expected_count = channels.len() * 2;
     assert_eq!(
-        msg_count, expected_count,
+        msg_count,
+        expected_count,
         "Should have exactly 2 messages per topic ({} topics = {} messages)",
-        channels.len(), expected_count
+        channels.len(),
+        expected_count
     );
 
     println!("\nrobocodec_test_17.bag read test passed!");
@@ -1368,20 +1438,23 @@ fn test_round_trip_robocodec_test_17_bag_rewrite() {
     let original_channels = collect_channels(&reader_original);
     let original_msg_count = count_bag_messages(input_path).unwrap();
 
-    println!("Original: {} channels, {} messages", original_channels.len(), original_msg_count);
+    println!(
+        "Original: {} channels, {} messages",
+        original_channels.len(),
+        original_msg_count
+    );
 
     // Rewrite without transformations
     let options = RewriteOptions::default();
     let mut rewriter = BagBagRewriter::with_options(options);
     let result = rewriter.rewrite(input_path, output_path);
-    assert!(
-        result.is_ok(),
-        "Rewrite should succeed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Rewrite should succeed: {:?}", result.err());
 
     let stats = result.unwrap();
-    println!("Rewrite stats: {} channels, {} messages", stats.channel_count, stats.message_count);
+    println!(
+        "Rewrite stats: {} channels, {} messages",
+        stats.channel_count, stats.message_count
+    );
 
     // Verify output is valid and readable
     let reader_output = BagFormatReader::open(output_path);

@@ -50,12 +50,7 @@ impl LeRobotConfig {
     pub fn state_mappings(&self) -> Vec<&Mapping> {
         self.mappings
             .iter()
-            .filter(|m| {
-                matches!(
-                    m.mapping_type,
-                    MappingType::State | MappingType::Action
-                )
-            })
+            .filter(|m| matches!(m.mapping_type, MappingType::State | MappingType::Action))
             .collect()
     }
 }
@@ -306,12 +301,9 @@ type = "image"
 
         // Should include both state and action mappings, but not image
         assert_eq!(state_mappings.len(), 2);
-        assert!(state_mappings.iter().all(|m| {
-            matches!(
-                m.mapping_type,
-                MappingType::State | MappingType::Action
-            )
-        }));
+        assert!(state_mappings
+            .iter()
+            .all(|m| { matches!(m.mapping_type, MappingType::State | MappingType::Action) }));
     }
 
     #[test]

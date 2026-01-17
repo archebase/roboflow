@@ -47,7 +47,12 @@ fn temp_bag_path(name: &str) -> PathBuf {
 }
 
 /// Create a minimal test bag file with messages
-fn create_test_bag(path: &PathBuf, topic: &str, message_type: &str, schema: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn create_test_bag(
+    path: &PathBuf,
+    topic: &str,
+    message_type: &str,
+    schema: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut writer = BagWriter::create(path)?;
 
     // Add connection
@@ -148,11 +153,7 @@ fn test_rewriter_caches_schemas_from_bag() {
     let mut rewriter = BagRewriter::with_options(options);
     let result = rewriter.rewrite(&input_path, &output_path);
 
-    assert!(
-        result.is_ok(),
-        "Rewrite should succeed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Rewrite should succeed: {:?}", result.err());
 
     let stats = result.unwrap();
     assert!(stats.message_count > 0);
@@ -379,7 +380,13 @@ fn test_rewriter_preserves_callerid() {
 
     let mut writer = BagWriter::create(&input_path).unwrap();
     writer
-        .add_connection_with_callerid(0, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF, "/talker")
+        .add_connection_with_callerid(
+            0,
+            "/chatter",
+            "std_msgs/String",
+            STD_MSGS_STRING_DEF,
+            "/talker",
+        )
         .unwrap();
     writer
         .write_message(&BagMessage::from_raw(0, 1_500_000_000, vec![1, 2, 3]))
@@ -389,7 +396,8 @@ fn test_rewriter_preserves_callerid() {
     let options = RewriteOptions::default();
 
     let mut rewriter = BagRewriter::with_options(options);
-    rewriter.rewrite(&input_path, &output_path)
+    rewriter
+        .rewrite(&input_path, &output_path)
         .expect("Rewrite should succeed");
 
     // Verify callerid is preserved
@@ -411,10 +419,22 @@ fn test_rewriter_preserves_multiple_callerids_for_same_topic() {
     let mut writer = BagWriter::create(&input_path).unwrap();
     // Two connections for the same topic with different callerids
     writer
-        .add_connection_with_callerid(0, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF, "/talker1")
+        .add_connection_with_callerid(
+            0,
+            "/chatter",
+            "std_msgs/String",
+            STD_MSGS_STRING_DEF,
+            "/talker1",
+        )
         .unwrap();
     writer
-        .add_connection_with_callerid(1, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF, "/talker2")
+        .add_connection_with_callerid(
+            1,
+            "/chatter",
+            "std_msgs/String",
+            STD_MSGS_STRING_DEF,
+            "/talker2",
+        )
         .unwrap();
     writer
         .write_message(&BagMessage::from_raw(0, 1_500_000_000, vec![1, 2, 3]))
@@ -427,7 +447,8 @@ fn test_rewriter_preserves_multiple_callerids_for_same_topic() {
     let options = RewriteOptions::default();
 
     let mut rewriter = BagRewriter::with_options(options);
-    rewriter.rewrite(&input_path, &output_path)
+    rewriter
+        .rewrite(&input_path, &output_path)
         .expect("Rewrite should succeed");
 
     // Verify both connections with different callerids are preserved
@@ -538,10 +559,15 @@ fn test_rewriter_tracks_reencoded_count() {
     assert!(result.is_ok());
 
     let stats = result.unwrap();
-    println!("Stats: message_count={}, reencoded_count={}, passthrough_count={}",
-             stats.message_count, stats.reencoded_count, stats.passthrough_count);
+    println!(
+        "Stats: message_count={}, reencoded_count={}, passthrough_count={}",
+        stats.message_count, stats.reencoded_count, stats.passthrough_count
+    );
     // Either the message is re-encoded or passed through, or at least written
-    assert!(stats.message_count > 0, "Should have processed at least one message");
+    assert!(
+        stats.message_count > 0,
+        "Should have processed at least one message"
+    );
 }
 
 // ============================================================================

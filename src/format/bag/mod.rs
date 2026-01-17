@@ -2,11 +2,11 @@
 //!
 //! Provides reading and writing of ROS1 bag files.
 
-pub mod writer;
 pub mod rewriter;
+pub mod writer;
 
-pub use writer::{BagMessage, BagWriter};
 pub use rewriter::BagRewriter;
+pub use writer::{BagMessage, BagWriter};
 
 // Re-export bag-related types from the reader module
 pub use crate::reader::{BagRawMessageIter, BagRawMessageStream};

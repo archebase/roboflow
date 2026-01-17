@@ -126,7 +126,8 @@ impl BagRewriter {
             // Check if we already have a connection for this (topic, callerid) combination
             // This ensures we don't merge connections from different publishers
             let conn_key = (transformed_topic.clone(), callerid.clone());
-            let new_conn_id = if let Some(&existing_id) = topic_callerid_to_new_conn.get(&conn_key) {
+            let new_conn_id = if let Some(&existing_id) = topic_callerid_to_new_conn.get(&conn_key)
+            {
                 existing_id
             } else {
                 let new_id = next_new_conn_id;
@@ -220,11 +221,7 @@ impl BagRewriter {
             // Try to decode and re-encode CDR messages
             if let Some(type_str) = transformed_type {
                 if let Some(schema) = schemas.get(type_str) {
-                    match self.rewrite_cdr_message(
-                        &cdr_decoder,
-                        &raw_msg,
-                        schema,
-                    ) {
+                    match self.rewrite_cdr_message(&cdr_decoder, &raw_msg, schema) {
                         Ok(data) => {
                             // Write re-encoded message
                             writer.write_message(&crate::format::bag::BagMessage::from_raw(
@@ -300,11 +297,8 @@ impl BagRewriter {
                         Ok(mut schema) => {
                             // Apply package renaming if types differ
                             if target_type != channel.message_type {
-                                let old_package = channel
-                                    .message_type
-                                    .split('/')
-                                    .next()
-                                    .unwrap_or("");
+                                let old_package =
+                                    channel.message_type.split('/').next().unwrap_or("");
                                 let new_package = target_type.split('/').next().unwrap_or("");
 
                                 if !old_package.is_empty()

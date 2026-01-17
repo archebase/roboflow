@@ -68,7 +68,10 @@ impl McapFormatWriter {
         })?;
 
         let writer = mcap::Writer::new(BufWriter::new(file)).map_err(|e| {
-            CodecError::encode("McapFormatWriter", format!("Failed to create MCAP writer: {e}"))
+            CodecError::encode(
+                "McapFormatWriter",
+                format!("Failed to create MCAP writer: {e}"),
+            )
         })?;
 
         Ok(Self {
@@ -88,21 +91,21 @@ impl FormatWriter for McapFormatWriter {
         }
 
         // Add schema if not exists
-        let schema_id = *self.schema_ids.entry(msg_type.to_string()).or_insert_with(|| {
-            self.writer
-                .add_schema(msg_type, "ros2msg", schema.as_bytes())
-                .unwrap_or(0) // Use schema_id 0 if add_schema fails
-        });
+        let schema_id = *self
+            .schema_ids
+            .entry(msg_type.to_string())
+            .or_insert_with(|| {
+                self.writer
+                    .add_schema(msg_type, "ros2msg", schema.as_bytes())
+                    .unwrap_or(0) // Use schema_id 0 if add_schema fails
+            });
 
         // Add channel
         let channel_id = self
             .writer
             .add_channel(schema_id, topic, "cdr", &BTreeMap::new())
             .map_err(|e| {
-                CodecError::encode(
-                    "McapFormatWriter",
-                    format!("Failed to add channel: {e}"),
-                )
+                CodecError::encode("McapFormatWriter", format!("Failed to add channel: {e}"))
             })?;
 
         self.channel_ids.insert(topic.to_string(), channel_id);
@@ -110,15 +113,12 @@ impl FormatWriter for McapFormatWriter {
     }
 
     fn write_message(&mut self, topic: &str, data: &[u8], time_ns: u64) -> Result<()> {
-        let channel_id = *self
-            .channel_ids
-            .get(topic)
-            .ok_or_else(|| {
-                CodecError::encode(
-                    "McapFormatWriter",
-                    format!("Channel not found: {topic}. Call add_channel first."),
-                )
-            })?;
+        let channel_id = *self.channel_ids.get(topic).ok_or_else(|| {
+            CodecError::encode(
+                "McapFormatWriter",
+                format!("Channel not found: {topic}. Call add_channel first."),
+            )
+        })?;
 
         let sequence = self.sequences.entry(channel_id).or_insert(0);
 
@@ -141,9 +141,9 @@ impl FormatWriter for McapFormatWriter {
     }
 
     fn finish(&mut self) -> Result<()> {
-        self.writer
-            .finish()
-            .map_err(|e| CodecError::encode("McapFormatWriter", format!("Failed to finish: {e}")))?;
+        self.writer.finish().map_err(|e| {
+            CodecError::encode("McapFormatWriter", format!("Failed to finish: {e}"))
+        })?;
         Ok(())
     }
 
@@ -192,8 +192,7 @@ impl FormatWriter for BagFormatWriter {
 
         // Add connection
         if let Some(writer) = &mut self.writer {
-            writer
-                .add_connection(self.next_conn_id, topic, msg_type, schema)?;
+            writer.add_connection(self.next_conn_id, topic, msg_type, schema)?;
         }
 
         self.conn_ids.insert(topic.to_string(), self.next_conn_id);
@@ -219,9 +218,9 @@ impl FormatWriter for BagFormatWriter {
 
     fn finish(&mut self) -> Result<()> {
         if let Some(writer) = self.writer.take() {
-            writer
-                .finish()
-                .map_err(|e| CodecError::encode("BagFormatWriter", format!("Failed to finish: {e}")))?;
+            writer.finish().map_err(|e| {
+                CodecError::encode("BagFormatWriter", format!("Failed to finish: {e}"))
+            })?;
         }
         Ok(())
     }
@@ -269,9 +268,7 @@ impl RoboWriter {
             _ => {
                 return Err(CodecError::encode(
                     "RoboWriter",
-                    format!(
-                        "Unknown file format: '.{extension}'. Supported: .mcap, .bag",
-                    ),
+                    format!("Unknown file format: '.{extension}'. Supported: .mcap, .bag",),
                 ))
             }
         };
@@ -338,7 +335,11 @@ mod tests {
     fn test_robo_writer_create_mcap() {
         let temp_file = std::env::temp_dir().join("test_writer.mcap");
         let result = RoboWriter::create(&temp_file);
-        assert!(result.is_ok(), "Failed to create MCAP writer: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to create MCAP writer: {:?}",
+            result.err()
+        );
         // Cleanup
         let _ = std::fs::remove_file(&temp_file);
     }
@@ -347,7 +348,11 @@ mod tests {
     fn test_robo_writer_create_bag() {
         let temp_file = std::env::temp_dir().join("test_writer.bag");
         let result = RoboWriter::create(&temp_file);
-        assert!(result.is_ok(), "Failed to create BAG writer: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to create BAG writer: {:?}",
+            result.err()
+        );
         // Cleanup
         let _ = std::fs::remove_file(&temp_file);
     }
