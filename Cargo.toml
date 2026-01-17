@@ -1,0 +1,72 @@
+[package]
+name = "robocodec"
+version = "0.1.0"
+edition = "2021"
+authors = ["Strata Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/yourusername/strata"
+description = "Schema-driven message codec supporting CDR, protobuf, and JSON"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+anyhow = "1.0"
+pest = "2.7"
+pest_derive = "2.7"
+byteorder = "1.5"
+mcap = "0.24"
+memmap2 = "0.9"
+prost = "0.13"
+prost-types = "0.13"
+prost-reflect = "0.14"
+rosbag = "0.6"
+hex = "0.4"
+toml = "0.8"
+regex = "1.10"
+# Structured logging
+tracing = "0.1"
+
+# LeRobot support (optional dependencies)
+hdf5 = { version = "0.8", optional = true }
+polars = { version = "0.41", features = ["parquet"], optional = true }
+
+# PyO3 for Python bindings (optional, gated by "python" feature)
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py311"], optional = true }
+
+# LeRobot features (optional, disabled by default)
+[features]
+lerobot-hdf5 = ["dep:hdf5"]
+lerobot-parquet = ["dep:polars"]
+lerobot-all = ["lerobot-hdf5", "lerobot-parquet"]
+# Python bindings via PyO3
+python = ["pyo3"]
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+paste = "1.0"
+
+# Binaries
+[[bin]]
+name = "convert"
+path = "src/bin/convert.rs"
+
+[[bin]]
+name = "extract"
+path = "src/bin/extract.rs"
+
+[[bin]]
+name = "inspect"
+path = "src/bin/inspect.rs"
+
+[[bin]]
+name = "schema"
+path = "src/bin/schema.rs"
+
+[[bin]]
+name = "search"
+path = "src/bin/search.rs"
+
+[[bin]]
+name = "extract_sample"
+path = "src/bin/extract_sample.rs"
