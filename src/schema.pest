@@ -1,0 +1,120 @@
+// Unified Pest grammar for both IDL and ROS .msg schema files
+//
+// This grammar can parse:
+// 1. OMG IDL format (modules, structs, sequences)
+// 2. ROS .msg format (simple field lists, constants)
+
+WHITESPACE = _{ " " | "\t" | "\r" }
+NEWLINE = _{ "\n" | "\r\n" }
+
+// ============================================================
+// Entry Point
+// ============================================================
+
+schema_file = { SOI ~ (idl_structure | msg_structure) ~ EOI }
+
+// ============================================================
+// IDL Format (OMG IDL with modules and structs)
+// ============================================================
+
+idl_structure = {
+    NEWLINE* ~ (module_def | struct_def | include_directive) ~
+    (include_directive | module_def | struct_def | comment_line)*
+}
+
+include_directive = @{
+    "#" ~ "include" ~ "\"" ~ ident ~ ( "." ~ ident )* ~ "\"" ~ NEWLINE?
+}
+
+module_def = @{
+    "module" ~ ident ~ "{" ~ NEWLINE* ~ (module_def | struct_def)* ~ "};" ~ NEWLINE?
+}
+
+struct_def = @{
+    "struct" ~ ident ~ "{" ~ NEWLINE* ~ idl_member* ~ "};" ~ NEWLINE?
+}
+
+idl_member = @{
+    metadata? ~ type_spec ~ ident ~ ";" ~ NEWLINE?
+}
+
+metadata = @{
+    "@" ~ "verbatim" ~ "(" ~ attribute* ~ ")"
+}
+
+attribute = @{ ident ~ "=" ~ string_literal }
+
+// ============================================================
+// MSG Format (Simple ROS .msg style)
+// ============================================================
+
+// Entry point for MSG parsing - handles leading/trailing whitespace
+msg_structure = {
+    SOI ~ NEWLINE* ~
+    (msg_field_primitive | msg_field_array | msg_field_nested | comment_line | separator_line)+ ~
+    EOI
+}
+
+// Primitive type field: int32 value
+msg_field_primitive = @{ primitive_type ~ ident ~ ("=" ~ constant_val)? ~ NEWLINE? }
+
+// Array field: int32[] values or int32[5] fixed
+msg_field_array = @{ primitive_type ~ "[" ~ array_size? ~ "]" ~ ident ~ ("=" ~ constant_val)? ~ NEWLINE? }
+
+// Nested type field: std_msgs/Header header
+msg_field_nested = @{ nested_type ~ ident ~ ("=" ~ constant_val)? ~ NEWLINE? }
+
+// Array type rule for IDL type_spec
+primitive_array = { primitive_type ~ "[" ~ array_size? ~ "]" }
+
+separator_line = @{ "===" ~ ("=")* ~ NEWLINE }
+comment_line = @{ comment ~ NEWLINE }
+
+// ============================================================
+// Shared Type Specifications
+// ============================================================
+
+type_spec = @{
+    idl_sequence | primitive_type | nested_type | primitive_array
+}
+
+idl_sequence = @{ "sequence" ~ "<" ~ type_base ~ ">" }
+
+// Base type (primitive or identifier)
+type_base = @{ primitive_type | ident }
+
+// Primitive types - atomic for efficient matching
+primitive_type = @{
+    "bool" | "boolean"
+  | "int8" | "int16" | "int32" | "int64"
+  | "uint8" | "uint16" | "uint32" | "uint64"
+  | "float32" | "float64" | "float" | "double"
+  | "string" | "wstring"
+  | "byte" | "char"
+  | "time" | "duration"
+}
+
+// Nested message type (package/Name or just Name)
+nested_type = @{ package ~ ("/" ~ ident)? }
+
+// Package identifier
+package = @{ ident ~ ("." ~ ident)* }
+
+// ============================================================
+// Shared Atoms
+// ============================================================
+
+ident = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+array_size = @{ int_literal }
+constant_val = @{ int_literal | float_literal | string_literal | bool_literal }
+
+// Literals
+int_literal = @{ "-"? ~ ASCII_DIGIT+ }
+float_literal = @{ "-"? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT* ~ exp? }
+exp = @{ ("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+ }
+string_literal = @{ "\"" ~ string_content* ~ "\"" }
+string_content = @{ !"\"" ~ ANY }
+bool_literal = @{ "true" | "TRUE" | "false" | "FALSE" }
+
+// Comments (both # and // style)
+comment = _{ ("#" | "//") ~ (!NEWLINE ~ ANY)* }

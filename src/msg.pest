@@ -1,0 +1,72 @@
+// ROS .msg format grammar
+//
+// Simple grammar for ROS .msg format files
+
+WHITESPACE = _{ " " | "\t" | "\r" }
+NEWLINE = _{ "\n" | "\r\n" }
+
+// ============================================================
+// Entry Point
+// ============================================================
+
+schema = { SOI ~ root_msg ~ (separator ~ dependency_msg)* ~ EOI }
+
+// ============================================================
+// Block Structure
+// ============================================================
+
+root_msg = { (msg_line | comment | empty_line)* }
+dependency_msg = { dependency_header ~ (msg_line | comment | empty_line)* }
+
+// ============================================================
+// Line Types
+// ============================================================
+
+// Field line - single rule with all possibilities
+// Supports:
+// - Regular fields: "int32 x"
+// - Constants: "int32 FOO=5"
+// - Fields with defaults: "float64 x 0"
+msg_line = @{
+    base_type ~ array_suffix? ~ WHITESPACE+ ~ field_name ~
+    (WHITESPACE* ~ ("=" ~ WHITESPACE* ~ constant_value | default_value))? ~
+    WHITESPACE* ~ comment? ~ NEWLINE?
+}
+
+// Array suffix: the brackets part, optional
+array_suffix = @{ array_spec }
+
+dependency_header = @{ "MSG:" ~ WHITESPACE+ ~ package_type_name ~ NEWLINE }
+separator = @{ "="{3,} ~ NEWLINE }
+
+// ============================================================
+// Field Components
+// ============================================================
+
+// Base types - list primitive types first, then fall back to package names
+base_type = @{
+    "float32" | "float64" | "float" | "double" |
+    "uint32" | "uint64" | "uint16" | "uint8" |
+    "int32" | "int64" | "int16" | "int8" |
+    "string" | "wstring" |
+    "bool" | "boolean" |
+    "byte" | "char" |
+    "time" | "duration" |
+    nested_type
+}
+
+// Nested type: package/Name (must come after primitives to avoid partial matches)
+nested_type = @{ package_type_name }
+
+array_spec = @{ "[" ~ ASCII_DIGIT* ~ "]" }
+field_name = @{ (ASCII_ALPHANUMERIC | "_")+ }
+package_type_name = @{ (ASCII_ALPHANUMERIC | "/" | "_")+ }
+constant_value = @{ (ASCII_ALPHANUMERIC | "." | "-" | "_" | "+" | "\"" | "\'")+ }
+default_value = @{ (ASCII_ALPHANUMERIC | "." | "-" | "_")+ }
+
+// ============================================================
+// Utilities
+// ============================================================
+
+comment = @{ "#" ~ (!NEWLINE ~ ANY)* ~ NEWLINE? }
+empty_line = @{ WHITESPACE* ~ NEWLINE }

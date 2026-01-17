@@ -1,0 +1,58 @@
+# LeRobot dataset conversion configuration.
+#
+# This config maps MCAP topics to LeRobot dataset features for
+# converting robotics data to the LeRobot format.
+#
+# Usage:
+#   cargo run --bin convert --features lerobot-hdf5 -- \
+#     to-lerobot input.mcap ./output_dir tests/fixtures/lerobot.toml
+
+[dataset]
+# Dataset name (used in metadata)
+name = "robot_dataset"
+# Frames per second for the dataset
+fps = 30
+# Robot type (optional): "genie_s", "stretch", "solo", etc.
+robot_type = "genie_s"
+
+# Topic to LeRobot feature mapping.
+# Each mapping specifies an MCAP topic and its corresponding LeRobot feature.
+[[mappings]]
+# MCAP topic name (can be partial match)
+topic = "/camera/cam_high"
+# LeRobot feature path: "observation.<name>" or "action.<name>"
+feature = "observation.camera_0"
+# Data type: "image", "state", "action", or "timestamp"
+type = "image"
+
+[[mappings]]
+topic = "/camera/cam_left_wrist"
+feature = "observation.camera_1"
+type = "image"
+
+[[mappings]]
+topic = "/camera/cam_right_wrist"
+feature = "observation.camera_2"
+type = "image"
+
+[[mappings]]
+topic = "io_teleop/joint_states"
+feature = "observation.state"
+type = "state"
+
+[[mappings]]
+topic = "io_teleop/joint_cmd"
+feature = "action"
+type = "action"
+
+[[mappings]]
+topic = "/timestamp"
+feature = "observation.timestamp"
+type = "timestamp"
+
+# Output format configuration.
+[output]
+# Formats to generate: "hdf5", "parquet", or both (empty = both)
+formats = ["hdf5", "parquet"]
+# Image format for Parquet output: "mp4" (video) or "raw" (embedded)
+image_format = "mp4"
