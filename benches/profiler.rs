@@ -161,20 +161,11 @@ impl PresetArg {
     }
 }
 
+#[derive(Default)]
 struct ConversionConfig {
     mode: Option<PerformanceMode>,
     batch_size: Option<usize>,
     compress_threads: Option<usize>,
-}
-
-impl Default for ConversionConfig {
-    fn default() -> Self {
-        Self {
-            mode: None,
-            batch_size: None,
-            compress_threads: None,
-        }
-    }
 }
 
 /// Run conversion once and return metrics.
@@ -214,13 +205,17 @@ fn run_conversion(
             // Apply batch size if specified
             if let Some(batch_size) = conv_config.batch_size {
                 use robocodec::pipeline::hyper::config::{BatcherConfig, PrefetcherConfig};
-                let mut batcher = BatcherConfig::default();
-                batcher.target_size = batch_size;
+                let batcher = BatcherConfig {
+                    target_size: batch_size,
+                    ..Default::default()
+                };
                 builder = builder.batcher(batcher);
 
                 // Also scale prefetch block size proportionally
-                let mut prefetcher = PrefetcherConfig::default();
-                prefetcher.block_size = (batch_size / 4).max(1024 * 1024); // At least 1MB
+                let prefetcher = PrefetcherConfig {
+                    block_size: (batch_size / 4).max(1024 * 1024), // At least 1MB
+                    ..Default::default()
+                };
                 builder = builder.prefetcher(prefetcher);
             }
 

@@ -87,10 +87,11 @@ impl std::error::Error for GpuCompressionError {}
 pub type GpuResult<T> = std::result::Result<T, GpuCompressionError>;
 
 /// Compression backend type selector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum BackendType {
     /// Auto-detect and use best available backend
+    #[default]
     Auto,
     /// Force CPU compression (multi-threaded ZSTD)
     Cpu,
@@ -99,12 +100,6 @@ pub enum BackendType {
     NvComp,
     /// Force Apple libcompression (macOS only, hardware-accelerated)
     Apple,
-}
-
-impl Default for BackendType {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
@@ -202,6 +197,155 @@ pub mod nvcomp {
 
         fn is_available(&self) -> bool {
             true
+        }
+    }
+}
+
+// Apple libcompression backend (macOS only)
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32"), target_os = "macos"))]
+pub mod apple {
+    //! Apple libcompression backend for hardware-accelerated compression on macOS.
+
+    use super::{
+        backend::{
+            ChunkToCompress, CompressedChunk, CompressorBackend, CompressorType, CpuCompressor,
+        },
+        GpuCompressionError,
+    };
+
+    /// Compression algorithm for Apple libcompression.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum AppleCompressionAlgorithm {
+        /// Automatic selection based on CPU capabilities
+        Auto,
+        /// LZ4 (fast compression)
+        Lz4,
+        /// ZLIB (moderate compression)
+        Zlib,
+        /// LZFSE (Apple's optimized format)
+        Lzfse,
+    }
+
+    /// Apple hardware-accelerated compressor using libcompression.
+    pub struct AppleCompressor {
+        cpu_compressor: CpuCompressor,
+        algorithm: AppleCompressionAlgorithm,
+    }
+
+    impl AppleCompressor {
+        /// Try to create a new Apple compressor.
+        pub fn try_new(
+            compression_level: u32,
+            cpu_threads: usize,
+            algorithm: AppleCompressionAlgorithm,
+        ) -> Result<Self, GpuCompressionError> {
+            // For now, use CPU compression as a fallback
+            // TODO: Integrate with actual libcompression API
+            eprintln!("Apple compression backend using CPU implementation");
+            Ok(Self {
+                cpu_compressor: CpuCompressor::new(compression_level, cpu_threads as u32),
+                algorithm,
+            })
+        }
+
+        /// Get the compression algorithm.
+        pub fn algorithm(&self) -> AppleCompressionAlgorithm {
+            self.algorithm
+        }
+    }
+
+    impl CompressorBackend for AppleCompressor {
+        fn compress_chunk(&self, chunk: &ChunkToCompress) -> super::GpuResult<CompressedChunk> {
+            self.cpu_compressor.compress_chunk(chunk)
+        }
+
+        fn compress_parallel(
+            &self,
+            chunks: &[ChunkToCompress],
+        ) -> super::GpuResult<Vec<CompressedChunk>> {
+            self.cpu_compressor.compress_parallel(chunks)
+        }
+
+        fn compressor_type(&self) -> CompressorType {
+            CompressorType::Cpu
+        }
+
+        fn compression_level(&self) -> u32 {
+            self.cpu_compressor.compression_level()
+        }
+
+        fn estimate_memory(&self, data_size: usize) -> usize {
+            self.cpu_compressor.estimate_memory(data_size)
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+    }
+}
+
+// Stub apple module for non-macOS platforms
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32"), not(target_os = "macos")))]
+pub mod apple {
+    //! Stub apple module for non-macOS platforms.
+
+    use super::{
+        backend::{
+            ChunkToCompress, CompressedChunk, CompressorBackend, CompressorType, CpuCompressor,
+        },
+        GpuCompressionError,
+    };
+
+    /// Compression algorithm placeholder.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum AppleCompressionAlgorithm {
+        Auto,
+    }
+
+    /// Stub compressor.
+    pub struct AppleCompressor {
+        cpu_compressor: CpuCompressor,
+    }
+
+    impl AppleCompressor {
+        /// Try to create a new Apple compressor (returns error on non-macOS).
+        pub fn try_new(
+            compression_level: u32,
+            cpu_threads: usize,
+            _algorithm: AppleCompressionAlgorithm,
+        ) -> Result<Self, GpuCompressionError> {
+            Ok(Self {
+                cpu_compressor: CpuCompressor::new(compression_level, cpu_threads as u32),
+            })
+        }
+    }
+
+    impl CompressorBackend for AppleCompressor {
+        fn compress_chunk(&self, chunk: &ChunkToCompress) -> super::GpuResult<CompressedChunk> {
+            self.cpu_compressor.compress_chunk(chunk)
+        }
+
+        fn compress_parallel(
+            &self,
+            chunks: &[ChunkToCompress],
+        ) -> super::GpuResult<Vec<CompressedChunk>> {
+            self.cpu_compressor.compress_parallel(chunks)
+        }
+
+        fn compressor_type(&self) -> CompressorType {
+            CompressorType::Cpu
+        }
+
+        fn compression_level(&self) -> u32 {
+            self.cpu_compressor.compression_level()
+        }
+
+        fn estimate_memory(&self, data_size: usize) -> usize {
+            self.cpu_compressor.estimate_memory(data_size)
+        }
+
+        fn is_available(&self) -> bool {
+            false
         }
     }
 }

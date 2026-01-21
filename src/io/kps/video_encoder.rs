@@ -634,22 +634,13 @@ impl DepthMkvEncoder {
 
             let file = std::fs::File::create(&path)?;
             let mut w = BufWriter::new(file);
-            let mut encoder =
-                png::Encoder::new(&mut w, frame.width, frame.height).map_err(|_| {
-                    VideoEncoderError::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "PNG encoder creation failed",
-                    ))
-                })?;
+            let mut encoder = png::Encoder::new(&mut w, frame.width, frame.height);
 
             encoder.set_color(png::ColorType::Grayscale);
             encoder.set_depth(png::BitDepth::Sixteen);
 
             let mut writer = encoder.write_header().map_err(|_| {
-                VideoEncoderError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "PNG header write failed",
-                ))
+                VideoEncoderError::Io(std::io::Error::other("PNG header write failed"))
             })?;
 
             let depth_data: Vec<u16> = frame
@@ -658,11 +649,11 @@ impl DepthMkvEncoder {
                 .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
                 .collect();
 
-            writer.write_image_data(&depth_data).map_err(|_| {
-                VideoEncoderError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "PNG data write failed",
-                ))
+            // Convert u16 to bytes for PNG writing
+            let depth_bytes: Vec<u8> = depth_data.iter().flat_map(|v| v.to_le_bytes()).collect();
+
+            writer.write_image_data(&depth_bytes).map_err(|_| {
+                VideoEncoderError::Io(std::io::Error::other("PNG data write failed"))
             })?;
 
             paths.push(path);

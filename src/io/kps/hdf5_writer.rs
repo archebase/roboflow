@@ -7,6 +7,18 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::config::KpsConfig;
+use crate::format::kps::config::Mapping;
+use crate::io::kps::writers::base::KpsWriterError;
+
+/// Buffered image data for HDF5 writing.
+#[derive(Debug, Clone)]
+struct BufferedImageData {
+    #[allow(dead_code)]
+    width: u32,
+    #[allow(dead_code)]
+    height: u32,
+    data: Vec<u8>,
+}
 
 /// HDF5 Kps dataset writer.
 ///
@@ -17,6 +29,10 @@ pub struct Hdf5KpsWriter {
     frame_count: usize,
     image_shapes: HashMap<String, (usize, usize)>,
     state_shapes: HashMap<String, usize>,
+    // Buffers for data collection
+    image_buffers: HashMap<String, Vec<BufferedImageData>>,
+    state_buffers: HashMap<String, Vec<Vec<f32>>>,
+    action_buffers: HashMap<String, Vec<Vec<f32>>>,
 }
 
 impl Hdf5KpsWriter {
@@ -36,6 +52,9 @@ impl Hdf5KpsWriter {
             frame_count: 0,
             image_shapes: HashMap::new(),
             state_shapes: HashMap::new(),
+            image_buffers: HashMap::new(),
+            state_buffers: HashMap::new(),
+            action_buffers: HashMap::new(),
         })
     }
 
@@ -76,9 +95,7 @@ impl Hdf5KpsWriter {
         mcap_path: impl AsRef<Path>,
         config: &KpsConfig,
     ) -> Result<usize, Box<dyn std::error::Error>> {
-        use crate::format::kps::config::{Mapping, MappingType};
         use hdf5::File as Hdf5File;
-        use hdf5::Group;
 
         let mcap_path_ref = mcap_path.as_ref();
 
@@ -89,30 +106,10 @@ impl Hdf5KpsWriter {
         // Open MCAP file
         let reader = crate::RoboReader::open(mcap_path_ref)?;
 
-        // Create HDF5 file
-        let hdf5_path = self
-            .output_dir
-            .join(format!("episode_{:06}.hdf5", self.episode_id));
-        let hdf5_file = Hdf5File::create(&hdf5_path)?;
-
-        println!("  Created HDF5 file: {}", hdf5_path.display());
-
-        // Create groups
-        let obs_group = hdf5_file.create_group("observations")?;
-        let action_group = hdf5_file.create_group("actions")?;
-        let metadata_group = hdf5_file.create_group("metadata")?;
-
-        // Track datasets and buffers
-        let mut image_datasets: HashMap<String, hdf5::Dataset> = HashMap::new();
-        let mut state_datasets: HashMap<String, hdf5::Dataset> = HashMap::new();
-        let mut action_datasets: HashMap<String, hdf5::Dataset> = HashMap::new();
-
-        let mut max_frames = 0usize;
+        // First pass: collect all data into buffers
         let mut frame_index = 0usize;
 
-        // Process messages
-        let iter = reader.decode_messages()?;
-        for result in iter {
+        for result in reader.decode_messages()? {
             let (msg, channel_info) = result?;
 
             // Find matching mapping
@@ -125,146 +122,126 @@ impl Hdf5KpsWriter {
                 continue;
             };
 
-            // Write based on type
+            // Buffer data based on type
             match &mapping.mapping_type {
-                MappingType::Image => {
-                    self.write_image_to_hdf5(
-                        &hdf5_file,
-                        &obs_group,
-                        mapping,
-                        &msg,
-                        &mut image_datasets,
-                    )?;
+                crate::format::kps::config::MappingType::Image => {
+                    self.buffer_image_data(mapping, &msg)?;
                 }
-                MappingType::State | MappingType::Action => {
-                    self.write_state_to_hdf5(
-                        &hdf5_file,
-                        if matches!(mapping.mapping_type, MappingType::Action) {
-                            &action_group
-                        } else {
-                            &obs_group
-                        },
+                crate::format::kps::config::MappingType::State
+                | crate::format::kps::config::MappingType::Action => {
+                    self.buffer_state_data(
                         mapping,
                         &msg,
-                        if matches!(mapping.mapping_type, MappingType::Action) {
-                            &mut action_datasets
-                        } else {
-                            &mut state_datasets
-                        },
+                        matches!(
+                            mapping.mapping_type,
+                            crate::format::kps::config::MappingType::Action
+                        ),
                     )?;
                 }
                 _ => {}
             }
 
             frame_index += 1;
-            if frame_index % 100 == 0 {
+            if frame_index.is_multiple_of(100) {
                 println!("  Processed {} frames...", frame_index);
             }
         }
 
         self.frame_count = frame_index;
-        max_frames = frame_index;
+
+        // Create HDF5 file and write all buffered data
+        let hdf5_path = self
+            .output_dir
+            .join(format!("episode_{:06}.hdf5", self.episode_id));
+        let hdf5_file = Hdf5File::create(&hdf5_path)?;
+
+        println!("  Created HDF5 file: {}", hdf5_path.display());
+
+        // Create groups
+        let obs_group = hdf5_file.create_group("observations")?;
+        let action_group = hdf5_file.create_group("actions")?;
+        let metadata_group = hdf5_file.create_group("metadata")?;
+
+        // Write all buffered data to HDF5
+        self.write_buffered_images(&obs_group)?;
+        self.write_buffered_states(&obs_group, false)?;
+        self.write_buffered_states(&action_group, true)?;
 
         // Write metadata
-        self.write_metadata(&metadata_group, config, max_frames)?;
+        self.write_metadata(&metadata_group, config, frame_index)?;
 
         println!("  Wrote {} frames", self.frame_count);
 
         Ok(self.frame_count)
     }
 
+    /// Buffer image data for later writing.
     #[cfg(feature = "kps-hdf5")]
-    fn write_image_to_hdf5(
+    fn buffer_image_data(
         &mut self,
-        _file: &hdf5::File,
-        obs_group: &hdf5::Group,
         mapping: &Mapping,
         msg: &crate::DecodedMessage,
-        datasets: &mut HashMap<String, hdf5::Dataset>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         use crate::CodecValue;
-        use hdf5::types::{FixedOpaque, VarLenOpaque};
 
-        // Extract image data
         let mut width = 0u32;
         let mut height = 0u32;
-        let mut data: Option<&[u8]> = None;
+        let mut image_data: Option<Vec<u8>> = None;
 
         for (key, value) in msg.iter() {
             match key.as_str() {
                 "width" => {
                     if let CodecValue::UInt32(w) = value {
                         width = *w;
-                        self.record_image_shape(
-                            mapping.topic.clone(),
-                            width as usize,
-                            height as usize,
-                        );
                     }
                 }
                 "height" => {
                     if let CodecValue::UInt32(h) = value {
                         height = *h;
-                        self.record_image_shape(
-                            mapping.topic.clone(),
-                            width as usize,
-                            height as usize,
-                        );
                     }
                 }
                 "data" => {
-                    if let CodecValue::Bytes(b) = value {
-                        data = Some(b);
+                    if let CodecValue::Bytes(bytes) = value {
+                        image_data = Some(bytes.clone());
                     }
                 }
                 _ => {}
             }
         }
 
-        let Some(image_data) = data else {
-            return Ok(()); // Skip if no image data
+        let Some(data) = image_data else {
+            return Ok(());
         };
 
-        // Parse feature path (e.g., "observation.camera_0" -> "images/camera_0")
-        let feature_name = mapping
-            .feature
-            .strip_prefix("observation.")
-            .unwrap_or(&mapping.feature);
-        let dataset_name = format!("images/{}", feature_name);
+        // Record image shape
+        if width > 0 && height > 0 {
+            self.record_image_shape(mapping.topic.clone(), width as usize, height as usize);
+        }
 
-        // Create or get dataset
-        let dataset = if !datasets.contains_key(&dataset_name) {
-            let dataspace = hdf5::dataspace::Dataspace::resizeable();
-            let dataset = obs_group.create_dataset(
-                &dataset_name,
-                dataspace,
-                &hdf5::datatype::DataType::Opaque(0),
-            )?;
-            datasets.insert(dataset_name.clone(), dataset);
-            dataset
-        } else {
-            datasets.get(&dataset_name).unwrap()
-        };
-
-        // Write image data as opaque
-        let opaque_data = FixedOpaque::new(image_data);
-        dataset.write(&opaque_data)?;
+        // Buffer the image data
+        let sanitized_name = mapping.topic.replace('/', "_");
+        self.image_buffers
+            .entry(sanitized_name)
+            .or_default()
+            .push(BufferedImageData {
+                width,
+                height,
+                data,
+            });
 
         Ok(())
     }
 
+    /// Buffer state data for later writing.
     #[cfg(feature = "kps-hdf5")]
-    fn write_state_to_hdf5(
+    fn buffer_state_data(
         &mut self,
-        _file: &hdf5::File,
-        group: &hdf5::Group,
         mapping: &Mapping,
         msg: &crate::DecodedMessage,
-        datasets: &mut HashMap<String, hdf5::Dataset>,
+        is_action: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         use crate::CodecValue;
 
-        // Extract numeric array data
         let mut values: Vec<f32> = Vec::new();
 
         for (_key, value) in msg.iter() {
@@ -280,8 +257,7 @@ impl Hdf5KpsWriter {
                 CodecValue::Float32(n) => values.push(*n),
                 CodecValue::Float64(n) => values.push(*n as f32),
                 CodecValue::Array(_) => {
-                    // Arrays might need special handling
-                    // For now, skip complex nested types
+                    // Skip complex nested types
                 }
                 _ => {}
             }
@@ -293,29 +269,90 @@ impl Hdf5KpsWriter {
 
         self.record_state_dimension(mapping.topic.clone(), values.len());
 
-        // Parse feature path
-        let feature_name = mapping
-            .feature
-            .strip_prefix("observation.")
-            .or_else(|| mapping.feature.strip_prefix("action."))
-            .unwrap_or(&mapping.feature);
-
-        // Create or get dataset
-        let dataset = if !datasets.contains_key(feature_name) {
-            let dataspace = hdf5::dataspace::Dataspace::resizeable();
-            let dataset = group.create_dataset(
-                feature_name,
-                dataspace,
-                &hdf5::datatype::DataType::Float32,
-            )?;
-            datasets.insert(feature_name.to_string(), dataset);
-            dataset
+        // Buffer the state data
+        let sanitized_name = mapping.topic.replace('/', "_");
+        if is_action {
+            self.action_buffers
+                .entry(sanitized_name)
+                .or_default()
+                .push(values);
         } else {
-            datasets.get(feature_name).unwrap()
+            self.state_buffers
+                .entry(sanitized_name)
+                .or_default()
+                .push(values);
+        }
+
+        Ok(())
+    }
+
+    /// Write buffered image data to HDF5.
+    #[cfg(feature = "kps-hdf5")]
+    fn write_buffered_images(
+        &mut self,
+        group: &hdf5::Group,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use hdf5::types::VarLenArray;
+
+        for (name, images) in &self.image_buffers {
+            if images.is_empty() {
+                continue;
+            }
+
+            // Create dataset with variable-length arrays
+            let dataset = group
+                .new_dataset::<VarLenArray<u8>>()
+                .shape(images.len())
+                .create(&**name)
+                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+
+            // Convert images to VarLenArray and write
+            let varlen_images: Vec<VarLenArray<u8>> = images
+                .iter()
+                .map(|img| VarLenArray::from_slice(&img.data))
+                .collect();
+
+            dataset.write(&varlen_images)?;
+        }
+
+        Ok(())
+    }
+
+    /// Write buffered state data to HDF5.
+    #[cfg(feature = "kps-hdf5")]
+    fn write_buffered_states(
+        &mut self,
+        group: &hdf5::Group,
+        is_action: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let buffers = if is_action {
+            &self.action_buffers
+        } else {
+            &self.state_buffers
         };
 
-        // Write the array
-        dataset.write(&values)?;
+        for (name, states) in buffers {
+            if states.is_empty() {
+                continue;
+            }
+
+            // Determine the dimension (all states should have the same dimension)
+            let dim = states.first().map(|s| s.len()).unwrap_or(0);
+            if dim == 0 {
+                continue;
+            }
+
+            // Create 2D dataset [num_frames, dim]
+            let dataset = group
+                .new_dataset::<f32>()
+                .shape([states.len(), dim])
+                .create(&**name)
+                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+
+            // Flatten data into 1D array for HDF5
+            let flat_data: Vec<f32> = states.iter().flatten().copied().collect();
+            dataset.write(&flat_data)?;
+        }
 
         Ok(())
     }
@@ -327,20 +364,20 @@ impl Hdf5KpsWriter {
         config: &KpsConfig,
         frame_count: usize,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Write episode metadata
-        use hdf5::types::VarLenUnicode;
-
-        let metadata = vec![
-            ("dataset_name", config.dataset.name.as_str()),
-            ("fps", config.fps.to_string().as_str()),
-            ("total_frames", frame_count.to_string().as_str()),
+        // Write episode metadata as attributes on the group
+        // This avoids issues with the HDF5 dataset builder API
+        let metadata: Vec<(&str, String)> = vec![
+            ("dataset_name", config.dataset.name.clone()),
+            ("fps", config.dataset.fps.to_string()),
+            ("total_frames", frame_count.to_string()),
         ];
 
         for (key, value) in metadata {
-            let dataspace = hdf5::dataspace::Dataspace::scalar();
-            let dataset =
-                group.create_dataset(key, dataspace, &hdf5::datatype::DataType::VarLenUnicode)?;
-            dataset.write(&VarLenUnicode::new(value))?;
+            // Use the low-level attribute API
+            group
+                .attr(key)?
+                .write(&value)
+                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
         }
 
         Ok(())

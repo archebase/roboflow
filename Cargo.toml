@@ -60,7 +60,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # KPS support (optional dependencies)
-hdf5 = { version = "0.8", optional = true }
+hdf5 = { git = "https://github.com/archebase/hdf5-rs", optional = true }
 polars = { version = "0.41", features = ["parquet"], optional = true }
 png = { version = "0.17", optional = true }
 uuid = { version = "1.10", features = ["v4", "serde"] }
@@ -69,7 +69,8 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 tikv-jemallocator = { version = "0.6", optional = true }
 
 # PyO3 for Python bindings (optional, gated by "python" feature)
-pyo3 = { version = "0.25", features = ["abi3-py311"], optional = true }
+# Note: extension-module is included here to prevent libpython linking
+pyo3 = { version = "0.25", features = ["abi3-py311", "extension-module"], optional = true }
 
 # CLI argument parsing (used by profiler and other binaries)
 clap = { version = "4.5", features = ["derive"], optional = true }
@@ -87,11 +88,10 @@ kps-hdf5 = ["dep:hdf5"]
 kps-parquet = ["dep:polars"]
 kps-depth = ["dep:png"]
 kps-all = ["kps-hdf5", "kps-parquet", "kps-depth"]
-# Python bindings via PyO3
+# Python bindings via PyO3 (extension-module mode to prevent libpython linking)
 python = ["pyo3"]
-# Python extension module (use with maturin, not for cargo test)
-# This enables extension-module which prevents linking Python for standalone binaries
-extension-module = ["python", "pyo3/extension-module"]
+# Python extension module (alias for python, since extension-module is now default)
+extension-module = ["python"]
 # GPU compression (experimental)
 # Enables GPU-accelerated compression via nvCOMP
 # Requires: NVIDIA GPU, CUDA toolkit, nvCOMP library (Linux)

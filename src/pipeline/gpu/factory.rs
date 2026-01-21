@@ -69,7 +69,7 @@ impl GpuCompressorFactory {
                 {
                     match apple::AppleCompressor::try_new(
                         config.compression_level,
-                        config.cpu_threads,
+                        config.cpu_threads as usize,
                         apple::AppleCompressionAlgorithm::Auto,
                     ) {
                         Ok(compressor) => {
@@ -108,7 +108,7 @@ impl GpuCompressorFactory {
                     // On macOS, try Apple compression first
                     match apple::AppleCompressor::try_new(
                         config.compression_level,
-                        config.cpu_threads,
+                        config.cpu_threads as usize,
                         apple::AppleCompressionAlgorithm::Auto,
                     ) {
                         Ok(compressor) => {

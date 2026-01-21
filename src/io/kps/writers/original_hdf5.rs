@@ -29,7 +29,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::io::kps::config::KpsConfig;
 use crate::io::kps::writers::base::KpsWriterError;
 use crate::io::metadata::ChannelInfo;
 
@@ -99,6 +98,7 @@ impl OriginalMessage {
 /// Original HDF5 writer for proprio_stats_original.hdf5.
 ///
 /// This writer stores data at original frequencies without interpolation or resampling.
+#[allow(dead_code)] // Suppress warnings about unused fields during API migration
 pub struct OriginalHdf5Writer {
     /// Episode ID for this writer.
     episode_id: String,
@@ -161,8 +161,6 @@ impl OriginalHdf5Writer {
     ) -> Result<(), KpsWriterError> {
         #[cfg(feature = "kps-hdf5")]
         {
-            use hdf5::Group;
-
             // Create HDF5 file
             let hdf5_path = self.output_dir.join("proprio_stats_original.hdf5");
 
@@ -170,7 +168,8 @@ impl OriginalHdf5Writer {
                 hdf5::File::create(&hdf5_path).map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
             self.hdf5_file = Some(file);
 
-            let hdf5_file = self.hdf5_file.as_ref().unwrap();
+            // Clone the file to avoid borrow checker issues
+            let hdf5_file = self.hdf5_file.as_ref().unwrap().clone();
 
             // Create top-level groups
             let action_group = hdf5_file
@@ -193,7 +192,7 @@ impl OriginalHdf5Writer {
             self.groups.insert("metadata".to_string(), metadata_group);
 
             // Create metadata datasets
-            self.create_metadata_datasets(hdf5_file)?;
+            self.create_metadata_datasets(&hdf5_file)?;
 
             // Initialize buffers for all topics
             for channel in channels.values() {
@@ -222,26 +221,19 @@ impl OriginalHdf5Writer {
     /// Create metadata datasets.
     #[cfg(feature = "kps-hdf5")]
     fn create_metadata_datasets(&mut self, file: &hdf5::File) -> Result<(), KpsWriterError> {
-        // Original timestamps dataset
-        let ts_dataspace = hdf5::dataspace::Dataspace::rows(0);
-        let ts_dataset = file
-            .create_dataset(
-                "metadata/original_timestamps",
-                ts_dataspace,
-                &hdf5::dtype::Int64,
-            )
+        // Create original_timestamps dataset
+        let _ts_dataset = file
+            .new_dataset::<i64>()
+            .shape(0usize)
+            .create("metadata/original_timestamps")
             .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-        self.datasets
-            .insert("metadata/original_timestamps".to_string(), ts_dataset);
 
-        // Topics string array (for reference)
-        let topic_dataspace = hdf5::dataspace::Dataspace::rows(0);
-        let fixed_string = hdf5::datatype::FixedAscii::new(64);
-        let topic_dataset = file
-            .create_dataset("metadata/topics", topic_dataspace, &fixed_string)
+        // Create topics dataset (fixed-length ASCII strings)
+        let _topics_dataset = file
+            .new_dataset::<hdf5::types::FixedAscii<256>>()
+            .shape(0usize)
+            .create("metadata/topics")
             .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-        self.datasets
-            .insert("metadata/topics".to_string(), topic_dataset);
 
         Ok(())
     }
@@ -251,13 +243,16 @@ impl OriginalHdf5Writer {
     /// Messages are buffered and written to HDF5 on finalize.
     pub fn add_message(&mut self, msg: OriginalMessage) -> Result<(), KpsWriterError> {
         if let Some(values) = msg.extract_float_array() {
-            let buffer = self.topic_buffers.entry(msg.topic.clone()).or_default();
+            // Get dimension before moving values into the buffer
+            let dim = values.len();
+            let topic = msg.topic.clone();
+
+            let buffer = self.topic_buffers.entry(topic.clone()).or_default();
             buffer.push((msg.timestamp, values));
 
             // Update dimension tracking
-            let dim = values.len();
             self.topic_dimensions
-                .entry(msg.topic.clone())
+                .entry(topic)
                 .and_modify(|d| *d = (*d).max(dim))
                 .or_insert(dim);
 
@@ -304,9 +299,8 @@ impl OriginalHdf5Writer {
     /// Write all buffered data to HDF5.
     #[cfg(feature = "kps-hdf5")]
     fn write_buffered_data(&mut self) -> Result<(), KpsWriterError> {
-        use hdf5::types::VarLenArray;
-
-        let file = self.hdf5_file.as_ref().unwrap();
+        // Clone the file to avoid borrow checker issues
+        let file = self.hdf5_file.as_ref().unwrap().clone();
 
         // Create datasets for each topic with buffered data
         for (topic, buffer) in &self.topic_buffers {
@@ -342,20 +336,23 @@ impl OriginalHdf5Writer {
                 }
             }
 
-            // Create dataset with proper dimension
-            let dataspace = hdf5::dataspace::Dataspace::rows(buffer.len());
-            let dtype = VarLenArray::<f32>::new(dim);
+            // Create and write the dataset
             let dataset = file
-                .create_dataset(&v12_path, dataspace, &dtype)
+                .new_dataset::<f32>()
+                .shape([buffer.len(), dim])
+                .create(&*v12_path)
                 .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
 
-            // Write all values
-            let values: Vec<f32> = buffer.iter().flat_map(|(_, v)| v.iter().copied()).collect();
+            let flat_data: Vec<f32> = buffer
+                .iter()
+                .flat_map(|(_, values)| values.iter().copied())
+                .collect();
+
             dataset
-                .write(&values)
+                .write(&flat_data)
                 .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
 
-            self.datasets.insert(v12_path.clone(), dataset);
+            self.datasets.insert(v12_path, dataset);
         }
 
         // Write original timestamps
@@ -365,8 +362,14 @@ impl OriginalHdf5Writer {
             .flat_map(|buf| buf.iter().map(|(ts, _)| *ts as i64))
             .collect();
 
-        if let Some(dataset) = self.datasets.get("metadata/original_timestamps") {
-            dataset
+        if !all_timestamps.is_empty() {
+            let ts_dataset = file
+                .new_dataset::<i64>()
+                .shape(all_timestamps.len())
+                .create("metadata/original_timestamps")
+                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+
+            ts_dataset
                 .write(&all_timestamps)
                 .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
         }

@@ -6,16 +6,28 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::core::Result;
 use crate::io::kps::config::KpsConfig;
 use crate::io::kps::writers::base::{
     AlignedFrame, ImageData, KpsWriter, KpsWriterError, WriterStats,
 };
 use crate::io::metadata::ChannelInfo;
 
+/// Buffered image data for HDF5 writing.
+#[derive(Debug, Clone)]
+struct BufferedImageData {
+    data: Vec<u8>,
+    #[allow(dead_code)]
+    width: usize,
+    #[allow(dead_code)]
+    height: usize,
+}
+
 /// Streaming HDF5 writer for Kps datasets.
 ///
 /// This writer supports frame-by-frame writing for pipeline integration.
-/// It maintains HDF5 dataset handles and writes data incrementally.
+/// Data is buffered and written to HDF5 at finalization.
+#[allow(dead_code)] // Suppress warnings about unused HDF5 dataset fields during API migration
 pub struct StreamingHdf5Writer {
     /// Episode ID for this writer.
     episode_id: usize,
@@ -77,6 +89,15 @@ pub struct StreamingHdf5Writer {
 
     /// Start time for duration calculation.
     start_time: Option<std::time::Instant>,
+
+    /// Buffered image data for delayed writing.
+    image_buffers: HashMap<String, Vec<BufferedImageData>>,
+
+    /// Buffered state data for delayed writing.
+    state_buffers: HashMap<String, Vec<Vec<f32>>>,
+
+    /// Buffered action data for delayed writing.
+    action_buffers: HashMap<String, Vec<Vec<f32>>>,
 }
 
 impl StreamingHdf5Writer {
@@ -85,7 +106,7 @@ impl StreamingHdf5Writer {
         output_dir: impl AsRef<Path>,
         episode_id: usize,
         config: &KpsConfig,
-    ) -> Result<Self, KpsWriterError> {
+    ) -> std::result::Result<Self, KpsWriterError> {
         let output_dir = output_dir.as_ref();
         std::fs::create_dir_all(output_dir)?;
 
@@ -115,6 +136,9 @@ impl StreamingHdf5Writer {
             channels: HashMap::new(),
             config: Some(config.clone()),
             start_time: None,
+            image_buffers: HashMap::new(),
+            state_buffers: HashMap::new(),
+            action_buffers: HashMap::new(),
         })
     }
 
@@ -125,31 +149,47 @@ impl StreamingHdf5Writer {
         feature: &str,
         group: &hdf5::Group,
         is_image: bool,
-        shape: Option<&[usize]>,
-    ) -> Result<(), KpsWriterError> {
-        use hdf5::types::{FixedOpaque, Float32, VarLenArray};
+        _shape: Option<&[usize]>,
+    ) -> std::result::Result<(), KpsWriterError> {
+        use hdf5::types::VarLenArray;
 
         if is_image {
-            // For images, create an opaque dataset
-            let dataspace = hdf5::dataspace::Dataspace::resizeable();
-            let dataset = group
-                .create_dataset(feature, dataspace, &hdf5::datatype::DataType::Opaque(0))
-                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-            self.image_datasets.insert(feature.to_string(), dataset);
+            // For images, we use variable-length byte arrays
+            let images = self.image_buffers.get(feature);
+            let count = images.map(|v| v.len()).unwrap_or(0);
+
+            if count > 0 {
+                let dataset = group
+                    .new_dataset::<VarLenArray<u8>>()
+                    .shape(count)
+                    .create(feature)
+                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+                self.image_datasets.insert(feature.to_string(), dataset);
+            }
         } else {
-            // For state/action, create a float32 array dataset
-            let dataspace = hdf5::dataspace::Dataspace::rows(0);
-            let dtype = if let Some(dim) = shape {
-                // Fixed-size array
-                VarLenArray::new(*dim)
-            } else {
-                // Variable size
-                Float32
-            };
-            let dataset = group
-                .create_dataset(feature, dataspace, &dtype)
-                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-            self.state_datasets.insert(feature.to_string(), dataset);
+            // For state/action data, we use fixed-size 2D arrays
+            let states = self
+                .state_buffers
+                .get(feature)
+                .or_else(|| self.action_buffers.get(feature));
+            if let Some(states) = states {
+                let count = states.len();
+                let dim = states.first().map(|v| v.len()).unwrap_or(0);
+
+                if count > 0 && dim > 0 {
+                    let dataset = group
+                        .new_dataset::<f32>()
+                        .shape([count, dim])
+                        .create(feature)
+                        .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+
+                    if self.state_buffers.contains_key(feature) {
+                        self.state_datasets.insert(feature.to_string(), dataset);
+                    } else {
+                        self.action_datasets.insert(feature.to_string(), dataset);
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -161,18 +201,17 @@ impl StreamingHdf5Writer {
         &mut self,
         feature: &str,
         data: &ImageData,
-    ) -> Result<(), KpsWriterError> {
-        use hdf5::types::FixedOpaque;
-
-        if let Some(dataset) = self.image_datasets.get(feature) {
-            let opaque_data = FixedOpaque::new(&data.data);
-            dataset
-                .write(&opaque_data)
-                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-            Ok(())
-        } else {
-            Err(KpsWriterError::FeatureNotMapped(feature.to_string()))
-        }
+    ) -> std::result::Result<(), KpsWriterError> {
+        // Buffer the image data for writing at finalization
+        self.image_buffers
+            .entry(feature.to_string())
+            .or_default()
+            .push(BufferedImageData {
+                data: data.data.clone(),
+                width: data.width as usize,
+                height: data.height as usize,
+            });
+        Ok(())
     }
 
     /// Write state data to an HDF5 dataset.
@@ -181,24 +220,111 @@ impl StreamingHdf5Writer {
         &mut self,
         feature: &str,
         values: &[f32],
-    ) -> Result<(), KpsWriterError> {
-        if let Some(dataset) = self.state_datasets.get(feature) {
-            dataset
-                .write(values)
+    ) -> std::result::Result<(), KpsWriterError> {
+        // Buffer the state data for writing at finalization
+        self.state_buffers
+            .entry(feature.to_string())
+            .or_default()
+            .push(values.to_vec());
+        Ok(())
+    }
+
+    /// Write buffered data to HDF5 datasets.
+    #[cfg(feature = "kps-hdf5")]
+    fn write_buffered_data(&mut self) -> Result<()> {
+        use hdf5::types::VarLenArray;
+
+        let obs_group =
+            self.obs_group
+                .as_ref()
+                .ok_or_else(|| crate::core::CodecError::ParseError {
+                    context: "HDF5 writer".to_string(),
+                    message: "Observations group not initialized".to_string(),
+                })?;
+        let action_group =
+            self.action_group
+                .as_ref()
+                .ok_or_else(|| crate::core::CodecError::ParseError {
+                    context: "HDF5 writer".to_string(),
+                    message: "Actions group not initialized".to_string(),
+                })?;
+
+        // Write image data
+        for (feature, images) in &self.image_buffers {
+            if images.is_empty() {
+                continue;
+            }
+
+            let dataset = obs_group
+                .new_dataset::<VarLenArray<u8>>()
+                .shape(images.len())
+                .create(&**feature)
                 .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-            Ok(())
-        } else if let Some(dataset) = self.action_datasets.get(feature) {
+
+            let varlen_images: Vec<VarLenArray<u8>> = images
+                .iter()
+                .map(|img| VarLenArray::from_slice(&img.data))
+                .collect();
+
             dataset
-                .write(values)
+                .write(&varlen_images)
                 .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-            Ok(())
-        } else {
-            Err(KpsWriterError::FeatureNotMapped(feature.to_string()))
+            self.image_datasets.insert(feature.clone(), dataset);
         }
+
+        // Write state data
+        for (feature, states) in &self.state_buffers {
+            if states.is_empty() {
+                continue;
+            }
+
+            let dim = states.first().map(|s| s.len()).unwrap_or(0);
+            if dim == 0 {
+                continue;
+            }
+
+            let dataset = obs_group
+                .new_dataset::<f32>()
+                .shape([states.len(), dim])
+                .create(&**feature)
+                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+
+            let flat_data: Vec<f32> = states.iter().flatten().copied().collect();
+            dataset
+                .write(&flat_data)
+                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+            self.state_datasets.insert(feature.clone(), dataset);
+        }
+
+        // Write action data
+        for (feature, actions) in &self.action_buffers {
+            if actions.is_empty() {
+                continue;
+            }
+
+            let dim = actions.first().map(|a| a.len()).unwrap_or(0);
+            if dim == 0 {
+                continue;
+            }
+
+            let dataset = action_group
+                .new_dataset::<f32>()
+                .shape([actions.len(), dim])
+                .create(&**feature)
+                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+
+            let flat_data: Vec<f32> = actions.iter().flatten().copied().collect();
+            dataset
+                .write(&flat_data)
+                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+            self.action_datasets.insert(feature.clone(), dataset);
+        }
+
+        Ok(())
     }
 
     /// Write metadata files (info.json, episode.jsonl).
-    fn write_metadata_files(&self, config: &KpsConfig) -> Result<(), KpsWriterError> {
+    fn write_metadata_files(&self, config: &KpsConfig) -> std::result::Result<(), KpsWriterError> {
         use crate::io::kps::info;
 
         // Write info.json
@@ -230,11 +356,9 @@ impl KpsWriter for StreamingHdf5Writer {
         &mut self,
         config: &KpsConfig,
         channels: &HashMap<u16, ChannelInfo>,
-    ) -> Result<(), KpsWriterError> {
+    ) -> Result<()> {
         #[cfg(feature = "kps-hdf5")]
         {
-            use hdf5::Group;
-
             // Store config and channels
             self.config = Some(config.clone());
             for ch in channels.values() {
@@ -269,9 +393,6 @@ impl KpsWriter for StreamingHdf5Writer {
             self.metadata_group = Some(metadata_group);
 
             // Create datasets based on mappings
-            let obs_group = self.obs_group.as_ref().unwrap();
-            let action_group = self.action_group.as_ref().unwrap();
-
             for mapping in &config.mappings {
                 let feature_name = mapping
                     .feature
@@ -280,14 +401,17 @@ impl KpsWriter for StreamingHdf5Writer {
                     .unwrap_or(&mapping.feature);
 
                 let is_observation = mapping.feature.starts_with("observation.");
-                let group = if is_observation {
-                    obs_group
-                } else {
-                    action_group
-                };
                 let is_image = matches!(mapping.mapping_type, crate::io::kps::MappingType::Image);
 
-                self.create_dataset_for_feature(feature_name, group, is_image, None)?;
+                // Clone the appropriate group to avoid borrow checker issues
+                // hdf5::Group uses reference counting internally
+                let group = if is_observation {
+                    self.obs_group.as_ref().unwrap().clone()
+                } else {
+                    self.action_group.as_ref().unwrap().clone()
+                };
+
+                self.create_dataset_for_feature(feature_name, &group, is_image, None)?;
             }
 
             self.initialized = true;
@@ -299,19 +423,20 @@ impl KpsWriter for StreamingHdf5Writer {
         #[cfg(not(feature = "kps-hdf5"))]
         {
             let _ = (config, channels);
-            Err(KpsWriterError::Encoding(
-                "HDF5 support not enabled".to_string(),
-            ))
+            Err(crate::core::CodecError::ParseError {
+                context: "HDF5 writer".to_string(),
+                message: "HDF5 support not enabled".to_string(),
+            })
         }
     }
 
-    fn write_frame(&mut self, frame: &AlignedFrame) -> Result<(), KpsWriterError> {
+    fn write_frame(&mut self, frame: &AlignedFrame) -> Result<()> {
         #[cfg(feature = "kps-hdf5")]
         {
             if !self.initialized {
-                return Err(KpsWriterError::InvalidData(
-                    "Writer not initialized".to_string(),
-                ));
+                return Err(
+                    KpsWriterError::InvalidData("Writer not initialized".to_string()).into(),
+                );
             }
 
             // Write images
@@ -362,9 +487,10 @@ impl KpsWriter for StreamingHdf5Writer {
         #[cfg(not(feature = "kps-hdf5"))]
         {
             let _ = frame;
-            Err(KpsWriterError::Encoding(
-                "HDF5 support not enabled".to_string(),
-            ))
+            Err(crate::core::CodecError::ParseError {
+                context: "HDF5 writer".to_string(),
+                message: "HDF5 support not enabled".to_string(),
+            })
         }
     }
 
@@ -372,9 +498,12 @@ impl KpsWriter for StreamingHdf5Writer {
         &mut self,
         config: &KpsConfig,
         _camera_params: Option<&crate::io::kps::camera_params::CameraParamCollector>,
-    ) -> Result<WriterStats, KpsWriterError> {
+    ) -> Result<WriterStats> {
         #[cfg(feature = "kps-hdf5")]
         {
+            // Write all buffered data to HDF5 datasets
+            self.write_buffered_data()?;
+
             // Write metadata files
             self.write_metadata_files(config)?;
 
@@ -395,9 +524,10 @@ impl KpsWriter for StreamingHdf5Writer {
         #[cfg(not(feature = "kps-hdf5"))]
         {
             let _ = (config, _camera_params);
-            Err(KpsWriterError::Encoding(
-                "HDF5 support not enabled".to_string(),
-            ))
+            Err(crate::core::CodecError::ParseError {
+                context: "HDF5 writer".to_string(),
+                message: "HDF5 support not enabled".to_string(),
+            })
         }
     }
 

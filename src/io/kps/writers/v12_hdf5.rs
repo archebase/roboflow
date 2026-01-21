@@ -39,10 +39,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::core::Result;
 use crate::io::kps::config::KpsConfig;
-use crate::io::kps::writers::base::{
-    AlignedFrame, ImageData, KpsWriter, KpsWriterError, WriterStats,
-};
+use crate::io::kps::writers::base::{AlignedFrame, KpsWriter, KpsWriterError, WriterStats};
 use crate::io::metadata::ChannelInfo;
 
 /// Dataset specification for v1.2 HDF5 structure.
@@ -125,7 +124,7 @@ impl V12Hdf5Schema {
                 (parts[0], parts[1])
             } else {
                 // Default to "joint" group if not specified
-                ("joint", parts.get(0).unwrap_or(&"position"))
+                ("joint", *parts.first().unwrap_or(&"position"))
             };
 
             let path = format!("{}/{}/{}", group_base, joint_group, data_name);
@@ -219,6 +218,7 @@ impl V12Hdf5Schema {
 ///
 /// This writer creates HDF5 files with the v1.2 specification structure,
 /// including action/, state/, other_sensors/, and metadata/ groups.
+#[allow(dead_code)] // Suppress warnings about unused fields during API migration
 pub struct V12Hdf5Writer {
     /// Episode ID for this writer.
     episode_id: String,
@@ -261,6 +261,18 @@ pub struct V12Hdf5Writer {
 
     /// Start time for duration calculation.
     start_time: Option<std::time::Instant>,
+
+    /// Buffered state data by dataset path.
+    #[cfg(feature = "kps-hdf5")]
+    state_buffers: HashMap<String, Vec<Vec<f32>>>,
+
+    /// Buffered timestamp data.
+    #[cfg(feature = "kps-hdf5")]
+    timestamp_buffer: Vec<i64>,
+
+    /// Buffered frame index data.
+    #[cfg(feature = "kps-hdf5")]
+    frame_index_buffer: Vec<i32>,
 }
 
 impl V12Hdf5Writer {
@@ -270,7 +282,7 @@ impl V12Hdf5Writer {
         episode_id: &str,
         config: &KpsConfig,
         channels: &HashMap<u16, ChannelInfo>,
-    ) -> Result<Self, KpsWriterError> {
+    ) -> Result<Self> {
         let output_dir = output_dir.as_ref();
         std::fs::create_dir_all(output_dir)?;
 
@@ -300,14 +312,18 @@ impl V12Hdf5Writer {
             frame_dimensions: HashMap::new(),
             channels: channel_map,
             start_time: None,
+            #[cfg(feature = "kps-hdf5")]
+            state_buffers: HashMap::new(),
+            #[cfg(feature = "kps-hdf5")]
+            timestamp_buffer: Vec::new(),
+            #[cfg(feature = "kps-hdf5")]
+            frame_index_buffer: Vec::new(),
         })
     }
 
     /// Create the v1.2 HDF5 group structure.
     #[cfg(feature = "kps-hdf5")]
-    fn create_v12_structure(&mut self, file: &hdf5::File) -> Result<(), KpsWriterError> {
-        use hdf5::Group;
-
+    fn create_v12_structure(&mut self, file: &hdf5::File) -> Result<()> {
         // Create top-level groups
         let action_group = file
             .create_group("action")
@@ -330,7 +346,9 @@ impl V12Hdf5Writer {
         self.groups.insert("metadata".to_string(), metadata_group);
 
         // Create subgroups and datasets based on schema
-        for dataset_spec in &self.schema.datasets {
+        // Clone the dataset specs to avoid borrow checker issues
+        let dataset_specs = self.schema.datasets.clone();
+        for dataset_spec in &dataset_specs {
             self.create_dataset_from_spec(file, dataset_spec)?;
         }
 
@@ -339,20 +357,15 @@ impl V12Hdf5Writer {
 
     /// Create a dataset from a specification.
     #[cfg(feature = "kps-hdf5")]
-    fn create_dataset_from_spec(
-        &mut self,
-        file: &hdf5::File,
-        spec: &DatasetSpec,
-    ) -> Result<(), KpsWriterError> {
-        use hdf5::types::{Float32, VarLenArray};
-
+    fn create_dataset_from_spec(&mut self, file: &hdf5::File, spec: &DatasetSpec) -> Result<()> {
         // Ensure parent groups exist
         let path_parts: Vec<&str> = spec.path.split('/').collect();
         if path_parts.len() < 2 {
             return Err(KpsWriterError::InvalidData(format!(
                 "Invalid dataset path: {}",
                 spec.path
-            )));
+            ))
+            .into());
         }
 
         // Create parent groups
@@ -374,21 +387,79 @@ impl V12Hdf5Writer {
             }
         }
 
-        // Create the dataset
-        let dataspace = hdf5::dataspace::Dataspace::rows(0);
-        let dtype = if spec.shape.len() > 1 {
-            // Fixed-size array
-            VarLenArray::new(spec.shape[1])
-        } else {
-            Float32
+        // Create the dataset with proper shape and type based on dtype
+        let dataset = match spec.dtype {
+            DataType::Float32 => {
+                // For extendable datasets, use 0 for unlimited dimension
+                let shape: Vec<usize> = spec
+                    .shape
+                    .iter()
+                    .map(|&s| if s == 0 { 0 } else { s })
+                    .collect();
+                file.new_dataset::<f32>()
+                    .shape(shape.as_slice())
+                    .create(&*spec.path)
+                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?
+            }
+            DataType::Float64 => {
+                let shape: Vec<usize> = spec
+                    .shape
+                    .iter()
+                    .map(|&s| if s == 0 { 0 } else { s })
+                    .collect();
+                file.new_dataset::<f64>()
+                    .shape(shape.as_slice())
+                    .create(&*spec.path)
+                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?
+            }
+            DataType::Int32 => {
+                let shape: Vec<usize> = spec
+                    .shape
+                    .iter()
+                    .map(|&s| if s == 0 { 0 } else { s })
+                    .collect();
+                file.new_dataset::<i32>()
+                    .shape(shape.as_slice())
+                    .create(&*spec.path)
+                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?
+            }
+            DataType::Int64 => {
+                let shape: Vec<usize> = spec
+                    .shape
+                    .iter()
+                    .map(|&s| if s == 0 { 0 } else { s })
+                    .collect();
+                file.new_dataset::<i64>()
+                    .shape(shape.as_slice())
+                    .create(&*spec.path)
+                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?
+            }
+            DataType::UInt8 => {
+                let shape: Vec<usize> = spec
+                    .shape
+                    .iter()
+                    .map(|&s| if s == 0 { 0 } else { s })
+                    .collect();
+                file.new_dataset::<u8>()
+                    .shape(shape.as_slice())
+                    .create(&*spec.path)
+                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?
+            }
+            DataType::String => {
+                // For string data, use fixed-size array for now
+                let shape: Vec<usize> = spec
+                    .shape
+                    .iter()
+                    .map(|&s| if s == 0 { 1 } else { s })
+                    .collect();
+                file.new_dataset::<hdf5::types::FixedAscii<256>>()
+                    .shape(shape.as_slice())
+                    .create(&*spec.path)
+                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?
+            }
         };
 
-        let dataset = file
-            .create_dataset(&spec.path, dataspace, &dtype)
-            .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-
         self.datasets.insert(spec.path.clone(), dataset);
-
         Ok(())
     }
 
@@ -418,34 +489,71 @@ impl V12Hdf5Writer {
     }
 
     /// Write data to a v1.2 dataset.
+    ///
+    /// Data is buffered and written at finalization.
     #[cfg(feature = "kps-hdf5")]
-    fn write_to_dataset(&mut self, path: &str, data: &[f32]) -> Result<(), KpsWriterError> {
-        if let Some(dataset) = self.datasets.get(path) {
-            dataset
-                .write(data)
-                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-            Ok(())
-        } else {
-            // Dataset doesn't exist, create it on-the-fly
-            #[cfg(feature = "kps-hdf5")]
-            {
-                let file = self.hdf5_file.as_ref().unwrap();
-                let spec = DatasetSpec {
-                    path: path.to_string(),
-                    shape: vec![0, data.len()],
-                    dtype: DataType::Float32,
-                    description: format!("Auto-created dataset {}", path),
-                };
-                self.create_dataset_from_spec(file, &spec)?;
-                if let Some(dataset) = self.datasets.get(path) {
-                    dataset
-                        .write(data)
-                        .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-                    return Ok(());
-                }
+    fn write_to_dataset(&mut self, path: &str, data: &[f32]) -> Result<()> {
+        self.state_buffers
+            .entry(path.to_string())
+            .or_default()
+            .push(data.to_vec());
+        Ok(())
+    }
+
+    /// Write all buffered data to HDF5 datasets.
+    #[cfg(feature = "kps-hdf5")]
+    fn write_buffered_data(&mut self) -> Result<()> {
+        // Write state buffers
+        for (path, states) in &self.state_buffers {
+            if states.is_empty() {
+                continue;
             }
-            Err(KpsWriterError::FeatureNotMapped(path.to_string()))
+
+            let dim = states.first().map(|s| s.len()).unwrap_or(0);
+            if dim == 0 {
+                continue;
+            }
+
+            // Get or create dataset
+            if let Some(dataset) = self.datasets.get(path) {
+                // Resize to final size
+                dataset
+                    .resize([states.len(), dim])
+                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+
+                // Flatten and write
+                let flat_data: Vec<f32> = states.iter().flatten().copied().collect();
+                dataset
+                    .write(&flat_data)
+                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+            }
         }
+
+        // Write timestamp buffer
+        if !self.timestamp_buffer.is_empty() {
+            if let Some(dataset) = self.datasets.get("metadata/timestamps") {
+                dataset
+                    .resize([self.timestamp_buffer.len()])
+                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+                dataset
+                    .write(&self.timestamp_buffer)
+                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+            }
+        }
+
+        // Write frame index buffer
+        if !self.frame_index_buffer.is_empty() {
+            if let Some(dataset) = self.datasets.get("metadata/frame_index") {
+                dataset
+                    .resize([self.frame_index_buffer.len()])
+                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+                dataset
+                    .write(&self.frame_index_buffer)
+                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -454,7 +562,7 @@ impl KpsWriter for V12Hdf5Writer {
         &mut self,
         config: &KpsConfig,
         channels: &HashMap<u16, ChannelInfo>,
-    ) -> Result<(), KpsWriterError> {
+    ) -> Result<()> {
         #[cfg(feature = "kps-hdf5")]
         {
             use hdf5::File;
@@ -465,10 +573,12 @@ impl KpsWriter for V12Hdf5Writer {
             let file = File::create(&hdf5_path).map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
             self.hdf5_file = Some(file);
 
-            let hdf5_file = self.hdf5_file.as_ref().unwrap();
+            // Clone the file to avoid borrow checker issues
+            // hdf5::File uses reference counting internally
+            let hdf5_file = self.hdf5_file.as_ref().unwrap().clone();
 
             // Create v1.2 structure
-            self.create_v12_structure(hdf5_file)?;
+            self.create_v12_structure(&hdf5_file)?;
 
             // Update channels mapping
             self.channels.clear();
@@ -493,37 +603,30 @@ impl KpsWriter for V12Hdf5Writer {
         #[cfg(not(feature = "kps-hdf5"))]
         {
             let _ = (config, channels);
-            Err(KpsWriterError::Encoding(
-                "HDF5 support not enabled".to_string(),
-            ))
+            Err(crate::core::CodecError::ParseError {
+                context: "HDF5 writer".to_string(),
+                message: "HDF5 support not enabled".to_string(),
+            })
         }
     }
 
-    fn write_frame(&mut self, frame: &AlignedFrame) -> Result<(), KpsWriterError> {
+    fn write_frame(&mut self, frame: &AlignedFrame) -> Result<()> {
         #[cfg(feature = "kps-hdf5")]
         {
             if !self.initialized {
-                return Err(KpsWriterError::InvalidData(
-                    "Writer not initialized".to_string(),
-                ));
+                return Err(
+                    KpsWriterError::InvalidData("Writer not initialized".to_string()).into(),
+                );
             }
 
-            // Write metadata
+            // Buffer metadata
             let timestamp_ns = frame.timestamp as i64;
-            if let Some(dataset) = self.datasets.get("metadata/timestamps") {
-                dataset
-                    .write(&timestamp_ns)
-                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-            }
+            self.timestamp_buffer.push(timestamp_ns);
 
             let frame_idx = self.frame_count as i32;
-            if let Some(dataset) = self.datasets.get("metadata/frame_index") {
-                dataset
-                    .write(&frame_idx)
-                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-            }
+            self.frame_index_buffer.push(frame_idx);
 
-            // Write states (observations)
+            // Buffer states (observations)
             for (feature, values) in &frame.states {
                 if let Some(v12_path) = self.map_feature_to_v12_path(feature) {
                     self.write_to_dataset(&v12_path, values)?;
@@ -531,7 +634,7 @@ impl KpsWriter for V12Hdf5Writer {
                 }
             }
 
-            // Write actions
+            // Buffer actions
             for (feature, values) in &frame.actions {
                 if let Some(v12_path) = self.map_feature_to_v12_path(feature) {
                     self.write_to_dataset(&v12_path, values)?;
@@ -550,9 +653,10 @@ impl KpsWriter for V12Hdf5Writer {
         #[cfg(not(feature = "kps-hdf5"))]
         {
             let _ = frame;
-            Err(KpsWriterError::Encoding(
-                "HDF5 support not enabled".to_string(),
-            ))
+            Err(crate::core::CodecError::ParseError {
+                context: "HDF5 writer".to_string(),
+                message: "HDF5 support not enabled".to_string(),
+            })
         }
     }
 
@@ -560,9 +664,12 @@ impl KpsWriter for V12Hdf5Writer {
         &mut self,
         _config: &KpsConfig,
         _camera_params: Option<&crate::io::kps::camera_params::CameraParamCollector>,
-    ) -> Result<WriterStats, KpsWriterError> {
+    ) -> Result<WriterStats> {
         #[cfg(feature = "kps-hdf5")]
         {
+            // Write all buffered data to HDF5
+            self.write_buffered_data()?;
+
             // Close HDF5 file
             self.hdf5_file = None;
 
@@ -589,9 +696,10 @@ impl KpsWriter for V12Hdf5Writer {
         #[cfg(not(feature = "kps-hdf5"))]
         {
             let _ = (_config, _camera_params);
-            Err(KpsWriterError::Encoding(
-                "HDF5 support not enabled".to_string(),
-            ))
+            Err(crate::core::CodecError::ParseError {
+                context: "HDF5 writer".to_string(),
+                message: "HDF5 support not enabled".to_string(),
+            })
         }
     }
 
@@ -607,34 +715,48 @@ impl KpsWriter for V12Hdf5Writer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_map_feature_to_v12_path() {
-        let schema = V12Hdf5Schema { datasets: vec![] };
+        // Create a dummy writer for testing
+        let config = KpsConfig {
+            dataset: crate::io::kps::DatasetConfig {
+                name: "test".to_string(),
+                fps: 30,
+                robot_type: None,
+            },
+            mappings: vec![],
+            output: crate::io::kps::OutputConfig::default(),
+        };
+
+        let temp_dir = std::env::temp_dir();
+        let writer =
+            V12Hdf5Writer::create(&temp_dir, "test_episode", &config, &HashMap::new()).unwrap();
 
         // Test observation mapping
         assert_eq!(
-            schema.map_feature_to_v12_path("observation.joint.position"),
+            writer.map_feature_to_v12_path("observation.joint.position"),
             Some("state/joint/position".to_string())
         );
         assert_eq!(
-            schema.map_feature_to_v12_path("observation.effector.position"),
+            writer.map_feature_to_v12_path("observation.effector.position"),
             Some("state/effector/position".to_string())
         );
 
         // Test action mapping
         assert_eq!(
-            schema.map_feature_to_v12_path("action.joint.position"),
+            writer.map_feature_to_v12_path("action.joint.position"),
             Some("action/joint/position".to_string())
         );
         assert_eq!(
-            schema.map_feature_to_v12_path("action.effector.velocity"),
+            writer.map_feature_to_v12_path("action.effector.velocity"),
             Some("action/effector/velocity".to_string())
         );
 
         // Test invalid paths
-        assert_eq!(schema.map_feature_to_v12_path("invalid.path"), None);
-        assert_eq!(schema.map_feature_to_v12_path("observation"), None);
+        assert_eq!(writer.map_feature_to_v12_path("invalid.path"), None);
+        assert_eq!(writer.map_feature_to_v12_path("observation"), None);
     }
 
     #[test]

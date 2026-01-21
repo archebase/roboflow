@@ -225,15 +225,24 @@ impl TaskStatistics {
             }
 
             // Try to infer from dataset shapes
-            // Look for common frame-indexed datasets
-            for group in file.groups() {
-                for dataset_result in group.datasets() {
-                    if let Ok(dataset) = dataset_result {
-                        if let Ok(shape) = dataset.shape() {
-                            // First dimension is usually frame count
-                            if shape.ndim() >= 1 && shape.dims()[0] > 0 {
-                                return Ok(shape.dims()[0]);
-                            }
+            // Look for common KPS dataset paths
+            let common_paths = [
+                "state/joint/position",
+                "state/joint/velocity",
+                "action/joint/position",
+                "action/joint/velocity",
+                "state/effector/position",
+                "action/effector/position",
+                "observations",
+                "actions",
+            ];
+
+            for dataset_path in &common_paths {
+                if let Ok(dataset) = file.dataset(dataset_path) {
+                    if let Ok(dspace) = dataset.space() {
+                        let shape = dspace.shape();
+                        if !shape.is_empty() {
+                            return Ok(shape[0]);
                         }
                     }
                 }

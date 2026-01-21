@@ -179,11 +179,6 @@ impl PrefetcherStage {
                 debug!("No platform hints applied");
                 Ok(())
             }
-            _ => {
-                // macOS-specific hints are no-ops on Linux
-                debug!("macOS-specific hint ignored on Linux");
-                Ok(())
-            }
         }
 
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]

@@ -90,13 +90,10 @@ fmt: ## Format all code
 	@if command -v ruff >/dev/null 2>&1; then ruff check python/ --fix; else echo "⚠ ruff not found, skipping Python linting"; fi
 	@echo "✓ Code formatted"
 
-lint: lint-parquet ## Lint all code
+lint: ## Lint all code
+	@echo "Linting with all features..."
+	cargo clippy --all-targets --features python,kps-all -- -D warnings
 	@echo "✓ Linting passed"
-
-lint-parquet: ## Lint with Kps Parquet features (works on all platforms)
-	@echo "Linting with Kps Parquet features (python + kps-parquet)..."
-	cargo clippy --all-targets --features python,kps-parquet -- -D warnings
-	@echo "✓ Full linting passed"
 
 lint-all: ## Lint with all features including HDF5 (requires compatible HDF5)
 	@echo "Linting with all features (python + kps-all)..."
