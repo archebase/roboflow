@@ -275,7 +275,7 @@ impl OriginalHdf5Writer {
             || topic_lower.contains("goal")
         {
             ("action", "position")
-        } else if topic_lower.contains("velocity") {
+        } else if topic_lower.contains("velocity") || topic_lower.contains("velocities") {
             ("state", "velocity")
         } else {
             ("state", "position")

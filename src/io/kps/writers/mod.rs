@@ -94,6 +94,7 @@ pub fn create_writer(
 }
 
 #[cfg(test)]
+#[cfg(not(any(feature = "kps-parquet", feature = "kps-hdf5")))]
 mod tests {
     use super::*;
 

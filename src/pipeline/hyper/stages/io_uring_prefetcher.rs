@@ -71,6 +71,7 @@ pub struct IoUringPrefetcher {
     config: IoUringPrefetcherConfig,
     path: String,
     sender: Sender<PrefetchedBlock>,
+    #[allow(dead_code)]
     stats: Arc<PrefetcherStats>,
 }
 
@@ -192,7 +193,7 @@ impl IoUringPrefetcher {
             bytes_processed += block_size as u64;
             offset += block_size;
 
-            if blocks_processed % 100 == 0 {
+            if blocks_processed.is_multiple_of(100) {
                 debug!(
                     blocks_processed,
                     bytes_processed,
