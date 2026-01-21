@@ -1,3 +1,12 @@
+// Copyright (c) 2026 ArcheBase
+// Roboflow is licensed under Mulan PSL v2.
+// You can use this software according to the terms and conditions of the Mulan PSL v2.
+// You may obtain a copy of Mulan PSL v2 at:
+//     http://license.coscl.org.cn/MulanPSL2
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+// EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+// MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+
 //! MCAP rewrite engine orchestrator.
 //!
 //! This module provides the [`McapRewriteEngine`] which coordinates
@@ -572,7 +581,7 @@ mod tests {
 
     #[test]
     fn test_prepare_schemas_with_reader() {
-        let reader = crate::McapReader::open("./tests/fixtures/robocodec_test_5.mcap").unwrap();
+        let reader = crate::McapReader::open("tests/fixtures/robocodec_test_5.mcap").unwrap();
         let mut engine = McapRewriteEngine::new();
 
         // Should successfully prepare schemas
@@ -585,7 +594,7 @@ mod tests {
 
     #[test]
     fn test_prepare_schemas_with_transforms() {
-        let reader = crate::McapReader::open("./tests/fixtures/robocodec_test_5.mcap").unwrap();
+        let reader = crate::McapReader::open("tests/fixtures/robocodec_test_5.mcap").unwrap();
         let mut engine = McapRewriteEngine::new();
 
         // Create a transform pipeline using the builder
@@ -604,7 +613,7 @@ mod tests {
 
     #[test]
     fn test_protobuf_rewriting() {
-        let fixture_path = "./tests/fixtures/robocodec_test_3.mcap";
+        let fixture_path = "tests/fixtures/robocodec_test_3.mcap";
         let reader = crate::McapReader::open(fixture_path).unwrap_or_else(|e| {
             panic!("Failed to open {fixture_path}: {e}");
         });
