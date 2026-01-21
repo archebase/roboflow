@@ -100,7 +100,7 @@ impl IoUringPrefetcher {
     }
 
     #[instrument(skip(self))]
-    fn run(mut self) -> Result<PrefetcherStats> {
+    fn run(self) -> Result<PrefetcherStats> {
         let start = Instant::now();
 
         let file = File::open(&self.path).map_err(|e| {
@@ -120,7 +120,7 @@ impl IoUringPrefetcher {
         );
 
         // Create io_uring instance
-        let ring = IoUring::new(self.config.queue_depth).map_err(|e| {
+        let mut ring = IoUring::new(self.config.queue_depth).map_err(|e| {
             CodecError::encode(
                 "IoUringPrefetcher",
                 format!("Failed to create io_uring: {e}"),
@@ -155,7 +155,10 @@ impl IoUringPrefetcher {
 
             // Submit and wait for completion
             ring.submit_and_wait(1).map_err(|e| {
-                CodecError::encode("IoUringPrefetcher", format!("Failed to submit and wait: {e}"))
+                CodecError::encode(
+                    "IoUringPrefetcher",
+                    format!("Failed to submit and wait: {e}"),
+                )
             })?;
 
             // Get completion entry
