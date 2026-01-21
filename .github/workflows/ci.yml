@@ -62,8 +62,11 @@ jobs:
           fi
         shell: bash
 
+      # Note: Do NOT use --all-features or --features python here.
+      # PyO3's extension-module feature prevents linking in standalone test binaries.
+      # Python bindings are tested separately via maturin in the python job.
       - name: Run tests
-        run: cargo test --all-features
+        run: cargo test --features kps-all
 
   python:
     name: Python Tests
@@ -149,8 +152,10 @@ jobs:
       - name: Install HDF5
         run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
 
+      # Note: Do NOT use --all-features here - PyO3's extension-module prevents linking.
+      # Rust coverage excludes python feature; Python coverage is generated separately below.
       - name: Generate Rust coverage
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov --features kps-all --workspace --lcov --output-path lcov.info
 
       - name: Generate Python coverage
         run: |

@@ -9,23 +9,34 @@ Example:
     >>> # Convert BAG to MCAP with topic rename
     >>> robocodec.convert("input.bag", "output.mcap", rename={"/old": "/new"})
     >>>
+    >>> # Use the fluent API for more control
+    >>> from robocodec import Robocodec, CompressionPreset
+    >>> result = Robocodec.open(["input.bag"])
+    ...     .write_to("output.mcap")
+    ...     .with_compression(CompressionPreset.fast())
+    ...     .run()
+    >>>
     >>> # Read and iterate messages
     >>> reader = robocodec.read("data.mcap")
     >>> for msg, channel in reader.iter_messages():
     ...     print(f"Message from {channel['topic']}: {msg}")
-    >>>
-    >>> # Decode binary data
-    >>> msg = robocodec.decode(data, schema="int32 value", type_name="TestMsg", encoding="cdr")
 """
 
 from robocodec._robocodec import (
     __version__,
+    BatchReport,
     CdrDecoder,
+    CompressionPreset,
+    FileResult,
+    HyperPipelineReport,
     JsonDecoder,
     MessageIter,
+    PipelineReport,
     ProtobufDecoder,
     Reader as _Reader,
-    Writer as _Writer,
+    Robocodec,
+    Writer,
+    _TransformBuilder,
     convert as _convert,
     decode as _decode,
     encode as _encode,
@@ -35,20 +46,37 @@ from robocodec._robocodec import (
 
 __all__ = [
     "__version__",
+    # Fluent API
+    "Robocodec",
+    "CompressionPreset",
+    "TransformBuilder",
+    # Pipeline Reports
+    "PipelineReport",
+    "HyperPipelineReport",
+    "BatchReport",
+    "FileResult",
+    # Convenience functions
     "convert",
     "transform",
     "read",
     "decode",
     "encode",
+    # Decoders
     "CdrDecoder",
     "ProtobufDecoder",
     "JsonDecoder",
+    # Reader
     "Reader",
-    "Writer",
     "MessageIter",
+    # Writer
+    "Writer",
+    # Schema
     "parse_schema_text",
 ]
 
+
+# Re-export with friendly names
+TransformBuilder = _TransformBuilder
 
 # Re-export Reader class
 class Reader(_Reader):
@@ -193,23 +221,3 @@ def encode(
         >>> print(f"Encoded {len(data)} bytes using {meta['encoding']}")
     """
     return _encode(message, schema_text, type_name, encoding)
-
-
-# Re-export Writer class
-class Writer(_Writer):
-    """Writer for robotics data files (MCAP, ROS1 bag).
-
-    Auto-registers channels from the first message written to each topic.
-
-    Example:
-        >>> with robocodec.Writer("output.mcap") as writer:
-        ...     writer.write(
-        ...         "/chatter",
-        ...         {"data": "hello"},
-        ...         timestamp_ns=1234567890,
-        ...         schema_text="string data",
-        ...         message_type="std_msgs/String"
-        ...     )
-    """
-
-    pass

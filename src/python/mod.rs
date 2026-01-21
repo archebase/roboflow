@@ -3,9 +3,15 @@
 //! Thin PyO3 wrappers that expose existing robocodec APIs to Python.
 //! Uses the new I/O layer with RoboReader/RoboWriter.
 
+mod fluent;
+
 use crate::{
     encoding::{cdr::CdrDecoder, json::JsonDecoder, protobuf::ProtobufDecoder},
-    io::{traits::FormatReader, ReaderBuilder, RoboReader},
+    io::{
+        metadata::RawMessage,
+        traits::{FormatReader, FormatWriter},
+        ReaderBuilder, RoboReader, RoboWriter,
+    },
     rewriter::RewriteOptions,
     schema::parse_schema,
     transform::TransformBuilder,
@@ -445,6 +451,173 @@ impl PyReader {
 }
 
 // =============================================================================
+// Writer - MCAP/BAG writing
+// =============================================================================
+
+/// Writer for robotics data files (MCAP, BAG).
+///
+/// Automatically detects format based on file extension.
+/// Messages are buffered and written as a batch when close() is called.
+#[pyclass(name = "Writer", unsendable)]
+pub struct PyWriter {
+    writer: Option<RoboWriter>,
+    path: String,
+    channel_registry: std::collections::HashMap<String, u16>,
+    message_buffer: Vec<RawMessage>,
+}
+
+#[pymethods]
+impl PyWriter {
+    /// Create a new writer for a robotics data file.
+    ///
+    /// Args:
+    ///     path: Path to output file (.mcap or .bag)
+    ///
+    /// Returns:
+    ///     Writer instance
+    #[new]
+    fn new(path: &str) -> PyResult<Self> {
+        let writer = RoboWriter::create(path).map_err(codec_error_to_py)?;
+        Ok(Self {
+            writer: Some(writer),
+            path: path.to_string(),
+            channel_registry: std::collections::HashMap::new(),
+            message_buffer: Vec::new(),
+        })
+    }
+
+    /// Write a message to the file.
+    ///
+    /// Args:
+    ///     topic: Topic name (e.g., "/chatter")
+    ///     message: Python dict with message fields
+    ///     timestamp_ns: Timestamp in nanoseconds
+    ///     schema_text: Schema definition text (required for first message on topic)
+    ///     message_type: Message type name (e.g., "std_msgs/String")
+    ///     encoding: Encoding format ("cdr", "json", "protobuf"). Defaults to "cdr"
+    ///
+    /// Raises:
+    ///     RuntimeError: If writer is closed or write fails
+    #[pyo3(signature = (topic, message, timestamp_ns, schema_text=None, message_type=None, encoding=None))]
+    fn write(
+        &mut self,
+        topic: &str,
+        message: &Bound<'_, PyDict>,
+        timestamp_ns: u64,
+        schema_text: Option<&str>,
+        message_type: Option<&str>,
+        encoding: Option<&str>,
+    ) -> PyResult<()> {
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("Writer is closed"))?;
+
+        let encoding = encoding.unwrap_or("cdr");
+        let message_type = message_type.unwrap_or("Unknown");
+
+        // Register channel if needed
+        let channel_id = if let Some(&id) = self.channel_registry.get(topic) {
+            id
+        } else {
+            let id = writer
+                .add_channel(topic, message_type, encoding, schema_text)
+                .map_err(codec_error_to_py)?;
+            self.channel_registry.insert(topic.to_string(), id);
+            id
+        };
+
+        // Encode message
+        let decoded = py_dict_to_decoded_message(message)?;
+        let data = match encoding {
+            "cdr" => {
+                let schema = schema_text.ok_or_else(|| {
+                    PyValueError::new_err("CDR encoding requires schema_text")
+                })?;
+                let schema = parse_schema(message_type, schema).map_err(codec_error_to_py)?;
+                let mut encoder = crate::encoding::CdrEncoder::new();
+                encoder
+                    .encode_message(&decoded, &schema, message_type)
+                    .map_err(codec_error_to_py)?;
+                encoder.finish()
+            }
+            "json" => {
+                // Use JsonDecoder's encode method which properly serializes CodecValue
+                let json_encoder = JsonDecoder::new();
+                let json_str = json_encoder
+                    .encode(&decoded, false)
+                    .map_err(codec_error_to_py)?;
+                json_str.into_bytes()
+            }
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "Unsupported encoding: {}",
+                    encoding
+                )))
+            }
+        };
+
+        // Create raw message and buffer it
+        let raw_msg = RawMessage {
+            channel_id,
+            sequence: Some(0),
+            log_time: timestamp_ns,
+            publish_time: timestamp_ns,
+            data,
+        };
+
+        // Buffer the message for batch writing on close
+        self.message_buffer.push(raw_msg);
+        Ok(())
+    }
+
+    /// Close and finalize the file.
+    fn close(&mut self) -> PyResult<()> {
+        if let Some(mut writer) = self.writer.take() {
+            // Write all buffered messages as a batch
+            if !self.message_buffer.is_empty() {
+                writer
+                    .write_batch(&self.message_buffer)
+                    .map_err(codec_error_to_py)?;
+                self.message_buffer.clear();
+            }
+            writer.finish().map_err(codec_error_to_py)?;
+        }
+        Ok(())
+    }
+
+    /// Get the number of messages buffered (waiting to be written).
+    fn message_count(&self) -> PyResult<u64> {
+        Ok(self.message_buffer.len() as u64)
+    }
+
+    /// Get the number of channels registered.
+    fn channel_count(&self) -> PyResult<usize> {
+        let writer = self
+            .writer
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("Writer is closed"))?;
+        Ok(writer.channel_count())
+    }
+
+    /// Context manager entry.
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    /// Context manager exit.
+    fn __exit__(
+        &mut self,
+        _exc_type: Option<&Bound<'_, pyo3::PyAny>>,
+        _exc_value: Option<&Bound<'_, pyo3::PyAny>>,
+        _traceback: Option<&Bound<'_, pyo3::PyAny>>,
+    ) -> PyResult<bool> {
+        self.close()?;
+        Ok(false)
+    }
+}
+
+// =============================================================================
 // Convert - Format conversion with transforms
 // =============================================================================
 
@@ -641,8 +814,11 @@ fn encode(
             (data, "cdr")
         }
         "json" => {
-            let json_data = serde_json::to_string(&decoded)
-                .map_err(|e| PyValueError::new_err(format!("Failed to encode as JSON: {}", e)))?;
+            // Use JsonDecoder's encode method which properly serializes CodecValue
+            let json_encoder = JsonDecoder::new();
+            let json_data = json_encoder
+                .encode(&decoded, false)
+                .map_err(codec_error_to_py)?;
             (json_data.into_bytes(), "json")
         }
         _ => {
@@ -683,12 +859,26 @@ fn _robocodec(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode, m)?)?;
     m.add_function(wrap_pyfunction!(encode, m)?)?;
 
-    // Classes
+    // Classes - Decoders
     m.add_class::<PyCdrDecoder>()?;
     m.add_class::<PyProtobufDecoder>()?;
     m.add_class::<PyJsonDecoder>()?;
+
+    // Classes - Reader
     m.add_class::<PyReader>()?;
     m.add_class::<PyMessageIter>()?;
+
+    // Classes - Writer
+    m.add_class::<PyWriter>()?;
+
+    // Classes - Fluent API
+    m.add_class::<fluent::PyRobocodec>()?;
+    m.add_class::<fluent::PyCompressionPreset>()?;
+    m.add_class::<fluent::PyTransformBuilder>()?;
+    m.add_class::<fluent::PyPipelineReport>()?;
+    m.add_class::<fluent::PyHyperPipelineReport>()?;
+    m.add_class::<fluent::PyFileResult>()?;
+    m.add_class::<fluent::PyBatchReport>()?;
 
     Ok(())
 }

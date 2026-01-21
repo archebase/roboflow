@@ -41,16 +41,18 @@ test: test-rust test-python ## Run all tests
 
 test-rust: ## Run Rust tests
 	@echo "Running Rust tests..."
-	cargo test --features python
+	cargo test
 	@echo "✓ Rust tests passed (run 'make test-all' for Kps features)"
 
 test-all: ## Run all tests including Kps features (requires HDF5)
 	@echo "Running all tests with all features..."
-	@echo "  (features: python + kps-all)"
-	cargo test --features python,kps-all
+	@echo "  (features: kps-all)"
+	cargo test --features kps-all
 	@echo "✓ All tests passed"
 
-test-python: ## Run Python tests (requires build-python-dev first)
+test-python: ## Run Python tests (builds extension first)
+	@echo "Building Python extension..."
+	maturin develop --features python
 	@echo "Running Python tests..."
 	pytest python/ -v
 	@echo "✓ Python tests passed"
@@ -68,8 +70,8 @@ coverage: coverage-rust coverage-python ## Run all coverage reports
 coverage-rust: ## Run Rust tests with coverage (requires cargo-llvm-cov)
 	@echo "Running Rust tests with coverage..."
 	@echo "(Install: cargo install cargo-llvm-cov)"
-	cargo llvm-cov --features python --workspace --html --output-dir target/llvm-cov/html
-	cargo llvm-cov --features python --workspace --lcov --output-path lcov.info
+	cargo llvm-cov --workspace --html --output-dir target/llvm-cov/html
+	cargo llvm-cov --workspace --lcov --output-path lcov.info
 	@echo ""
 	@echo "✓ Rust coverage report: target/llvm-cov/html/index.html (add --features kps-all for Kps coverage)"
 
