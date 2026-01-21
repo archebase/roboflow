@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/robocodec)](https://crates.io/crates/robocodec)
 [![PyPI](https://img.shields.io/pypi/v/robocodec)](https://pypi.org/project/robocodec/)
-[![License: MulanPSL-2.0](https://img.shields.io/badge/License-MulanPSL--2.0-blue.svg)](http://mulan.cosine.org.cn/license/MulanPSL2)
+[![License: MulanPSL-2.0](https://img.shields.io/badge/License-MulanPSL--2.0-blue.svg)](http://license.coscl.org.cn/MulanPSL2)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 
 [English](README.md) | [简体中文](README_zh.md)

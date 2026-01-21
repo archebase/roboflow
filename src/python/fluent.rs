@@ -491,7 +491,7 @@ enum BuilderState {
 
 impl PyRobocodec {
     /// Get the transform pipeline from the registry.
-    fn get_transform(id: u64) -> Option<robocodec::transform::TransformPipeline> {
+    fn get_transform(id: u64) -> Option<robocodec::transform::MultiTransform> {
         TRANSFORM_REGISTRY.with(|registry| {
             let mut registry = registry.borrow_mut();
             registry.pipelines.remove(&id)
@@ -810,7 +810,7 @@ use std::collections::HashMap;
 
 struct TransformRegistryInner {
     next_id: u64,
-    pipelines: HashMap<u64, robocodec::transform::TransformPipeline>,
+    pipelines: HashMap<u64, robocodec::transform::MultiTransform>,
 }
 
 impl Default for TransformRegistryInner {

@@ -11,6 +11,7 @@ use robocodec::BagFormat;
 use robocodec::ParallelMcapWriter;
 use robocodec::RewriteOptions;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fs;
 use std::io::BufWriter;
 use std::path::Path;
 
@@ -73,6 +74,14 @@ fn count_mcap_messages(path: &str) -> Result<usize, Box<dyn std::error::Error>> 
     Ok(count)
 }
 
+/// Ensure the temp directory exists for test outputs.
+fn ensure_temp_dir() {
+    let dir = "/tmp/claude";
+    if !Path::new(dir).exists() {
+        fs::create_dir_all(dir).expect("Failed to create temp directory");
+    }
+}
+
 #[test]
 fn test_round_trip_read_bag() {
     let input_path = "tests/fixtures/robocodec_test_15.bag";
@@ -108,6 +117,8 @@ fn test_round_trip_read_bag() {
 
 #[test]
 fn test_round_trip_bag_rewrite() {
+    ensure_temp_dir();
+
     let input_path = "tests/fixtures/robocodec_test_15.bag";
     let output_path = "/tmp/claude/robocodec_test_15_rewrite.bag";
 
@@ -165,6 +176,8 @@ fn test_round_trip_bag_rewrite() {
 
 #[test]
 fn test_round_trip_topic_rename() {
+    ensure_temp_dir();
+
     let input_path = "tests/fixtures/robocodec_test_15.bag";
     let output_path = "/tmp/claude/robocodec_test_15_topic_rename.bag";
 
@@ -239,6 +252,8 @@ fn test_round_trip_topic_rename() {
 
 #[test]
 fn test_round_trip_type_rename_with_verification() {
+    ensure_temp_dir();
+
     let input_path = "tests/fixtures/robocodec_test_15.bag";
     let output_path = "/tmp/claude/robocodec_test_15_type_rename.bag";
 
@@ -346,6 +361,8 @@ fn test_round_trip_type_rename_with_verification() {
 
 #[test]
 fn test_round_trip_combined_topic_and_type_rename() {
+    ensure_temp_dir();
+
     let input_path = "tests/fixtures/robocodec_test_15.bag";
     let output_path = "/tmp/claude/robocodec_test_15_combined_rename.bag";
 
@@ -471,6 +488,8 @@ fn test_round_trip_combined_topic_and_type_rename() {
 
 #[test]
 fn test_round_trip_roborewriter_facade() {
+    ensure_temp_dir();
+
     let input_path = "tests/fixtures/robocodec_test_15.bag";
     let output_path = "/tmp/claude/robocodec_test_15_facade.bag";
 
@@ -543,6 +562,8 @@ where
 
 #[test]
 fn test_round_trip_callerid_preservation() {
+    ensure_temp_dir();
+
     // Use test_15 which has a smaller, more manageable size
     let input_path = "tests/fixtures/robocodec_test_15.bag";
     let output_path = "/tmp/claude/robocodec_test_15_callerid.bag";
@@ -735,6 +756,8 @@ fn test_round_trip_multiple_tf_connections() {
 
 #[test]
 fn test_round_trip_with_transform_preserves_callerid() {
+    ensure_temp_dir();
+
     // Test that callerids are preserved even when applying topic/type renames
     let input_path = "tests/fixtures/robocodec_test_15.bag";
     let output_path = "/tmp/claude/robocodec_test_15_transform_callerid.bag";
@@ -861,6 +884,8 @@ fn test_round_trip_with_transform_preserves_callerid() {
 
 #[test]
 fn test_round_trip_test_23_bag() {
+    ensure_temp_dir();
+
     let input_path = "tests/fixtures/robocodec_test_23.bag";
     let output_path = "/tmp/claude/robocodec_test_23_round_trip.bag";
 
@@ -1009,6 +1034,8 @@ fn test_round_trip_test_23_bag() {
 
 #[test]
 fn test_bag_to_mcap_to_bag_with_transforms() {
+    ensure_temp_dir();
+
     let input_bag = "tests/fixtures/robocodec_test_15.bag";
     let temp_mcap = "/tmp/claude/robocodec_test_15_to_mcap.mcap";
     let output_bag = "/tmp/claude/robocodec_test_15_round_trip.bag";
@@ -1090,6 +1117,8 @@ fn test_bag_to_mcap_to_bag_with_transforms() {
 
 #[test]
 fn test_mcap_to_bag_to_mcap_with_transforms() {
+    ensure_temp_dir();
+
     use robocodec::{mcap::McapReader, rewriter::engine::McapRewriteEngine};
 
     let input_mcap = "tests/fixtures/robocodec_test_0.mcap";
@@ -1412,6 +1441,8 @@ fn test_round_trip_robocodec_test_17_bag_read() {
 
 #[test]
 fn test_round_trip_robocodec_test_17_bag_rewrite() {
+    ensure_temp_dir();
+
     let input_path = "tests/fixtures/robocodec_test_17.bag";
     let output_path = "/tmp/claude/robocodec_test_17_rewrite.bag";
 
