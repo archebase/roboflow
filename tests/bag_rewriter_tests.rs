@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use robocodec::io::traits::FormatReader;
 use robocodec::rewriter::RewriteOptions;
-use robocodec::transform::{TransformBuilder, MultiTransform};
+use robocodec::transform::{MultiTransform, TransformBuilder};
 use robocodec::BagFormat;
 use robocodec::{BagMessage, BagWriter};
 

@@ -521,7 +521,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transform::{TransformBuilder, MultiTransform};
+    use crate::transform::{MultiTransform, TransformBuilder};
     use std::path::PathBuf;
 
     /// Get the fixtures directory path

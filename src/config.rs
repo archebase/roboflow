@@ -2,7 +2,7 @@
 //!
 //! Loads type mappings from TOML config files.
 
-use robocodec::transform::{TransformBuilder, MultiTransform, TypeRenameTransform};
+use robocodec::transform::{MultiTransform, TransformBuilder, TypeRenameTransform};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;

@@ -5,8 +5,8 @@
 
 use robocodec::io::traits::FormatReader;
 use robocodec::rewriter::bag::BagRewriter as BagBagRewriter;
-use robocodec::transform::TransformBuilder;
 use robocodec::transform::MultiTransform;
+use robocodec::transform::TransformBuilder;
 use robocodec::BagFormat;
 use robocodec::ParallelMcapWriter;
 use robocodec::RewriteOptions;

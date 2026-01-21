@@ -78,7 +78,7 @@ pub mod rewriter;
 pub use rewriter::{FormatRewriter, RewriteOptions, RewriteStats, RoboRewriter};
 
 pub use transform::{
-    TopicRenameTransform, TransformBuilder, TransformError, MultiTransform, TransformedChannel,
+    MultiTransform, TopicRenameTransform, TransformBuilder, TransformError, TransformedChannel,
     TypeNormalization, TypeRenameTransform,
 };
 
