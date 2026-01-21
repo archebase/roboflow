@@ -47,9 +47,10 @@ pub use audio_writer::{AudioWriter, AudioWriterFactory};
 /// This function examines the Kps config and returns the appropriate
 /// writer implementation. If both formats are specified, Parquet is
 /// preferred as it's the modern format.
+#[allow(unused_variables)]
 pub fn create_writer(
-    _output_dir: impl AsRef<std::path::Path>,
-    _episode_id: usize,
+    output_dir: impl AsRef<std::path::Path>,
+    episode_id: usize,
     config: &crate::io::kps::KpsConfig,
 ) -> Result<Box<dyn KpsWriter>, KpsWriterError> {
     use crate::io::kps::OutputFormat;

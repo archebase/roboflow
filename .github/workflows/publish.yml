@@ -46,6 +46,11 @@ jobs:
 
       - name: Install maturin
         run: pip install maturin[patchelf]
+        if: runner.os != 'Windows'
+
+      - name: Install maturin (Windows)
+        run: pip install maturin
+        if: runner.os == 'Windows'
 
       - name: Build wheels
         run: maturin build --release --strip --features python --out dist --find-interpreter
@@ -68,7 +73,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build wheels
-        run: maturin build --release --strip --out dist --manylinux 2010+
+        run: maturin build --release --strip --features python --out dist --manylinux 2010+
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4

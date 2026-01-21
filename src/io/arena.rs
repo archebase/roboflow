@@ -143,7 +143,7 @@ impl MmapArena {
     /// Caller must ensure the range is within bounds.
     pub unsafe fn slice_unchecked(&self, offset: usize, len: usize) -> &[u8] {
         // SAFETY: Caller ensures the range is valid
-        &self.mmap.get_unchecked(offset..offset + len)
+        self.mmap.get_unchecked(offset..offset + len)
     }
 }
 

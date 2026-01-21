@@ -80,9 +80,9 @@ impl StreamingParquetWriter {
         let videos_dir = output_dir.join("videos");
         let meta_dir = output_dir.join("meta");
 
-        std::fs::create_dir_all(&data_dir).map_err(|e| KpsWriterError::Io(e))?;
-        std::fs::create_dir_all(&videos_dir).map_err(|e| KpsWriterError::Io(e))?;
-        std::fs::create_dir_all(&meta_dir).map_err(|e| KpsWriterError::Io(e))?;
+        std::fs::create_dir_all(&data_dir)?;
+        std::fs::create_dir_all(&videos_dir)?;
+        std::fs::create_dir_all(&meta_dir)?;
 
         Ok(Self {
             episode_id,
@@ -112,7 +112,7 @@ impl StreamingParquetWriter {
 
     /// Write a Parquet file from buffered data.
     #[cfg(feature = "kps-parquet")]
-    fn write_parquet_shard(&mut self) -> Result<(), KpsWriterError> {
+    fn write_parquet_shard(&mut self) -> crate::core::Result<()> {
         use polars::prelude::*;
 
         if self.observation_buffer.is_empty() && self.action_buffer.is_empty() {
@@ -135,19 +135,21 @@ impl StreamingParquetWriter {
         }
 
         if !series_vec.is_empty() {
-            let df =
-                DataFrame::new(series_vec).map_err(|e| KpsWriterError::Parquet(e.to_string()))?;
+            let df = DataFrame::new(series_vec)
+                .map_err(|e| KpsWriterError::Parquet(format!("Failed to create DataFrame: {e}")))?;
 
             // Write to Parquet file
             let path = self
                 .output_dir
                 .join(format!("data/shard_{:04}.parquet", shard_num));
 
-            let mut file = std::fs::File::create(&path).map_err(|e| KpsWriterError::Io(e))?;
+            let mut file = std::fs::File::create(&path)?;
 
             ParquetWriter::new(&mut file)
                 .finish(&mut df.clone())
-                .map_err(|e| KpsWriterError::Parquet(e.to_string()))?;
+                .map_err(|e| {
+                    KpsWriterError::Parquet(format!("Failed to write Parquet file: {e}"))
+                })?;
 
             // Track output size
             if let Ok(metadata) = std::fs::metadata(&path) {
@@ -163,7 +165,7 @@ impl StreamingParquetWriter {
     }
 
     /// Write metadata files (info.json, episode.jsonl).
-    fn write_metadata_files(&self, config: &KpsConfig) -> Result<(), KpsWriterError> {
+    fn write_metadata_files(&self, config: &KpsConfig) -> crate::core::Result<()> {
         use crate::io::kps::info;
 
         // Write info.json
@@ -174,7 +176,7 @@ impl StreamingParquetWriter {
             &self.image_shapes,
             &self.state_dims,
         )
-        .map_err(|e| KpsWriterError::Encoding(e.to_string()))?;
+        .map_err(|e| KpsWriterError::Parquet(e.to_string()))?;
 
         // Write episode.jsonl
         info::write_episode_json(
@@ -184,7 +186,7 @@ impl StreamingParquetWriter {
             self.frame_count as u64 * 1_000_000_000 / config.dataset.fps as u64,
             self.frame_count,
         )
-        .map_err(|e| KpsWriterError::Encoding(e.to_string()))?;
+        .map_err(|e| KpsWriterError::Parquet(e.to_string()))?;
 
         Ok(())
     }
@@ -193,7 +195,7 @@ impl StreamingParquetWriter {
     ///
     /// Uses ffmpeg to encode buffered images as MP4 videos.
     /// Falls back to individual PPM files if ffmpeg is not available.
-    fn process_images(&mut self) -> Result<(), KpsWriterError> {
+    fn process_images(&mut self) -> crate::core::Result<()> {
         use crate::io::kps::video_encoder::{Mp4Encoder, VideoFrame, VideoFrameBuffer};
 
         if self.image_buffer.is_empty() {
@@ -201,12 +203,12 @@ impl StreamingParquetWriter {
         }
 
         let videos_dir = self.output_dir.join("videos");
-        std::fs::create_dir_all(&videos_dir).map_err(|e| KpsWriterError::Io(e))?;
+        std::fs::create_dir_all(&videos_dir)?;
 
         let fps = self.config.as_ref().map(|c| c.dataset.fps).unwrap_or(30);
 
         // Create encoder with FPS from config
-        let encoder = Mp4Encoder::new().with_config(
+        let encoder = Mp4Encoder::with_config(
             crate::io::kps::video_encoder::VideoEncoderConfig::default().with_fps(fps),
         );
 
@@ -233,7 +235,7 @@ impl StreamingParquetWriter {
             }
 
             if !buffer.is_empty() {
-                let clean_name = sanitize_feature_name(&feature_name);
+                let clean_name = Self::sanitize_feature_name(&feature_name);
 
                 match encoder.encode_buffer_or_save_images(&buffer, &videos_dir, &clean_name) {
                     Ok(output_paths) => {
@@ -261,8 +263,7 @@ impl StreamingParquetWriter {
 
     /// Sanitize a feature name for use as a filename.
     fn sanitize_feature_name(name: &str) -> String {
-        name.replace('.', "_")
-            .replace('/', "_")
+        name.replace(['.', '/'], "_")
             .chars()
             .map(|c| {
                 if c.is_alphanumeric() || c == '-' || c == '_' {
@@ -280,7 +281,7 @@ impl KpsWriter for StreamingParquetWriter {
         &mut self,
         config: &KpsConfig,
         channels: &HashMap<u16, ChannelInfo>,
-    ) -> Result<(), KpsWriterError> {
+    ) -> crate::core::Result<()> {
         // Store config and channels
         self.config = Some(config.clone());
         for ch in channels.values() {
@@ -312,10 +313,11 @@ impl KpsWriter for StreamingParquetWriter {
         Ok(())
     }
 
-    fn write_frame(&mut self, frame: &AlignedFrame) -> Result<(), KpsWriterError> {
+    fn write_frame(&mut self, frame: &AlignedFrame) -> crate::core::Result<()> {
         if !self.initialized {
-            return Err(KpsWriterError::InvalidData(
-                "Writer not initialized".to_string(),
+            return Err(crate::CodecError::encode(
+                "KpsWriter",
+                "Writer not initialized",
             ));
         }
 
@@ -359,7 +361,7 @@ impl KpsWriter for StreamingParquetWriter {
 
             self.image_buffer
                 .entry(feature_name.to_string())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(data.clone());
         }
 
@@ -367,7 +369,7 @@ impl KpsWriter for StreamingParquetWriter {
         self.state_records += frame.states.len() + frame.actions.len();
 
         // Check if we should write a shard
-        if self.frame_count % self.frames_per_shard == 0 {
+        if self.frame_count.is_multiple_of(self.frames_per_shard) {
             #[cfg(feature = "kps-parquet")]
             {
                 self.write_parquet_shard()?;
@@ -382,7 +384,7 @@ impl KpsWriter for StreamingParquetWriter {
         &mut self,
         config: &KpsConfig,
         _camera_params: Option<&crate::io::kps::camera_params::CameraParamCollector>,
-    ) -> Result<WriterStats, KpsWriterError> {
+    ) -> crate::core::Result<WriterStats> {
         // Write final shard
         #[cfg(feature = "kps-parquet")]
         {

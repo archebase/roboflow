@@ -15,24 +15,25 @@ use super::config::Mapping;
 #[cfg(feature = "kps-parquet")]
 use std::io::Write;
 
-// Work-in-progress: These structures will be used for full Parquet implementation
+// Row structures for Parquet data
+// Note: Marked dead_code because they're used in methods that may not be
+// active in all compilation configurations. These are used by the
+// ParquetKpsWriter implementation.
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct ObservationRow {
     timestamp: i64,
-    // Observations will be stored as key-value pairs
-    // For Parquet, we'll serialize to Arrow format
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct ActionRow {
     timestamp: i64,
-    // Action values
 }
 
-// Work-in-progress: Will be used when storing image frames
+/// Image frame for buffering.
 #[allow(dead_code)]
+#[derive(Debug, Clone)]
 struct ImageFrame {
     timestamp: i64,
     width: usize,
@@ -45,7 +46,7 @@ struct ImageFrame {
 /// Creates Kps datasets compatible with v3.0 format:
 /// - `data/` directory with Parquet shards
 /// - `videos/` directory with MP4 shards
-#[allow(dead_code)]
+#[allow(dead_code)] // Fields are used when kps-parquet feature is enabled
 pub struct ParquetKpsWriter {
     episode_id: usize,
     output_dir: std::path::PathBuf,
@@ -132,10 +133,10 @@ impl ParquetKpsWriter {
 
         let mut frame_index = 0usize;
 
-        // Process messages
-        let iter = reader.decode_messages()?;
+        // Process messages - use decode_messages_with_timestamp to get timestamps
+        let iter = reader.decode_messages_with_timestamp()?;
         for result in iter {
-            let (msg, _channel_info) = result?;
+            let (timestamped_msg, _channel_info) = result?;
 
             // Find matching mapping
             let mapping = config
@@ -147,21 +148,26 @@ impl ParquetKpsWriter {
                 continue;
             };
 
-            // Extract actual message timestamp from raw message
-            let timestamp = raw_msg.log_time / 1000; // Convert nanoseconds to microseconds
+            // Extract actual message timestamp (convert nanoseconds to microseconds)
+            let timestamp = (timestamped_msg.log_time / 1000) as i64;
             self.timestamps.push(timestamp);
+
+            let msg = &timestamped_msg.message;
 
             match &mapping.mapping_type {
                 MappingType::Image => {
-                    self.process_image(&msg, mapping, &mut image_buffers)?;
+                    self.process_image(msg, mapping, &mut image_buffers)?;
                 }
                 MappingType::State => {
-                    self.process_state(&msg, mapping, timestamp);
+                    self.process_state(msg, mapping, timestamp);
                 }
                 MappingType::Action => {
-                    self.process_action(&msg, mapping, timestamp);
+                    self.process_action(msg, mapping, timestamp);
                 }
                 MappingType::Timestamp => {}
+                MappingType::OtherSensor | MappingType::Audio => {
+                    // Not yet implemented for Parquet writer
+                }
             }
 
             frame_index += 1;

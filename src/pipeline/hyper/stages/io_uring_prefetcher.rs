@@ -198,30 +198,19 @@ impl IoUringPrefetcher {
 
         let duration = start.elapsed();
         let stats = PrefetcherStats {
-            blocks_processed,
-            bytes_processed,
-            duration_sec: duration.as_secs_f64(),
+            blocks_prefetched: blocks_processed,
+            bytes_prefetched: bytes_processed,
+            io_time_sec: duration.as_secs_f64(),
         };
 
         info!(
-            blocks = stats.blocks_processed,
-            bytes = stats.bytes_processed,
-            duration_sec = stats.duration_sec,
+            blocks = stats.blocks_prefetched,
+            bytes = stats.bytes_prefetched,
+            duration_sec = stats.io_time_sec,
             throughput_mb_sec = (stats.bytes_processed as f64 / 1_048_576.0) / stats.duration_sec,
             "Prefetcher completed"
         );
 
         Ok(stats)
     }
-}
-
-/// Statistics from io_uring prefetcher.
-#[derive(Debug, Clone, Default)]
-pub struct PrefetcherStats {
-    /// Number of blocks processed
-    pub blocks_processed: u64,
-    /// Number of bytes processed
-    pub bytes_processed: u64,
-    /// Total duration in seconds
-    pub duration_sec: f64,
 }

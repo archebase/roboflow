@@ -126,6 +126,48 @@ impl RoboReader {
     pub fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
         self.inner.as_any_mut().downcast_mut::<T>()
     }
+
+    /// Decode messages from the reader.
+    ///
+    /// This method requires the inner reader to support message decoding
+    /// (e.g., McapReader). Returns an error if the inner reader doesn't
+    /// support this operation.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding `(DecodedMessage, ChannelInfo)` tuples.
+    pub fn decode_messages(&self) -> Result<crate::format::reader::mcap::DecodedMessageIter<'_>> {
+        use crate::format::reader::McapReader;
+
+        // Try to downcast to McapReader (which has decode_messages)
+        if let Some(mcap) = self.downcast_ref::<McapReader>() {
+            return mcap.decode_messages();
+        }
+
+        Err(crate::CodecError::parse(
+            "RoboReader",
+            "decode_messages not supported for this format",
+        ))
+    }
+
+    /// Decode messages with timestamps from the reader.
+    ///
+    /// Similar to `decode_messages` but includes log_time and publish_time
+    /// for each message.
+    pub fn decode_messages_with_timestamp(
+        &self,
+    ) -> Result<crate::format::reader::mcap::DecodedMessageWithTimestampIter<'_>> {
+        use crate::format::reader::McapReader;
+
+        if let Some(mcap) = self.downcast_ref::<McapReader>() {
+            return mcap.decode_messages_with_timestamp();
+        }
+
+        Err(crate::CodecError::parse(
+            "RoboReader",
+            "decode_messages_with_timestamp not supported for this format",
+        ))
+    }
 }
 
 impl FormatReader for RoboReader {

@@ -42,12 +42,12 @@ test: test-rust test-python ## Run all tests
 test-rust: ## Run Rust tests
 	@echo "Running Rust tests..."
 	cargo test --features python
-	@echo "✓ Rust tests passed (run 'make test-all' for LeRobot features)"
+	@echo "✓ Rust tests passed (run 'make test-all' for Kps features)"
 
-test-all: ## Run all tests including LeRobot features (requires HDF5)
+test-all: ## Run all tests including Kps features (requires HDF5)
 	@echo "Running all tests with all features..."
-	@echo "  (features: python + lerobot-all)"
-	cargo test --features python,lerobot-all
+	@echo "  (features: python + kps-all)"
+	cargo test --features python,kps-all
 	@echo "✓ All tests passed"
 
 test-python: ## Run Python tests (requires build-python-dev first)
@@ -71,7 +71,7 @@ coverage-rust: ## Run Rust tests with coverage (requires cargo-llvm-cov)
 	cargo llvm-cov --features python --workspace --html --output-dir target/llvm-cov/html
 	cargo llvm-cov --features python --workspace --lcov --output-path lcov.info
 	@echo ""
-	@echo "✓ Rust coverage report: target/llvm-cov/html/index.html (add --features lerobot-all for LeRobot coverage)"
+	@echo "✓ Rust coverage report: target/llvm-cov/html/index.html (add --features kps-all for Kps coverage)"
 
 coverage-python: ## Run Python tests with coverage
 	@echo "Running Python tests with coverage..."
@@ -90,23 +90,21 @@ fmt: ## Format all code
 	@if command -v ruff >/dev/null 2>&1; then ruff check python/ --fix; else echo "⚠ ruff not found, skipping Python linting"; fi
 	@echo "✓ Code formatted"
 
-lint: ## Lint all code
-	@echo "Linting Rust code..."
-	cargo clippy --all-targets --features python -- -D warnings
-	@echo "✓ Linting passed (run 'make lint-parquet' for LeRobot Parquet features)"
+lint: lint-parquet ## Lint all code
+	@echo "✓ Linting passed"
 
-lint-parquet: ## Lint with LeRobot Parquet features (works on all platforms)
-	@echo "Linting with LeRobot Parquet features (python + lerobot-parquet)..."
-	cargo clippy --all-targets --features python,lerobot-parquet -- -D warnings
+lint-parquet: ## Lint with Kps Parquet features (works on all platforms)
+	@echo "Linting with Kps Parquet features (python + kps-parquet)..."
+	cargo clippy --all-targets --features python,kps-parquet -- -D warnings
 	@echo "✓ Full linting passed"
 
 lint-all: ## Lint with all features including HDF5 (requires compatible HDF5)
-	@echo "Linting with all features (python + lerobot-all)..."
+	@echo "Linting with all features (python + kps-all)..."
 	@echo "Note: hdf5 crate 0.8.1 doesn't support Homebrew HDF5 1.14.x"
-	@echo "      Use 'make lint-parquet' for LeRobot support on macOS"
-	cargo clippy --all-targets --features python,lerobot-all -- -D warnings 2>/dev/null || \
+	@echo "      Use 'make lint-parquet' for Kps support on macOS"
+	cargo clippy --all-targets --features python,kps-all -- -D warnings 2>/dev/null || \
 		(echo "⚠ HDF5 feature failed (expected on macOS with Homebrew HDF5 1.14.x)"; \
-		 echo "  Use 'make lint-parquet' for LeRobot Parquet support instead"; exit 0)
+		 echo "  Use 'make lint-parquet' for Kps Parquet support instead"; exit 0)
 
 check: fmt lint ## Run format check and lint
 

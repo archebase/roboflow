@@ -189,71 +189,66 @@ impl AsyncPipeline {
     ///
     /// The optimal WindowLog is determined by CPU cache, not chunk size.
     /// - x86_64: Use CPUID to detect L3 cache size
-    /// - aarch64 (Apple Silicon): 24 (16MB) is optimal
+    /// - aarch64 (Apple Silicon): 25 (32MB) is optimal
     /// - Other: 23 (8MB) safe default
+    #[cfg(all(target_arch = "x86_64", feature = "cpuid"))]
     fn calculate_optimal_window_log(_input_path: &Path) -> Result<Option<u32>> {
-        #[cfg(all(target_arch = "x86_64", feature = "cpuid"))]
-        {
-            use raw_cpuid::CpuId;
-            let cpuid = CpuId::new();
+        use raw_cpuid::CpuId;
+        let cpuid = CpuId::new();
 
-            // Attempt to get L3 cache size
-            if let Some(cparams) = cpuid.get_cache_parameters() {
-                for cache in cparams {
-                    // Level 3 Cache
-                    if cache.level() == 3 {
-                        let cache_size_bytes =
-                            cache.sets() * cache.associativity() * cache.coherency_line_size();
-                        // Use half of L3 cache as Window size (to leave room for other data)
-                        let window_size = cache_size_bytes / 2;
-                        let window_log = (window_size as f64).log2().floor() as u32;
-                        // Cap at 26 (64 MB) which is optimal before cache thrashing
-                        let window_log = window_log.clamp(10, 26);
-                        info!(
-                            "Detected L3 cache: {} MB, using WindowLog: {} ({} MB)",
-                            cache_size_bytes / 1024 / 1024,
-                            window_log,
-                            2u64.pow(window_log) / 1024 / 1024
-                        );
-                        return Ok(Some(window_log));
-                    }
+        // Attempt to get L3 cache size
+        if let Some(cparams) = cpuid.get_cache_parameters() {
+            for cache in cparams {
+                // Level 3 Cache
+                if cache.level() == 3 {
+                    let cache_size_bytes =
+                        cache.sets() * cache.associativity() * cache.coherency_line_size();
+                    // Use half of L3 cache as Window size (to leave room for other data)
+                    let window_size = cache_size_bytes / 2;
+                    let window_log = (window_size as f64).log2().floor() as u32;
+                    // Cap at 26 (64 MB) which is optimal before cache thrashing
+                    let window_log = window_log.clamp(10, 26);
+                    info!(
+                        "Detected L3 cache: {} MB, using WindowLog: {} ({} MB)",
+                        cache_size_bytes / 1024 / 1024,
+                        window_log,
+                        2u64.pow(window_log) / 1024 / 1024
+                    );
+                    return Ok(Some(window_log));
                 }
             }
-            // Fallback if CPUID fails
-            info!("Could not detect L3 cache, using default WindowLog: 26 (64 MB)");
-            return Ok(Some(26));
         }
+        // Fallback if CPUID fails
+        info!("Could not detect L3 cache, using default WindowLog: 26 (64 MB)");
+        Ok(Some(26))
+    }
 
-        #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
-        {
-            // Apple Silicon (M1/M2/M3) has unified memory architecture
-            // Optimal is 24-25 based on benchmarks
-            info!("Apple Silicon detected, using WindowLog: 25 (32 MB)");
-            Ok(Some(25))
-        }
+    #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
+    fn calculate_optimal_window_log(_input_path: &Path) -> Result<Option<u32>> {
+        // Apple Silicon (M1/M2/M3) has unified memory architecture
+        // Optimal is 24-25 based on benchmarks
+        info!("Apple Silicon detected, using WindowLog: 25 (32 MB)");
+        Ok(Some(25))
+    }
 
-        #[cfg(all(target_arch = "aarch64", not(target_vendor = "apple")))]
-        {
-            // Generic ARM - conservative default
-            info!("ARM detected, using WindowLog: 24 (16 MB)");
-            return Ok(Some(24));
-        }
-
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        {
-            // Other architectures - safe default
-            info!("Unknown architecture, using WindowLog: 23 (8 MB)");
-            return Ok(Some(23));
-        }
-
-        // x86_64 without cpuid feature - handled separately since
-        // the first x86_64 block won't compile without the feature
+    #[cfg(all(target_arch = "aarch64", not(target_vendor = "apple")))]
+    fn calculate_optimal_window_log(_input_path: &Path) -> Result<Option<u32>> {
+        // Generic ARM - conservative default
+        info!("ARM detected, using WindowLog: 24 (16 MB)");
+        Ok(Some(24))
     }
 
     #[cfg(all(target_arch = "x86_64", not(feature = "cpuid")))]
     fn calculate_optimal_window_log(_input_path: &Path) -> Result<Option<u32>> {
         info!("x86_64 without cpuid feature, using WindowLog: 26 (64 MB)");
         Ok(Some(26))
+    }
+
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    fn calculate_optimal_window_log(_input_path: &Path) -> Result<Option<u32>> {
+        // Other architectures - safe default
+        info!("Unknown architecture, using WindowLog: 23 (8 MB)");
+        Ok(Some(23))
     }
 
     /// Run the pipeline to completion.

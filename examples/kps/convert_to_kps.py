@@ -36,7 +36,7 @@ def convert_mcap_to_kps_spec(
 
     # Load configuration
     config = _load_toml_config(config_path)
-    task_info = _load_task_info(task_info_path) if task_info else None
+    task_info = _load_task_info(task_info_path) if task_info_path else None
 
     # Create output directory structure
     output_path = Path(output_dir)

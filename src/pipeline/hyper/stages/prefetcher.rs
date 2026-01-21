@@ -128,15 +128,15 @@ impl PrefetcherStage {
     }
 
     /// Apply platform-specific I/O hints to the mmap.
-    fn apply_platform_hints(&self, mmap: &Mmap) -> Result<()> {
+    fn apply_platform_hints(&self, _mmap: &Mmap) -> Result<()> {
+        #[cfg(target_os = "macos")]
         match &self.config.platform_hints {
-            #[cfg(target_os = "macos")]
             PlatformHints::Madvise {
                 sequential,
                 willneed,
             } => unsafe {
-                let ptr = mmap.as_ptr() as *mut libc::c_void;
-                let len = mmap.len();
+                let ptr = _mmap.as_ptr() as *mut libc::c_void;
+                let len = _mmap.len();
 
                 if *sequential {
                     libc::madvise(ptr, len, libc::MADV_SEQUENTIAL);
@@ -147,30 +147,52 @@ impl PrefetcherStage {
                     libc::madvise(ptr, len, libc::MADV_WILLNEED);
                     debug!("Applied MADV_WILLNEED");
                 }
+                Ok(())
             },
+            PlatformHints::None => {
+                debug!("No platform hints applied");
+                Ok(())
+            }
+            _ => {
+                // Linux-specific hints are no-ops on macOS
+                debug!("Linux-specific hint ignored on macOS");
+                Ok(())
+            }
+        }
 
-            #[cfg(target_os = "linux")]
+        #[cfg(target_os = "linux")]
+        match &self.config.platform_hints {
             PlatformHints::Fadvise { sequential } => {
-                use std::os::unix::io::AsRawFd;
                 // Note: We can't fadvise on mmap, but we applied it during file open
                 debug!("Linux fadvise hint (sequential={})", sequential);
+                Ok(())
             }
-
-            #[cfg(target_os = "linux")]
             PlatformHints::IoUring { queue_depth } => {
                 // io_uring requires async runtime; for now, fall back to mmap
                 debug!(
                     "io_uring requested (queue_depth={}), using mmap fallback",
                     queue_depth
                 );
+                Ok(())
             }
-
-            PlatformHints::Fadvise { .. } | PlatformHints::None => {
+            PlatformHints::None => {
                 debug!("No platform hints applied");
+                Ok(())
+            }
+            _ => {
+                // macOS-specific hints are no-ops on Linux
+                debug!("macOS-specific hint ignored on Linux");
+                Ok(())
             }
         }
 
-        Ok(())
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        match &self.config.platform_hints {
+            _ => {
+                debug!("No platform hints applied for this platform");
+                Ok(())
+            }
+        }
     }
 
     /// Scan file structure and emit blocks.
