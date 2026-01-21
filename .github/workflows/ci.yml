@@ -102,8 +102,13 @@ jobs:
           echo "VIRTUAL_ENV=$pwd\.venv" >> $env:GITHUB_ENV
           echo "$pwd\.venv\Scripts" >> $env:GITHUB_PATH
 
-      - name: Install maturin
+      - name: Install maturin (Unix)
+        if: runner.os != 'Windows'
         run: pip install maturin[patchelf]
+
+      - name: Install maturin (Windows)
+        if: runner.os == 'Windows'
+        run: pip install maturin
 
       - name: Build and install Python package
         run: maturin develop --release --features python
