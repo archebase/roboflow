@@ -546,6 +546,24 @@ impl Default for McapRewriteEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    /// Get the fixtures directory path
+    fn fixtures_dir() -> PathBuf {
+        // Use CARGO_MANIFEST_DIR to get the robocodec crate root,
+        // then go up to workspace root to access shared fixtures
+        let manifest_dir =
+            std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| String::from("."));
+        PathBuf::from(manifest_dir)
+            .parent()
+            .expect("manifest dir should have parent")
+            .join("tests")
+            .join("fixtures")
+    }
+
+    fn fixture_path(name: &str) -> PathBuf {
+        fixtures_dir().join(name)
+    }
 
     #[test]
     fn test_engine_creation() {
@@ -581,7 +599,7 @@ mod tests {
 
     #[test]
     fn test_prepare_schemas_with_reader() {
-        let reader = crate::McapReader::open("tests/fixtures/robocodec_test_5.mcap").unwrap();
+        let reader = crate::McapReader::open(&fixture_path("robocodec_test_5.mcap")).unwrap();
         let mut engine = McapRewriteEngine::new();
 
         // Should successfully prepare schemas
@@ -594,7 +612,7 @@ mod tests {
 
     #[test]
     fn test_prepare_schemas_with_transforms() {
-        let reader = crate::McapReader::open("tests/fixtures/robocodec_test_5.mcap").unwrap();
+        let reader = crate::McapReader::open(&fixture_path("robocodec_test_5.mcap")).unwrap();
         let mut engine = McapRewriteEngine::new();
 
         // Create a transform pipeline using the builder
@@ -613,9 +631,9 @@ mod tests {
 
     #[test]
     fn test_protobuf_rewriting() {
-        let fixture_path = "tests/fixtures/robocodec_test_3.mcap";
-        let reader = crate::McapReader::open(fixture_path).unwrap_or_else(|e| {
-            panic!("Failed to open {fixture_path}: {e}");
+        let fixture_path_str = fixture_path("robocodec_test_3.mcap");
+        let reader = crate::McapReader::open(&fixture_path_str).unwrap_or_else(|e| {
+            panic!("Failed to open {:?}: {e}", fixture_path_str);
         });
 
         println!("=== Channels in fixture ===");

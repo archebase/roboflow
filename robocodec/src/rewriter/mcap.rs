@@ -535,7 +535,15 @@ mod tests {
 
     /// Get the fixtures directory path
     fn fixtures_dir() -> PathBuf {
-        PathBuf::from("tests/fixtures")
+        // Use CARGO_MANIFEST_DIR to get the robocodec crate root,
+        // then go up to workspace root to access shared fixtures
+        let manifest_dir =
+            std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| String::from("."));
+        PathBuf::from(manifest_dir)
+            .parent()
+            .expect("manifest dir should have parent")
+            .join("tests")
+            .join("fixtures")
     }
 
     /// Get a temporary file path for test output
