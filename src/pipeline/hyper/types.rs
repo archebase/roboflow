@@ -14,11 +14,11 @@
 
 use std::sync::Arc;
 
-use crate::pipeline::types::arena::ArenaSlice;
-use crate::pipeline::types::arena_pool::PooledArena;
 use crate::pipeline::types::chunk::{
     CompressedChunk, MessageChunk, MessageIndexEntry as ChunkMessageIndexEntry,
 };
+use robocodec::types::arena::ArenaSlice;
+use robocodec::types::arena_pool::PooledArena;
 
 // ============================================================================
 // Stage 1 → Stage 2: Prefetched memory blocks

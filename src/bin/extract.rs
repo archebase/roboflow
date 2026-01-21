@@ -12,9 +12,9 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 
-use robocodec::format::writer::ParallelMcapWriter;
-use robocodec::formats::SequentialMcapReader;
 use robocodec::io::traits::FormatReader;
+use robocodec::mcap::writer::ParallelMcapWriter;
+use robocodec::mcap::SequentialMcapReader;
 
 enum Command {
     Messages {
@@ -228,7 +228,7 @@ fn extract_bag_messages(
     count: Option<usize>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use robocodec::io::traits::FormatReader;
-    let reader = robocodec::io::formats::BagFormat::open(input)?;
+    let reader = robocodec::BagFormat::open(input)?;
 
     println!("Extracting from BAG: {}", input);
     println!("Output: {}", output);
@@ -371,7 +371,7 @@ fn extract_bag_topics(
     topics: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     use robocodec::io::traits::FormatReader;
-    let reader = robocodec::io::formats::BagFormat::open(input)?;
+    let reader = robocodec::BagFormat::open(input)?;
 
     println!("Extracting topics from BAG: {}", input);
     println!("Topics: {:?}", topics);
@@ -457,7 +457,7 @@ fn extract_per_topic(
 
     if ext == "bag" {
         use robocodec::io::traits::FormatReader;
-        let reader = robocodec::io::formats::BagFormat::open(input)?;
+        let reader = robocodec::BagFormat::open(input)?;
         let mut writer = robocodec::BagWriter::create(output)?;
 
         // Copy all connections, preserving callerid from the original bag
@@ -566,7 +566,7 @@ fn extract_per_topic(
 fn create_fixture_from_bag(input: &str, name: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Creating fixture from BAG: {}", input);
 
-    let reader = robocodec::io::formats::BagFormat::open(input)?;
+    let reader = robocodec::BagFormat::open(input)?;
 
     // Find the first message
     match reader.iter_raw()?.next() {
@@ -594,7 +594,7 @@ fn create_fixture_from_mcap(input: &str, name: &str) -> Result<(), Box<dyn std::
 
     let reader = SequentialMcapReader::open(input)?;
 
-    match reader.iter_raw()?.into_iter().next() {
+    match reader.iter_raw()?.next() {
         Some(Ok((raw_msg, channel_info))) => {
             write_fixture_mcap(
                 name,
@@ -729,7 +729,7 @@ fn extract_bag_time_range(
     end: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use robocodec::io::traits::FormatReader;
-    let reader = robocodec::io::formats::BagFormat::open(input)?;
+    let reader = robocodec::BagFormat::open(input)?;
 
     println!("Extracting from BAG: {}", input);
     println!("Time range: {} - {} ns", start, end);

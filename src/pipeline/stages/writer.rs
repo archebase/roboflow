@@ -15,10 +15,10 @@ use std::thread;
 
 use crossbeam_channel::Receiver;
 
-use crate::core::{CodecError, Result};
-use crate::format::writer::ParallelMcapWriter;
-use crate::io::metadata::ChannelInfo;
-use crate::pipeline::types::chunk::CompressedChunk;
+use crate::core::{Result, RoboflowError};
+use robocodec::io::metadata::ChannelInfo;
+use robocodec::types::chunk::CompressedChunk;
+use robocodec::ParallelMcapWriter;
 
 /// Maximum number of out-of-order chunks to buffer.
 const MAX_CHUNK_BUFFER_SIZE: usize = 1024;
@@ -87,7 +87,7 @@ impl WriterStage {
 
         // Create output file with buffered writer
         let file = File::create(&self.output_path).map_err(|e| {
-            CodecError::encode("WriterStage", format!("Failed to create output file: {e}"))
+            RoboflowError::encode("WriterStage", format!("Failed to create output file: {e}"))
         })?;
 
         let buffered_writer = BufWriter::with_capacity(self.config.buffer_size, file);
@@ -107,7 +107,7 @@ impl WriterStage {
                     let id = writer
                         .add_schema(&channel.message_type, encoding, schema.as_bytes())
                         .map_err(|e| {
-                            CodecError::encode(
+                            RoboflowError::encode(
                                 "WriterStage",
                                 format!("Failed to add schema for {}: {}", channel.message_type, e),
                             )
@@ -129,7 +129,7 @@ impl WriterStage {
                     &HashMap::new(),
                 )
                 .map_err(|e| {
-                    CodecError::encode(
+                    RoboflowError::encode(
                         "WriterStage",
                         format!("Failed to add channel {}: {}", channel.topic, e),
                     )
@@ -189,7 +189,7 @@ impl WriterStage {
             } else {
                 // Out of order, buffer it
                 if chunk_buffer.len() >= MAX_CHUNK_BUFFER_SIZE {
-                    return Err(CodecError::encode(
+                    return Err(RoboflowError::encode(
                         "WriterStage",
                         format!(
                             "Chunk buffer overflow: waiting for sequence {}, got {}, buffer size {}",
@@ -236,7 +236,7 @@ pub struct WriterStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::types::chunk::CompressedChunk;
+    use robocodec::types::chunk::CompressedChunk;
 
     /// Create a test compressed chunk with the given sequence number.
     fn make_test_chunk(sequence: u64, message_count: usize) -> CompressedChunk {

@@ -77,7 +77,7 @@ coverage-rust: ## Run Rust tests with coverage (requires cargo-llvm-cov)
 
 coverage-python: ## Run Python tests with coverage
 	@echo "Running Python tests with coverage..."
-	pytest python/ --cov=robocodec --cov-report=term-missing --cov-report=html:coverage-html --cov-report=xml:coverage.xml
+	pytest python/ --cov=roboflow --cov-report=term-missing --cov-report=html:coverage-html --cov-report=xml:coverage.xml
 	@echo ""
 	@echo "✓ Python coverage report: coverage-html/index.html"
 

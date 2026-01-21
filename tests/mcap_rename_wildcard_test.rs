@@ -1,10 +1,10 @@
 //! Test MCAP rewriting with wildcard type renaming and round-trip verification.
 //!
 //! Usage:
-//!   cargo test -p robocodec --test mcap_rename_wildcard -- --nocapture
+//!   cargo test -p roboflow --test mcap_rename_wildcard -- --nocapture
 
-use robocodec::format::rewriter::McapRewriter;
-use robocodec::format::McapReader;
+use robocodec::mcap::McapReader;
+use robocodec::rewriter::McapRewriter;
 use robocodec::transform::TransformBuilder;
 use robocodec::RewriteOptions;
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,7 +14,7 @@ use std::path::Path;
 fn test_wildcard_rename_sensor_msgs() {
     // Use nissan fixture from strata-core
     let input_path = "../strata-core/tests/fixtures/nissan_zala_50_zeg_4_0.mcap";
-    let output_path = "/tmp/nissan_renamed.mcap";
+    let output_path = "/tmp/claude/nissan_renamed.mcap";
 
     // Skip test if fixture doesn't exist
     if !Path::new(input_path).exists() {
@@ -65,7 +65,7 @@ struct ChannelSnapshot {
 }
 
 impl ChannelSnapshot {
-    fn from_channel_info(channel: &robocodec::format::reader::ChannelInfo) -> Self {
+    fn from_channel_info(channel: &robocodec::mcap::reader::ChannelInfo) -> Self {
         Self {
             topic: channel.topic.clone(),
             message_type: channel.message_type.clone(),
@@ -87,7 +87,7 @@ fn collect_channels(reader: &McapReader) -> BTreeMap<String, ChannelSnapshot> {
 #[test]
 fn test_round_trip_topic_rename() {
     let input_path = "../strata-core/tests/fixtures/nissan_zala_50_zeg_4_0.mcap";
-    let output_path = "/tmp/nissan_topic_rename.mcap";
+    let output_path = "/tmp/claude/nissan_topic_rename.mcap";
 
     if !Path::new(input_path).exists() {
         eprintln!("Skipping test: fixture not found at {input_path}");
@@ -179,7 +179,7 @@ fn test_round_trip_topic_rename() {
 #[test]
 fn test_round_trip_type_rename_with_verification() {
     let input_path = "../strata-core/tests/fixtures/nissan_zala_50_zeg_4_0.mcap";
-    let output_path = "/tmp/nissan_type_rename_verify.mcap";
+    let output_path = "/tmp/claude/nissan_type_rename_verify.mcap";
 
     if !Path::new(input_path).exists() {
         eprintln!("Skipping test: fixture not found at {input_path}");
@@ -261,7 +261,7 @@ fn test_round_trip_type_rename_with_verification() {
 #[test]
 fn test_round_trip_combined_topic_and_type_rename() {
     let input_path = "../strata-core/tests/fixtures/nissan_zala_50_zeg_4_0.mcap";
-    let output_path = "/tmp/nissan_combined_rename.mcap";
+    let output_path = "/tmp/claude/nissan_combined_rename.mcap";
 
     if !Path::new(input_path).exists() {
         eprintln!("Skipping test: fixture not found at {input_path}");

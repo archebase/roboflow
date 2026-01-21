@@ -1,6 +1,6 @@
-//! Example: Convert MCAP to Kps dataset format using robocodec Rust API.
+//! Example: Convert MCAP to Kps dataset format using roboflow Rust API.
 //!
-//! This example demonstrates how to use robocodec's new streaming Kps pipeline
+//! This example demonstrates how to use roboflow's new streaming Kps pipeline
 //! to convert robotics data from MCAP files to the Kps dataset format.
 //!
 //! # Usage
@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load configuration
     let config_content = fs::read_to_string(config_path)?;
-    let config: robocodec::io::kps::KpsConfig =
+    let config: roboflow::io::kps::KpsConfig =
         toml::from_str(&config_content)?;
 
     println!("Converting MCAP to Kps dataset");
@@ -60,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pipeline_config = build_pipeline_config(&config);
 
     // Create and run the pipeline
-    let pipeline = robocodec::pipeline::kps::KpsPipeline::new(
+    let pipeline = roboflow::pipeline::kps::KpsPipeline::new(
         input_path,
         output_dir,
         pipeline_config,
@@ -80,9 +80,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Build pipeline configuration from Kps config and environment variables.
 fn build_pipeline_config(
-    config: &robocodec::io::kps::KpsConfig,
-) -> robocodec::pipeline::kps::KpsPipelineConfig {
-    use robocodec::pipeline::kps::{
+    config: &roboflow::io::kps::KpsConfig,
+) -> roboflow::pipeline::kps::KpsPipelineConfig {
+    use roboflow::pipeline::kps::{
         CameraExtractorConfig, KpsPipelineConfig, TimeAlignerConfig,
         TimeAlignmentStrategyType,
     };
@@ -147,8 +147,8 @@ fn parse_camera_topics_from_env() -> HashMap<String, String> {
 
 /// Example: Create a minimal Kps config programmatically.
 #[allow(dead_code)]
-fn create_example_config() -> robocodec::io::kps::KpsConfig {
-    use robocodec::io::kps::{
+fn create_example_config() -> roboflow::io::kps::KpsConfig {
+    use roboflow::io::kps::{
         DatasetConfig, ImageFormat, KpsConfig, Mapping, MappingType, OutputConfig,
         OutputFormat,
     };

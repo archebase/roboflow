@@ -13,9 +13,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use robocodec::format::writer::{BagMessage, BagWriter};
-use robocodec::io::formats::BagFormat;
 use robocodec::io::traits::FormatReader;
+use robocodec::BagFormat;
+use robocodec::{BagMessage, BagWriter};
 
 // ============================================================================
 // Test Fixtures
@@ -50,7 +50,7 @@ fn temp_dir() -> PathBuf {
         .unwrap()
         .subsec_nanos();
     std::env::temp_dir().join(format!(
-        "robocodec_bag_writer_test_{}_{}",
+        "roboflow_bag_writer_test_{}_{}",
         std::process::id(),
         random
     ))
@@ -540,7 +540,7 @@ fn test_round_trip_topic_types_match() {
 #[test]
 fn test_round_trip_message_data_preserved() {
     // Use a fixed path for easier debugging
-    let path = PathBuf::from("/tmp/test_round_trip_data.bag");
+    let path = PathBuf::from("/tmp/claude/test_round_trip_data.bag");
 
     // Create test data with known byte patterns
     let test_data_1 = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
@@ -614,7 +614,7 @@ fn test_round_trip_message_data_preserved() {
 
 #[test]
 fn test_round_trip_multiple_connections_with_data() {
-    let path = PathBuf::from("/tmp/test_round_trip_multi_conn.bag");
+    let path = PathBuf::from("/tmp/claude/test_round_trip_multi_conn.bag");
 
     // Create test data for different topics
     let string_data = vec![b'H', b'e', b'l', b'l', b'o'];

@@ -2,7 +2,7 @@
 //!
 //! Provides filtering and configuration for input file reading.
 
-use crate::io::filter::TopicFilter;
+use robocodec::io::filter::TopicFilter;
 
 /// Read options for configuring input file processing.
 ///
@@ -11,7 +11,7 @@ use crate::io::filter::TopicFilter;
 /// # Examples
 ///
 /// ```no_run
-/// use robocodec::pipeline::fluent::ReadOptions;
+/// use roboflow::pipeline::fluent::ReadOptions;
 /// use robocodec::io::filter::TopicFilter;
 ///
 /// let options = ReadOptions::new()
@@ -46,7 +46,7 @@ impl ReadOptions {
     /// # Examples
     ///
     /// ```no_run
-    /// use robocodec::pipeline::fluent::ReadOptions;
+    /// use roboflow::pipeline::fluent::ReadOptions;
     /// use robocodec::io::filter::TopicFilter;
     ///
     /// // Include specific topics
@@ -78,7 +78,7 @@ impl ReadOptions {
     /// # Examples
     ///
     /// ```no_run
-    /// use robocodec::pipeline::fluent::ReadOptions;
+    /// use roboflow::pipeline::fluent::ReadOptions;
     ///
     /// // Read messages from 1 second to 5 seconds
     /// let _opts = ReadOptions::new()

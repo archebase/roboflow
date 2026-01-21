@@ -10,11 +10,11 @@
 use std::fs;
 use std::path::PathBuf;
 
-use robocodec::format::writer::{BagMessage, BagWriter};
-use robocodec::io::formats::BagFormat;
 use robocodec::io::traits::FormatReader;
 use robocodec::rewriter::RewriteOptions;
-use robocodec::transform::{TransformBuilder, TransformPipeline};
+use robocodec::transform::{TransformBuilder, MultiTransform};
+use robocodec::BagFormat;
+use robocodec::{BagMessage, BagWriter};
 
 // ============================================================================
 // Test Fixtures
@@ -30,7 +30,7 @@ fn temp_dir() -> PathBuf {
         .unwrap()
         .subsec_nanos();
     std::env::temp_dir().join(format!(
-        "robocodec_bag_rewriter_test_{}_{}",
+        "roboflow_bag_rewriter_test_{}_{}",
         std::process::id(),
         random
     ))
@@ -83,7 +83,7 @@ fn create_test_bag(
 
 #[test]
 fn test_rewriter_new_creates_with_default_options() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let rewriter = BagRewriter::new();
 
@@ -95,12 +95,12 @@ fn test_rewriter_new_creates_with_default_options() {
 
 #[test]
 fn test_rewriter_with_custom_options() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let options = RewriteOptions {
         validate_schemas: true,
         skip_decode_failures: true,
-        transforms: Some(TransformPipeline::new()),
+        transforms: Some(MultiTransform::new()),
         passthrough_non_cdr: false,
     };
 
@@ -113,7 +113,7 @@ fn test_rewriter_with_custom_options() {
 
 #[test]
 fn test_rewriter_default() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let rewriter = BagRewriter::default();
 
@@ -126,7 +126,7 @@ fn test_rewriter_default() {
 
 #[test]
 fn test_rewriter_caches_schemas_from_bag() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("schema_cache_input");
     let output_path = temp_bag_path("schema_cache_output");
@@ -158,7 +158,7 @@ fn test_rewriter_caches_schemas_from_bag() {
 
 #[test]
 fn test_rewriter_validates_invalid_schema_returns_error() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("invalid_schema_input");
     let output_path = temp_bag_path("invalid_schema_output");
@@ -194,7 +194,7 @@ fn test_rewriter_validates_invalid_schema_returns_error() {
 
 #[test]
 fn test_rewriter_skips_validation_when_disabled() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("skip_validation_input");
     let output_path = temp_bag_path("skip_validation_output");
@@ -233,7 +233,7 @@ fn test_rewriter_skips_validation_when_disabled() {
 
 #[test]
 fn test_rewriter_applies_topic_rename() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("topic_rename_input");
     let output_path = temp_bag_path("topic_rename_output");
@@ -276,7 +276,7 @@ fn test_rewriter_applies_topic_rename() {
 
 #[test]
 fn test_rewriter_applies_type_rename() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("type_rename_input");
     let output_path = temp_bag_path("type_rename_output");
@@ -319,7 +319,7 @@ fn test_rewriter_applies_type_rename() {
 
 #[test]
 fn test_rewriter_applies_combined_transformations() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("combined_transform_input");
     let output_path = temp_bag_path("combined_transform_output");
@@ -369,7 +369,7 @@ fn test_rewriter_applies_combined_transformations() {
 
 #[test]
 fn test_rewriter_preserves_callerid() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("callerid_input");
     let output_path = temp_bag_path("callerid_output");
@@ -407,7 +407,7 @@ fn test_rewriter_preserves_callerid() {
 
 #[test]
 fn test_rewriter_preserves_multiple_callerids_for_same_topic() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("multi_callerid_input");
     let output_path = temp_bag_path("multi_callerid_output");
@@ -468,7 +468,7 @@ fn test_rewriter_preserves_multiple_callerids_for_same_topic() {
 
 #[test]
 fn test_rewriter_tracks_message_count() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("message_count_input");
     let output_path = temp_bag_path("message_count_output");
@@ -497,7 +497,7 @@ fn test_rewriter_tracks_message_count() {
 
 #[test]
 fn test_rewriter_tracks_channel_count() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("channel_count_input");
     let output_path = temp_bag_path("channel_count_output");
@@ -528,7 +528,7 @@ fn test_rewriter_tracks_channel_count() {
 
 #[test]
 fn test_rewriter_tracks_reencoded_count() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("reencoded_count_input");
     let output_path = temp_bag_path("reencoded_count_output");
@@ -572,7 +572,7 @@ fn test_rewriter_tracks_reencoded_count() {
 
 #[test]
 fn test_rewriter_returns_error_for_nonexistent_input() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = PathBuf::from("/nonexistent/path/to/file.bag");
     let output_path = temp_bag_path("error_output");
@@ -585,7 +585,7 @@ fn test_rewriter_returns_error_for_nonexistent_input() {
 
 #[test]
 fn test_rewriter_handles_invalid_output_path() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("invalid_output_input");
     let output_path = PathBuf::from("/nonexistent/directory/cannot_create/file.bag");
@@ -611,7 +611,7 @@ fn test_rewriter_handles_invalid_output_path() {
 
 #[test]
 fn test_bag_rewriter_implements_format_rewriter_trait() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("trait_input");
     let output_path = temp_bag_path("trait_output");
@@ -640,7 +640,7 @@ fn test_bag_rewriter_implements_format_rewriter_trait() {
 
 #[test]
 fn test_rewriter_passes_through_without_schema() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("passthrough_input");
     let output_path = temp_bag_path("passthrough_output");
@@ -677,7 +677,7 @@ fn test_rewriter_passes_through_without_schema() {
 
 #[test]
 fn test_multiple_rewrites_are_independent() {
-    use robocodec::format::rewriter::BagRewriter;
+    use robocodec::rewriter::bag::BagRewriter;
 
     let input_path = temp_bag_path("multi_rewrite_input");
     let output_path1 = temp_bag_path("multi_rewrite_output1");

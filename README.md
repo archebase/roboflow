@@ -1,25 +1,25 @@
-# Robocodec
+# Roboflow
 
-[![Crates.io](https://img.shields.io/crates/v/robocodec)](https://crates.io/crates/robocodec)
-[![PyPI](https://img.shields.io/pypi/v/robocodec)](https://pypi.org/project/robocodec/)
+[![Crates.io](https://img.shields.io/crates/v/roboflow)](https://crates.io/crates/roboflow)
+[![PyPI](https://img.shields.io/pypi/v/roboflow)](https://pypi.org/project/roboflow/)
 [![License: MulanPSL-2.0](https://img.shields.io/badge/License-MulanPSL--2.0-blue.svg)](http://mulan.cosine.org.cn/license/MulanPSL2)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 
 [English](README.md) | [简体中文](README_zh.md)
 
-**Robocodec** is a universal, schema-driven runtime decoding engine for robotics data. It provides a unified interface for decoding, encoding, and converting between different robotics message formats and data storage formats.
+**Roboflow** is a universal, schema-driven runtime decoding engine for robotics data. It provides a unified interface for decoding, encoding, and converting between different robotics message formats and data storage formats.
 
 ## Workspace Structure
 
-Robocodec is organized as a Cargo workspace with two crates:
+Roboflow is organized as a Cargo workspace with two crates:
 
-- **`robofmt`** - Low-level robotics data format library
+- **`robocodec`** - Low-level robotics data format library
   - Message codecs (CDR, Protobuf, JSON)
   - Schema parser (ROS .msg, ROS2 IDL, OMG IDL)
   - Core types and error handling
   - Arena allocation primitives
 
-- **`robocodec`** - High-level pipeline and conversion tool
+- **`roboflow`** - High-level pipeline and conversion tool
   - Format-specific readers and writers (MCAP, ROS1 bag)
   - Parallel processing pipelines (Standard, HyperPipeline)
   - Fluent API for batch operations
@@ -54,8 +54,8 @@ Robocodec is organized as a Cargo workspace with two crates:
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/archebase/robocodec.git
-cd robocodec
+git clone https://github.com/archebase/roboflow.git
+cd roboflow
 ```
 
 2. Build Rust library:
@@ -82,20 +82,20 @@ To use `robocodec` in your Rust project, add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-robocodec = "0.1"
+roboflow = "0.1"
 ```
 
 For the format library only:
 
 ```toml
 [dependencies]
-robofmt = "0.1"
+robocodec = "0.1"
 ```
 
 Enable optional features as needed:
 
 ```toml
-robocodec = { version = "0.1", features = ["python", "kps-all"] }
+roboflow = { version = "0.1", features = ["python", "kps-all"] }
 ```
 
 ### Using Python Package
@@ -103,7 +103,7 @@ robocodec = { version = "0.1", features = ["python", "kps-all"] }
 After building with `maturin develop`, you can use the Python package:
 
 ```python
-from robocodec import Reader, Writer, decode, encode
+from roboflow import Reader, Writer, decode, encode
 ```
 
 ## Quick Start
@@ -111,7 +111,7 @@ from robocodec import Reader, Writer, decode, encode
 ### Rust API
 
 ```rust
-use robocodec::RoboReader;
+use roboflow::RoboReader;
 
 // Open a robotics data file (auto-detects format)
 let reader = RoboReader::open("data.bag")?;
@@ -126,7 +126,7 @@ for result in reader.iter_messages() {
 ### Python API
 
 ```python
-from robocodec import RoboReader
+from roboflow import RoboReader
 
 # Open a robotics data file (auto-detects format)
 reader = RoboReader("data.bag")
@@ -154,7 +154,7 @@ extract data.bag --topics /camera/image_raw --output extracted/
 ### Fluent API for Batch Processing
 
 ```rust
-use robocodec::Robocodec;
+use roboflow::Robocodec;
 
 // Simple conversion with auto-detection
 Robocodec::open(vec!["input.bag"])?
@@ -176,7 +176,7 @@ Robocodec::open(vec!["input.bag"])?
 Convert robotics data to KPS dataset format. The KPS writer integrates with the pipeline for efficient dataset generation:
 
 ```rust
-use robocodec::pipeline::fluent::Robocodec;
+use roboflow::pipeline::fluent::Robocodec;
 
 // Convert to KPS format using the fluent API
 Robocodec::open(vec!["input.mcap"])?
@@ -231,7 +231,7 @@ image_format = "mp4"
 Python bindings provide full access to the Rust core:
 
 ```python
-from robocodec import RoboReader, RoboWriter, decode, encode
+from roboflow import RoboReader, RoboWriter, decode, encode
 
 # Read from file
 reader = RoboReader("data.mcap")

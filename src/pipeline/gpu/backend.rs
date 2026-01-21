@@ -4,7 +4,7 @@
 //! allowing GPU and CPU implementations to be used interchangeably.
 
 use super::{GpuCompressionError, GpuResult};
-use crate::core::CodecError;
+use crate::core::RoboflowError;
 
 // Re-export chunk types from compress module to avoid duplication
 pub use crate::pipeline::compression::{ChunkToCompress, CompressedDataChunk as CompressedChunk};
@@ -182,9 +182,9 @@ impl CompressorBackend for CpuCompressor {
     }
 }
 
-/// Convert GpuCompressionError to CodecError.
-impl From<GpuCompressionError> for CodecError {
+/// Convert GpuCompressionError to RoboflowError.
+impl From<GpuCompressionError> for RoboflowError {
     fn from(err: GpuCompressionError) -> Self {
-        CodecError::encode("GpuCompressor", format!("{}", err))
+        RoboflowError::encode("GpuCompressor", format!("{}", err))
     }
 }

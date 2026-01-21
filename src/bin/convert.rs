@@ -15,7 +15,7 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 
-use robocodec::format::writer::ParallelMcapWriter;
+use robocodec::mcap::writer::ParallelMcapWriter;
 
 // ============================================================================
 // Fluent API Types
@@ -76,6 +76,7 @@ fn normalize<'a>(input: &'a str, output: &'a str) -> NormalizeBuilder<'a> {
 ///     .run()
 ///     .unwrap();
 /// ```
+#[cfg(feature = "kps-all")]
 fn to_lerobot<'a>(input: &'a str, output_dir: &'a str) -> LeRobotBuilder<'a> {
     LeRobotBuilder::new(input, output_dir)
 }
@@ -124,12 +125,14 @@ impl<'a> NormalizeBuilder<'a> {
 }
 
 /// Builder for LeRobot conversions.
+#[cfg(feature = "kps-all")]
 struct LeRobotBuilder<'a> {
     input: &'a str,
     output_dir: &'a str,
     config: Option<&'a str>,
 }
 
+#[cfg(feature = "kps-all")]
 impl<'a> LeRobotBuilder<'a> {
     fn new(input: &'a str, output_dir: &'a str) -> Self {
         Self {
@@ -168,6 +171,7 @@ enum Command {
         output: String,
         config: String,
     },
+    #[cfg(feature = "kps-all")]
     ToLeRobot {
         input: String,
         output: String,
@@ -206,6 +210,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                 config,
             }
         }
+        #[cfg(feature = "kps-all")]
         "to-lerobot" => {
             if args.len() < 5 {
                 return Err("to-lerobot command requires a config file argument".to_string());
@@ -230,6 +235,7 @@ fn run_convert(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
             output,
             config,
         } => normalize(&input, &output).config(&config).run(),
+        #[cfg(feature = "kps-all")]
         Command::ToLeRobot {
             input,
             output,
@@ -244,8 +250,8 @@ fn run_convert(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Convert ROS1 BAG to MCAP format.
 fn convert_bag_to_mcap(input: &str, output: &str) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::io::formats::BagFormat;
     use robocodec::io::traits::FormatReader;
+    use robocodec::BagFormat;
 
     println!("Converting BAG to MCAP: {} -> {}", input, output);
 
@@ -344,7 +350,7 @@ fn convert_bag_to_mcap(input: &str, output: &str) -> Result<(), Box<dyn std::err
 fn convert_mcap_to_bag(input: &str, output: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Converting MCAP to BAG: {} -> {}", input, output);
 
-    let reader = robocodec::format::McapReader::open(input)?;
+    let reader = robocodec::mcap::McapReader::open(input)?;
     println!("Channels: {}", reader.channels().len());
 
     let mut writer = robocodec::BagWriter::create(output)?;
@@ -369,7 +375,7 @@ fn convert_mcap_to_bag(input: &str, output: &str) -> Result<(), Box<dyn std::err
 
     // Convert messages using raw data
     let raw_iter = reader.iter_raw()?;
-    let stream = raw_iter.into_stream()?;
+    let stream = raw_iter.stream()?;
 
     for result in stream {
         let (msg, _channel) = result?;
@@ -417,7 +423,7 @@ fn normalize_file(
     println!("Config: {}", config_path);
 
     // Load normalization config
-    let config = robocodec::config::NormalizeConfig::from_file(config_path)?;
+    let config = roboflow::config::NormalizeConfig::from_file(config_path)?;
     let pipeline = config.to_pipeline();
 
     println!("Type mappings: {}", config.type_mappings.len());
@@ -442,7 +448,7 @@ fn normalize_file(
 
 fn normalize_to_mcap(
     input: &str,
-    pipeline: &robocodec::transform::TransformPipeline,
+    pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let input_path = std::path::Path::new(input);
@@ -461,10 +467,10 @@ fn normalize_to_mcap(
 /// Convert MCAP file to MCAP format with transformations.
 fn mcap_to_mcap_normalized(
     input: &str,
-    pipeline: &robocodec::transform::TransformPipeline,
+    pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::format::{reader::McapReader, rewriter::McapRewriteEngine};
+    use robocodec::{mcap::reader::McapReader, rewriter::engine::McapRewriteEngine};
 
     let mcap_reader = McapReader::open(input)?;
     let mut engine = McapRewriteEngine::new();
@@ -533,7 +539,7 @@ fn mcap_to_mcap_normalized(
 
     // Copy messages (data stays the same, only metadata is transformed)
     let raw_iter = mcap_reader.iter_raw()?;
-    let stream = raw_iter.into_stream()?;
+    let stream = raw_iter.stream()?;
 
     for result in stream {
         let (msg, _channel) = result?;
@@ -567,10 +573,10 @@ fn mcap_to_mcap_normalized(
 /// Convert BAG file to MCAP format with transformations.
 fn bag_to_mcap_normalized(
     input: &str,
-    pipeline: &robocodec::transform::TransformPipeline,
+    pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::formats::bag::BagFormat;
+    use robocodec::bag::BagFormat;
     use robocodec::io::traits::FormatReader;
 
     println!("Converting BAG to MCAP with transforms");
@@ -664,7 +670,7 @@ fn bag_to_mcap_normalized(
 
 fn normalize_to_bag(
     input: &str,
-    pipeline: &robocodec::transform::TransformPipeline,
+    pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Detect input format
@@ -690,10 +696,10 @@ fn normalize_to_bag(
 /// Convert MCAP file to BAG format.
 fn mcap_to_bag_normalized(
     input: &str,
-    pipeline: &robocodec::transform::TransformPipeline,
+    pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::format::{reader::McapReader, rewriter::McapRewriteEngine};
+    use robocodec::{mcap::reader::McapReader, rewriter::engine::McapRewriteEngine};
 
     let reader = McapReader::open(input)?;
     let mut engine = McapRewriteEngine::new();
@@ -743,7 +749,7 @@ fn mcap_to_bag_normalized(
 
     // Copy messages
     let raw_iter = reader.iter_raw()?;
-    let stream = raw_iter.into_stream()?;
+    let stream = raw_iter.stream()?;
 
     for result in stream {
         let (msg, _channel) = result?;
@@ -767,10 +773,10 @@ fn mcap_to_bag_normalized(
 /// Convert BAG file to BAG format with transformations.
 fn bag_to_bag(
     input: &str,
-    pipeline: &robocodec::transform::TransformPipeline,
+    pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::formats::bag::BagFormat;
+    use robocodec::bag::BagFormat;
     use robocodec::io::traits::FormatReader;
 
     println!("Converting BAG to BAG with transforms");
@@ -835,12 +841,13 @@ fn bag_to_bag(
 }
 
 /// Convert MCAP to KPS dataset format.
+#[cfg(feature = "kps-all")]
 fn convert_to_lerobot(
     input: &str,
     output_dir: &str,
     config_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::format::kps::{KpsConfig, OutputFormat};
+    use roboflow::dataset::kps::{KpsConfig, OutputFormat};
 
     println!("Converting MCAP to KPS dataset");
     println!("  Input: {}", input);
@@ -865,7 +872,7 @@ fn convert_to_lerobot(
     if use_hdf5 {
         #[cfg(feature = "kps-hdf5")]
         {
-            use robocodec::format::kps::Hdf5KpsWriter;
+            use roboflow::dataset::kps::Hdf5KpsWriter;
 
             println!();
             println!("Creating HDF5 format...");
@@ -885,7 +892,7 @@ fn convert_to_lerobot(
     if use_parquet {
         #[cfg(feature = "kps-parquet")]
         {
-            use robocodec::format::kps::ParquetKpsWriter;
+            use roboflow::dataset::kps::ParquetKpsWriter;
 
             println!();
             println!("Creating Parquet+MP4 format...");

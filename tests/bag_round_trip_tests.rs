@@ -1,14 +1,14 @@
 //! Test BAG rewriting with round-trip verification.
 //!
 //! Usage:
-//!   cargo test -p robocodec --test bag_round_trip_tests -- --nocapture
+//!   cargo test -p roboflow --test bag_round_trip_tests -- --nocapture
 
-use robocodec::format::rewriter::BagRewriter as BagBagRewriter;
-use robocodec::format::writer::ParallelMcapWriter;
-use robocodec::io::formats::BagFormat;
 use robocodec::io::traits::FormatReader;
+use robocodec::rewriter::bag::BagRewriter as BagBagRewriter;
 use robocodec::transform::TransformBuilder;
-use robocodec::transform::TransformPipeline;
+use robocodec::transform::MultiTransform;
+use robocodec::BagFormat;
+use robocodec::ParallelMcapWriter;
 use robocodec::RewriteOptions;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::BufWriter;
@@ -60,10 +60,10 @@ fn count_bag_messages(path: &str) -> Result<usize, Box<dyn std::error::Error>> {
 
 /// Count all messages in an MCAP file.
 fn count_mcap_messages(path: &str) -> Result<usize, Box<dyn std::error::Error>> {
-    use robocodec::format::McapReader;
+    use robocodec::mcap::McapReader;
     let reader = McapReader::open(path)?;
     let iter = reader.iter_raw()?;
-    let stream = iter.into_stream()?;
+    let stream = iter.stream()?;
 
     let mut count = 0;
     for result in stream {
@@ -109,7 +109,7 @@ fn test_round_trip_read_bag() {
 #[test]
 fn test_round_trip_bag_rewrite() {
     let input_path = "tests/fixtures/robocodec_test_15.bag";
-    let output_path = "/tmp/robocodec_test_15_rewrite.bag";
+    let output_path = "/tmp/claude/robocodec_test_15_rewrite.bag";
 
     if !Path::new(input_path).exists() {
         eprintln!("Skipping test: fixture not found at {input_path}");
@@ -166,7 +166,7 @@ fn test_round_trip_bag_rewrite() {
 #[test]
 fn test_round_trip_topic_rename() {
     let input_path = "tests/fixtures/robocodec_test_15.bag";
-    let output_path = "/tmp/robocodec_test_15_topic_rename.bag";
+    let output_path = "/tmp/claude/robocodec_test_15_topic_rename.bag";
 
     if !Path::new(input_path).exists() {
         eprintln!("Skipping test: fixture not found at {input_path}");
@@ -240,7 +240,7 @@ fn test_round_trip_topic_rename() {
 #[test]
 fn test_round_trip_type_rename_with_verification() {
     let input_path = "tests/fixtures/robocodec_test_15.bag";
-    let output_path = "/tmp/robocodec_test_15_type_rename.bag";
+    let output_path = "/tmp/claude/robocodec_test_15_type_rename.bag";
 
     if !Path::new(input_path).exists() {
         eprintln!("Skipping test: fixture not found at {input_path}");
@@ -347,7 +347,7 @@ fn test_round_trip_type_rename_with_verification() {
 #[test]
 fn test_round_trip_combined_topic_and_type_rename() {
     let input_path = "tests/fixtures/robocodec_test_15.bag";
-    let output_path = "/tmp/robocodec_test_15_combined_rename.bag";
+    let output_path = "/tmp/claude/robocodec_test_15_combined_rename.bag";
 
     if !Path::new(input_path).exists() {
         eprintln!("Skipping test: fixture not found at {input_path}");
@@ -472,7 +472,7 @@ fn test_round_trip_combined_topic_and_type_rename() {
 #[test]
 fn test_round_trip_roborewriter_facade() {
     let input_path = "tests/fixtures/robocodec_test_15.bag";
-    let output_path = "/tmp/robocodec_test_15_facade.bag";
+    let output_path = "/tmp/claude/robocodec_test_15_facade.bag";
 
     if !Path::new(input_path).exists() {
         eprintln!("Skipping test: fixture not found at {input_path}");
@@ -545,7 +545,7 @@ where
 fn test_round_trip_callerid_preservation() {
     // Use test_15 which has a smaller, more manageable size
     let input_path = "tests/fixtures/robocodec_test_15.bag";
-    let output_path = "/tmp/robocodec_test_15_callerid.bag";
+    let output_path = "/tmp/claude/robocodec_test_15_callerid.bag";
 
     if !Path::new(input_path).exists() {
         eprintln!("Skipping test: fixture not found at {input_path}");
@@ -664,7 +664,7 @@ fn test_round_trip_callerid_preservation() {
 fn test_round_trip_multiple_tf_connections() {
     // Test specific to /tf which commonly has multiple publishers
     let input_path = "tests/fixtures/robocodec_test_15.bag";
-    let output_path = "/tmp/robocodec_test_15_tf.bag";
+    let output_path = "/tmp/claude/robocodec_test_15_tf.bag";
 
     if !Path::new(input_path).exists() {
         eprintln!("Skipping test: fixture not found at {input_path}");
@@ -737,7 +737,7 @@ fn test_round_trip_multiple_tf_connections() {
 fn test_round_trip_with_transform_preserves_callerid() {
     // Test that callerids are preserved even when applying topic/type renames
     let input_path = "tests/fixtures/robocodec_test_15.bag";
-    let output_path = "/tmp/robocodec_test_15_transform_callerid.bag";
+    let output_path = "/tmp/claude/robocodec_test_15_transform_callerid.bag";
 
     if !Path::new(input_path).exists() {
         eprintln!("Skipping test: fixture not found at {input_path}");
@@ -862,7 +862,7 @@ fn test_round_trip_with_transform_preserves_callerid() {
 #[test]
 fn test_round_trip_test_23_bag() {
     let input_path = "tests/fixtures/robocodec_test_23.bag";
-    let output_path = "/tmp/robocodec_test_23_round_trip.bag";
+    let output_path = "/tmp/claude/robocodec_test_23_round_trip.bag";
 
     if !Path::new(input_path).exists() {
         eprintln!("Skipping test: fixture not found at {input_path}");
@@ -1010,8 +1010,8 @@ fn test_round_trip_test_23_bag() {
 #[test]
 fn test_bag_to_mcap_to_bag_with_transforms() {
     let input_bag = "tests/fixtures/robocodec_test_15.bag";
-    let temp_mcap = "/tmp/robocodec_test_15_to_mcap.mcap";
-    let output_bag = "/tmp/robocodec_test_15_round_trip.bag";
+    let temp_mcap = "/tmp/claude/robocodec_test_15_to_mcap.mcap";
+    let output_bag = "/tmp/claude/robocodec_test_15_round_trip.bag";
 
     if !Path::new(input_bag).exists() {
         eprintln!("Skipping test: fixture not found at {}", input_bag);
@@ -1090,11 +1090,11 @@ fn test_bag_to_mcap_to_bag_with_transforms() {
 
 #[test]
 fn test_mcap_to_bag_to_mcap_with_transforms() {
-    use robocodec::format::{McapReader, McapRewriteEngine};
+    use robocodec::{mcap::McapReader, rewriter::engine::McapRewriteEngine};
 
     let input_mcap = "tests/fixtures/robocodec_test_0.mcap";
-    let temp_bag = "/tmp/robocodec_test_0_to_bag.bag";
-    let output_mcap = "/tmp/robocodec_test_0_round_trip.mcap";
+    let temp_bag = "/tmp/claude/robocodec_test_0_to_bag.bag";
+    let output_mcap = "/tmp/claude/robocodec_test_0_round_trip.mcap";
 
     if !Path::new(input_mcap).exists() {
         eprintln!("Skipping test: fixture not found at {}", input_mcap);
@@ -1185,7 +1185,7 @@ fn test_mcap_to_bag_to_mcap_with_transforms() {
 /// Helper function: Convert BAG to MCAP with transforms
 fn bag_to_mcap_conversion(
     input: &str,
-    pipeline: &TransformPipeline,
+    pipeline: &MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let reader = BagFormat::open(input)?;
@@ -1276,11 +1276,11 @@ fn bag_to_mcap_conversion(
 /// Helper function: Convert MCAP to BAG with transforms
 fn mcap_to_bag_conversion(
     input: &str,
-    pipeline: &TransformPipeline,
+    pipeline: &MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::format::{McapReader, McapRewriteEngine};
     use robocodec::BagWriter;
+    use robocodec::{mcap::McapReader, rewriter::engine::McapRewriteEngine};
 
     let mcap_reader = McapReader::open(input)?;
     let mut engine = McapRewriteEngine::new();
@@ -1331,7 +1331,7 @@ fn mcap_to_bag_conversion(
 
     // Copy messages
     let iter = mcap_reader.iter_raw()?;
-    let stream = iter.into_stream()?;
+    let stream = iter.stream()?;
 
     for result in stream {
         let (msg, _channel) = result?;
@@ -1413,7 +1413,7 @@ fn test_round_trip_robocodec_test_17_bag_read() {
 #[test]
 fn test_round_trip_robocodec_test_17_bag_rewrite() {
     let input_path = "tests/fixtures/robocodec_test_17.bag";
-    let output_path = "/tmp/robocodec_test_17_rewrite.bag";
+    let output_path = "/tmp/claude/robocodec_test_17_rewrite.bag";
 
     if !Path::new(input_path).exists() {
         eprintln!("Skipping test: fixture not found at {input_path}");

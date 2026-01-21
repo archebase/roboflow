@@ -8,10 +8,10 @@ use std::time::Instant;
 
 use tracing::{error, warn};
 
-use crate::core::{CodecError, Result};
+use crate::core::{Result, RoboflowError};
 use crate::pipeline::hyper::{HyperPipeline, HyperPipelineConfig, HyperPipelineReport};
 use crate::pipeline::orchestrator::{AsyncPipeline, PipelineConfig, PipelineReport};
-use crate::transform::TransformPipeline;
+use robocodec::transform::MultiTransform;
 
 use super::compression::CompressionPreset;
 use super::read_options::ReadOptions;
@@ -60,7 +60,7 @@ pub struct WithOutput;
 /// # Single File Mode
 ///
 /// When a single input file is provided:
-/// - If output is a directory → uses original filename + "robocodec" suffix
+/// - If output is a directory → uses original filename + "roboflow" suffix
 /// - If output is a file path → creates the file, errors if it exists
 ///
 /// # Batch Mode
@@ -72,8 +72,8 @@ pub struct WithOutput;
 /// # Examples
 ///
 /// ```no_run
-/// use robocodec::Robocodec;
-/// use robocodec::pipeline::fluent::CompressionPreset;
+/// use roboflow::Robocodec;
+/// use roboflow::pipeline::fluent::CompressionPreset;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Single file to directory (auto-generates output filename)
@@ -97,7 +97,7 @@ pub struct WithOutput;
 pub struct Robocodec<State = Initial> {
     input_files: Vec<PathBuf>,
     read_options: Option<ReadOptions>,
-    transform: Option<TransformPipeline>,
+    transform: Option<MultiTransform>,
     output_path: Option<PathBuf>,
     compression_preset: CompressionPreset,
     chunk_size: Option<usize>,
@@ -127,7 +127,7 @@ impl Robocodec<Initial> {
     ///
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use robocodec::Robocodec;
+    /// use roboflow::Robocodec;
     ///
     /// // Single file
     /// let builder = Robocodec::open(vec!["input.bag"])?;
@@ -147,7 +147,7 @@ impl Robocodec<Initial> {
             .collect();
 
         if paths.is_empty() {
-            return Err(CodecError::parse(
+            return Err(RoboflowError::parse(
                 "Robocodec::open",
                 "No input files provided",
             ));
@@ -156,7 +156,7 @@ impl Robocodec<Initial> {
         // Validate all files exist
         for path in &paths {
             if !path.exists() {
-                return Err(CodecError::parse(
+                return Err(RoboflowError::parse(
                     "Robocodec::open",
                     format!("Input file not found: {}", path.display()),
                 ));
@@ -204,7 +204,7 @@ impl Robocodec<WithInput> {
     /// Set the transform pipeline.
     ///
     /// Transforms are applied to topic names, type names, and schemas.
-    pub fn transform(self, pipeline: TransformPipeline) -> Robocodec<WithTransform> {
+    pub fn transform(self, pipeline: MultiTransform) -> Robocodec<WithTransform> {
         Robocodec {
             input_files: self.input_files,
             read_options: self.read_options,
@@ -221,7 +221,7 @@ impl Robocodec<WithInput> {
     /// Set the output path (directory or file).
     ///
     /// # Single File Mode (1 input)
-    /// - If path is a directory → uses original filename + "robocodec" suffix
+    /// - If path is a directory → uses original filename + "roboflow" suffix
     /// - If path is a file → creates that file (errors if exists)
     ///
     /// # Batch Mode (multiple inputs)
@@ -332,7 +332,7 @@ impl Robocodec<WithOutput> {
     pub fn run(self) -> Result<RunOutput> {
         let output_path = self
             .output_path
-            .ok_or_else(|| CodecError::parse("Robocodec::run", "Output path not set"))?;
+            .ok_or_else(|| RoboflowError::parse("Robocodec::run", "Output path not set"))?;
 
         let compression_level = self.compression_preset.compression_level();
         let chunk_size = self
@@ -364,7 +364,7 @@ impl Robocodec<WithOutput> {
             if let Some(parent) = resolved_output.parent() {
                 if !parent.as_os_str().is_empty() && !parent.exists() {
                     std::fs::create_dir_all(parent).map_err(|e| {
-                        CodecError::encode(
+                        RoboflowError::encode(
                             "Robocodec::run",
                             format!("Failed to create output directory: {e}"),
                         )
@@ -410,7 +410,7 @@ impl Robocodec<WithOutput> {
             output_path.clone()
         } else {
             // For batch mode, output must be a directory
-            return Err(CodecError::parse(
+            return Err(RoboflowError::parse(
                 "Robocodec::run",
                 format!(
                     "Output must be a directory for batch mode, got: {}",
@@ -421,7 +421,7 @@ impl Robocodec<WithOutput> {
 
         // Create output directory if it doesn't exist
         std::fs::create_dir_all(&output_dir).map_err(|e| {
-            CodecError::encode(
+            RoboflowError::encode(
                 "Robocodec::run",
                 format!("Failed to create output directory: {e}"),
             )
@@ -593,10 +593,10 @@ pub enum FileResultData {
     /// Hyper pipeline succeeded
     HyperSuccess(HyperPipelineReport),
     /// Conversion failed
-    Failure { error: CodecError },
+    Failure { error: RoboflowError },
 }
 
-// Implement Clone manually for FileResultData since CodecError may not be Clone
+// Implement Clone manually for FileResultData since RoboflowError may not be Clone
 impl Clone for FileResultData {
     fn clone(&self) -> Self {
         match self {
@@ -606,11 +606,11 @@ impl Clone for FileResultData {
             FileResultData::HyperSuccess(report) => FileResultData::HyperSuccess(report.clone()),
             FileResultData::Failure { error } => {
                 // For Clone, we preserve the error category and message
-                // since CodecError may contain non-cloneable resources
+                // since RoboflowError may contain non-cloneable resources
                 let category = error.category().as_str();
                 let message = format!("{}", error);
                 FileResultData::Failure {
-                    error: CodecError::parse(category, message),
+                    error: RoboflowError::parse(category, message),
                 }
             }
         }
@@ -652,7 +652,7 @@ impl FileResult {
     }
 
     /// Get the error if conversion failed.
-    pub fn error(&self) -> Option<&CodecError> {
+    pub fn error(&self) -> Option<&RoboflowError> {
         match &self.result {
             FileResultData::Failure { error } => Some(error),
             _ => None,
@@ -699,7 +699,7 @@ impl FileResult {
         }
     }
 
-    fn from_failure(input_path: String, output_path: String, error: CodecError) -> Self {
+    fn from_failure(input_path: String, output_path: String, error: RoboflowError) -> Self {
         Self {
             input_path,
             output_path,
@@ -715,23 +715,23 @@ impl FileResult {
 /// Resolve output path for single file mode.
 ///
 /// Rules:
-/// - If output_path exists and is a directory → use filename + "robocodec" suffix
+/// - If output_path exists and is a directory → use filename + "roboflow" suffix
 /// - If output_path is a file → return as-is (will check existence later)
 /// - If output_path doesn't exist → treat as file path
 fn resolve_single_output(input_path: &Path, output_path: &Path) -> Result<PathBuf> {
     if output_path.exists() {
         if output_path.is_dir() {
-            // Use original filename + "robocodec" suffix
+            // Use original filename + "roboflow" suffix
             let stem = input_path
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "output".to_string());
 
-            let filename = format!("{}_robocodec.mcap", stem);
+            let filename = format!("{}_roboflow.mcap", stem);
             return Ok(output_path.join(filename));
         }
         // Output is a file - check if it exists
-        return Err(CodecError::parse(
+        return Err(RoboflowError::parse(
             "Robocodec::run",
             format!(
                 "Output file already exists: {}. \
@@ -750,7 +750,7 @@ fn resolve_single_output(input_path: &Path, output_path: &Path) -> Result<PathBu
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "output".to_string());
-        return Ok(output_path.join(format!("{}_robocodec.mcap", stem)));
+        return Ok(output_path.join(format!("{}_roboflow.mcap", stem)));
     }
 
     // It's a file path - return as-is
@@ -773,7 +773,7 @@ fn generate_output_path(
 
     // Check if this path was already generated for another input in this batch
     if used_paths.contains(&output_path) {
-        return Err(CodecError::parse(
+        return Err(RoboflowError::parse(
             "Robocodec::run",
             format!(
                 "Duplicate output path in batch: {} (from input: {}). \
@@ -786,7 +786,7 @@ fn generate_output_path(
 
     // Check if the file already exists on disk
     if output_path.exists() {
-        return Err(CodecError::parse(
+        return Err(RoboflowError::parse(
             "Robocodec::run",
             format!(
                 "Output file already exists: {}. \

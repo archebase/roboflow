@@ -1,11 +1,11 @@
 //! MCAP integration tests.
 //!
-//! These tests validate that robocodec can parse schemas from real MCAP files
+//! These tests validate that roboflow can parse schemas from real MCAP files
 //! and decode messages correctly. Each fixture file represents real robotics data.
 
 use std::path::Path;
 
-use robocodec::format::McapReader;
+use robocodec::mcap::McapReader;
 
 // Import common test utilities
 mod common;
@@ -33,7 +33,7 @@ pub struct TestSummary {
 
 /// Run integration tests on a single MCAP fixture file with expectations.
 fn test_mcap_file(fixture_path: &Path, _expectations: &FixtureExpectations) -> TestSummary {
-    // Open the MCAP file using robocodec's McapReader
+    // Open the MCAP file using roboflow's McapReader
     let reader =
         McapReader::open(fixture_path).unwrap_or_else(|e| panic!("Failed to open MCAP file: {e}"));
 
@@ -53,7 +53,7 @@ fn test_mcap_file(fixture_path: &Path, _expectations: &FixtureExpectations) -> T
         ..Default::default()
     };
 
-    // Test each channel using robocodec's decoded message iterator
+    // Test each channel using roboflow's decoded message iterator
     let decoded_iter = reader
         .decode_messages()
         .unwrap_or_else(|e| panic!("Failed to create decoded iterator: {e}"));
@@ -98,8 +98,8 @@ fn test_mcap_file(fixture_path: &Path, _expectations: &FixtureExpectations) -> T
 
 /// Validate that a decoded message has expected structure.
 fn validate_decoded_message_simple(
-    decoded: &std::collections::HashMap<String, robocodec::CodecValue>,
-    channel_info: &robocodec::format::reader::ChannelInfo,
+    decoded: &std::collections::HashMap<String, roboflow::CodecValue>,
+    channel_info: &robocodec::mcap::reader::ChannelInfo,
 ) {
     // Check that we decoded some fields
     if decoded.is_empty() {

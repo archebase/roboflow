@@ -15,9 +15,10 @@ use std::time::Instant;
 use byteorder::{LittleEndian, WriteBytesExt};
 use crossbeam_channel::{Receiver, Sender};
 
-use crate::core::{CodecError, Result};
+use crate::core::{Result, RoboflowError};
 use crate::pipeline::types::buffer_pool::{BufferPool, PooledBuffer};
-use crate::pipeline::types::chunk::{CompressedChunk, MessageChunk};
+use robocodec::io::traits::MessageChunkData;
+use robocodec::types::chunk::CompressedChunk;
 
 /// Compressed chunk with pooled buffer support.
 ///
@@ -111,7 +112,7 @@ pub struct CompressionStage {
     /// Compression configuration
     config: CompressionStageConfig,
     /// Channel for receiving chunks from reader
-    chunks_receiver: Receiver<MessageChunk<'static>>,
+    chunks_receiver: Receiver<MessageChunkData>,
     /// Channel for sending compressed chunks to writer
     chunks_sender: Sender<CompressedChunk>,
     /// Statistics
@@ -135,7 +136,7 @@ impl CompressionStage {
     /// Create a new compression stage.
     pub fn new(
         config: CompressionStageConfig,
-        chunks_receiver: Receiver<MessageChunk<'static>>,
+        chunks_receiver: Receiver<MessageChunkData>,
         chunks_sender: Sender<CompressedChunk>,
     ) -> Self {
         Self {
@@ -210,7 +211,7 @@ impl CompressionStage {
         }
 
         if !worker_errors.is_empty() {
-            return Err(CodecError::encode(
+            return Err(RoboflowError::encode(
                 "CompressionStage",
                 format!("Worker errors: {}", worker_errors.join(", ")),
             ));
@@ -242,7 +243,7 @@ impl CompressionStage {
     #[allow(clippy::too_many_arguments)]
     fn compression_worker(
         worker_id: usize,
-        receiver: Receiver<MessageChunk<'static>>,
+        receiver: Receiver<MessageChunkData>,
         sender: Sender<CompressedChunk>,
         stats: Arc<CompressionStats>,
         compression_level: i32,
@@ -252,7 +253,7 @@ impl CompressionStage {
     ) -> Result<()> {
         // Create thread-local compressor based on backend
         let mut zstd_compressor = zstd::bulk::Compressor::new(compression_level).map_err(|e| {
-            CodecError::encode(
+            RoboflowError::encode(
                 "CompressionStage",
                 format!("Failed to create ZSTD compressor: {e}"),
             )
@@ -304,7 +305,7 @@ impl CompressionStage {
                     zstd_compressor
                         .compress(&uncompressed_buffer)
                         .map_err(|e| {
-                            CodecError::encode(
+                            RoboflowError::encode(
                                 "CompressionStage",
                                 format!("ZSTD compression failed: {e}"),
                             )
@@ -356,7 +357,7 @@ impl CompressionStage {
 
             // Send to writer (blocks if channel is full)
             if sender.send(compressed_chunk).is_err() {
-                return Err(CodecError::encode(
+                return Err(RoboflowError::encode(
                     "CompressionStage",
                     format!("Worker {} failed to send compressed chunk", worker_id),
                 ));
@@ -381,17 +382,18 @@ impl CompressionStage {
     ///
     /// Also builds message indexes for each channel, tracking (log_time, offset) pairs.
     fn build_uncompressed_chunk_into_buffer(
-        chunk: &MessageChunk<'_>,
+        chunk: &MessageChunkData,
         buffer: &mut Vec<u8>,
         message_indexes: &mut std::collections::BTreeMap<
             u16,
             Vec<crate::pipeline::types::chunk::MessageIndexEntry>,
         >,
     ) -> Result<()> {
-        use crate::pipeline::types::chunk::MessageIndexEntry;
+        use robocodec::types::chunk::MessageIndexEntry;
         const OP_MESSAGE: u8 = 0x05;
 
-        let estimated_size = chunk.estimated_serialized_size();
+        let total_size = chunk.total_data_size();
+        let estimated_size = total_size + (chunk.messages.len() * (2 + 4 + 8 + 8 + 8)); // headers per message
         if buffer.capacity() < estimated_size {
             buffer.reserve(estimated_size - buffer.capacity());
         }
@@ -401,7 +403,7 @@ impl CompressionStage {
 
         // Write messages as proper MCAP message records
         for msg in &chunk.messages {
-            let data = msg.data.as_ref();
+            let data = &msg.data;
 
             // Record the offset BEFORE writing this message (offset within uncompressed chunk)
             let offset = buffer.len() as u64;
@@ -423,7 +425,7 @@ impl CompressionStage {
             buffer.write_u64::<LittleEndian>(record_len)?;
 
             buffer.write_u16::<LittleEndian>(msg.channel_id)?;
-            buffer.write_u32::<LittleEndian>(msg.sequence)?;
+            buffer.write_u32::<LittleEndian>(msg.sequence.unwrap_or(0) as u32)?;
             buffer.write_u64::<LittleEndian>(msg.log_time)?;
             buffer.write_u64::<LittleEndian>(msg.publish_time)?;
             buffer.write_all(data)?;

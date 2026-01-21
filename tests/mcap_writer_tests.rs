@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 use std::io::{BufWriter, Cursor};
 
-use robocodec::format::writer::ParallelMcapWriter;
-use robocodec::formats::mcap::MCAP_MAGIC;
+use robocodec::mcap::MCAP_MAGIC;
+use robocodec::ParallelMcapWriter;
 
 #[test]
 fn test_channel_record_format_readable_by_mcap_crate() {

@@ -3,7 +3,7 @@
 //! This example shows how to create and write task_info JSON files
 //! as specified in the Kps data format v1.2.
 
-use robocodec::format::kps::{
+use roboflow::format::kps::{
     ActionSegmentBuilder, TaskInfo, TaskInfoBuilder, write_task_info,
 };
 use std::path::PathBuf;

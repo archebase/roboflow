@@ -10,15 +10,15 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, instrument, warn};
 
-use crate::core::{CodecError, Result};
-use crate::io::detection::detect_format;
-use crate::io::metadata::{ChannelInfo as IoChannelInfo, FileFormat};
-use crate::io::traits::FormatReader;
+use crate::core::{Result, RoboflowError};
 use crate::pipeline::stages::compression::{CompressionStage, CompressionStageConfig};
 use crate::pipeline::stages::reader::{ReaderStage, ReaderStageConfig, ReaderStats};
 use crate::pipeline::stages::transform::{TransformStage, TransformStageConfig};
 use crate::pipeline::stages::writer::{WriterStage, WriterStageConfig};
-use crate::transform::{ChannelInfo, TransformPipeline};
+use robocodec::io::detection::detect_format;
+use robocodec::io::metadata::{ChannelInfo as IoChannelInfo, FileFormat};
+use robocodec::io::traits::{FormatReader, MessageChunkData};
+use robocodec::transform::{ChannelInfo, MultiTransform};
 
 /// Statistics from parallel reading (simplified version).
 #[derive(Debug, Clone, Default)]
@@ -75,12 +75,12 @@ pub struct PipelineConfig {
     /// Parallel reader configuration (reserved for future use)
     pub parallel_reader_config: ParallelReaderConfig,
     /// Optional transform pipeline for schema/topic transformations
-    pub transform_pipeline: Option<TransformPipeline>,
+    pub transform_pipeline: Option<MultiTransform>,
     /// Channel capacity for inter-stage communication
     pub channel_capacity: usize,
 }
 
-// Manual Clone implementation since TransformPipeline isn't cloneable
+// Manual Clone implementation since MultiTransform isn't cloneable
 impl Clone for PipelineConfig {
     fn clone(&self) -> Self {
         // Note: transform_pipeline is not cloned (would be None in cloned config)
@@ -91,7 +91,7 @@ impl Clone for PipelineConfig {
             compression_config: self.compression_config.clone(),
             writer_config: self.writer_config.clone(),
             parallel_reader_config: self.parallel_reader_config.clone(),
-            transform_pipeline: None, // Cannot clone TransformPipeline
+            transform_pipeline: None, // Cannot clone MultiTransform
             channel_capacity: self.channel_capacity,
         }
     }
@@ -170,7 +170,7 @@ impl AsyncPipeline {
     pub fn with_config(mut config: PipelineConfig) -> Result<Self> {
         // Validate input file exists
         if !config.input_path.exists() {
-            return Err(CodecError::parse(
+            return Err(RoboflowError::parse(
                 "AsyncPipeline",
                 format!("Input file not found: {}", config.input_path.display()),
             ));
@@ -292,19 +292,19 @@ impl AsyncPipeline {
             usize,
         ) = match format {
             FileFormat::Mcap => {
-                use crate::formats::mcap::McapFormat;
+                use robocodec::mcap::McapFormat;
                 let reader = McapFormat::open(&self.config.input_path)?;
                 let count = reader.channels().len();
                 (reader.channels().clone(), count)
             }
             FileFormat::Bag => {
-                use crate::formats::bag::BagFormat;
+                use robocodec::bag::BagFormat;
                 let reader = BagFormat::open(&self.config.input_path)?;
                 let count = reader.channels().len();
                 (reader.channels().clone(), count)
             }
             FileFormat::Unknown => {
-                return Err(CodecError::parse(
+                return Err(RoboflowError::parse(
                     "AsyncPipeline",
                     format!("Unknown file format: {}", self.config.input_path.display()),
                 ));
@@ -336,7 +336,7 @@ impl AsyncPipeline {
         // Otherwise: reader -> compression -> writer
         let capacity = self.config.channel_capacity;
         let (reader_to_transform, transform_receiver) = if has_transform {
-            let (s, r) = crossbeam_channel::bounded(capacity);
+            let (s, r) = crossbeam_channel::bounded::<MessageChunkData>(capacity);
             (Some(s), Some(r))
         } else {
             (None, None)
@@ -344,10 +344,10 @@ impl AsyncPipeline {
 
         let (chunks_to_compress, chunks_receiver) = if has_transform {
             // Transform sends to compression
-            crossbeam_channel::bounded(capacity)
+            crossbeam_channel::bounded::<MessageChunkData>(capacity)
         } else {
             // Reader sends to compression
-            crossbeam_channel::bounded(capacity)
+            crossbeam_channel::bounded::<MessageChunkData>(capacity)
         };
 
         let (chunks_to_write, write_receiver) = crossbeam_channel::bounded(capacity);
@@ -411,7 +411,7 @@ impl AsyncPipeline {
         // Wait for transform stage if enabled
         let transform_result = if let Some(handle) = transform_handle {
             Some(handle.join().map_err(|_| {
-                CodecError::encode("AsyncPipeline", "Transform thread panicked".to_string())
+                RoboflowError::encode("AsyncPipeline", "Transform thread panicked".to_string())
             })?)
         } else {
             None
@@ -419,7 +419,7 @@ impl AsyncPipeline {
 
         // Wait for compression stage to complete
         let compression_result = compression_handle.join().map_err(|_| {
-            CodecError::encode("AsyncPipeline", "Compression thread panicked".to_string())
+            RoboflowError::encode("AsyncPipeline", "Compression thread panicked".to_string())
         })?;
 
         // Drop the chunks_to_write sender to signal writer to finish
@@ -427,7 +427,7 @@ impl AsyncPipeline {
 
         // Wait for writer to complete
         let writer_result = writer_handle.join().map_err(|_| {
-            CodecError::encode("AsyncPipeline", "Writer thread panicked".to_string())
+            RoboflowError::encode("AsyncPipeline", "Writer thread panicked".to_string())
         })?;
 
         // Check all results for errors
@@ -529,7 +529,7 @@ pub struct PipelineBuilder {
     chunk_size: Option<usize>,
     compression_level: Option<i32>,
     threads: Option<usize>,
-    transform_pipeline: Option<TransformPipeline>,
+    transform_pipeline: Option<MultiTransform>,
 }
 
 impl Clone for PipelineBuilder {
@@ -540,7 +540,7 @@ impl Clone for PipelineBuilder {
             chunk_size: self.chunk_size,
             compression_level: self.compression_level,
             threads: self.threads,
-            transform_pipeline: None, // Cannot clone TransformPipeline
+            transform_pipeline: None, // Cannot clone MultiTransform
         }
     }
 }
@@ -582,7 +582,7 @@ impl PipelineBuilder {
     }
 
     /// Set the transform pipeline for schema/topic transformations.
-    pub fn transform_pipeline(mut self, pipeline: TransformPipeline) -> Self {
+    pub fn transform_pipeline(mut self, pipeline: MultiTransform) -> Self {
         self.transform_pipeline = Some(pipeline);
         self
     }
@@ -606,10 +606,10 @@ impl PipelineBuilder {
     pub fn build(self) -> Result<AsyncPipeline> {
         let input_path = self
             .input_path
-            .ok_or_else(|| CodecError::parse("PipelineBuilder", "Input path not set"))?;
+            .ok_or_else(|| RoboflowError::parse("PipelineBuilder", "Input path not set"))?;
         let output_path = self
             .output_path
-            .ok_or_else(|| CodecError::parse("PipelineBuilder", "Output path not set"))?;
+            .ok_or_else(|| RoboflowError::parse("PipelineBuilder", "Output path not set"))?;
 
         let mut config = PipelineConfig::new(input_path, output_path);
 

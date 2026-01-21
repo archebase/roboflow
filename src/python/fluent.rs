@@ -8,18 +8,18 @@ use pyo3::types::PyList;
 use std::mem;
 use std::path::{Path, PathBuf};
 
-use crate::core::CodecError;
+use crate::core::RoboflowError;
 use crate::pipeline::fluent::{BatchReport, CompressionPreset, FileResult, Robocodec, RunOutput};
 use crate::pipeline::hyper::HyperPipelineReport;
 use crate::pipeline::orchestrator::PipelineReport;
-use crate::transform::TransformBuilder;
+use robocodec::transform::TransformBuilder;
 
 // =============================================================================
 // Error conversion
 // ============================================================================
 
-/// Convert CodecError to Python exception.
-fn codec_error_to_py(error: CodecError) -> PyErr {
+/// Convert RoboflowError to Python exception.
+fn codec_error_to_py(error: RoboflowError) -> PyErr {
     let msg = error.to_string();
     if msg.contains("Failed to open") || msg.contains("No such file") || msg.contains("not found") {
         PyIOError::new_err(msg)
@@ -85,7 +85,7 @@ impl PyCompressionPreset {
 // ============================================================================
 
 /// Builder for creating transformation pipelines.
-#[pyclass(name = "_TransformBuilder")]
+#[pyclass(name = "TransformBuilder")]
 pub struct PyTransformBuilder {
     builder: TransformBuilder,
 }
@@ -114,7 +114,7 @@ impl PyTransformBuilder {
     /// Add a wildcard topic rename mapping.
     ///
     /// The wildcard `*` matches any topic suffix. For example:
-    /// - `"/foo/*"` → `"/robocodec/*"` will rename all topics starting with "/foo/"
+    /// - `"/foo/*"` → `"/roboflow/*"` will rename all topics starting with "/foo/"
     fn with_topic_rename_wildcard(
         mut slf: PyRefMut<'_, Self>,
         pattern: String,
@@ -462,15 +462,15 @@ impl PyBatchReport {
 // Robocodec Fluent API
 // ============================================================================
 
-/// Robocodec fluent API for converting robotics data files.
+/// Roboflow fluent API for converting robotics data files.
 ///
 /// Example:
-///     >>> import robocodec
-///     >>> result = robocodec.Robocodec.open(["input.bag"])
+///     >>> import roboflow
+///     >>> result = roboflow.Roboflow.open(["input.bag"])
 ///     ...     .write_to("output.mcap")
 ///     ...     .run()
 ///     >>> print(result)
-#[pyclass(name = "Robocodec")]
+#[pyclass(name = "Roboflow")]
 pub struct PyRobocodec {
     // Store the path parts and config, build the actual Robocodec when needed
     input_files: Option<Vec<PathBuf>>,
@@ -491,7 +491,7 @@ enum BuilderState {
 
 impl PyRobocodec {
     /// Get the transform pipeline from the registry.
-    fn get_transform(id: u64) -> Option<crate::transform::TransformPipeline> {
+    fn get_transform(id: u64) -> Option<robocodec::transform::TransformPipeline> {
         TRANSFORM_REGISTRY.with(|registry| {
             let mut registry = registry.borrow_mut();
             registry.pipelines.remove(&id)
@@ -810,7 +810,7 @@ use std::collections::HashMap;
 
 struct TransformRegistryInner {
     next_id: u64,
-    pipelines: HashMap<u64, crate::transform::TransformPipeline>,
+    pipelines: HashMap<u64, robocodec::transform::TransformPipeline>,
 }
 
 impl Default for TransformRegistryInner {

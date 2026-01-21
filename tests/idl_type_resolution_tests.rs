@@ -209,7 +209,7 @@ string basic_string
     assert_eq!(test_type.fields[0].name, "basic_string");
     assert!(matches!(
         test_type.fields[0].type_name,
-        robocodec::FieldType::Primitive(robocodec::schema::PrimitiveType::String)
+        roboflow::FieldType::Primitive(robocodec::schema::PrimitiveType::String)
     ));
 }
 

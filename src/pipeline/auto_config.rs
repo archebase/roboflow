@@ -1,6 +1,6 @@
 //! Automatic pipeline configuration with hardware-aware tuning.
 //!
-//! This module provides intelligent auto-configuration for robocodec pipelines
+//! This module provides intelligent auto-configuration for roboflow pipelines
 //! based on detected hardware capabilities and performance targets.
 
 use crate::pipeline::hardware::HardwareInfo;

@@ -16,7 +16,7 @@ pub use reader::ReaderStage;
 pub use transform::TransformStage;
 pub use writer::WriterStage;
 
-use crate::transform::ChannelInfo;
+use robocodec::transform::ChannelInfo;
 
 /// Configuration for the transform stage.
 #[derive(Debug, Clone, Default)]

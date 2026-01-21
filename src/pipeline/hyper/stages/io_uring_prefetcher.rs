@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use robocodec::pipeline::hyper::stages::io_uring_prefetcher::IoUringPrefetcher;
+//! use crate::pipeline::hyper::stages::io_uring_prefetcher::IoUringPrefetcher;
 //!
 //! let prefetcher = IoUringPrefetcher::new(config, path, sender)?;
 //! let handle = prefetcher.spawn()?;
@@ -35,7 +35,7 @@ use crossbeam_channel::Sender;
 use io_uring::{opcode, types, IoUring};
 use tracing::{debug, info, instrument};
 
-use crate::core::{CodecError, Result};
+use crate::core::{Result, RoboflowError};
 use crate::pipeline::hyper::types::{BlockType, PrefetchedBlock, PrefetcherStats};
 
 /// Configuration for the io_uring prefetcher.
@@ -96,7 +96,7 @@ impl IoUringPrefetcher {
             .name("io_uring-prefetcher".to_string())
             .spawn(move || self.run())
             .map_err(|e| {
-                CodecError::encode("IoUringPrefetcher", format!("Failed to spawn thread: {e}"))
+                RoboflowError::encode("IoUringPrefetcher", format!("Failed to spawn thread: {e}"))
             })
     }
 
@@ -105,11 +105,11 @@ impl IoUringPrefetcher {
         let start = Instant::now();
 
         let file = File::open(&self.path).map_err(|e| {
-            CodecError::encode("IoUringPrefetcher", format!("Failed to open file: {e}"))
+            RoboflowError::encode("IoUringPrefetcher", format!("Failed to open file: {e}"))
         })?;
 
         let metadata = file.metadata().map_err(|e| {
-            CodecError::encode("IoUringPrefetcher", format!("Failed to get metadata: {e}"))
+            RoboflowError::encode("IoUringPrefetcher", format!("Failed to get metadata: {e}"))
         })?;
 
         let file_len = metadata.len() as usize;
@@ -122,7 +122,7 @@ impl IoUringPrefetcher {
 
         // Create io_uring instance
         let mut ring = IoUring::new(self.config.queue_depth).map_err(|e| {
-            CodecError::encode(
+            RoboflowError::encode(
                 "IoUringPrefetcher",
                 format!("Failed to create io_uring: {e}"),
             )
@@ -156,7 +156,7 @@ impl IoUringPrefetcher {
 
             // Submit and wait for completion
             ring.submit_and_wait(1).map_err(|e| {
-                CodecError::encode(
+                RoboflowError::encode(
                     "IoUringPrefetcher",
                     format!("Failed to submit and wait: {e}"),
                 )
@@ -164,12 +164,12 @@ impl IoUringPrefetcher {
 
             // Get completion entry
             let cqe = ring.completion().next().ok_or_else(|| {
-                CodecError::encode("IoUringPrefetcher", "No completion entry available")
+                RoboflowError::encode("IoUringPrefetcher", "No completion entry available")
             })?;
 
             let result = cqe.result();
             if result < 0 {
-                return Err(CodecError::encode(
+                return Err(RoboflowError::encode(
                     "IoUringPrefetcher",
                     format!("Read error: {}", -result),
                 ));
@@ -186,7 +186,7 @@ impl IoUringPrefetcher {
             };
 
             self.sender.send(block).map_err(|e| {
-                CodecError::encode("IoUringPrefetcher", format!("Failed to send block: {e}"))
+                RoboflowError::encode("IoUringPrefetcher", format!("Failed to send block: {e}"))
             })?;
 
             blocks_processed += 1;

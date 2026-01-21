@@ -6,13 +6,13 @@ This document provides a high-level overview of Robocodec's architecture and des
 
 Robocodec is a **schema-driven, universal robotics data codec** that enables efficient conversion between different robotics message formats and storage formats. The project is organized as a Cargo workspace with two crates:
 
-- **`robofmt`** - Low-level format library for robotics data
+- **`robocodec`** - Low-level format library for robotics data
 - **`robocodec`** - High-level pipeline and conversion tool
 
 ```
  Workspace: robocodec
  ----------------------------------------------------------------------
-| Crate: robofmt                                                      |
+| Crate: robocodec                                                      |
 |  --------       --------       --------                            |
 | |  CDR   |     |Protobuf|     |  JSON  |                           |
 | | Codec  |     | Codec  |     | Codec  |                           |
@@ -60,11 +60,11 @@ Robocodec is a **schema-driven, universal robotics data codec** that enables eff
 
 ## Workspace Structure
 
-### Crate: robofmt
+### Crate: robocodec
 
 **Purpose**: Low-level robotics data format library
 
-**Location**: `robofmt/src/`
+**Location**: `robocodec/src/`
 
 **Modules**:
 
@@ -96,27 +96,27 @@ Robocodec is a **schema-driven, universal robotics data codec** that enables eff
 | `transform/` | Data transformations (topic/type renaming) |
 | `python/` | Python bindings via PyO3 |
 
-**Design**: This crate depends on `robofmt` and provides the user-facing APIs including the fluent API, format I/O, transformations, and Python bindings.
+**Design**: This crate depends on `robocodec` and provides the user-facing APIs including the fluent API, format I/O, transformations, and Python bindings.
 
 ## Core Components
 
-### 1. Codec Layer (robofmt)
+### 1. Codec Layer (robocodec)
 
-**Location**: `robofmt/src/encoding/`
+**Location**: `robocodec/src/encoding/`
 
 The codec layer handles message encoding and decoding:
 
 | Codec | Purpose | File |
 |-------|---------|------|
-| CDR | ROS1/ROS2 serialization | `robofmt/src/encoding/cdr.rs` |
-| Protobuf | Protocol Buffers | `robofmt/src/encoding/protobuf.rs` |
-| JSON | Human-readable format | `robofmt/src/encoding/json.rs` |
+| CDR | ROS1/ROS2 serialization | `robocodec/src/encoding/cdr.rs` |
+| Protobuf | Protocol Buffers | `robocodec/src/encoding/protobuf.rs` |
+| JSON | Human-readable format | `robocodec/src/encoding/json.rs` |
 
 **Design**: Each codec implements a common trait for encode/decode operations.
 
-### 2. Schema Parser (robofmt)
+### 2. Schema Parser (robocodec)
 
-**Location**: `robofmt/src/schema/`
+**Location**: `robocodec/src/schema/`
 
 Parses robotics interface definition languages:
 
@@ -282,17 +282,17 @@ Robocodec::open(vec!["input.mcap"])?
 
 The workspace structure separates concerns:
 
-1. **`robofmt`** - Low-level format handling
+1. **`robocodec`** - Low-level format handling
    - Can be used independently
    - Stable API for format access
    - Minimal dependencies
 
 2. **`robocodec`** - High-level processing
-   - Depends on `robofmt`
+   - Depends on `robocodec`
    - Fluent API and transformations
    - Python bindings
 
-This allows other projects to use `robofmt` for format access without pulling in the full pipeline infrastructure.
+This allows other projects to use `robocodec` for format access without pulling in the full pipeline infrastructure.
 
 ### Why Rust?
 
@@ -372,8 +372,8 @@ with RoboReader("data.bag") as reader:
 
 ### Adding a New Codec
 
-1. Implement codec trait in `robofmt/src/encoding/`
-2. Register in `robofmt/src/core/registry.rs`
+1. Implement codec trait in `robocodec/src/encoding/`
+2. Register in `robocodec/src/core/registry.rs`
 3. Add schema parser if needed
 
 ### Adding a New File Format

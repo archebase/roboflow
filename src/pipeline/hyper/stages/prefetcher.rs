@@ -17,7 +17,7 @@ use crossbeam_channel::Sender;
 use memmap2::Mmap;
 use tracing::{debug, info, instrument};
 
-use crate::core::{CodecError, Result};
+use crate::core::{Result, RoboflowError};
 use crate::pipeline::hyper::config::PlatformHints;
 use crate::pipeline::hyper::types::{BlockType, CompressionType, PrefetchedBlock, PrefetcherStats};
 
@@ -88,11 +88,13 @@ impl PrefetcherStage {
 
         // Open file
         let file = File::open(&self.input_path)
-            .map_err(|e| CodecError::parse("Prefetcher", format!("Failed to open file: {e}")))?;
+            .map_err(|e| RoboflowError::parse("Prefetcher", format!("Failed to open file: {e}")))?;
 
         let file_size = file
             .metadata()
-            .map_err(|e| CodecError::parse("Prefetcher", format!("Failed to get file size: {e}")))?
+            .map_err(|e| {
+                RoboflowError::parse("Prefetcher", format!("Failed to get file size: {e}"))
+            })?
             .len() as usize;
 
         debug!(
@@ -102,7 +104,7 @@ impl PrefetcherStage {
 
         // Use mmap for zero-copy reading
         let mmap = unsafe { Mmap::map(&file) }
-            .map_err(|e| CodecError::parse("Prefetcher", format!("Failed to mmap file: {e}")))?;
+            .map_err(|e| RoboflowError::parse("Prefetcher", format!("Failed to mmap file: {e}")))?;
 
         // Apply platform-specific hints
         self.apply_platform_hints(&mmap)?;
@@ -194,7 +196,7 @@ impl PrefetcherStage {
     fn scan_and_emit(&self, mmap: &Mmap, file_size: usize) -> Result<()> {
         // Detect file format from magic bytes
         if file_size < 8 {
-            return Err(CodecError::parse("Prefetcher", "File too small"));
+            return Err(RoboflowError::parse("Prefetcher", "File too small"));
         }
 
         let magic = &mmap[0..8];
@@ -303,7 +305,7 @@ impl PrefetcherStage {
 
         let header_start = record_start + 9; // After opcode + record_len
         if header_start + 36 > record_end {
-            return Err(CodecError::parse("Prefetcher", "Chunk header too short"));
+            return Err(RoboflowError::parse("Prefetcher", "Chunk header too short"));
         }
 
         let mut cursor = Cursor::new(&mmap[header_start..]);
@@ -418,7 +420,7 @@ impl PrefetcherStage {
 
         self.sender
             .send(block)
-            .map_err(|_| CodecError::encode("Prefetcher", "Channel closed"))?;
+            .map_err(|_| RoboflowError::encode("Prefetcher", "Channel closed"))?;
 
         self.stats.blocks_prefetched.fetch_add(1, Ordering::Relaxed);
         self.stats

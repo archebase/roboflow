@@ -4,14 +4,13 @@
 //! produces correct output that matches the input when read back.
 //!
 //! Usage:
-//!   cargo test -p robocodec --test pipeline_round_trip_tests -- --nocapture
+//!   cargo test -p roboflow --test pipeline_round_trip_tests -- --nocapture
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use robocodec::io::formats::{BagFormat, McapFormat};
 use robocodec::io::traits::FormatReader;
-use robocodec::Robocodec;
+use robocodec::{BagFormat, McapFormat};
 
 /// Per-channel message data for verification.
 #[derive(Debug, Clone, PartialEq)]
@@ -50,7 +49,7 @@ fn collect_mcap_messages_by_channel(
                     channel_id: msg.channel_id,
                     log_time: msg.log_time,
                     publish_time: msg.publish_time,
-                    data: msg.data.as_ref().to_vec(),
+                    data: msg.data.clone(),
                 });
         }
     }
@@ -88,7 +87,7 @@ fn collect_bag_messages_by_channel(
                     channel_id: msg.channel_id,
                     log_time: msg.log_time,
                     publish_time: msg.publish_time,
-                    data: msg.data.as_ref().to_vec(),
+                    data: msg.data.clone(),
                 });
         }
     }
@@ -179,7 +178,7 @@ fn verify_messages_match(
 #[test]
 fn test_bag_to_mcap_round_trip() {
     let input_bag = "tests/fixtures/robocodec_test_15.bag";
-    let output_mcap = "/tmp/robocodec_round_trip_test.mcap";
+    let output_mcap = "/tmp/claude/roboflow_round_trip_test.mcap";
 
     // Clean up existing output file
     let _ = std::fs::remove_file(output_mcap);
@@ -209,8 +208,8 @@ fn test_bag_to_mcap_round_trip() {
     );
 
     // Step 2: Run the full AsyncPipeline (BAG → MCAP)
-    let result =
-        Robocodec::open(vec![input_bag]).and_then(|builder| builder.write_to(output_mcap).run());
+    let result = roboflow::Robocodec::open(vec![input_bag])
+        .and_then(|builder| builder.write_to(output_mcap).run());
 
     match &result {
         Ok(_) => println!("Pipeline completed successfully"),
@@ -250,7 +249,7 @@ fn test_bag_to_mcap_round_trip() {
 #[test]
 fn test_mcap_to_mcap_round_trip() {
     let input_mcap = "tests/fixtures/robocodec_test_0.mcap";
-    let output_mcap = "/tmp/robocodec_mcap_round_trip_test.mcap";
+    let output_mcap = "/tmp/claude/roboflow_mcap_round_trip_test.mcap";
 
     // Clean up existing output file
     let _ = std::fs::remove_file(output_mcap);
@@ -280,8 +279,8 @@ fn test_mcap_to_mcap_round_trip() {
     );
 
     // Step 2: Run the full AsyncPipeline (MCAP → MCAP)
-    let result =
-        Robocodec::open(vec![input_mcap]).and_then(|builder| builder.write_to(output_mcap).run());
+    let result = roboflow::Robocodec::open(vec![input_mcap])
+        .and_then(|builder| builder.write_to(output_mcap).run());
 
     match &result {
         Ok(_) => println!("Pipeline completed successfully"),
@@ -324,7 +323,7 @@ fn test_bag_to_mcap_with_different_presets() {
 
     // Clean up existing output files
     for name in ["fast", "balanced", "slow"] {
-        let _ = std::fs::remove_file(format!("/tmp/robocodec_round_trip_{}.mcap", name));
+        let _ = std::fs::remove_file(format!("/tmp/claude/roboflow_round_trip_{}.mcap", name));
     }
 
     if !Path::new(input_bag).exists() {
@@ -344,21 +343,21 @@ fn test_bag_to_mcap_with_different_presets() {
     };
 
     let presets = [
-        ("fast", robocodec::pipeline::fluent::CompressionPreset::Fast),
+        ("fast", roboflow::pipeline::fluent::CompressionPreset::Fast),
         (
             "balanced",
-            robocodec::pipeline::fluent::CompressionPreset::Balanced,
+            roboflow::pipeline::fluent::CompressionPreset::Balanced,
         ),
-        ("slow", robocodec::pipeline::fluent::CompressionPreset::Slow),
+        ("slow", roboflow::pipeline::fluent::CompressionPreset::Slow),
     ];
 
     for (name, preset) in presets {
-        let output = format!("/tmp/robocodec_round_trip_{}.mcap", name);
+        let output = format!("/tmp/claude/roboflow_round_trip_{}.mcap", name);
 
         println!("\nTesting preset: {}", name);
 
         // Run with preset
-        let result = Robocodec::open(vec![input_bag])
+        let result = roboflow::Robocodec::open(vec![input_bag])
             .and_then(|builder| builder.write_to(&output).with_compression(preset).run());
 
         if let Err(e) = &result {
@@ -386,7 +385,7 @@ fn test_bag_to_mcap_with_different_presets() {
 #[test]
 fn test_channel_info_preservation() {
     let input_bag = "tests/fixtures/robocodec_test_15.bag";
-    let output_mcap = "/tmp/robocodec_channel_info_test.mcap";
+    let output_mcap = "/tmp/claude/roboflow_channel_info_test.mcap";
 
     // Clean up existing output file
     let _ = std::fs::remove_file(output_mcap);
@@ -403,7 +402,7 @@ fn test_channel_info_preservation() {
     let input_channels = input_reader.channels().clone();
 
     // Run pipeline
-    Robocodec::open(vec![input_bag])
+    roboflow::Robocodec::open(vec![input_bag])
         .and_then(|builder| builder.write_to(output_mcap).run())
         .expect("Pipeline should succeed");
 

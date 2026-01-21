@@ -25,7 +25,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use robocodec::pipeline::PipelineBuilder;
+//! use roboflow::pipeline::PipelineBuilder;
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let pipeline = PipelineBuilder::new()

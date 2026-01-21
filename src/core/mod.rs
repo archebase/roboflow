@@ -1,4 +1,4 @@
-//! Core types used throughout robocodec.
+//! Core types used throughout roboflow.
 //!
 //! This module provides the foundational types for the library:
 //! - [`Error`] - Comprehensive error handling
@@ -11,6 +11,10 @@ pub mod error;
 pub mod registry;
 pub mod value;
 
-pub use error::{CodecError, Result};
+pub use error::{Result, RoboflowError};
 pub use registry::{SchemaProvider, TypeAccessor, TypeRegistry};
-pub use value::{CodecValue, DecodedMessage, PrimitiveType};
+pub use value::{CodecValue, DecodedMessage};
+// PrimitiveType is in schema module
+pub use robocodec::schema::PrimitiveType;
+// CodecError from robocodec
+pub use robocodec::core::CodecError;

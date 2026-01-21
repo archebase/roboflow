@@ -2,7 +2,7 @@
 
 use rayon::prelude::*;
 
-use crate::core::{CodecError, Result};
+use crate::core::{Result, RoboflowError};
 use crate::pipeline::config::CompressionConfig;
 
 /// Chunk of data to be compressed.
@@ -68,7 +68,7 @@ impl CompressionPool {
                 // Create a compressor for this thread
                 let mut compressor =
                     zstd::bulk::Compressor::new(compression_level).map_err(|e| {
-                        CodecError::encode(
+                        RoboflowError::encode(
                             "CompressionPool",
                             format!("Failed to create compressor: {e}"),
                         )
@@ -76,7 +76,7 @@ impl CompressionPool {
 
                 // Compress using ZSTD
                 let compressed = compressor.compress(&chunk.data).map_err(|e| {
-                    CodecError::encode("CompressionPool", format!("Compression failed: {e}"))
+                    RoboflowError::encode("CompressionPool", format!("Compression failed: {e}"))
                 })?;
 
                 Ok(CompressedDataChunk {
@@ -104,14 +104,14 @@ impl CompressionPool {
 
         let mut compressor = zstd::bulk::Compressor::new(self.config.compression_level as i32)
             .map_err(|e| {
-                CodecError::encode(
+                RoboflowError::encode(
                     "CompressionPool",
                     format!("Failed to create compressor: {e}"),
                 )
             })?;
 
         let compressed = compressor.compress(&chunk.data).map_err(|e| {
-            CodecError::encode("CompressionPool", format!("Compression failed: {e}"))
+            RoboflowError::encode("CompressionPool", format!("Compression failed: {e}"))
         })?;
 
         Ok(CompressedDataChunk {

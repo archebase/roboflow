@@ -12,10 +12,9 @@ use tracing::{info, instrument};
 
 use crossbeam_channel::Sender;
 
-use crate::core::{CodecError, Result};
-use crate::io::metadata::FileFormat;
-use crate::io::traits::{ParallelReader, ParallelReaderConfig};
-use crate::pipeline::types::chunk::MessageChunk;
+use crate::core::{Result, RoboflowError};
+use robocodec::io::metadata::FileFormat;
+use robocodec::io::traits::{MessageChunkData, ParallelReader, ParallelReaderConfig};
 
 /// Configuration for the reader stage.
 #[derive(Debug, Clone)]
@@ -60,9 +59,9 @@ pub struct ReaderStage {
     format: FileFormat,
     /// Channel information
     #[allow(dead_code)]
-    channels: HashMap<u16, crate::io::metadata::ChannelInfo>,
+    channels: HashMap<u16, robocodec::io::metadata::ChannelInfo>,
     /// Channel for sending chunks to compression stage
-    chunks_sender: Sender<MessageChunk<'static>>,
+    chunks_sender: Sender<MessageChunkData>,
 }
 
 impl ReaderStage {
@@ -70,9 +69,9 @@ impl ReaderStage {
     pub fn new(
         config: ReaderStageConfig,
         input_path: &Path,
-        channels: HashMap<u16, crate::io::metadata::ChannelInfo>,
+        channels: HashMap<u16, robocodec::io::metadata::ChannelInfo>,
         format: FileFormat,
-        chunks_sender: Sender<MessageChunk<'static>>,
+        chunks_sender: Sender<MessageChunkData>,
     ) -> Self {
         Self {
             config,
@@ -109,17 +108,17 @@ impl ReaderStage {
         // Create the appropriate reader based on format and read in parallel
         let stats = match self.format {
             FileFormat::Mcap => {
-                use crate::formats::mcap::McapFormat;
+                use robocodec::mcap::McapFormat;
                 let reader = McapFormat::open(&self.input_path)?;
                 reader.read_parallel(parallel_config, self.chunks_sender)?
             }
             FileFormat::Bag => {
-                use crate::formats::bag::BagFormat;
+                use robocodec::bag::BagFormat;
                 let reader = BagFormat::open(&self.input_path)?;
                 reader.read_parallel(parallel_config, self.chunks_sender)?
             }
             FileFormat::Unknown => {
-                return Err(CodecError::encode(
+                return Err(RoboflowError::encode(
                     "ReaderStage",
                     "Unknown file format".to_string(),
                 ));

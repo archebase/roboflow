@@ -384,15 +384,15 @@ impl HyperPipelineBuilder {
 
     /// Build the configuration.
     pub fn build(self) -> Result<HyperPipelineConfig> {
-        use crate::core::CodecError;
+        use crate::core::RoboflowError;
 
         let input_path = self
             .input_path
-            .ok_or_else(|| CodecError::parse("HyperPipelineBuilder", "Input path not set"))?;
+            .ok_or_else(|| RoboflowError::parse("HyperPipelineBuilder", "Input path not set"))?;
 
         let output_path = self
             .output_path
-            .ok_or_else(|| CodecError::parse("HyperPipelineBuilder", "Output path not set"))?;
+            .ok_or_else(|| RoboflowError::parse("HyperPipelineBuilder", "Output path not set"))?;
 
         Ok(HyperPipelineConfig {
             input_path,
@@ -417,8 +417,8 @@ impl HyperPipelineConfig {
     /// # Example
     ///
     /// ```no_run
-    /// use robocodec::pipeline::hyper::HyperPipelineConfig;
-    /// use robocodec::pipeline::PerformanceMode;
+    /// use roboflow::pipeline::hyper::HyperPipelineConfig;
+    /// use roboflow::pipeline::PerformanceMode;
     ///
     /// let config = HyperPipelineConfig::auto(
     ///     PerformanceMode::Throughput,

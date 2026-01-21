@@ -16,11 +16,11 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use crossbeam_channel::{Receiver, Sender};
 use tracing::{debug, info, instrument, warn};
 
-use crate::core::{CodecError, Result};
+use crate::core::{Result, RoboflowError};
 use crate::pipeline::hyper::types::{BlockType, CompressionType, ParserStats, PrefetchedBlock};
-use crate::pipeline::types::arena_pool::global_pool;
 use crate::pipeline::types::buffer_pool::BufferPool;
 use crate::pipeline::types::chunk::MessageChunk;
+use robocodec::types::arena_pool::global_pool;
 
 /// Configuration for the parser/slicer stage.
 #[derive(Debug, Clone)]
@@ -138,7 +138,7 @@ impl ParserSlicerStage {
         }
 
         if !worker_errors.is_empty() {
-            return Err(CodecError::encode(
+            return Err(RoboflowError::encode(
                 "ParserSlicer",
                 format!("Worker errors: {}", worker_errors.join(", ")),
             ));
@@ -178,7 +178,7 @@ impl ParserSlicerStage {
 
         // Thread-local decompressor
         let mut zstd_decompressor = zstd::bulk::Decompressor::new().map_err(|e| {
-            CodecError::encode(
+            RoboflowError::encode(
                 "ParserSlicer",
                 format!("Failed to create decompressor: {e}"),
             )
@@ -260,7 +260,7 @@ impl ParserSlicerStage {
                                 &data,
                             )
                             .map_err(|e| {
-                                CodecError::encode(
+                                RoboflowError::encode(
                                     "ParserSlicer",
                                     format!("Arena allocation failed: {e}"),
                                 )
@@ -274,7 +274,7 @@ impl ParserSlicerStage {
                         {
                             let full_chunk = current_chunk.take().unwrap();
                             sender.send(full_chunk).map_err(|_| {
-                                CodecError::encode("ParserSlicer", "Channel closed")
+                                RoboflowError::encode("ParserSlicer", "Channel closed")
                             })?;
                             stats.chunks_produced.fetch_add(1, Ordering::Relaxed);
                         }
@@ -300,7 +300,7 @@ impl ParserSlicerStage {
             if chunk.message_count() > 0 {
                 sender
                     .send(chunk)
-                    .map_err(|_| CodecError::encode("ParserSlicer", "Channel closed"))?;
+                    .map_err(|_| RoboflowError::encode("ParserSlicer", "Channel closed"))?;
                 stats.chunks_produced.fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -321,7 +321,7 @@ impl ParserSlicerStage {
         let data = &block.data[..];
 
         if data.len() < 9 {
-            return Err(CodecError::parse("ParserSlicer", "Block too short"));
+            return Err(RoboflowError::parse("ParserSlicer", "Block too short"));
         }
 
         // Skip opcode and record length
@@ -351,7 +351,10 @@ impl ParserSlicerStage {
         );
 
         if compressed_data_offset >= data.len() {
-            return Err(CodecError::parse("ParserSlicer", "Invalid chunk structure"));
+            return Err(RoboflowError::parse(
+                "ParserSlicer",
+                "Invalid chunk structure",
+            ));
         }
 
         let compressed_data = &data[compressed_data_offset..];
@@ -366,11 +369,11 @@ impl ParserSlicerStage {
             CompressionType::Zstd => zstd_decompressor
                 .decompress(compressed_data, uncompressed_size)
                 .map_err(|e| {
-                    CodecError::encode("ParserSlicer", format!("ZSTD decompression failed: {e}"))
+                    RoboflowError::encode("ParserSlicer", format!("ZSTD decompression failed: {e}"))
                 }),
             CompressionType::Lz4 => lz4_flex::decompress(compressed_data, uncompressed_size)
                 .map_err(|e| {
-                    CodecError::encode("ParserSlicer", format!("LZ4 decompression failed: {e}"))
+                    RoboflowError::encode("ParserSlicer", format!("LZ4 decompression failed: {e}"))
                 }),
             CompressionType::None => Ok(compressed_data.to_vec()),
         }
@@ -386,11 +389,11 @@ impl ParserSlicerStage {
 
         while (cursor.position() as usize) + 9 < data.len() {
             let opcode = cursor.read_u8().map_err(|e| {
-                CodecError::parse("ParserSlicer", format!("Failed to read opcode: {e}"))
+                RoboflowError::parse("ParserSlicer", format!("Failed to read opcode: {e}"))
             })?;
 
             let record_len = cursor.read_u64::<LittleEndian>().map_err(|e| {
-                CodecError::parse("ParserSlicer", format!("Failed to read record length: {e}"))
+                RoboflowError::parse("ParserSlicer", format!("Failed to read record length: {e}"))
             })? as usize;
 
             if opcode != OP_MESSAGE {
@@ -410,19 +413,19 @@ impl ParserSlicerStage {
             }
 
             let channel_id = cursor.read_u16::<LittleEndian>().map_err(|e| {
-                CodecError::parse("ParserSlicer", format!("Failed to read channel_id: {e}"))
+                RoboflowError::parse("ParserSlicer", format!("Failed to read channel_id: {e}"))
             })?;
 
             let sequence = cursor.read_u32::<LittleEndian>().map_err(|e| {
-                CodecError::parse("ParserSlicer", format!("Failed to read sequence: {e}"))
+                RoboflowError::parse("ParserSlicer", format!("Failed to read sequence: {e}"))
             })?;
 
             let log_time = cursor.read_u64::<LittleEndian>().map_err(|e| {
-                CodecError::parse("ParserSlicer", format!("Failed to read log_time: {e}"))
+                RoboflowError::parse("ParserSlicer", format!("Failed to read log_time: {e}"))
             })?;
 
             let publish_time = cursor.read_u64::<LittleEndian>().map_err(|e| {
-                CodecError::parse("ParserSlicer", format!("Failed to read publish_time: {e}"))
+                RoboflowError::parse("ParserSlicer", format!("Failed to read publish_time: {e}"))
             })?;
 
             let data_len = record_len - 22;

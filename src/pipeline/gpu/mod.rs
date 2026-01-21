@@ -17,7 +17,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use robocodec::pipeline::gpu::{GpuCompressionConfig, GpuCompressorFactory};
+//! use crate::pipeline::gpu::{GpuCompressionConfig, GpuCompressorFactory};
 //!
 //! let config = GpuCompressionConfig::default();
 //! let compressor = GpuCompressorFactory::create(&config)?;

@@ -1,4 +1,4 @@
-//! Benchmark and profiling tool for robocodec optimization.
+//! Benchmark and profiling tool for roboflow optimization.
 //!
 //! Examples:
 //!   # Convert with metrics output
@@ -17,13 +17,13 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use robocodec::pipeline::fluent::{CompressionPreset, Robocodec};
-use robocodec::pipeline::hyper::{HyperPipeline, HyperPipelineConfig};
-use robocodec::pipeline::{PerformanceMode, PipelineAutoConfig};
+use roboflow::pipeline::fluent::{CompressionPreset, Robocodec};
+use roboflow::pipeline::hyper::{HyperPipeline, HyperPipelineConfig};
+use roboflow::pipeline::{PerformanceMode, PipelineAutoConfig};
 
 #[derive(Parser, Debug)]
 #[command(name = "profiler")]
-#[command(about = "Benchmark/profiling tool for robocodec optimization")]
+#[command(about = "Benchmark/profiling tool for roboflow optimization")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -204,7 +204,7 @@ fn run_conversion(
 
             // Apply batch size if specified
             if let Some(batch_size) = conv_config.batch_size {
-                use robocodec::pipeline::hyper::config::{BatcherConfig, PrefetcherConfig};
+                use roboflow::pipeline::hyper::config::{BatcherConfig, PrefetcherConfig};
                 let batcher = BatcherConfig {
                     target_size: batch_size,
                     ..Default::default()
@@ -254,11 +254,11 @@ fn run_conversion(
 
         // Extract metrics from the report
         let report = match report {
-            robocodec::pipeline::fluent::RunOutput::Single(r) => r,
-            robocodec::pipeline::fluent::RunOutput::Hyper(_) => {
+            roboflow::pipeline::fluent::RunOutput::Single(r) => r,
+            roboflow::pipeline::fluent::RunOutput::Hyper(_) => {
                 return Err("Unexpected Hyper report when use_hyper=false".into());
             }
-            robocodec::pipeline::fluent::RunOutput::Batch(_) => {
+            roboflow::pipeline::fluent::RunOutput::Batch(_) => {
                 return Err("Expected single report, got batch".into());
             }
         };

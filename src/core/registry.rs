@@ -61,10 +61,9 @@ impl<T> TypeRegistry<T> {
 
     /// Register a schema with this registry.
     pub fn register(&self, name: impl Into<String>, schema: T) -> Result<()> {
-        let mut inner = self
-            .inner
-            .write()
-            .map_err(|e| super::error::CodecError::Other(format!("Registry lock poisoned: {e}")))?;
+        let mut inner = self.inner.write().map_err(|e| {
+            super::error::RoboflowError::Other(format!("Registry lock poisoned: {e}"))
+        })?;
         inner.schemas.insert(name.into(), schema);
         Ok(())
     }
@@ -74,56 +73,50 @@ impl<T> TypeRegistry<T> {
     where
         T: Clone,
     {
-        let inner = self
-            .inner
-            .read()
-            .map_err(|e| super::error::CodecError::Other(format!("Registry lock poisoned: {e}")))?;
+        let inner = self.inner.read().map_err(|e| {
+            super::error::RoboflowError::Other(format!("Registry lock poisoned: {e}"))
+        })?;
         Ok(inner.schemas.get(name).cloned())
     }
 
     /// Check if a schema is registered.
     pub fn contains(&self, name: &str) -> Result<bool> {
-        let inner = self
-            .inner
-            .read()
-            .map_err(|e| super::error::CodecError::Other(format!("Registry lock poisoned: {e}")))?;
+        let inner = self.inner.read().map_err(|e| {
+            super::error::RoboflowError::Other(format!("Registry lock poisoned: {e}"))
+        })?;
         Ok(inner.schemas.contains_key(name))
     }
 
     /// Get all registered schema names.
     pub fn names(&self) -> Result<Vec<String>> {
-        let inner = self
-            .inner
-            .read()
-            .map_err(|e| super::error::CodecError::Other(format!("Registry lock poisoned: {e}")))?;
+        let inner = self.inner.read().map_err(|e| {
+            super::error::RoboflowError::Other(format!("Registry lock poisoned: {e}"))
+        })?;
         Ok(inner.schemas.keys().cloned().collect())
     }
 
     /// Remove a schema from the registry.
     pub fn remove(&self, name: &str) -> Result<bool> {
-        let mut inner = self
-            .inner
-            .write()
-            .map_err(|e| super::error::CodecError::Other(format!("Registry lock poisoned: {e}")))?;
+        let mut inner = self.inner.write().map_err(|e| {
+            super::error::RoboflowError::Other(format!("Registry lock poisoned: {e}"))
+        })?;
         Ok(inner.schemas.remove(name).is_some())
     }
 
     /// Clear all schemas from the registry.
     pub fn clear(&self) -> Result<()> {
-        let mut inner = self
-            .inner
-            .write()
-            .map_err(|e| super::error::CodecError::Other(format!("Registry lock poisoned: {e}")))?;
+        let mut inner = self.inner.write().map_err(|e| {
+            super::error::RoboflowError::Other(format!("Registry lock poisoned: {e}"))
+        })?;
         inner.schemas.clear();
         Ok(())
     }
 
     /// Get the number of registered schemas.
     pub fn len(&self) -> Result<usize> {
-        let inner = self
-            .inner
-            .read()
-            .map_err(|e| super::error::CodecError::Other(format!("Registry lock poisoned: {e}")))?;
+        let inner = self.inner.read().map_err(|e| {
+            super::error::RoboflowError::Other(format!("Registry lock poisoned: {e}"))
+        })?;
         Ok(inner.schemas.len())
     }
 

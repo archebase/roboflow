@@ -27,9 +27,9 @@ use std::time::Instant;
 use crossbeam_channel::{Receiver, Sender};
 use tracing::{debug, info, instrument};
 
-use crate::core::{CodecError, Result};
-use crate::pipeline::types::chunk::MessageChunk;
-use crate::transform::{ChannelInfo, TransformPipeline, TransformedChannel};
+use crate::core::{Result, RoboflowError};
+use robocodec::io::traits::MessageChunkData;
+use robocodec::transform::{ChannelInfo, MultiTransform, TransformedChannel};
 
 /// Configuration for the transform stage.
 #[derive(Debug, Clone)]
@@ -57,13 +57,13 @@ pub struct TransformStage {
     /// Transform configuration
     config: TransformStageConfig,
     /// Transform pipeline to apply
-    transform_pipeline: Option<Arc<TransformPipeline>>,
+    transform_pipeline: Option<Arc<MultiTransform>>,
     /// Original channel information (from reader)
     channels: HashMap<u16, ChannelInfo>,
     /// Channel for receiving chunks from reader
-    chunks_receiver: Receiver<MessageChunk<'static>>,
+    chunks_receiver: Receiver<MessageChunkData>,
     /// Channel for sending transformed chunks to compression
-    chunks_sender: Sender<MessageChunk<'static>>,
+    chunks_sender: Sender<MessageChunkData>,
 }
 
 impl TransformStage {
@@ -78,10 +78,10 @@ impl TransformStage {
     /// * `chunks_sender` - Channel for sending chunks to compression
     pub fn new(
         config: TransformStageConfig,
-        transform_pipeline: Option<TransformPipeline>,
+        transform_pipeline: Option<MultiTransform>,
         channels: HashMap<u16, ChannelInfo>,
-        chunks_receiver: Receiver<MessageChunk<'static>>,
-        chunks_sender: Sender<MessageChunk<'static>>,
+        chunks_receiver: Receiver<MessageChunkData>,
+        chunks_sender: Sender<MessageChunkData>,
     ) -> Self {
         Self {
             config,
@@ -168,7 +168,7 @@ impl TransformStage {
         let channel_list: Vec<ChannelInfo> = self.channels.values().cloned().collect();
         pipeline
             .validate(&channel_list)
-            .map_err(|e| CodecError::encode("TransformStage", e.to_string()))?;
+            .map_err(|e| RoboflowError::encode("TransformStage", e.to_string()))?;
 
         // Transform each channel
         let mut transformed = HashMap::new();
@@ -218,7 +218,7 @@ impl TransformStage {
 
             // Send to compression stage
             chunks_sender.send(transformed_chunk).map_err(|_| {
-                CodecError::encode(
+                RoboflowError::encode(
                     "TransformStage",
                     "Failed to send chunk to compression stage",
                 )
@@ -233,16 +233,18 @@ impl TransformStage {
 ///
 /// This is a standalone function to avoid borrowing issues with `self`.
 fn transform_chunk(
-    chunk: MessageChunk<'static>,
+    chunk: MessageChunkData,
     channel_id_map: &HashMap<u16, u16>,
-) -> Result<MessageChunk<'static>> {
+) -> Result<MessageChunkData> {
+    use robocodec::io::metadata::RawMessage;
+
     // If no transforms, pass through unchanged
     if channel_id_map.is_empty() {
         return Ok(chunk);
     }
 
     // Create new chunk with remapped channel IDs
-    let mut transformed = MessageChunk::with_capacity(chunk.sequence, chunk.messages.len());
+    let mut transformed = MessageChunkData::new(chunk.sequence);
     transformed.message_start_time = chunk.message_start_time;
     transformed.message_end_time = chunk.message_end_time;
 
@@ -253,13 +255,14 @@ fn transform_chunk(
             .unwrap_or(msg.channel_id);
 
         // Add message with remapped channel ID
-        transformed.add_message(crate::pipeline::types::chunk::ArenaMessage::new(
-            new_channel_id,
-            msg.log_time,
-            msg.publish_time,
-            msg.sequence,
-            msg.data,
-        ));
+        let transformed_msg = RawMessage {
+            channel_id: new_channel_id,
+            log_time: msg.log_time,
+            publish_time: msg.publish_time,
+            data: msg.data.clone(),
+            sequence: msg.sequence,
+        };
+        transformed.add_message(transformed_msg);
     }
 
     Ok(transformed)

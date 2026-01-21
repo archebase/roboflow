@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/claude-code) when working 
 
 ## Project Overview
 
-Robocodec is a universal, schema-driven runtime decoding engine for robotics data. It provides high-performance conversion between different robotics message formats (CDR, Protobuf, JSON) and storage formats (MCAP, ROS1 bag). The project is written in Rust with Python bindings via PyO3.
+Roboflow is a universal, schema-driven runtime decoding engine for robotics data. It provides high-performance conversion between different robotics message formats (CDR, Protobuf, JSON) and storage formats (MCAP, ROS1 bag). The project is written in Rust with Python bindings via PyO3.
 
 **Key characteristics:**
-- Workspace with two crates: `robocodec` (pipeline) and `robofmt` (I/O formats)
+- Workspace with two crates: `roboflow` (pipeline) and `robocodec` (I/O formats)
 - Multi-format support: MCAP, ROS bag, CDR, Protobuf, JSON
 - Three pipeline implementations: Standard (4-stage), HyperPipeline (7-stage), KPS (experimental)
 - Zero-copy design using arena allocation for performance
@@ -74,7 +74,7 @@ ruff check python/
 
 # Type check Python (requires built extension)
 make lint-python
-mypy python/robocodec
+mypy python/roboflow
 ```
 
 ## Workspace Structure
@@ -82,8 +82,8 @@ mypy python/robocodec
 The project uses Cargo workspace with two main crates:
 
 ```
-robocodec/                    # Workspace root
-├── robocodec/                # Main pipeline crate
+roboflow/                    # Workspace root
+├── roboflow/                # Main pipeline crate (or just: src/)
 │   ├── src/
 │   │   ├── pipeline/         # Pipeline implementations
 │   │   │   ├── stages/       # Standard pipeline stages
@@ -96,7 +96,7 @@ robocodec/                    # Workspace root
 │   │   └── lib.rs
 │   └── bin/convert.rs        # Unified convert CLI
 │
-└── robofmt/                  # I/O format handling crate
+└── robocodec/                  # I/O format handling crate
     ├── src/
     │   ├── encoding/         # CDR, Protobuf, JSON codecs
     │   ├── schema/           # ROS .msg, ROS2 IDL, OMG IDL parsers
@@ -108,7 +108,7 @@ robocodec/                    # Workspace root
     └── bin/                  # CLI tools: inspect, extract, schema, search
 ```
 
-**Key separation:** `robocodec` depends on `robofmt`. All I/O operations and format handling go through `robofmt`, while `robocodec` provides the pipeline orchestration and processing logic.
+**Key separation:** `roboflow` depends on `robocodec`. All I/O operations and format handling go through `robocodec`, while `roboflow` provides the pipeline orchestration and processing logic.
 
 ## Architecture
 
@@ -116,42 +116,41 @@ robocodec/                    # Workspace root
 
 The codebase provides three pipeline implementations for different use cases:
 
-1. **Standard Pipeline** (`robocodec/src/pipeline/`): 4-stage (Reader→Transform→Compress→Write), ~200 MB/s
-2. **HyperPipeline** (`robocodec/src/pipeline/hyper/`): 7-stage for maximum throughput, ~1800 MB/s
-3. **KPS Pipeline** (`robocodec/src/pipeline/kps/`): Converts to robotics learning dataset format (experimental)
+1. **Standard Pipeline** (`src/pipeline/`): 4-stage (Reader→Transform→Compress→Write), ~200 MB/s
+2. **HyperPipeline** (`src/pipeline/hyper/`): 7-stage for maximum throughput, ~1800 MB/s
+3. **KPS Pipeline** (`src/pipeline/kps/`): Converts to robotics learning dataset format (experimental)
 
 ### Codec Layer
 
-Located in `robofmt/src/encoding/`:
+Located in `robocodec/src/encoding/`:
 - **CDR**: ROS1/ROS2 serialization with cursor-based encoding
 - **Protobuf**: Protocol Buffers support
 - **JSON**: Human-readable serialization
 
 ### Schema Parser
 
-Located in `robofmt/src/schema/parser/`:
+Located in `robocodec/src/schema/parser/`:
 - Uses Pest parser combinator
 - Parses ROS `.msg`, ROS2 IDL, and OMG IDL formats
 - Schema-driven runtime decoding (no code generation)
 
 ### Fluent API
 
-Type-safe builder pattern in `robocodec/src/pipeline/fluent/`:
+Type-safe builder pattern in `src/pipeline/fluent/`:
 ```rust
-Robocodec::open(vec!["input.bag"])?
+Roboflow::open(vec!["input.bag"])?
     .write_to("output.mcap")
-    .hyper()
-    .mode(PerformanceMode::Throughput)
+    .hyper_mode()
     .run()?;
 ```
 
 ## Memory Management
 
 The codebase uses **arena allocation** extensively for zero-copy operations:
-- Message data allocated in arenas (`robofmt/src/types/arena.rs`)
-- Arena pooling for reuse (`robofmt/src/types/arena_pool.rs`)
-- Buffer pools for compression (`robofmt/src/types/buffer_pool.rs`)
-- Chunk-based processing (`robofmt/src/types/chunk.rs`)
+- Message data allocated in arenas (`robocodec/src/types/arena.rs`)
+- Arena pooling for reuse (`robocodec/src/types/arena_pool.rs`)
+- Buffer pools for compression (`robocodec/src/types/buffer_pool.rs`)
+- Chunk-based processing (`robocodec/src/types/chunk.rs`)
 
 **When working with memory code:** Always use arena allocation for message data to avoid the ~22% CPU overhead of individual allocations.
 
@@ -172,25 +171,25 @@ Key feature flags in both crates:
 ## KPS Integration (Experimental)
 
 The KPS pipeline converts robotics data to KPS dataset format. Key files:
-- Configuration: `robofmt/src/io/kps/config.rs`
-- Fluent API: `robocodec/src/pipeline/kps/fluent.rs`
-- Delivery v1.2: `robofmt/src/io/kps/delivery_v12.rs`
-- Writers: `robofmt/src/io/kps/writers/`
+- Configuration: `robocodec/src/io/kps/config.rs`
+- Fluent API: `src/pipeline/kps/fluent.rs`
+- Delivery v1.2: `robocodec/src/io/kps/delivery_v12.rs`
+- Writers: `robocodec/src/io/kps/writers/`
 
 ## Common Patterns
 
 ### Adding a new codec
-1. Implement in `robofmt/src/encoding/`
-2. Register in `robofmt/src/core/registry.rs`
+1. Implement in `robocodec/src/encoding/`
+2. Register in `robocodec/src/core/registry.rs`
 3. Add schema parser if needed
 
 ### Adding a new file format
-1. Implement `BagSource` for reading in `robofmt/src/io/formats/`
-2. Implement `BagWriter` for writing in `robofmt/src/io/writer/`
-3. Add format detection in `robofmt/src/io/detection.rs`
+1. Implement `BagSource` for reading in `robocodec/src/io/formats/`
+2. Implement `BagWriter` for writing in `robocodec/src/io/writer/`
+3. Add format detection in `robocodec/src/io/detection.rs`
 
 ### Adding Python bindings
-1. Add `#[pyfunction]` or `#[pymethods]` in `robocodec/src/python/`
+1. Add `#[pyfunction]` or `#[pymethods]` in `src/python/`
 2. Rebuild with `maturin develop --features python`
 
 ## Testing Notes

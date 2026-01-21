@@ -5,8 +5,8 @@
 
 use std::path::Path;
 
-use robocodec::formats::{BagFormat, McapFormat, SequentialBagReader, SequentialMcapReader};
 use robocodec::io::traits::FormatReader;
+use robocodec::{BagFormat, McapFormat, SequentialBagReader, SequentialMcapReader};
 
 /// Helper to collect all messages from a sequential MCAP reader.
 fn collect_mcap_messages_sequential(path: &str) -> Vec<(u16, u64, Vec<u8>)> {
@@ -38,7 +38,7 @@ fn collect_mcap_messages_parallel(path: &str) -> Vec<(u16, u64, Vec<u8>)> {
     for chunk in receiver {
         // Access the messages field directly
         for msg in &chunk.messages {
-            messages.push((msg.channel_id, msg.log_time, msg.data.as_ref().to_vec()));
+            messages.push((msg.channel_id, msg.log_time, msg.data.clone()));
         }
     }
 
@@ -75,7 +75,7 @@ fn collect_bag_messages_parallel(path: &str) -> Vec<(u16, u64, Vec<u8>)> {
     for chunk in receiver {
         // Access the messages field directly
         for msg in &chunk.messages {
-            messages.push((msg.channel_id, msg.log_time, msg.data.as_ref().to_vec()));
+            messages.push((msg.channel_id, msg.log_time, msg.data.clone()));
         }
     }
 

@@ -4,18 +4,18 @@
 //! matching the AsyncPipeline for the same input.
 //!
 //! Usage:
-//!   cargo test -p robocodec --test hyper_pipeline_tests -- --nocapture
+//!   cargo test -p roboflow --test hyper_pipeline_tests -- --nocapture
 
 use std::path::Path;
 
-use robocodec::io::formats::McapFormat;
 use robocodec::io::traits::FormatReader;
-use robocodec::pipeline::hyper::{HyperPipeline, HyperPipelineConfig};
+use robocodec::McapFormat;
+use roboflow::pipeline::hyper::{HyperPipeline, HyperPipelineConfig};
 
 #[test]
 fn test_hyper_pipeline_mcap_to_mcap() {
     let input_mcap = "tests/fixtures/robocodec_test_0.mcap";
-    let output_mcap = "/tmp/hyper_pipeline_test_0.mcap";
+    let output_mcap = "/tmp/claude/hyper_pipeline_test_0.mcap";
 
     if !Path::new(input_mcap).exists() {
         eprintln!("Skipping test: fixture not found at {}", input_mcap);
@@ -57,7 +57,7 @@ fn test_hyper_pipeline_mcap_to_mcap() {
 #[test]
 fn test_hyper_pipeline_with_crc_enabled() {
     let input_mcap = "tests/fixtures/robocodec_test_1.mcap";
-    let output_mcap = "/tmp/hyper_pipeline_crc_test.mcap";
+    let output_mcap = "/tmp/claude/hyper_pipeline_crc_test.mcap";
 
     if !Path::new(input_mcap).exists() {
         eprintln!("Skipping test: fixture not found at {}", input_mcap);
@@ -84,7 +84,7 @@ fn test_hyper_pipeline_with_crc_enabled() {
 #[test]
 fn test_hyper_pipeline_with_crc_disabled() {
     let input_mcap = "tests/fixtures/robocodec_test_2.mcap";
-    let output_mcap = "/tmp/hyper_pipeline_no_crc_test.mcap";
+    let output_mcap = "/tmp/claude/hyper_pipeline_no_crc_test.mcap";
 
     if !Path::new(input_mcap).exists() {
         eprintln!("Skipping test: fixture not found at {}", input_mcap);
@@ -122,7 +122,7 @@ fn test_hyper_pipeline_compression_levels() {
     let compression_levels = [1, 3, 6, 9];
 
     for level in compression_levels {
-        let output_mcap = format!("/tmp/hyper_pipeline_level_{}.mcap", level);
+        let output_mcap = format!("/tmp/claude/hyper_pipeline_level_{}.mcap", level);
 
         let config = HyperPipelineConfig::builder()
             .input_path(input_mcap)
@@ -146,7 +146,7 @@ fn test_hyper_pipeline_compression_levels() {
 #[test]
 fn test_hyper_pipeline_channel_preservation() {
     let input_mcap = "tests/fixtures/robocodec_test_4.mcap";
-    let output_mcap = "/tmp/hyper_pipeline_channel_test.mcap";
+    let output_mcap = "/tmp/claude/hyper_pipeline_channel_test.mcap";
 
     if !Path::new(input_mcap).exists() {
         eprintln!("Skipping test: fixture not found at {}", input_mcap);
@@ -211,7 +211,7 @@ fn test_hyper_pipeline_multiple_files() {
             continue;
         }
 
-        let output_mcap = format!("/tmp/hyper_pipeline_multi_{}.mcap", i);
+        let output_mcap = format!("/tmp/claude/hyper_pipeline_multi_{}.mcap", i);
 
         let config = HyperPipelineConfig::new(input_mcap.to_string(), output_mcap);
         let pipeline = HyperPipeline::new(config).expect("Failed to create pipeline");
@@ -229,7 +229,7 @@ fn test_hyper_pipeline_multiple_files() {
 #[test]
 fn test_hyper_pipeline_report_fields() {
     let input_mcap = "tests/fixtures/robocodec_test_8.mcap";
-    let output_mcap = "/tmp/hyper_pipeline_report_test.mcap";
+    let output_mcap = "/tmp/claude/hyper_pipeline_report_test.mcap";
 
     if !Path::new(input_mcap).exists() {
         eprintln!("Skipping test: fixture not found at {}", input_mcap);

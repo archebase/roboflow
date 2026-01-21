@@ -96,9 +96,9 @@ Robocodec::open(vec!["input.mcap"])?
   - Format readers: `src/io/reader/`
   - Format writers: `src/io/writer/`
 - Transform: `src/transform/`
-- Format Library: `robofmt/src/`
-  - Encoding: `robofmt/src/encoding/`
-  - Schema parsing: `robofmt/src/schema/`
+- Format Library: `robocodec/src/`
+  - Encoding: `robocodec/src/encoding/`
+  - Schema parsing: `robocodec/src/schema/`
 
 ### Tools
 

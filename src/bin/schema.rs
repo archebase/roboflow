@@ -111,7 +111,7 @@ fn get_message_types(file: &str, ext: &str) -> Result<Vec<TypeInfo>, Box<dyn std
 
     match ext {
         "mcap" => {
-            let reader = robocodec::format::McapReader::open(file)?;
+            let reader = robocodec::mcap::McapReader::open(file)?;
             for channel in reader.channels().values() {
                 type_map
                     .entry(channel.message_type.clone())
@@ -126,7 +126,7 @@ fn get_message_types(file: &str, ext: &str) -> Result<Vec<TypeInfo>, Box<dyn std
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::io::formats::BagFormat::open(file)?;
+            let reader = robocodec::BagFormat::open(file)?;
             for channel in reader.channels().values() {
                 type_map
                     .entry(channel.message_type.clone())
@@ -141,7 +141,7 @@ fn get_message_types(file: &str, ext: &str) -> Result<Vec<TypeInfo>, Box<dyn std
         }
         _ => {
             // Try MCAP first
-            match robocodec::format::McapReader::open(file) {
+            match robocodec::mcap::McapReader::open(file) {
                 Ok(reader) => {
                     for channel in reader.channels().values() {
                         type_map
@@ -157,7 +157,7 @@ fn get_message_types(file: &str, ext: &str) -> Result<Vec<TypeInfo>, Box<dyn std
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::io::formats::BagFormat::open(file)?;
+                    let reader = robocodec::BagFormat::open(file)?;
                     for channel in reader.channels().values() {
                         type_map
                             .entry(channel.message_type.clone())
@@ -189,7 +189,7 @@ fn show_schema(file: &str, ext: &str, msg_type: &str) -> Result<(), Box<dyn std:
 
     match ext {
         "mcap" => {
-            let reader = robocodec::format::McapReader::open(file)?;
+            let reader = robocodec::mcap::McapReader::open(file)?;
             for ch in reader.channels().values() {
                 if ch.message_type.contains(msg_type) {
                     found = true;
@@ -210,7 +210,7 @@ fn show_schema(file: &str, ext: &str, msg_type: &str) -> Result<(), Box<dyn std:
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::io::formats::BagFormat::open(file)?;
+            let reader = robocodec::BagFormat::open(file)?;
             for ch in reader.channels().values() {
                 if ch.message_type.contains(msg_type) {
                     found = true;
@@ -231,7 +231,7 @@ fn show_schema(file: &str, ext: &str, msg_type: &str) -> Result<(), Box<dyn std:
         }
         _ => {
             // Try MCAP first
-            match robocodec::format::McapReader::open(file) {
+            match robocodec::mcap::McapReader::open(file) {
                 Ok(reader) => {
                     for ch in reader.channels().values() {
                         if ch.message_type.contains(msg_type) {
@@ -249,7 +249,7 @@ fn show_schema(file: &str, ext: &str, msg_type: &str) -> Result<(), Box<dyn std:
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::io::formats::BagFormat::open(file)?;
+                    let reader = robocodec::BagFormat::open(file)?;
                     for ch in reader.channels().values() {
                         if ch.message_type.contains(msg_type) {
                             found = true;
@@ -286,7 +286,7 @@ fn validate_schemas(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Err
         "bag" => validate_schemas_bag(file)?,
         _ => {
             // Try MCAP first
-            match robocodec::format::McapReader::open(file) {
+            match robocodec::mcap::McapReader::open(file) {
                 Ok(reader) => validate_schemas_mcap_direct(&reader)?,
                 Err(_) => validate_schemas_bag(file)?,
             }
@@ -304,12 +304,12 @@ fn validate_schemas(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Err
 }
 
 fn validate_schemas_mcap(file: &str) -> Result<(usize, usize), Box<dyn std::error::Error>> {
-    let reader = robocodec::format::McapReader::open(file)?;
+    let reader = robocodec::mcap::McapReader::open(file)?;
     validate_schemas_mcap_direct(&reader)
 }
 
 fn validate_schemas_mcap_direct(
-    reader: &robocodec::format::McapReader,
+    reader: &robocodec::mcap::McapReader,
 ) -> Result<(usize, usize), Box<dyn std::error::Error>> {
     let mut ok = 0;
     let mut err = 0;
@@ -344,7 +344,7 @@ fn validate_schemas_mcap_direct(
 
 fn validate_schemas_bag(file: &str) -> Result<(usize, usize), Box<dyn std::error::Error>> {
     use robocodec::io::traits::FormatReader;
-    let reader = robocodec::io::formats::BagFormat::open(file)?;
+    let reader = robocodec::BagFormat::open(file)?;
 
     let mut ok = 0;
     let mut err = 0;
@@ -386,21 +386,21 @@ fn search_types(file: &str, ext: &str, pattern: &str) -> Result<(), Box<dyn std:
 
     match ext {
         "mcap" => {
-            let reader = robocodec::format::McapReader::open(file)?;
+            let reader = robocodec::mcap::McapReader::open(file)?;
             search_types_mcap(&reader, &pattern_lower)?;
         }
         "bag" => {
-            let reader = robocodec::io::formats::BagFormat::open(file)?;
+            let reader = robocodec::BagFormat::open(file)?;
             search_types_bag(&reader, &pattern_lower)?;
         }
         _ => {
             // Try MCAP first
-            match robocodec::format::McapReader::open(file) {
+            match robocodec::mcap::McapReader::open(file) {
                 Ok(reader) => {
                     search_types_mcap(&reader, &pattern_lower)?;
                 }
                 Err(_) => {
-                    let reader = robocodec::io::formats::BagFormat::open(file)?;
+                    let reader = robocodec::BagFormat::open(file)?;
                     search_types_bag(&reader, &pattern_lower)?;
                 }
             }
@@ -411,7 +411,7 @@ fn search_types(file: &str, ext: &str, pattern: &str) -> Result<(), Box<dyn std:
 }
 
 fn search_types_mcap(
-    reader: &robocodec::format::McapReader,
+    reader: &robocodec::mcap::McapReader,
     pattern_lower: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for ch in reader.channels().values() {
@@ -491,7 +491,7 @@ fn show_common_types(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Er
 
     match ext {
         "mcap" => {
-            let reader = robocodec::format::McapReader::open(file)?;
+            let reader = robocodec::mcap::McapReader::open(file)?;
             for ch in reader.channels().values() {
                 let mut is_common = false;
                 for prefix in COMMON_PREFIXES {
@@ -510,7 +510,7 @@ fn show_common_types(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Er
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::io::formats::BagFormat::open(file)?;
+            let reader = robocodec::BagFormat::open(file)?;
             for ch in reader.channels().values() {
                 let mut is_common = false;
                 for prefix in COMMON_PREFIXES {
@@ -529,7 +529,7 @@ fn show_common_types(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Er
         }
         _ => {
             // Try MCAP first
-            match robocodec::format::McapReader::open(file) {
+            match robocodec::mcap::McapReader::open(file) {
                 Ok(reader) => {
                     for ch in reader.channels().values() {
                         let mut is_common = false;
@@ -549,7 +549,7 @@ fn show_common_types(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Er
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::io::formats::BagFormat::open(file)?;
+                    let reader = robocodec::BagFormat::open(file)?;
                     for ch in reader.channels().values() {
                         let mut is_common = false;
                         for prefix in COMMON_PREFIXES {

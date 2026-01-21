@@ -11,9 +11,9 @@ use std::time::Instant;
 use crossbeam_channel::{Receiver, Sender};
 use tracing::{debug, info, instrument};
 
-use crate::core::{CodecError, Result};
+use crate::core::{Result, RoboflowError};
 use crate::pipeline::hyper::types::{MessageIndexEntry, PacketizedChunk, PacketizerStats};
-use crate::pipeline::types::chunk::CompressedChunk;
+use robocodec::types::chunk::CompressedChunk;
 
 /// Configuration for the CRC/packetizer stage.
 #[derive(Debug, Clone)]
@@ -112,7 +112,7 @@ impl CrcPacketizerStage {
         }
 
         if !worker_errors.is_empty() {
-            return Err(CodecError::encode(
+            return Err(RoboflowError::encode(
                 "CrcPacketizer",
                 format!("Worker errors: {}", worker_errors.join(", ")),
             ));
@@ -190,7 +190,7 @@ impl CrcPacketizerStage {
             // Send to writer
             sender
                 .send(packetized)
-                .map_err(|_| CodecError::encode("CrcPacketizer", "Channel closed"))?;
+                .map_err(|_| RoboflowError::encode("CrcPacketizer", "Channel closed"))?;
 
             // Update stats
             stats.chunks_processed.fetch_add(1, Ordering::Relaxed);

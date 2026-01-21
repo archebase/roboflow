@@ -128,7 +128,7 @@ fn test_time_alignment_config() {
 /// Test different time alignment strategies.
 #[test]
 fn test_time_alignment_strategies() {
-    use robocodec::pipeline::kps::traits::time_alignment::{
+    use roboflow::pipeline::kps::traits::time_alignment::{
         HoldLastValue, LinearInterpolation, NearestNeighbor, TimeAlignmentStrategy,
     };
 
@@ -155,7 +155,7 @@ fn test_time_alignment_strategies() {
 /// Test video encoder with fallback.
 #[test]
 fn test_video_encoder_fallback() {
-    use robocodec::io::formats::kps::video_encoder::{
+    use roboflow::dataset::kps::video_encoder::{
         Mp4Encoder, VideoEncoderConfig, VideoFrame, VideoFrameBuffer,
     };
 

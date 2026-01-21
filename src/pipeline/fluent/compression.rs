@@ -9,7 +9,7 @@
 /// # Examples
 ///
 /// ```no_run
-/// use robocodec::pipeline::fluent::CompressionPreset;
+/// use roboflow::pipeline::fluent::CompressionPreset;
 ///
 /// let preset = CompressionPreset::Balanced; // Level 3
 /// assert_eq!(preset.compression_level(), 3);

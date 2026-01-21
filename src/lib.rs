@@ -1,4 +1,4 @@
-//! # Robocodec
+//! # Roboflow
 //!
 //! A universal, schema-driven runtime decoding engine for Rust.
 //!
@@ -7,28 +7,21 @@
 //! ## Modules
 //!
 //! - [`core`] - Core types (CodecValue, errors, registry)
-//! - [`schema`] - IDL/MSG schema parser using Pest
-//! - [`encoding`] - Message encoding/decoding (CDR, Protobuf, JSON)
-//! - [`format`] - File format handlers (MCAP, ROS1 bag, KPS)
-//! - [`transform`] - Cross-format transformations
-//! - [`io`] - Unified I/O layer
+//! - [`encoding`] - Message encoding/decoding (CDR, Protobuf, JSON) - from robocodec
+//! - [`schema`] - IDL/MSG schema parser using Pest - from robocodec
 //! - [`pipeline`] - Parallel processing pipeline
+//! - [`dataset::kps`] - KPS dataset format (experimental)
 //!
 //! ## Example
 //!
 //! ```no_run
-//! use robocodec::Reader;
-//! use robocodec::io::FormatReader;
+//! use roboflow::Robocodec;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Open any format (auto-detected from file extension)
-//! let mut reader = Reader::open("data.mcap")?;
-//!
-//! // Access channel metadata
-//! for channel in reader.channels().values() {
-//!     println!("Topic: {}, Type: {}, Encoding: {}",
-//!         channel.topic, channel.message_type, channel.encoding);
-//! }
+//! // Convert between formats
+//! Robocodec::open(vec!["input.bag"])?
+//!     .write_to("output.mcap")
+//!     .run()?;
 //! # Ok(())
 //! # }
 //! ```
@@ -52,7 +45,6 @@ static GLOBAL: Jemalloc = Jemalloc;
 // =============================================================================
 pub mod config;
 pub mod core;
-pub mod rewriter;
 
 // =============================================================================
 // Parallel processing pipeline
@@ -60,51 +52,37 @@ pub mod rewriter;
 pub mod pipeline;
 
 // =============================================================================
-// Unified I/O layer
+// Schema parsing and encoding (re-exported from robocodec)
 // =============================================================================
-pub mod io;
+// Schema and encoding are provided by robofmt - use robocodec::schema::* and robocodec::encoding::*
 
 // =============================================================================
-// Schema parsing
+// Dataset structures (KPS)
 // =============================================================================
-pub mod schema;
-
-// =============================================================================
-// Encoding/decoding
-// =============================================================================
-pub mod encoding;
-
-// =============================================================================
-// File formats
-// =============================================================================
-pub mod format;
-pub mod formats;
-pub mod transform;
+pub mod dataset;
 
 // =============================================================================
 // Re-exports (minimal, focused on user-facing API)
 // =============================================================================
 
 // Core types (essential)
-pub use core::{CodecError, CodecValue, DecodedMessage, PrimitiveType, Result};
+pub use core::{CodecError, CodecValue, DecodedMessage, PrimitiveType, Result, RoboflowError};
 
-// Schema parsing
-pub use schema::{parse_schema, FieldType, MessageSchema};
+// Schema parsing (re-exported from robocodec)
+pub use robocodec::schema::{parse_schema, FieldType, MessageSchema};
 
-// High-level readers
-pub use format::reader::{ChannelInfo, McapReader, RawMessage};
-
-// Writers
-pub use format::writer::{BagMessage, BagWriter, ParallelMcapWriter};
-
-// Transformers
-pub use transform::{TopicRenameTransform, TransformBuilder, TransformPipeline};
-
-// Unified I/O
-pub use io::{ReaderBuilder, RoboReader, RoboWriter, WriterBuilder};
+// I/O types (re-exported from robocodec)
+pub use robocodec::io::{
+    metadata::RawMessage,
+    reader::{ReaderBuilder, RoboReader},
+    traits::{FormatReader, FormatWriter},
+    writer::RoboWriter,
+    ChannelInfo,
+};
+pub use robocodec::transform::TransformBuilder;
 
 // KPS dataset format
-pub use io::formats::kps::{
+pub use dataset::kps::{
     config::{KpsConfig, Mapping, MappingType, OutputFormat},
     delivery_v12::{
         SeriesDeliveryConfig, SeriesDeliveryConfigBuilder, StatisticsCollector, TaskInfo,
@@ -112,9 +90,6 @@ pub use io::formats::kps::{
     },
     Hdf5KpsWriter, ParquetKpsWriter,
 };
-
-// Unified rewriter
-pub use rewriter::{detect_format as io_detect_format, RewriteOptions, RoboRewriter};
 
 // Configuration
 pub use config::NormalizeConfig;
@@ -138,43 +113,9 @@ pub mod python;
 // =============================================================================
 
 // Simplified type aliases for the unified API
-/// Unified reader that auto-detects format (MCAP or BAG) from file extension.
-///
-/// This is a type alias for [`RoboReader`](crate::io::RoboReader).
-/// Use this for the simplest API when opening robotics data files.
-///
-/// # Example
-///
-/// ```no_run
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// use robocodec::Reader;
-///
-/// let reader = Reader::open("data.mcap")?;
-/// // or
-/// let reader = Reader::open("data.bag")?;
-/// # Ok(())
-/// # }
-/// ```
-pub type Reader = io::RoboReader;
-
-/// Unified writer that auto-detects format from file extension.
-///
-/// This is a type alias for [`RoboWriter`](crate::io::RoboWriter).
-/// Use this for the simplest API when writing robotics data files.
-///
-/// # Example
-///
-/// ```no_run
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// use robocodec::Writer;
-///
-/// let mut writer = Writer::create("output.mcap")?;
-/// // or
-/// let mut writer = Writer::create("output.bag")?;
-/// # Ok(())
-/// # }
-/// ```
-pub type Writer = io::RoboWriter;
+// TODO: Re-add high-level reader/writer type aliases once API is stabilized
+// pub type Reader = io::RoboReader;
+// pub type Writer = io::RoboWriter;
 
 /// Decoder trait for generic decoding operations.
 pub trait Decoder: Send + Sync {

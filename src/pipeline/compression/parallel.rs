@@ -8,7 +8,7 @@ use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::core::{CodecError, Result};
+use crate::core::{Result, RoboflowError};
 use crate::pipeline::types::chunk::{CompressedChunk, MessageChunk};
 
 /// Compression level for ZSTD.
@@ -91,7 +91,7 @@ impl ThreadLocalCompressor {
     /// Create a new thread-local compressor.
     fn new(level: CompressionLevel) -> Result<Self> {
         let compressor = zstd::bulk::Compressor::new(level).map_err(|e| {
-            CodecError::encode("Compressor", format!("Failed to create compressor: {e}"))
+            RoboflowError::encode("Compressor", format!("Failed to create compressor: {e}"))
         })?;
         Ok(Self { compressor })
     }
@@ -101,7 +101,7 @@ impl ThreadLocalCompressor {
         self.compressor
             .compress(input)
             .map(|v| v.to_vec())
-            .map_err(|e| CodecError::encode("Compressor", format!("Compression failed: {e}")))
+            .map_err(|e| RoboflowError::encode("Compressor", format!("Compression failed: {e}")))
     }
 
     /// Compress directly into a buffer.
@@ -110,7 +110,7 @@ impl ThreadLocalCompressor {
         let compressed = self
             .compressor
             .compress(input)
-            .map_err(|e| CodecError::encode("Compressor", format!("Compression failed: {e}")))?;
+            .map_err(|e| RoboflowError::encode("Compressor", format!("Compression failed: {e}")))?;
         output.extend_from_slice(&compressed);
         Ok(())
     }
@@ -143,7 +143,7 @@ impl ParallelCompressor {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build()
-            .map_err(|e| CodecError::encode(
+            .map_err(|e| RoboflowError::encode(
                 "Compressor",
                 format!("Failed to create Rayon thread pool with {} threads: {}. Try reducing the thread count or closing other applications.", num_threads, e)
             ))?;
@@ -168,12 +168,12 @@ impl ParallelCompressor {
 
         // Create compressor for this chunk
         let mut compressor = zstd::bulk::Compressor::new(self.config.level).map_err(|e| {
-            CodecError::encode("Compressor", format!("Failed to create compressor: {e}"))
+            RoboflowError::encode("Compressor", format!("Failed to create compressor: {e}"))
         })?;
 
         let compressed_data = compressor
             .compress(&uncompressed)
-            .map_err(|e| CodecError::encode("Compressor", format!("Compression failed: {e}")))?;
+            .map_err(|e| RoboflowError::encode("Compressor", format!("Compression failed: {e}")))?;
 
         self.bytes_compressed
             .fetch_add(uncompressed.len(), Ordering::Relaxed);
@@ -218,14 +218,14 @@ impl ParallelCompressor {
                     // Each worker thread creates its own compressor once and reuses it
                     // for all chunks it processes.
                     let mut compressor = zstd::bulk::Compressor::new(level).map_err(|e| {
-                        CodecError::encode(
+                        RoboflowError::encode(
                             "Compressor",
                             format!("Failed to create compressor: {e}"),
                         )
                     })?;
 
                     let compressed_data = compressor.compress(&uncompressed).map_err(|e| {
-                        CodecError::encode("Compressor", format!("Compression failed: {e}"))
+                        RoboflowError::encode("Compressor", format!("Compression failed: {e}"))
                     })?;
 
                     bytes_compressed.fetch_add(uncompressed.len(), Ordering::Relaxed);

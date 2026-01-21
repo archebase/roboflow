@@ -3,7 +3,7 @@ requires = ["maturin>=1.8,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "robocodec"
+name = "roboflow"
 version = "0.1.0"
 description = "Schema-driven robotics message codec (CDR, Protobuf, JSON, MCAP, BAG)"
 requires-python = ">=3.11"
@@ -33,7 +33,7 @@ dev = [
 [tool.maturin]
 features = ["extension-module"]
 python-source = "python"
-module-name = "robocodec._robocodec"
+module-name = "roboflow._roboflow"
 manifest-path = "Cargo.toml"
 
 [tool.mypy]

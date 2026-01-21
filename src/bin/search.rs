@@ -256,7 +256,7 @@ fn search_topics(file: &str, pattern: &str) -> Result<(), Box<dyn std::error::Er
 
     match ext.as_str() {
         "mcap" => {
-            let reader = robocodec::format::McapReader::open(file)?;
+            let reader = robocodec::mcap::McapReader::open(file)?;
             println!("Searching for topics matching: {:?}", pattern);
             println!();
 
@@ -274,7 +274,7 @@ fn search_topics(file: &str, pattern: &str) -> Result<(), Box<dyn std::error::Er
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::io::formats::BagFormat::open(file)?;
+            let reader = robocodec::BagFormat::open(file)?;
             println!("Searching for topics matching: {:?}", pattern);
             println!();
 
@@ -292,7 +292,7 @@ fn search_topics(file: &str, pattern: &str) -> Result<(), Box<dyn std::error::Er
         }
         _ => {
             // Try MCAP first
-            match robocodec::format::McapReader::open(file) {
+            match robocodec::mcap::McapReader::open(file) {
                 Ok(reader) => {
                     println!("Searching for topics matching: {:?}", pattern);
                     println!();
@@ -311,7 +311,7 @@ fn search_topics(file: &str, pattern: &str) -> Result<(), Box<dyn std::error::Er
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::io::formats::BagFormat::open(file)?;
+                    let reader = robocodec::BagFormat::open(file)?;
                     println!("Searching for topics matching: {:?}", pattern);
                     println!();
 
@@ -349,7 +349,7 @@ fn show_fields(file: &str, topic: &str) -> Result<(), Box<dyn std::error::Error>
     let (channel, message_type, schema, schema_encoding): (String, String, String, Option<String>) =
         match ext.as_str() {
             "mcap" => {
-                let reader = robocodec::format::McapReader::open(file)?;
+                let reader = robocodec::mcap::McapReader::open(file)?;
 
                 let channel = reader
                     .channels()
@@ -380,7 +380,7 @@ fn show_fields(file: &str, topic: &str) -> Result<(), Box<dyn std::error::Error>
             }
             "bag" => {
                 use robocodec::io::traits::FormatReader;
-                let reader = robocodec::io::formats::BagFormat::open(file)?;
+                let reader = robocodec::BagFormat::open(file)?;
 
                 let channel = reader
                     .channels()
@@ -411,7 +411,7 @@ fn show_fields(file: &str, topic: &str) -> Result<(), Box<dyn std::error::Error>
             }
             _ => {
                 // Try MCAP first
-                match robocodec::format::McapReader::open(file) {
+                match robocodec::mcap::McapReader::open(file) {
                     Ok(reader) => {
                         let channel = reader
                             .channels()
@@ -437,7 +437,7 @@ fn show_fields(file: &str, topic: &str) -> Result<(), Box<dyn std::error::Error>
                     }
                     Err(_) => {
                         use robocodec::io::traits::FormatReader;
-                        let reader = robocodec::io::formats::BagFormat::open(file)?;
+                        let reader = robocodec::BagFormat::open(file)?;
 
                         let channel = reader
                             .channels()
@@ -550,7 +550,7 @@ fn show_values(file: &str, topic: &str, field: &str) -> Result<(), Box<dyn std::
         std::process::exit(1);
     }
 
-    let reader = robocodec::format::McapReader::open(file)?;
+    let reader = robocodec::mcap::McapReader::open(file)?;
 
     println!("Searching for field '{}' in topic '{}'", field, topic);
     println!();
@@ -618,26 +618,26 @@ fn show_values(file: &str, topic: &str, field: &str) -> Result<(), Box<dyn std::
 }
 
 /// Format a CodecValue for display.
-fn format_value(value: &robocodec::CodecValue) -> String {
+fn format_value(value: &roboflow::CodecValue) -> String {
     match value {
-        robocodec::CodecValue::Bool(b) => b.to_string(),
-        robocodec::CodecValue::UInt8(n) => n.to_string(),
-        robocodec::CodecValue::UInt16(n) => n.to_string(),
-        robocodec::CodecValue::UInt32(n) => n.to_string(),
-        robocodec::CodecValue::UInt64(n) => n.to_string(),
-        robocodec::CodecValue::Int8(n) => n.to_string(),
-        robocodec::CodecValue::Int16(n) => n.to_string(),
-        robocodec::CodecValue::Int32(n) => n.to_string(),
-        robocodec::CodecValue::Int64(n) => n.to_string(),
-        robocodec::CodecValue::Float32(n) => n.to_string(),
-        robocodec::CodecValue::Float64(n) => n.to_string(),
-        robocodec::CodecValue::String(s) => format!("\"{}\"", s),
-        robocodec::CodecValue::Bytes(b) => format!("[{} bytes]", b.len()),
-        robocodec::CodecValue::Array(_) => "[array]".to_string(),
-        robocodec::CodecValue::Struct(_) => "[struct]".to_string(),
-        robocodec::CodecValue::Null => "[null]".to_string(),
-        robocodec::CodecValue::Timestamp(_) => "[timestamp]".to_string(),
-        robocodec::CodecValue::Duration(_) => "[duration]".to_string(),
+        roboflow::CodecValue::Bool(b) => b.to_string(),
+        roboflow::CodecValue::UInt8(n) => n.to_string(),
+        roboflow::CodecValue::UInt16(n) => n.to_string(),
+        roboflow::CodecValue::UInt32(n) => n.to_string(),
+        roboflow::CodecValue::UInt64(n) => n.to_string(),
+        roboflow::CodecValue::Int8(n) => n.to_string(),
+        roboflow::CodecValue::Int16(n) => n.to_string(),
+        roboflow::CodecValue::Int32(n) => n.to_string(),
+        roboflow::CodecValue::Int64(n) => n.to_string(),
+        roboflow::CodecValue::Float32(n) => n.to_string(),
+        roboflow::CodecValue::Float64(n) => n.to_string(),
+        roboflow::CodecValue::String(s) => format!("\"{}\"", s),
+        roboflow::CodecValue::Bytes(b) => format!("[{} bytes]", b.len()),
+        roboflow::CodecValue::Array(_) => "[array]".to_string(),
+        roboflow::CodecValue::Struct(_) => "[struct]".to_string(),
+        roboflow::CodecValue::Null => "[null]".to_string(),
+        roboflow::CodecValue::Timestamp(_) => "[timestamp]".to_string(),
+        roboflow::CodecValue::Duration(_) => "[duration]".to_string(),
     }
 }
 
@@ -655,7 +655,7 @@ fn show_stats(file: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     match ext.as_str() {
         "mcap" => {
-            let reader = robocodec::format::McapReader::open(file)?;
+            let reader = robocodec::mcap::McapReader::open(file)?;
             println!("Channels: {}", reader.channels().len());
             println!("Messages: {}", reader.message_count());
 
@@ -691,7 +691,7 @@ fn show_stats(file: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::io::formats::BagFormat::open(file)?;
+            let reader = robocodec::BagFormat::open(file)?;
             println!("Channels: {}", reader.channels().len());
             println!("Messages: {}", reader.message_count());
 
@@ -727,7 +727,7 @@ fn show_stats(file: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             // Try MCAP first
-            match robocodec::format::McapReader::open(file) {
+            match robocodec::mcap::McapReader::open(file) {
                 Ok(reader) => {
                     println!("Channels: {}", reader.channels().len());
                     println!("Messages: {}", reader.message_count());
@@ -749,7 +749,7 @@ fn show_stats(file: &str) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::io::formats::BagFormat::open(file)?;
+                    let reader = robocodec::BagFormat::open(file)?;
                     println!("Channels: {}", reader.channels().len());
                     println!("Messages: {}", reader.message_count());
 

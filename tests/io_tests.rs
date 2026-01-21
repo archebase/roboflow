@@ -6,14 +6,17 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
-use robocodec::formats::McapFormat;
 use robocodec::io::detection::detect_format;
 use robocodec::io::metadata::{ChannelInfo, FileFormat, RawMessage};
-use robocodec::io::{ReadStrategy, ReaderBuilder};
+use robocodec::io::reader::{ReadStrategy, ReaderBuilder};
+use robocodec::McapFormat;
 
 #[test]
 fn test_detect_format_mcap_extension() {
-    let path = format!("/tmp/robocodec_test_mcap_{}.mcap", std::process::id());
+    let path = format!(
+        "/tmp/claude/robocodec_test_mcap_{}.mcap",
+        std::process::id()
+    );
     let mut temp_file = File::create(&path).unwrap();
     temp_file.write_all(b"dummy content").unwrap();
     temp_file.sync_all().unwrap();
@@ -30,7 +33,7 @@ fn test_detect_format_mcap_extension() {
 
 #[test]
 fn test_detect_format_bag_extension() {
-    let path = format!("/tmp/robocodec_test_bag_{}.bag", std::process::id());
+    let path = format!("/tmp/claude/robocodec_test_bag_{}.bag", std::process::id());
     let mut temp_file = File::create(&path).unwrap();
     temp_file.write_all(b"#ROSBAG V2.0").unwrap();
     temp_file.sync_all().unwrap();
@@ -43,7 +46,7 @@ fn test_detect_format_bag_extension() {
 
 #[test]
 fn test_detect_format_unknown() {
-    let path = format!("/tmp/robocodec_test_xyz_{}.xyz", std::process::id());
+    let path = format!("/tmp/claude/robocodec_test_xyz_{}.xyz", std::process::id());
     let mut temp_file = File::create(&path).unwrap();
     temp_file.write_all(b"unknown content").unwrap();
     temp_file.sync_all().unwrap();
@@ -113,7 +116,7 @@ fn test_mcap_format_exists() {
 #[test]
 fn test_robo_reader_auto_strategy() {
     let result = robocodec::io::RoboReader::open_with_strategy(
-        "/tmp/nonexistent_file_xYz123.mcap",
+        "/tmp/claude/nonexistent_file_xYz123.mcap",
         ReadStrategy::Auto,
     );
     assert!(result.is_err());

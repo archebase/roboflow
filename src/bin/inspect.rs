@@ -92,7 +92,7 @@ fn show_info(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     match ext {
         "mcap" => {
-            let reader = robocodec::format::McapReader::open(file)?;
+            let reader = robocodec::mcap::McapReader::open(file)?;
             println!("Channels: {}", reader.channels().len());
             println!("Message count: {}", reader.message_count());
             if let (Some(start), Some(end)) = (reader.start_time(), reader.end_time()) {
@@ -109,7 +109,7 @@ fn show_info(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::io::formats::BagFormat::open(file)?;
+            let reader = robocodec::BagFormat::open(file)?;
             println!("Channels: {}", reader.channels().len());
             println!("Message count: {}", reader.message_count());
             if let (Some(start), Some(end)) = (reader.start_time(), reader.end_time()) {
@@ -126,7 +126,7 @@ fn show_info(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             // Try MCAP first
-            match robocodec::format::McapReader::open(file) {
+            match robocodec::mcap::McapReader::open(file) {
                 Ok(reader) => {
                     println!("Channels: {}", reader.channels().len());
                     println!("Message count: {}", reader.message_count());
@@ -144,7 +144,7 @@ fn show_info(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::io::formats::BagFormat::open(file)?;
+                    let reader = robocodec::BagFormat::open(file)?;
                     println!("Channels: {}", reader.channels().len());
                     println!("Message count: {}", reader.message_count());
                     if let (Some(start), Some(end)) = (reader.start_time(), reader.end_time()) {
@@ -172,7 +172,7 @@ fn show_topics(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
 
     match ext {
         "mcap" => {
-            let reader = robocodec::format::McapReader::open(file)?;
+            let reader = robocodec::mcap::McapReader::open(file)?;
             for channel in reader.channels().values() {
                 println!("Topic: {}", channel.topic);
                 println!("  Type: {}", channel.message_type);
@@ -194,7 +194,7 @@ fn show_topics(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::io::formats::BagFormat::open(file)?;
+            let reader = robocodec::BagFormat::open(file)?;
             for channel in reader.channels().values() {
                 println!("Topic: {}", channel.topic);
                 println!("  Type: {}", channel.message_type);
@@ -215,7 +215,7 @@ fn show_topics(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
         }
         _ => {
             // Try MCAP first
-            match robocodec::format::McapReader::open(file) {
+            match robocodec::mcap::McapReader::open(file) {
                 Ok(reader) => {
                     for channel in reader.channels().values() {
                         println!("Topic: {}", channel.topic);
@@ -227,7 +227,7 @@ fn show_topics(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::io::formats::BagFormat::open(file)?;
+                    let reader = robocodec::BagFormat::open(file)?;
                     for channel in reader.channels().values() {
                         println!("Topic: {}", channel.topic);
                         println!("  Type: {}", channel.message_type);
@@ -249,7 +249,7 @@ fn show_channels(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>
 
     match ext {
         "mcap" => {
-            let reader = robocodec::format::McapReader::open(file)?;
+            let reader = robocodec::mcap::McapReader::open(file)?;
             for (&id, ch) in reader.channels() {
                 println!("Channel ID: {}", id);
                 println!("  Topic: {}", ch.topic);
@@ -273,7 +273,7 @@ fn show_channels(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::io::formats::BagFormat::open(file)?;
+            let reader = robocodec::BagFormat::open(file)?;
             for (&id, ch) in reader.channels() {
                 println!("Channel ID: {}", id);
                 println!("  Topic: {}", ch.topic);
@@ -297,7 +297,7 @@ fn show_channels(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>
         }
         _ => {
             // Try MCAP first
-            match robocodec::format::McapReader::open(file) {
+            match robocodec::mcap::McapReader::open(file) {
                 Ok(reader) => {
                     for (&id, ch) in reader.channels() {
                         println!("Channel ID: {}", id);
@@ -309,7 +309,7 @@ fn show_channels(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::io::formats::BagFormat::open(file)?;
+                    let reader = robocodec::BagFormat::open(file)?;
                     for (&id, ch) in reader.channels() {
                         println!("Channel ID: {}", id);
                         println!("  Topic: {}", ch.topic);
@@ -335,7 +335,7 @@ fn show_schema(
 
     match ext {
         "mcap" => {
-            let reader = robocodec::format::McapReader::open(file)?;
+            let reader = robocodec::mcap::McapReader::open(file)?;
             for ch in reader.channels().values() {
                 if let Some(filter) = topic_filter {
                     if !ch.topic.contains(filter) && !ch.message_type.contains(filter) {
@@ -361,7 +361,7 @@ fn show_schema(
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::io::formats::BagFormat::open(file)?;
+            let reader = robocodec::BagFormat::open(file)?;
             for ch in reader.channels().values() {
                 if let Some(filter) = topic_filter {
                     if !ch.topic.contains(filter) && !ch.message_type.contains(filter) {
@@ -387,7 +387,7 @@ fn show_schema(
         }
         _ => {
             // Try MCAP first
-            match robocodec::format::McapReader::open(file) {
+            match robocodec::mcap::McapReader::open(file) {
                 Ok(reader) => {
                     for ch in reader.channels().values() {
                         if let Some(filter) = topic_filter {
@@ -410,7 +410,7 @@ fn show_schema(
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::io::formats::BagFormat::open(file)?;
+                    let reader = robocodec::BagFormat::open(file)?;
                     for ch in reader.channels().values() {
                         if let Some(filter) = topic_filter {
                             if !ch.topic.contains(filter) && !ch.message_type.contains(filter) {
@@ -447,9 +447,9 @@ fn show_messages(
 
     match ext {
         "mcap" => {
-            let reader = robocodec::format::McapReader::open(file)?;
+            let reader = robocodec::mcap::McapReader::open(file)?;
             let iter = reader.iter_raw()?;
-            let stream = iter.into_stream()?;
+            let stream = iter.stream()?;
             let mut counts: HashMap<u16, usize> = HashMap::new();
 
             for result in stream {
@@ -468,7 +468,7 @@ fn show_messages(
             }
         }
         "bag" => {
-            let reader = robocodec::io::formats::BagFormat::open(file)?;
+            let reader = robocodec::BagFormat::open(file)?;
             let iter = reader.iter_raw()?;
             let mut counts: HashMap<u16, usize> = HashMap::new();
 
@@ -489,10 +489,10 @@ fn show_messages(
         }
         _ => {
             // Try MCAP first
-            match robocodec::format::McapReader::open(file) {
+            match robocodec::mcap::McapReader::open(file) {
                 Ok(reader) => {
                     let iter = reader.iter_raw()?;
-                    let stream = iter.into_stream()?;
+                    let stream = iter.stream()?;
                     for result in stream.take(sample_count) {
                         let (msg, channel_info) = result?;
                         println!("Channel {} ({})", msg.channel_id, channel_info.topic);
@@ -502,7 +502,7 @@ fn show_messages(
                     }
                 }
                 Err(_) => {
-                    let reader = robocodec::io::formats::BagFormat::open(file)?;
+                    let reader = robocodec::BagFormat::open(file)?;
                     let iter = reader.iter_raw()?;
                     for result in iter.take(sample_count) {
                         let (msg, channel_info) = result?;
@@ -529,9 +529,9 @@ fn show_hex_dump(
 
     match ext {
         "mcap" => {
-            let reader = robocodec::format::McapReader::open(file)?;
+            let reader = robocodec::mcap::McapReader::open(file)?;
             let iter = reader.iter_raw()?;
-            let stream = iter.into_stream()?;
+            let stream = iter.stream()?;
             let mut counts: HashMap<u16, usize> = HashMap::new();
 
             for result in stream {
@@ -562,7 +562,7 @@ fn show_hex_dump(
             }
         }
         "bag" => {
-            let reader = robocodec::io::formats::BagFormat::open(file)?;
+            let reader = robocodec::BagFormat::open(file)?;
             let iter = reader.iter_raw()?;
             let mut counts: HashMap<u16, usize> = HashMap::new();
 
@@ -595,10 +595,10 @@ fn show_hex_dump(
         }
         _ => {
             // Try MCAP first
-            match robocodec::format::McapReader::open(file) {
+            match robocodec::mcap::McapReader::open(file) {
                 Ok(reader) => {
                     let iter = reader.iter_raw()?;
-                    let stream = iter.into_stream()?;
+                    let stream = iter.stream()?;
                     for result in stream.take(sample_count) {
                         let (msg, channel_info) = result?;
                         println!("Channel {} ({})", msg.channel_id, channel_info.topic);
@@ -617,7 +617,7 @@ fn show_hex_dump(
                     }
                 }
                 Err(_) => {
-                    let reader = robocodec::io::formats::BagFormat::open(file)?;
+                    let reader = robocodec::BagFormat::open(file)?;
                     let iter = reader.iter_raw()?;
                     for result in iter.take(sample_count) {
                         let (msg, channel_info) = result?;
@@ -649,7 +649,7 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
 
     match ext {
         "mcap" => {
-            use robocodec::formats::mcap::ParallelMcapReader;
+            use robocodec::mcap::ParallelMcapReader;
             let reader = ParallelMcapReader::open(file)?;
             let chunks = reader.chunk_indexes();
 
@@ -728,7 +728,7 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
             println!("  Recommended WindowLog: {}", window_log);
         }
         "bag" => {
-            use robocodec::formats::bag::ParallelBagReader;
+            use robocodec::bag::ParallelBagReader;
             let reader = ParallelBagReader::open(file)?;
             let chunks = reader.chunks();
 
@@ -786,7 +786,7 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
         }
         _ => {
             // Try MCAP first
-            match robocodec::formats::mcap::ParallelMcapReader::open(file) {
+            match robocodec::mcap::ParallelMcapReader::open(file) {
                 Ok(reader) => {
                     let chunks = reader.chunk_indexes();
                     if !chunks.is_empty() {
@@ -794,7 +794,7 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
                     }
                 }
                 Err(_) => {
-                    if let Ok(reader) = robocodec::formats::bag::ParallelBagReader::open(file) {
+                    if let Ok(reader) = robocodec::bag::ParallelBagReader::open(file) {
                         if !reader.chunks().is_empty() {
                             return show_chunks(file, "bag");
                         }

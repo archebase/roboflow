@@ -1,12 +1,12 @@
 //! MCAP integration tests for test fixture 2.
 //!
-//! This test validates that robocodec can parse schemas from robocodec_test_2.mcap
+//! This test validates that roboflow can parse schemas from robocodec_test_2.mcap
 //! file and decode messages correctly.
 
 use std::path::Path;
 
 use robocodec::encoding::CdrDecoder;
-use robocodec::format::McapReader;
+use robocodec::mcap::McapReader;
 
 // Import common test utilities
 mod common;
@@ -87,7 +87,7 @@ fn test_robocodec_test_2_fixture() {
                         let mut messages_tested = 0;
 
                         if let Ok(raw_iter) = reader.iter_raw() {
-                            if let Ok(stream) = raw_iter.into_stream() {
+                            if let Ok(stream) = raw_iter.stream() {
                                 for (msg, _ch) in stream.flatten() {
                                     if msg.channel_id == channel_id {
                                         match decoder.decode(&schema, &msg.data, None) {

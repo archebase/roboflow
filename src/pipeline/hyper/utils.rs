@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 
-use crate::core::{CodecError, Result};
+use crate::core::{Result, RoboflowError};
 
 // ============================================================================
 // Worker Thread Error Handling
@@ -34,7 +34,7 @@ use crate::core::{CodecError, Result};
 ///
 /// ```no_run
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// use robocodec::pipeline::hyper::utils::join_workers;
+/// use roboflow::pipeline::hyper::utils::join_workers;
 /// use std::thread;
 ///
 /// let handles = vec![
@@ -61,7 +61,7 @@ pub fn join_workers<T>(
     }
 
     if !errors.is_empty() {
-        return Err(CodecError::encode(
+        return Err(RoboflowError::encode(
             stage_name,
             format!("Worker errors: {}", errors.join(", ")),
         ));
@@ -84,7 +84,7 @@ pub fn join_unit_workers(
 /// Join a single stage thread with a descriptive error message.
 pub fn join_stage_thread<T>(handle: thread::JoinHandle<Result<T>>, stage_name: &str) -> Result<T> {
     handle.join().map_err(|_| {
-        CodecError::encode("HyperPipeline", format!("{} thread panicked", stage_name))
+        RoboflowError::encode("HyperPipeline", format!("{} thread panicked", stage_name))
     })?
 }
 
@@ -312,7 +312,7 @@ mod tests {
     fn test_join_workers_with_error() {
         let handles: Vec<thread::JoinHandle<Result<i32>>> = vec![
             thread::spawn(|| Ok(1)),
-            thread::spawn(|| Err(CodecError::encode("Test", "worker failed"))),
+            thread::spawn(|| Err(RoboflowError::encode("Test", "worker failed"))),
         ];
 
         let result = join_workers(handles, "TestStage");

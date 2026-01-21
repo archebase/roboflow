@@ -17,7 +17,7 @@
 //! # Single File Mode
 //!
 //! When a single input file is provided:
-//! - If output is a directory → uses original filename + "_robocodec" suffix
+//! - If output is a directory → uses original filename + "_roboflow" suffix
 //! - If output is a file path → creates that file (errors if exists)
 //!
 //! # Batch Mode
@@ -29,7 +29,7 @@
 //! ## Single File to Directory
 //!
 //! ```no_run
-//! use robocodec::Robocodec;
+//! use roboflow::Robocodec;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! Robocodec::open(vec!["input.bag"])?
@@ -37,13 +37,13 @@
 //!     .run()?;
 //! # Ok(())
 //! # }
-//! // Output: /output/dir/input_robocodec.mcap
+//! // Output: /output/dir/input_roboflow.mcap
 //! ```
 //!
 //! ## Single File to Specific Output
 //!
 //! ```no_run
-//! use robocodec::Robocodec;
+//! use roboflow::Robocodec;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! Robocodec::open(vec!["input.bag"])?
@@ -56,8 +56,8 @@
 //! ## Batch Processing
 //!
 //! ```no_run
-//! use robocodec::Robocodec;
-//! use robocodec::pipeline::fluent::CompressionPreset;
+//! use roboflow::Robocodec;
+//! use roboflow::pipeline::fluent::CompressionPreset;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! Robocodec::open(vec!["a.bag", "b.bag"])?
@@ -71,7 +71,8 @@
 //! ## With Transforms
 //!
 //! ```no_run
-//! use robocodec::{Robocodec, TransformBuilder};
+//! use roboflow::Robocodec;
+//! use robocodec::TransformBuilder;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let transform = TransformBuilder::new()
@@ -90,7 +91,7 @@
 //! ## Hyper Mode (Maximum Throughput)
 //!
 //! ```no_run
-//! use robocodec::Robocodec;
+//! use roboflow::Robocodec;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! Robocodec::open(vec!["input.bag"])?

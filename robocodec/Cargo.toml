@@ -1,0 +1,49 @@
+[package]
+name = "robocodec"
+version = "0.1.0"
+edition = "2021"
+authors = ["Strata Contributors"]
+license = "MulanPSL-2.0"
+description = "Robotics data format library for MCAP and ROS bag files"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+anyhow = "1.0"
+pest = "2.7"
+pest_derive = "2.7"
+byteorder = "1.5"
+memmap2 = "0.9"
+prost = "0.13"
+prost-types = "0.13"
+prost-reflect = "0.14"
+hex = "0.4"
+toml = "0.8"
+regex = "1.10"
+rayon = "1.10"
+crossbeam-channel = "0.5"
+crossbeam = "0.8"
+crossbeam-queue = "0.3"
+libc = "0.2"
+num_cpus = "1.16"
+zstd = "0.13"
+lz4_flex = "0.11"
+bzip2 = "0.4"
+crc32fast = "1.4"
+mcap = "0.24"
+rosbag = "0.6"
+bumpalo = "3.16"
+bytemuck = "1.15"
+chrono = "0.4"
+tracing = "0.1"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+tikv-jemallocator = { version = "0.6", optional = true }
+pyo3 = { version = "0.25", features = ["abi3-py311", "extension-module"], optional = true }
+
+[features]
+python = ["pyo3"]
+jemalloc = ["dep:tikv-jemallocator"]

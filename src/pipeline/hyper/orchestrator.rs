@@ -23,16 +23,16 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::bounded;
 use tracing::{debug, info, instrument};
 
-use crate::core::{CodecError, Result};
-use crate::format::writer::ParallelMcapWriter;
-use crate::io::detection::detect_format;
-use crate::io::metadata::{ChannelInfo, FileFormat};
-use crate::io::traits::FormatReader;
+use crate::core::{Result, RoboflowError};
 use crate::pipeline::hyper::config::HyperPipelineConfig;
 use crate::pipeline::hyper::stages::crc_packetizer::{CrcPacketizerConfig, CrcPacketizerStage};
 use crate::pipeline::hyper::types::PacketizedChunk;
 use crate::pipeline::stages::compression::{CompressionStage, CompressionStageConfig};
 use crate::pipeline::stages::reader::{ReaderStage, ReaderStageConfig};
+use robocodec::io::detection::detect_format;
+use robocodec::io::metadata::{ChannelInfo, FileFormat};
+use robocodec::io::traits::FormatReader;
+use robocodec::ParallelMcapWriter;
 
 /// Hyper-Pipeline for maximum throughput file conversion.
 ///
@@ -51,7 +51,7 @@ use crate::pipeline::stages::reader::{ReaderStage, ReaderStageConfig};
 /// # Example
 ///
 /// ```no_run
-/// use robocodec::pipeline::hyper::{HyperPipeline, HyperPipelineConfig};
+/// use roboflow::pipeline::hyper::{HyperPipeline, HyperPipelineConfig};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let config = HyperPipelineConfig::new("input.bag", "output.mcap");
@@ -70,7 +70,7 @@ impl HyperPipeline {
     pub fn new(config: HyperPipelineConfig) -> Result<Self> {
         // Validate input file exists
         if !config.input_path.exists() {
-            return Err(CodecError::parse(
+            return Err(RoboflowError::parse(
                 "HyperPipeline",
                 format!("Input file not found: {}", config.input_path.display()),
             ));
@@ -182,7 +182,7 @@ impl HyperPipeline {
         // Wait for reader
         let reader_result = reader_handle
             .join()
-            .map_err(|_| CodecError::encode("HyperPipeline", "Reader thread panicked"))?;
+            .map_err(|_| RoboflowError::encode("HyperPipeline", "Reader thread panicked"))?;
         let reader_stats = reader_result?;
         debug!(
             messages = reader_stats.messages_read,
@@ -194,14 +194,14 @@ impl HyperPipeline {
         // Wait for compression
         let compression_result = compression_handle
             .join()
-            .map_err(|_| CodecError::encode("HyperPipeline", "Compression thread panicked"))?;
+            .map_err(|_| RoboflowError::encode("HyperPipeline", "Compression thread panicked"))?;
         compression_result?;
         debug!("Compression complete");
 
         // Wait for packetizer
         let packetizer_result = packetizer_handle
             .join()
-            .map_err(|_| CodecError::encode("HyperPipeline", "Packetizer thread panicked"))?;
+            .map_err(|_| RoboflowError::encode("HyperPipeline", "Packetizer thread panicked"))?;
         let packetizer_stats = packetizer_result?;
         debug!(
             chunks = packetizer_stats.chunks_processed,
@@ -212,7 +212,7 @@ impl HyperPipeline {
         // Wait for writer
         let writer_result = writer_handle
             .join()
-            .map_err(|_| CodecError::encode("HyperPipeline", "Writer thread panicked"))?;
+            .map_err(|_| RoboflowError::encode("HyperPipeline", "Writer thread panicked"))?;
         let writer_stats = writer_result?;
         debug!(
             chunks = writer_stats.chunks_written,
@@ -265,16 +265,16 @@ impl HyperPipeline {
     fn get_channel_info(&self, format: &FileFormat) -> Result<HashMap<u16, ChannelInfo>> {
         match format {
             FileFormat::Mcap => {
-                use crate::formats::mcap::McapFormat;
+                use robocodec::mcap::McapFormat;
                 let reader = McapFormat::open(&self.config.input_path)?;
                 Ok(reader.channels().clone())
             }
             FileFormat::Bag => {
-                use crate::formats::bag::BagFormat;
+                use robocodec::bag::BagFormat;
                 let reader = BagFormat::open(&self.config.input_path)?;
                 Ok(reader.channels().clone())
             }
-            FileFormat::Unknown => Err(CodecError::parse(
+            FileFormat::Unknown => Err(RoboflowError::parse(
                 "HyperPipeline",
                 format!("Unknown file format: {}", self.config.input_path.display()),
             )),
@@ -311,7 +311,7 @@ impl HyperPipeline {
 
         // Create output file
         let file = File::create(&output_path).map_err(|e| {
-            CodecError::encode("Writer", format!("Failed to create output file: {e}"))
+            RoboflowError::encode("Writer", format!("Failed to create output file: {e}"))
         })?;
 
         let buffered_writer = BufWriter::with_capacity(buffer_size, file);
@@ -329,7 +329,7 @@ impl HyperPipeline {
                     let id = writer
                         .add_schema(&channel.message_type, encoding, schema.as_bytes())
                         .map_err(|e| {
-                            CodecError::encode(
+                            RoboflowError::encode(
                                 "Writer",
                                 format!("Failed to add schema for {}: {}", channel.message_type, e),
                             )
@@ -350,7 +350,7 @@ impl HyperPipeline {
                     &HashMap::new(),
                 )
                 .map_err(|e| {
-                    CodecError::encode(
+                    RoboflowError::encode(
                         "Writer",
                         format!("Failed to add channel {}: {}", channel.topic, e),
                     )
@@ -405,7 +405,7 @@ impl HyperPipeline {
             } else {
                 // Buffer out-of-order chunk
                 if chunk_buffer.len() >= MAX_BUFFER_SIZE {
-                    return Err(CodecError::encode(
+                    return Err(RoboflowError::encode(
                         "Writer",
                         format!(
                             "Chunk buffer overflow: waiting for {}, got {}",

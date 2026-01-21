@@ -1,24 +1,24 @@
 [workspace]
-members = ["robofmt", "."]
+members = ["robocodec", "."]
 resolver = "2"
 
 [workspace.dependencies]
-robofmt = { path = "robofmt" }
+robocodec = { path = "robocodec" }
 
 [package]
-name = "robocodec"
+name = "roboflow"
 version = "0.1.0"
 edition = "2021"
 authors = ["Strata Contributors"]
 license = "MulanPSL-2.0"
-repository = "https://github.com/archebase/robocodec"
+repository = "https://github.com/archebase/roboflow"
 description = "Schema-driven message codec supporting CDR, protobuf, and JSON"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-robofmt = { path = "robofmt" }
+robocodec = { path = "robocodec" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
@@ -97,7 +97,7 @@ kps-parquet = ["dep:polars"]
 kps-depth = ["dep:png"]
 kps-all = ["kps-hdf5", "kps-parquet", "kps-depth"]
 # Python bindings via PyO3 (extension-module mode to prevent libpython linking)
-python = ["pyo3", "robofmt/python"]
+python = ["pyo3", "robocodec/python"]
 # Python extension module (alias for python, since extension-module is now default)
 extension-module = ["python"]
 # GPU compression (experimental)
@@ -106,7 +106,7 @@ extension-module = ["python"]
 gpu = []
 # Use jemalloc as global allocator on Linux (better for concurrent workloads)
 # On macOS, the default allocator is already excellent and jemalloc is not used
-jemalloc = ["dep:tikv-jemallocator", "robofmt/jemalloc"]
+jemalloc = ["dep:tikv-jemallocator", "robocodec/jemalloc"]
 # CLI support for binaries (profiler, etc.)
 cli = ["dep:clap"]
 # Profiling support for profiler binary (flamegraph generation)

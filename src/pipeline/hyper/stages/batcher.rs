@@ -12,7 +12,7 @@ use std::time::Instant;
 use crossbeam_channel::{Receiver, Sender};
 use tracing::{info, instrument};
 
-use crate::core::{CodecError, Result};
+use crate::core::{Result, RoboflowError};
 use crate::pipeline::hyper::types::BatcherStats;
 use crate::pipeline::types::chunk::MessageChunk;
 
@@ -85,7 +85,7 @@ impl BatcherStage {
 
             self.sender
                 .send(chunk)
-                .map_err(|_| CodecError::encode("Batcher", "Channel closed"))?;
+                .map_err(|_| RoboflowError::encode("Batcher", "Channel closed"))?;
 
             self.stats.chunks_sent.fetch_add(1, Ordering::Relaxed);
         }

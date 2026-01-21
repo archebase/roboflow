@@ -20,7 +20,7 @@
 //! # Usage
 //!
 //! ```no_run
-//! use robocodec::pipeline::hyper::{HyperPipeline, HyperPipelineConfig};
+//! use roboflow::pipeline::hyper::{HyperPipeline, HyperPipelineConfig};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = HyperPipelineConfig::new("input.bag", "output.mcap");
