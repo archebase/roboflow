@@ -187,7 +187,7 @@ impl ReaderBuilder {
 
     /// Check if an MCAP file has a summary with chunk indexes.
     fn check_mcap_summary(&self, path: &PathBuf) -> Result<(bool, bool)> {
-        crate::io::formats::mcap::McapFormat::check_summary(path)
+        crate::formats::mcap::McapFormat::check_summary(path)
     }
 }
 

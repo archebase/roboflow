@@ -1,22 +1,6 @@
-//! KPS pipeline integration tests.
+//! KPS integration tests.
 //!
-//! These tests validate the KPS conversion pipeline with real MCAP files.
-
-use robocodec::io::formats::kps::config::ImageFormat;
-use robocodec::io::formats::kps::{KpsConfig, Mapping, MappingType, OutputConfig, OutputFormat};
-
-/// Path to the fixtures directory.
-const FIXTURES_DIR: &str = "tests/fixtures";
-
-/// Macro to skip a test if a fixture file is missing.
-macro_rules! skip_if_missing {
-    ($path:expr, $fixture_name:expr) => {
-        if !$path.exists() {
-            eprintln!("Skipping test: fixture file not found: {}", $fixture_name);
-            return;
-        }
-    };
-}
+//! These tests validate the KPS video encoding and related functionality.
 
 /// Create a test output directory.
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
@@ -24,42 +8,6 @@ fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
         // Fallback to system temp if tests/output doesn't exist
         tempfile::tempdir().expect("Failed to create temp dir")
     })
-}
-
-// NOTE: The following tests are commented out because they depend on
-// `pipeline::kps::KpsPipeline` which was removed during refactoring.
-// KPS is now just a format/writer in `io::formats::kps`, not a separate pipeline.
-
-/// Create a minimal KPS config for testing.
-///
-/// Uses topics that exist in robocodec_test_2.mcap:
-/// - /camera/head_color for camera images
-/// - /hal/arm_joint_state for joint states
-fn test_kps_config() -> KpsConfig {
-    KpsConfig {
-        dataset: robocodec::io::formats::kps::DatasetConfig {
-            name: "test_dataset".to_string(),
-            fps: 30,
-            robot_type: None,
-        },
-        mappings: vec![
-            Mapping {
-                topic: "/camera/head_color".to_string(),
-                feature: "observation.camera".to_string(),
-                mapping_type: MappingType::Image,
-            },
-            Mapping {
-                topic: "/hal/arm_joint_state".to_string(),
-                feature: "observation.joint_state".to_string(),
-                mapping_type: MappingType::State,
-            },
-        ],
-        output: OutputConfig {
-            formats: vec![OutputFormat::Parquet],
-            image_format: ImageFormat::Mp4,
-            max_frames: None,
-        },
-    }
 }
 
 // Tests below are commented out - they depend on deleted `pipeline::kps` module

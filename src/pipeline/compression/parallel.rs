@@ -36,7 +36,7 @@ impl Default for CompressionConfig {
     fn default() -> Self {
         Self {
             level: DEFAULT_COMPRESSION_LEVEL,
-            threads: crate::core::detect_cpu_count() as usize,
+            threads: crate::pipeline::hardware::detect_cpu_count() as usize,
         }
     }
 }
@@ -52,7 +52,7 @@ impl CompressionConfig {
     pub fn max_throughput() -> Self {
         Self {
             level: LOW_COMPRESSION_LEVEL,
-            threads: crate::core::detect_cpu_count() as usize,
+            threads: crate::pipeline::hardware::detect_cpu_count() as usize,
         }
     }
 
@@ -60,7 +60,7 @@ impl CompressionConfig {
     pub fn high_throughput() -> Self {
         Self {
             level: LOW_COMPRESSION_LEVEL,
-            threads: crate::core::detect_cpu_count() as usize,
+            threads: crate::pipeline::hardware::detect_cpu_count() as usize,
         }
     }
 
@@ -73,7 +73,7 @@ impl CompressionConfig {
     pub fn high_compression() -> Self {
         Self {
             level: HIGH_COMPRESSION_LEVEL,
-            threads: crate::core::detect_cpu_count() as usize,
+            threads: crate::pipeline::hardware::detect_cpu_count() as usize,
         }
     }
 }
@@ -135,7 +135,7 @@ impl ParallelCompressor {
     /// Create a new parallel compressor.
     pub fn new(config: CompressionConfig) -> Result<Self> {
         let num_threads = if config.threads == 0 {
-            crate::core::detect_cpu_count() as usize
+            crate::pipeline::hardware::detect_cpu_count() as usize
         } else {
             config.threads
         };

@@ -59,7 +59,7 @@ impl CompressionConfig {
     /// - Compression level 3 provides good balance between speed and ratio
     pub fn auto_detect() -> Self {
         // Detect CPU cores
-        let num_cpus = crate::core::detect_cpu_count();
+        let num_cpus = crate::pipeline::hardware::detect_cpu_count();
 
         // Use all available CPUs for maximum throughput
         let threads = num_cpus;

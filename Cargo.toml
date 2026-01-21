@@ -1,3 +1,10 @@
+[workspace]
+members = ["robofmt", "."]
+resolver = "2"
+
+[workspace.dependencies]
+robofmt = { path = "robofmt" }
+
 [package]
 name = "robocodec"
 version = "0.1.0"
@@ -11,6 +18,7 @@ description = "Schema-driven message codec supporting CDR, protobuf, and JSON"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+robofmt = { path = "robofmt" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
@@ -84,12 +92,12 @@ io-uring = { version = "0.7", optional = true }
 
 # KPS features (optional, disabled by default)
 [features]
-kps-hdf5 = ["dep:hdf5"]
-kps-parquet = ["dep:polars"]
-kps-depth = ["dep:png"]
-kps-all = ["kps-hdf5", "kps-parquet", "kps-depth"]
+kps-hdf5 = ["dep:hdf5", "robofmt/kps-hdf5"]
+kps-parquet = ["dep:polars", "robofmt/kps-parquet"]
+kps-depth = ["dep:png", "robofmt/kps-depth"]
+kps-all = ["kps-hdf5", "kps-parquet", "kps-depth", "robofmt/kps-all"]
 # Python bindings via PyO3 (extension-module mode to prevent libpython linking)
-python = ["pyo3"]
+python = ["pyo3", "robofmt/python"]
 # Python extension module (alias for python, since extension-module is now default)
 extension-module = ["python"]
 # GPU compression (experimental)
@@ -98,7 +106,7 @@ extension-module = ["python"]
 gpu = []
 # Use jemalloc as global allocator on Linux (better for concurrent workloads)
 # On macOS, the default allocator is already excellent and jemalloc is not used
-jemalloc = ["dep:tikv-jemallocator"]
+jemalloc = ["dep:tikv-jemallocator", "robofmt/jemalloc"]
 # CLI support for binaries (profiler, etc.)
 cli = ["dep:clap"]
 # Profiling support for profiler binary (flamegraph generation)

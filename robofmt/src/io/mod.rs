@@ -1,0 +1,26 @@
+//! I/O layer for robotics data formats.
+//!
+//! This module provides the foundational types and traits for reading
+//! and writing robotics data files.
+
+pub mod arena;
+pub mod detection;
+pub mod metadata;
+
+// Re-exports
+pub use arena::{MmapArena, MmapArenaRef};
+pub use detection::{detect_format, is_bag_file, is_mcap_file, FormatDetector};
+pub use metadata::{ChannelInfo, FileFormat, FileInfo, MessageMetadata, RawMessage};
+
+// Traits for format readers and writers
+pub mod traits;
+pub use traits::{FormatReader, FormatWriter};
+
+// Re-export parallel reader types
+pub use traits::{
+    ParallelReader, ParallelReaderConfig, ParallelReaderStats, MessageChunkData,
+};
+
+// Filter for topic filtering
+pub mod filter;
+pub use filter::{ChannelFilter, TopicFilter};

@@ -282,6 +282,16 @@ impl Default for HardwareInfo {
     }
 }
 
+/// Detect the number of available CPU cores with proper fallback.
+pub fn detect_cpu_count() -> u32 {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or_else(|_| {
+            eprintln!("Warning: Failed to detect CPU count, defaulting to 1");
+            1
+        }) as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

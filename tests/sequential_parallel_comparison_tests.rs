@@ -5,17 +5,17 @@
 
 use std::path::Path;
 
-use robocodec::io::formats::{BagFormat, McapFormat, SequentialBagReader, SequentialMcapReader};
+use robocodec::formats::{BagFormat, McapFormat, SequentialBagReader, SequentialMcapReader};
 use robocodec::io::traits::FormatReader;
 
 /// Helper to collect all messages from a sequential MCAP reader.
 fn collect_mcap_messages_sequential(path: &str) -> Vec<(u16, u64, Vec<u8>)> {
     let reader = SequentialMcapReader::open(path).expect("Failed to open MCAP file");
     let iter = reader.iter_raw().expect("Failed to create iterator");
-    let stream = iter.into_stream().expect("Failed to create stream");
+    let stream = iter.into_iter();
 
     stream
-        .filter_map(|r| r.ok())
+        .filter_map(|r: Result<_, _>| r.ok())
         .map(|(msg, _)| (msg.channel_id, msg.log_time, msg.data))
         .collect()
 }
@@ -52,7 +52,7 @@ fn collect_bag_messages_sequential(path: &str) -> Vec<(u16, u64, Vec<u8>)> {
     let reader = SequentialBagReader::open(path).expect("Failed to open BAG file");
     let iter = reader.iter_raw().expect("Failed to create iterator");
 
-    iter.filter_map(|r| r.ok())
+    iter.filter_map(|r: Result<_, _>| r.ok())
         .map(|(msg, _)| (msg.channel_id, msg.log_time, msg.data))
         .collect()
 }
@@ -102,8 +102,8 @@ fn test_sequential_mcap_reader_reads_fixture() {
 
     // Count messages
     let iter = reader.iter_raw().expect("Failed to create iterator");
-    let stream = iter.into_stream().expect("Failed to create stream");
-    let count: usize = stream.filter(|r| r.is_ok()).count();
+    let stream = iter.into_iter();
+    let count: usize = stream.filter(|r: &Result<_, _>| r.is_ok()).count();
 
     println!("Sequential MCAP reader read {} messages", count);
     assert!(
@@ -130,7 +130,7 @@ fn test_sequential_bag_reader_reads_fixture() {
 
     // Count messages
     let iter = reader.iter_raw().expect("Failed to create iterator");
-    let count: usize = iter.filter(|r| r.is_ok()).count();
+    let count: usize = iter.filter(|r: &Result<_, _>| r.is_ok()).count();
 
     println!("Sequential BAG reader read {} messages", count);
     assert!(

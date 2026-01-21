@@ -3,7 +3,7 @@
 //! This module provides intelligent auto-configuration for robocodec pipelines
 //! based on detected hardware capabilities and performance targets.
 
-use crate::core::HardwareInfo;
+use crate::pipeline::hardware::HardwareInfo;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 

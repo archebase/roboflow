@@ -265,12 +265,12 @@ impl HyperPipeline {
     fn get_channel_info(&self, format: &FileFormat) -> Result<HashMap<u16, ChannelInfo>> {
         match format {
             FileFormat::Mcap => {
-                use crate::io::formats::mcap::McapFormat;
+                use crate::formats::mcap::McapFormat;
                 let reader = McapFormat::open(&self.config.input_path)?;
                 Ok(reader.channels().clone())
             }
             FileFormat::Bag => {
-                use crate::io::formats::bag::BagFormat;
+                use crate::formats::bag::BagFormat;
                 let reader = BagFormat::open(&self.config.input_path)?;
                 Ok(reader.channels().clone())
             }

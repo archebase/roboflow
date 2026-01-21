@@ -15,7 +15,7 @@ use tracing::warn;
 
 use crate::core::{CodecError, DecodedMessage, Result};
 use crate::encoding::{CdrDecoder, JsonDecoder, ProtobufDecoder};
-use crate::io::formats::mcap::ParallelMcapReader;
+use crate::formats::mcap::ParallelMcapReader;
 
 /// Information about a channel in an MCAP file.
 #[derive(Debug, Clone)]

@@ -42,6 +42,9 @@
 // Core data structures
 pub mod types;
 
+// Hardware detection for auto-tuning
+pub mod hardware;
+
 // Pipeline stages
 pub mod stages;
 
@@ -68,6 +71,7 @@ pub use auto_config::{PerformanceMode, PipelineAutoConfig};
 pub use compression::ParallelCompressor;
 pub use config::{CompressionConfig, CompressionTarget};
 pub use fluent::{BatchReport, CompressionPreset, PipelineMode, ReadOptions, Robocodec};
+pub use hardware::{HardwareInfo, detect_cpu_count};
 pub use orchestrator::{AsyncPipeline, PipelineBuilder, PipelineReport};
 pub use stages::{TransformStage, TransformStageConfig};
 pub use types::{ArenaMessage, CompressedChunk, MessageArena, MessageChunk};

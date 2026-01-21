@@ -13,7 +13,8 @@ use std::io::BufWriter;
 use std::path::Path;
 
 use robocodec::format::writer::ParallelMcapWriter;
-use robocodec::io::formats::SequentialMcapReader;
+use robocodec::formats::SequentialMcapReader;
+use robocodec::io::traits::FormatReader;
 
 enum Command {
     Messages {
@@ -166,13 +167,17 @@ fn extract_mcap_messages(
     for (&ch_id, channel) in reader.channels() {
         let schema_id = if let Some(schema) = &channel.schema {
             let encoding = channel.schema_encoding.as_deref().unwrap_or("ros2msg");
-            *schema_ids
-                .entry(channel.message_type.clone())
-                .or_insert_with(|| {
-                    mcap_writer
+            let msg_type = channel.message_type.clone();
+            match schema_ids.get(&msg_type) {
+                Some(&id) => id,
+                None => {
+                    let id: u16 = mcap_writer
                         .add_schema(&channel.message_type, encoding, schema.as_bytes())
-                        .unwrap_or(0)
-                })
+                        .unwrap_or(0);
+                    schema_ids.insert(msg_type, id);
+                    id
+                }
+            }
         } else {
             0
         };
@@ -188,7 +193,7 @@ fn extract_mcap_messages(
 
     // Copy messages
     let iter = reader.iter_raw()?;
-    let stream = iter.into_stream()?;
+    let stream = iter.into_iter();
     let mut written = 0;
 
     for result in stream {
@@ -315,13 +320,17 @@ fn extract_mcap_topics(
 
         let schema_id = if let Some(schema) = &channel.schema {
             let encoding = channel.schema_encoding.as_deref().unwrap_or("ros2msg");
-            *schema_ids
-                .entry(channel.message_type.clone())
-                .or_insert_with(|| {
-                    mcap_writer
+            let msg_type = channel.message_type.clone();
+            match schema_ids.get(&msg_type) {
+                Some(&id) => id,
+                None => {
+                    let id: u16 = mcap_writer
                         .add_schema(&channel.message_type, encoding, schema.as_bytes())
-                        .unwrap_or(0)
-                })
+                        .unwrap_or(0);
+                    schema_ids.insert(msg_type, id);
+                    id
+                }
+            }
         } else {
             0
         };
@@ -337,7 +346,7 @@ fn extract_mcap_topics(
 
     // Copy filtered messages
     let iter = reader.iter_raw()?;
-    let stream = iter.into_stream()?;
+    let stream = iter.into_iter();
     let mut written = 0;
 
     for result in stream {
@@ -521,7 +530,7 @@ fn extract_per_topic(
 
         // Copy messages up to count per topic
         let iter = reader.iter_raw()?;
-        let stream = iter.into_stream()?;
+        let stream = iter.into_iter();
 
         for result in stream {
             let (msg, channel) = result?;
@@ -585,7 +594,7 @@ fn create_fixture_from_mcap(input: &str, name: &str) -> Result<(), Box<dyn std::
 
     let reader = SequentialMcapReader::open(input)?;
 
-    match reader.iter_raw()?.into_stream()?.next() {
+    match reader.iter_raw()?.into_iter().next() {
         Some(Ok((raw_msg, channel_info))) => {
             write_fixture_mcap(
                 name,
@@ -665,13 +674,17 @@ fn extract_mcap_time_range(
     for (&ch_id, channel) in reader.channels() {
         let schema_id = if let Some(schema) = &channel.schema {
             let encoding = channel.schema_encoding.as_deref().unwrap_or("ros2msg");
-            *schema_ids
-                .entry(channel.message_type.clone())
-                .or_insert_with(|| {
-                    mcap_writer
+            let msg_type = channel.message_type.clone();
+            match schema_ids.get(&msg_type) {
+                Some(&id) => id,
+                None => {
+                    let id: u16 = mcap_writer
                         .add_schema(&channel.message_type, encoding, schema.as_bytes())
-                        .unwrap_or(0)
-                })
+                        .unwrap_or(0);
+                    schema_ids.insert(msg_type, id);
+                    id
+                }
+            }
         } else {
             0
         };
@@ -687,7 +700,7 @@ fn extract_mcap_time_range(
 
     // Copy messages in time range
     let iter = reader.iter_raw()?;
-    let stream = iter.into_stream()?;
+    let stream = iter.into_iter();
     let mut written = 0;
 
     for result in stream {

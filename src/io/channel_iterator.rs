@@ -205,11 +205,11 @@ impl ParallelReaderIteratorBuilder {
                     crate::io::metadata::FileFormat::Mcap => {
                         // For MCAP files, always use two-pass reader
                         // This handles files without summary section
-                        crate::io::formats::mcap_two_pass::TwoPassMcapReader::open(&path_str)
+                        crate::formats::mcap::TwoPassMcapReader::open(&path_str)
                             .map(|r| Box::new(r) as Box<dyn crate::io::traits::ParallelReader>)
                     }
                     crate::io::metadata::FileFormat::Bag => {
-                        crate::io::formats::bag_parallel::ParallelBagReader::open(&path_str)
+                        crate::formats::bag::ParallelBagReader::open(&path_str)
                             .map(|r| Box::new(r) as Box<dyn crate::io::traits::ParallelReader>)
                     }
                     crate::io::metadata::FileFormat::Unknown => {

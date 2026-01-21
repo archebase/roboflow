@@ -1,0 +1,23 @@
+//! BAG format implementation.
+//!
+//! This module provides a complete ROS1 bag reader/writer implementation with:
+//! - Parallel chunk-based reading for optimal performance
+//! - Sequential reading
+//! - Custom writer with manual chunk control for parallel compression
+
+// Parallel reader implementation
+pub mod parallel;
+
+// Parser utilities
+pub mod parser;
+
+// Sequential reader implementation
+pub mod sequential;
+
+// Writer implementation
+pub mod writer;
+
+// Re-exports
+pub use parallel::{BagFormat, ParallelBagReader};
+pub use writer::{BagMessage, BagWriter};
+pub use sequential::{BagSequentialFormat, SequentialBagReader, SequentialBagRawIter};

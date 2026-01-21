@@ -13,7 +13,7 @@ use crate::encoding::CdrDecoder;
 use crate::encoding::CdrEncoder;
 use crate::format::reader::RawMessage;
 use crate::format::writer::BagWriter;
-use crate::io::formats::bag::BagFormat;
+use crate::formats::bag::BagFormat;
 use crate::io::traits::FormatReader;
 use crate::rewriter::{FormatRewriter, RewriteOptions, RewriteStats};
 use crate::schema::{parse_schema, MessageSchema};
@@ -284,7 +284,7 @@ impl BagRewriter {
     }
 
     /// Cache all schemas from the bag file, applying transformations if configured.
-    fn cache_schemas(&mut self, reader: &crate::io::formats::bag::ParallelBagReader) -> Result<()> {
+    fn cache_schemas(&mut self, reader: &crate::formats::bag::ParallelBagReader) -> Result<()> {
         let pipeline = self.options.transforms.as_ref();
         let channels = FormatReader::channels(reader);
 

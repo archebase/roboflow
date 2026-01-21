@@ -25,7 +25,7 @@ impl Default for GpuCompressionConfig {
         Self {
             backend: BackendType::Auto,
             compression_level: 3,
-            cpu_threads: crate::core::detect_cpu_count(),
+            cpu_threads: crate::pipeline::hardware::detect_cpu_count(),
             gpu_device: None,
             max_chunk_size: 256 * 1024 * 1024, // 256MB default
             auto_fallback: true,
@@ -97,7 +97,7 @@ impl GpuCompressionConfig {
         Self {
             backend: BackendType::Auto,
             compression_level: 3, // Lower level for speed
-            cpu_threads: crate::core::detect_cpu_count(),
+            cpu_threads: crate::pipeline::hardware::detect_cpu_count(),
             gpu_device: None,
             max_chunk_size: 512 * 1024 * 1024, // 512MB chunks for GPU
             auto_fallback: true,
@@ -109,7 +109,7 @@ impl GpuCompressionConfig {
         Self {
             backend: BackendType::Auto,
             compression_level: 19, // High compression level
-            cpu_threads: crate::core::detect_cpu_count(),
+            cpu_threads: crate::pipeline::hardware::detect_cpu_count(),
             gpu_device: None,
             max_chunk_size: 128 * 1024 * 1024, // Smaller chunks for better compression
             auto_fallback: true,

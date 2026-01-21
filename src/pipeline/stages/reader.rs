@@ -109,12 +109,12 @@ impl ReaderStage {
         // Create the appropriate reader based on format and read in parallel
         let stats = match self.format {
             FileFormat::Mcap => {
-                use crate::io::formats::mcap::McapFormat;
+                use crate::formats::mcap::McapFormat;
                 let reader = McapFormat::open(&self.input_path)?;
                 reader.read_parallel(parallel_config, self.chunks_sender)?
             }
             FileFormat::Bag => {
-                use crate::io::formats::bag::BagFormat;
+                use crate::formats::bag::BagFormat;
                 let reader = BagFormat::open(&self.input_path)?;
                 reader.read_parallel(parallel_config, self.chunks_sender)?
             }

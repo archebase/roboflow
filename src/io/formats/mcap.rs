@@ -19,7 +19,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use rayon::prelude::*;
 
 use crate::io::filter::ChannelFilter;
-use crate::io::formats::mcap_constants::{
+use crate::formats::mcap_constants::{
     MCAP_MAGIC, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX, OP_DATA_END, OP_FOOTER, OP_HEADER,
     OP_MESSAGE, OP_SCHEMA, OP_STATISTICS,
 };

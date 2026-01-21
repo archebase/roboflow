@@ -649,7 +649,7 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
 
     match ext {
         "mcap" => {
-            use robocodec::io::formats::mcap::ParallelMcapReader;
+            use robocodec::formats::mcap::ParallelMcapReader;
             let reader = ParallelMcapReader::open(file)?;
             let chunks = reader.chunk_indexes();
 
@@ -728,7 +728,7 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
             println!("  Recommended WindowLog: {}", window_log);
         }
         "bag" => {
-            use robocodec::io::formats::bag_parallel::ParallelBagReader;
+            use robocodec::formats::bag::ParallelBagReader;
             let reader = ParallelBagReader::open(file)?;
             let chunks = reader.chunks();
 
@@ -786,7 +786,7 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
         }
         _ => {
             // Try MCAP first
-            match robocodec::io::formats::mcap::ParallelMcapReader::open(file) {
+            match robocodec::formats::mcap::ParallelMcapReader::open(file) {
                 Ok(reader) => {
                     let chunks = reader.chunk_indexes();
                     if !chunks.is_empty() {
@@ -795,7 +795,7 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
                 }
                 Err(_) => {
                     if let Ok(reader) =
-                        robocodec::io::formats::bag_parallel::ParallelBagReader::open(file)
+                        robocodec::formats::bag::ParallelBagReader::open(file)
                     {
                         if !reader.chunks().is_empty() {
                             return show_chunks(file, "bag");

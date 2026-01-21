@@ -98,7 +98,7 @@ impl CpuCompressor {
     pub fn default_config() -> Self {
         Self {
             compression_level: 3,
-            threads: crate::core::detect_cpu_count(),
+            threads: crate::pipeline::hardware::detect_cpu_count(),
         }
     }
 }

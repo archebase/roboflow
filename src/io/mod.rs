@@ -10,7 +10,6 @@
 //! - **Core types**: arena, traits, detection, metadata, filter, channel_iterator
 //! - **Reader**: Reading strategies (sequential, parallel, auto)
 //! - **Writer**: Writing implementations
-//! - **Formats**: Format-specific implementations (MCAP, BAG, etc.)
 //!
 //! # Key Design Principles
 //!
@@ -53,9 +52,6 @@ pub mod reader;
 // Writer implementations
 pub mod writer;
 
-// Format-specific implementations
-pub mod formats;
-
 // Re-exports for convenience
 pub use arena::MmapArena;
 pub use detection::detect_format;
@@ -74,11 +70,12 @@ pub use writer::{
     RoboWriter,
 };
 
-pub use formats::{
-    bag::BagFormat, mcap::McapFormat, sequential_bag::SequentialBagReader,
-    sequential_mcap::SequentialMcapReader,
-    kps::{
-        config::{KpsConfig, Mapping, MappingType, OutputFormat},
-        Hdf5KpsWriter, ParquetKpsWriter,
-    },
+// Re-export from crate::formats for backwards compatibility
+pub use crate::formats::{
+    bag::{BagFormat, ParallelBagReader, SequentialBagReader, SequentialBagRawIter},
+    mcap::{McapFormat, ParallelMcapReader, SequentialMcapReader, SequentialRawIter},
 };
+
+// Keep the formats module for KPS (which remains at io::formats::kps)
+pub mod formats;
+
