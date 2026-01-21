@@ -4,71 +4,115 @@ This document provides a high-level overview of Robocodec's architecture and des
 
 ## Overview
 
-Robocodec is a **schema-driven, universal robotics data codec** that enables efficient conversion between different robotics message formats and storage formats.
+Robocodec is a **schema-driven, universal robotics data codec** that enables efficient conversion between different robotics message formats and storage formats. The project is organized as a Cargo workspace with two crates:
+
+- **`robofmt`** - Low-level format library for robotics data
+- **`robocodec`** - High-level pipeline and conversion tool
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Robocodec Core                              │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────┐ ┌──────────┐ │
-│  │  CDR     │  │Protobuf  │  │  JSON    │  │Registry│ │   GPU    │ │
-│  │  Codec   │  │  Codec   │  │  Codec   │  │       │ │Compression│ │
-│  └──────────┘  └──────────┘  └──────────┘  └───────┘ └──────────┘ │
-├─────────────────────────────────────────────────────────────────────┤
-│                         Pipeline Layer                              │
-│  ┌─────────────────────┐  ┌──────────────────────────────────────┐ │
-│  │  Standard Pipeline  │  │      HyperPipeline (7-stage)          │ │
-│  │  Reader→Transform→  │  │  Prefetch→Parse→Batch→Transform→     │ │
-│  │  Compress→Write     │  │  Compress→CRC→Write                   │ │
-│  └─────────────────────┘  └──────────────────────────────────────┘ │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │           KPS Pipeline (experimental)                         │ │
-│  │  Decode→TimeAlign→CameraExtract→Encode→Delivery              │ │
-│  └──────────────────────────────────────────────────────────────┘ │
-├─────────────────────────────────────────────────────────────────────┤
-│                         Fluent API Layer                            │
-│  ┌────────────────────────────────────────────────────────────────┐│
-│  │  Robocodec::open(input) → .write_to(output) → .run()          ││
-│  │  KpsConverter::new(input, output) → .config() → .run()         ││
-│  └────────────────────────────────────────────────────────────────┘│
-├─────────────────────────────────────────────────────────────────────┤
-│                       Auto-Configuration                           │
-│  ┌────────────────────────────────────────────────────────────────┐│
-│  │  Hardware Detection → Performance Mode → Pipeline Config       ││
-│  └────────────────────────────────────────────────────────────────┘│
-├─────────────────────────────────────────────────────────────────────┤
-│                          I/O Layer                                   │
-│  ┌──────────────────┐           ┌──────────────────┐                │
-│  │  MCAP Format     │           │  ROS Bag Format  │                │
-│  │  Reader/Writer   │           │  Reader/Writer   │                │
-│  └──────────────────┘           └──────────────────┘                │
-├─────────────────────────────────────────────────────────────────────┤
-│                       Language Bindings                             │
-│  ┌────────────────────┐          ┌────────────────────┐             │
-│  │     Rust API       │          │    Python API      │             │
-│  │  (native library)  │          │    (PyO3 bindings) │             │
-│  └────────────────────┘          └────────────────────┘             │
-└─────────────────────────────────────────────────────────────────────┘
+ Workspace: robocodec
+ ----------------------------------------------------------------------
+| Crate: robofmt                                                      |
+|  --------       --------       --------       --------------       |
+| |  CDR   |     |Protobuf|     |  JSON  |     |   Schema     |      |
+| | Codec  |     | Codec  |     | Codec  |     |   Parser     |      |
+|  --------       --------       --------       --------------       |
+|  ----------------------        ----------------------               |
+| |   Format Readers    |      |   Format Writers     |             |
+| |   (MCAP, BAG)       |      |   (MCAP, BAG)        |             |
+|  ----------------------        ----------------------               |
+ ----------------------------------------------------------------------
+ ----------------------------------------------------------------------
+| Crate: robocodec                                                     |
+|  ---------------------       -----------------------------------     |
+| | Standard Pipeline  |     |      HyperPipeline (7-stage)  |      |
+| | Reader->Transform->|     |  Prefetch->Parse->Batch->      |     |
+| | Compress->Write    |     |  Transform->Compress->Write   |     |
+|  ---------------------       -----------------------------------     |
+|  ----------------------------------------                          |
+| |     Fluent API: Robocodec::open()->run() |                     |
+|  ----------------------------------------                          |
+|  ----------------------------------------                          |
+| |     Transform: Topic/Type Renaming      |                      |
+|  ----------------------------------------                          |
+|  ----------------------------------------                          |
+| |     KPS Format Writer (experimental)    |                      |
+|  ----------------------------------------                          |
+|  ----------------------------------------                          |
+| |     Python Bindings (PyO3)              |                      |
+|  ----------------------------------------                          |
+ ----------------------------------------------------------------------
+ ----------------------------------------------------------------------
+|                       Language Bindings                             |
+|  ------------------          ------------------                      |
+| |    Rust API       |        |    Python API     |                  |
+| |  (native library) |        |  (PyO3 bindings)  |                  |
+|  ------------------          ------------------                      |
+ ----------------------------------------------------------------------
 ```
+
+## Workspace Structure
+
+### Crate: robofmt
+
+**Purpose**: Low-level robotics data format library
+
+**Location**: `robofmt/src/`
+
+**Modules**:
+
+| Module | Description |
+|--------|-------------|
+| `core/` | Core types (CodecValue, errors, Encoding) |
+| `encoding/` | Message codecs (CDR, Protobuf, JSON) |
+| `schema/` | Schema parser (ROS .msg, ROS2 IDL, OMG IDL) |
+| `io/` | I/O types (arena, metadata, traits) |
+| `mcap/` | MCAP format reader |
+| `bag/` | ROS1 bag format reader |
+
+**Design**: This crate provides the foundational types and format-specific logic that `robocodec` builds upon. It can be used independently for low-level robotics data access.
+
+### Crate: robocodec
+
+**Purpose**: High-level pipeline and conversion tool
+
+**Location**: `src/`
+
+**Modules**:
+
+| Module | Description |
+|--------|-------------|
+| `core/` | Core types and errors |
+| `encoding/` | Re-exports from robofmt |
+| `schema/` | Re-exports from robofmt |
+| `io/` | Unified I/O layer (readers, writers) |
+| `formats/` | Format-specific handlers (MCAP, BAG) |
+| `format/` | High-level format APIs |
+| `transform/` | Data transformations |
+| `pipeline/` | Processing pipelines |
+| `python/` | Python bindings |
+
+**Design**: This crate depends on `robofmt` and provides the user-facing APIs including the fluent API, transformations, and Python bindings.
 
 ## Core Components
 
-### 1. Codec Layer
+### 1. Codec Layer (robofmt)
 
-**Location**: `src/encoding/`
+**Location**: `robofmt/src/encoding/`
 
 The codec layer handles message encoding and decoding:
 
 | Codec | Purpose | File |
 |-------|---------|------|
-| CDR | ROS1/ROS2 serialization | `src/encoding/cdr/` |
-| Protobuf | Protocol Buffers | `src/encoding/protobuf/` |
-| JSON | Human-readable format | `src/encoding/json/` |
+| CDR | ROS1/ROS2 serialization | `robofmt/src/encoding/cdr.rs` |
+| Protobuf | Protocol Buffers | `robofmt/src/encoding/protobuf.rs` |
+| JSON | Human-readable format | `robofmt/src/encoding/json.rs` |
 
 **Design**: Each codec implements a common trait for encode/decode operations.
 
-### 2. Schema Parser
+### 2. Schema Parser (robofmt)
 
-**Location**: `src/schema/parser/`
+**Location**: `robofmt/src/schema/`
 
 Parses robotics interface definition languages:
 
@@ -78,19 +122,29 @@ Parses robotics interface definition languages:
 
 **Implementation**: Uses Pest parser combinator for grammar definitions.
 
-### 3. Pipeline System
+### 3. Format Readers (robofmt)
+
+**Location**: `robofmt/src/mcap/` and `robofmt/src/bag/`
+
+Format-specific readers for robotics data files:
+
+| Format | Reader | Features |
+|--------|--------|----------|
+| MCAP | `McapFormat` | Index-based, parallel access |
+| ROS1 Bag | `BagFormat` | Chunk-based parsing |
+
+### 4. Pipeline System (robocodec)
 
 **Location**: `src/pipeline/`
 
 See [PIPELINE.md](PIPELINE.md) for detailed documentation.
 
-**Three pipeline implementations:**
+**Two pipeline implementations:**
 
 1. **Standard Pipeline** (`src/pipeline/`): 4-stage design for balanced performance
-2. **HyperPipeline** (`src/pipeline/hyper/`): 7-stage design for maximum throughput (2000+ MB/s)
-3. **KPS Pipeline** (`src/pipeline/kps/`): Converts robotics data to KPS dataset format (experimental)
+2. **HyperPipeline** (`src/pipeline/hyper/`): 7-stage design for maximum throughput
 
-### 4. Fluent API
+### 5. Fluent API (robocodec)
 
 **Location**: `src/pipeline/fluent/`
 
@@ -102,7 +156,7 @@ use robocodec::pipeline::fluent::{Robocodec, CompressionPreset};
 // Single file conversion
 Robocodec::open(vec!["input.bag"])?
     .write_to("output.mcap")
-    .with_compression(CompressionPreset::Balanced)
+    .compression(CompressionPreset::Balanced)
     .run()?;
 
 // HyperPipeline with auto-configuration
@@ -118,38 +172,15 @@ Robocodec::open(vec!["file1.bag", "file2.bag"])?
     .run()?;
 ```
 
-**KPS Pipeline Fluent API:**
-
-```rust
-use robocodec::pipeline::kps::KpsConverter;
-
-// Simple conversion
-let report = KpsConverter::new("input.mcap", "output_dir")
-    .config("config.toml")
-    .run()?;
-
-// V1.2 delivery with statistics tracking
-let report = KpsConverter::new("input.mcap", "output_dir")
-    .config("config.toml")
-    .v12_delivery()
-    .robot("Kuavo4Pro")
-    .end_effector("Dexhand")
-    .scene("Housekeeper")
-    .sub_scene("Kitchen")
-    .task("Dispose_of_takeout_containers")
-    .with_statistics()  // Auto-rename directory with actual stats
-    .run()?;
-```
-
 **Features:**
 - Type-state pattern ensures valid API usage
 - Automatic output file naming
 - Single file and batch processing modes
 - Progress reporting for batch operations
 
-### 5. Auto-Configuration
+### 6. Auto-Configuration (robocodec)
 
-**Location**: `src/pipeline/auto_config/`
+**Location**: `src/pipeline/auto_config.rs`
 
 Hardware-aware automatic pipeline configuration:
 
@@ -173,7 +204,7 @@ let config = PipelineAutoConfig::auto(PerformanceMode::Throughput)
 - Optimal batch sizes
 - Channel capacities
 
-### 6. GPU Compression
+### 7. GPU Compression (robocodec)
 
 **Location**: `src/pipeline/gpu/`
 
@@ -193,95 +224,80 @@ let config = HyperPipelineConfig::builder()
     .build()?;
 ```
 
-### 7. I/O Layer
+### 8. Unified I/O Layer (robocodec)
 
 **Location**: `src/io/`
 
 Unified interface for different storage formats:
 
 ```rust
-pub trait BagSource {
+pub trait FormatReader {
     fn channels(&self) -> &[ChannelInfo];
     fn read_chunk(&mut self, chunk_size: usize) -> Result<MessageChunk>;
 }
 
-pub trait BagWriter {
+pub trait FormatWriter {
     fn write(&mut self, chunk: MessageChunk) -> Result<()>;
     fn finish(&mut self) -> Result<()>;
 }
 ```
 
-### 8. Type System
+The I/O layer includes:
+- **Reader builder**: Automatic format detection and strategy selection
+- **Writer builder**: Format-specific writers
+- **Strategy pattern**: Sequential vs parallel reading based on file capabilities
 
-**Location**: `src/core/`
+### 9. Transform Layer (robocodec)
 
-Core types used throughout the library:
+**Location**: `src/transform/`
 
-- **`CodecValue`**: Unified representation for all message types
-- **`MessageSchema`**: Schema definition with field descriptors
-- **`Error`**: Comprehensive error types with context
+Data transformation capabilities:
 
-## Module Structure
+- **Topic renaming**: Rename topics during conversion
+- **Type renaming**: Rename message types
+- **Type normalization**: Normalize ROS1/ROS2 type differences
 
+```rust
+let transform = TransformBuilder::new()
+    .with_topic_rename("/old", "/new")
+    .with_type_rename("std_msgs/String", "std_msgs/msg/String")
+    .build();
 ```
-src/
-├── bin/                   # Command-line tools
-│   ├── convert.rs         # Unified convert command
-│   ├── extract.rs         # Data extraction
-│   ├── inspect.rs         # File inspection
-│   ├── schema.rs          # Schema utilities
-│   ├── search.rs          # Data search
-│   └── extract_sample.rs  # Sample creation
-│
-├── core/                  # Core types and errors
-│   ├── error.rs           # Error definitions
-│   ├── registry.rs        # Codec registry
-│   └── value.rs           # CodecValue type
-│
-├── encoding/              # Message codecs
-│   ├── cdr/               # CDR (ROS1/ROS2)
-│   ├── protobuf/          # Protobuf
-│   └── json/              # JSON
-│
-├── io/                    # Unified I/O layer
-│   ├── formats/           # Format implementations
-│   │   ├── bag.rs         # ROS bag format
-│   │   ├── bag_parallel.rs # Parallel bag reading
-│   │   ├── mcap.rs        # MCAP format
-│   │   └── mcap_two_pass.rs # Two-pass MCAP
-│   └── kps/               # KPS dataset format (experimental)
-│       ├── config.rs      # KPS configuration
-│       ├── delivery_v12.rs # v1.2 delivery structure
-│       ├── hdf5_schema.rs # HDF5 schema definitions
-│       ├── video_encoder.rs # Video encoding
-│       ├── writers/       # KPS writers
-│       │   ├── base.rs    # Base writer traits
-│       │   ├── v12_hdf5.rs # v1.2 HDF5 writer
-│       │   ├── original_hdf5.rs # Original data writer
-│       │   └── audio_writer.rs # Audio writer
-│       └── robot_calibration.rs # Robot calibration
-│
-├── schema/                # Schema parsing
-│   └── parser/            # IDL/MSG parsers
-│
-├── pipeline/              # Processing pipeline
-│   ├── stages/            # Pipeline stages (standard)
-│   ├── types/             # Chunk and arena types
-│   ├── fluent/            # Builder API
-│   ├── hyper/             # 7-stage HyperPipeline
-│   ├── kps/               # KPS conversion pipeline
-│   │   ├── fluent.rs      # KPS fluent API
-│   │   ├── config.rs      # KPS pipeline config
-│   │   └── traits/        # KPS traits
-│   ├── gpu/               # GPU compression
-│   ├── auto_config.rs     # Auto-configuration
-│   └── orchestrator.rs    # Standard pipeline coordinator
-│
-├── transform/             # Data transformations
-└── python/                # Python bindings
+
+### 10. KPS Format Writer (robocodec, experimental)
+
+**Location**: `src/io/formats/kps/`
+
+Converts robotics data to KPS dataset format:
+
+- **v1.2 Specification Support**: Compliant directory structure
+- **Multiple Output Formats**: HDF5, Parquet + MP4
+- **Configuration**: TOML-based configuration
+
+```rust
+use robocodec::io::formats::kps::{Hdf5KpsWriter, KpsConfig};
+
+let config = KpsConfig::from_file("config.toml")?;
+let writer = Hdf5KpsWriter::new("output_dir", config)?;
 ```
 
 ## Design Decisions
+
+### Why Split into Two Crates?
+
+The workspace structure separates concerns:
+
+1. **`robofmt`** - Low-level format handling
+   - Can be used independently
+   - Stable API for format access
+   - Minimal dependencies
+
+2. **`robocodec`** - High-level processing
+   - Depends on `robofmt`
+   - Fluent API and transformations
+   - Python bindings
+
+This allows other projects to use `robofmt` for format access without pulling in the full pipeline infrastructure.
 
 ### Why Rust?
 
@@ -318,42 +334,13 @@ Robotics uses many message types:
 
 > **⚠️ Experimental Feature**: The KPS integration is currently experimental and under active development. APIs may change between versions.
 
-The KPS (Kupas) pipeline converts robotics data from MCAP format to KPS dataset format for robotics learning applications.
+The KPS (Kupas) format writer converts robotics data from MCAP format to KPS dataset format for robotics learning applications.
 
 ### Features
 
-- **v1.2 Specification Support**: Compliant directory structure with Robot-EndEffector-Scene naming
-- **Time Alignment**: Multiple strategies (Linear, Nearest Neighbor, Hold Last)
-- **Camera Extraction**: Automatic camera parameter extraction from TF and camera_info
-- **Statistics Tracking**: Automatic directory naming with actual statistics (size, counts, duration)
-- **Multiple Output Formats**: HDF5 (legacy), Parquet + MP4 (v3.0)
-- **Audio Support**: WAV file output for audio data
-- **Original Data Storage**: `proprio_stats_original.hdf5` for unaligned data
-
-### Fluent API
-
-```rust
-use robocodec::pipeline::kps::KpsConverter;
-
-// Basic conversion
-let report = KpsConverter::new("input.mcap", "output_dir")
-    .config("config.toml")
-    .run()?;
-
-// V1.2 delivery with full configuration
-let report = KpsConverter::new("input.mcap", "output_dir")
-    .config("config.toml")
-    .v12_delivery()
-    .robot("Kuavo4Pro")
-    .end_effector("Dexhand")
-    .scene("Housekeeper")
-    .sub_scene("Kitchen")
-    .task("Dispose_of_takeout_containers")
-    .calibration("robot_calibration.json")
-    .urdf("robot.urdf")
-    .with_statistics()
-    .run()?;
-```
+- **v1.2 Specification Support**: Compliant directory structure
+- **Multiple Output Formats**: HDF5 (legacy), Parquet + MP4
+- **Configuration**: TOML-based configuration
 
 ### Feature Flags
 
@@ -363,22 +350,6 @@ let report = KpsConverter::new("input.mcap", "output_dir")
 | `kps-parquet` | Parquet dataset support |
 | `kps-depth` | Depth video support |
 | `kps-all` | All KPS features |
-
-## New Features
-
-### Enhanced CLI Tools
-
-**Unified convert command:**
-```bash
-# BAG to MCAP
-robocodec convert bag-to-mcap -i input.bag -o output.mcap
-
-# MCAP to BAG
-robocodec convert mcap-to-bag -i input.mcap -o output.bag
-
-# Normalize with transformations
-robocodec convert normalize -c transform.toml -i input.bag -o output.mcap
-```
 
 ## Performance Characteristics
 
@@ -408,7 +379,7 @@ use robocodec::pipeline::fluent::{Robocodec, CompressionPreset};
 
 Robocodec::open(vec!["input.bag"])?
     .write_to("output.mcap")
-    .with_compression(CompressionPreset::Balanced)
+    .compression(CompressionPreset::Balanced)
     .run()?;
 ```
 
@@ -416,10 +387,10 @@ Robocodec::open(vec!["input.bag"])?
 
 PyO3 bindings with feature parity:
 ```python
-from robocodec import Reader, Writer
+from robocodec import RoboReader, RoboWriter
 
-with Reader("data.bag") as reader:
-    with Writer("output.mcap") as writer:
+with RoboReader("data.bag") as reader:
+    with RoboWriter("output.mcap") as writer:
         for topic, message in reader:
             writer.write(topic, message)
 ```
@@ -428,21 +399,21 @@ with Reader("data.bag") as reader:
 
 ### Adding a New Codec
 
-1. Implement `MessageCodec` trait
-2. Register in `src/core/registry.rs`
+1. Implement codec trait in `robofmt/src/encoding/`
+2. Register in `robofmt/src/core/registry.rs`
 3. Add schema parser if needed
 
 ### Adding a New File Format
 
-1. Implement `BagSource` for reading
-2. Implement `BagWriter` for writing
-3. Register in `src/io/mod.rs`
+1. Implement `FormatReader` in `robofmt/src/`
+2. Implement `FormatWriter` in `robofmt/src/`
+3. Add format detection in `robofmt/src/io/detection.rs`
 
 ### Adding a New Transform
 
-1. Implement `Transform` trait
-2. Add to `TransformPipeline`
-3. Wire into orchestrator
+1. Implement transform trait in `src/transform/`
+2. Add to `TransformBuilder`
+3. Wire into pipeline
 
 ## Trade-offs
 
@@ -470,5 +441,5 @@ ROS has many edge cases:
 
 - [PIPELINE.md](PIPELINE.md) - Detailed pipeline architecture
 - [MEMORY.md](MEMORY.md) - Memory management details
-- [CONTRIBUTING.md](../CONTRIBUTING.md) - Contribution guidelines
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guidelines
 - [benches/README.md](../benches/README.md) - Benchmarking guide

@@ -9,12 +9,30 @@
 
 **Robocodec** is a universal, schema-driven runtime decoding engine for robotics data. It provides a unified interface for decoding, encoding, and converting between different robotics message formats and data storage formats.
 
+## Workspace Structure
+
+Robocodec is organized as a Cargo workspace with two crates:
+
+- **`robofmt`** - Low-level robotics data format library
+  - Format-specific readers and writers (MCAP, ROS1 bag)
+  - Message codecs (CDR, Protobuf, JSON)
+  - Schema parser (ROS .msg, ROS2 IDL, OMG IDL)
+  - Core types and error handling
+
+- **`robocodec`** - High-level pipeline and conversion tool
+  - Parallel processing pipelines (Standard, HyperPipeline)
+  - Fluent API for batch operations
+  - Data transformations (topic renaming, type normalization)
+  - Python bindings via PyO3
+  - KPS dataset format support (experimental)
+
 ## Features
 
 - **Multi-Format Support**: Decode and encode CDR (ROS1/ROS2), Protobuf, and JSON messages
 - **File Format Support**: Read and write MCAP and ROS1 bag files
 - **Schema Parsing**: Parse ROS `.msg` files, ROS2 IDL, and OMG IDL formats
 - **Cross-Language**: Rust and Python APIs with full feature parity
+- **High-Performance Pipeline**: Parallel processing with Standard and HyperPipeline modes
 - **Data Transformation**: Built-in tools for format conversion, topic renaming, and type normalization
 - **KPS Integration**: Convert robotics datasets to KPS format for robotics learning (experimental)
 
@@ -59,17 +77,24 @@ maturin build
 
 ### Using as Rust Dependency
 
-To use `robocodec` in your Rust project, add it as a local dependency in your `Cargo.toml`:
+To use `robocodec` in your Rust project, add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-robocodec = { path = "../robocodec" }
+robocodec = "0.1"
+```
+
+For the format library only:
+
+```toml
+[dependencies]
+robofmt = "0.1"
 ```
 
 Enable optional features as needed:
 
 ```toml
-robocodec = { path = "../robocodec", features = ["python", "kps-all"] }
+robocodec = { version = "0.1", features = ["python", "kps-all"] }
 ```
 
 ### Using Python Package
@@ -85,10 +110,10 @@ from robocodec import Reader, Writer, decode, encode
 ### Rust API
 
 ```rust
-use robocodec::Reader;
+use robocodec::RoboReader;
 
-// Open a robotics data file
-let reader = Reader::open("data.bag")?;
+// Open a robotics data file (auto-detects format)
+let reader = RoboReader::open("data.bag")?;
 
 // Iterate through messages
 for result in reader.iter_messages() {
@@ -100,10 +125,10 @@ for result in reader.iter_messages() {
 ### Python API
 
 ```python
-from robocodec import Reader
+from robocodec import RoboReader
 
-# Open a robotics data file
-reader = Reader("data.bag")
+# Open a robotics data file (auto-detects format)
+reader = RoboReader("data.bag")
 
 # Iterate through messages
 for topic, message in reader:
@@ -116,13 +141,31 @@ Convert between formats:
 
 ```bash
 # Convert ROS bag to MCAP
-robocodec-convert input.bag output.mcap
+convert input.bag output.mcap
 
 # Inspect file contents
-robocodec-inspect data.mcap
+inspect data.mcap
 
 # Extract specific topics
-robocodec-extract data.bag --topics /camera/image_raw --output extracted/
+extract data.bag --topics /camera/image_raw --output extracted/
+```
+
+### Fluent API for Batch Processing
+
+```rust
+use robocodec::Robocodec;
+
+// Simple conversion with auto-detection
+Robocodec::open(vec!["input.bag"])?
+    .write_to("output.mcap")
+    .run()?;
+
+// HyperPipeline with custom compression
+Robocodec::open(vec!["input.bag"])?
+    .write_to("output.mcap")
+    .hyper()
+    .compression(CompressionPreset::Balanced)
+    .run()?;
 ```
 
 ### KPS Dataset Conversion (Experimental)
@@ -132,24 +175,21 @@ robocodec-extract data.bag --topics /camera/image_raw --output extracted/
 Convert robotics data to KPS dataset format with v1.2 specification support:
 
 ```rust
-use robocodec::pipeline::kps::KpsConverter;
+use robocodec::io::formats::kps::{
+    Hdf5KpsWriter, KpsConfig, V12DeliveryBuilder
+};
 
-// Simple conversion
-let report = KpsConverter::new("input.mcap", "output_dir")
-    .config("config.toml")
-    .run()?;
+// Create KPS writer with configuration
+let config = KpsConfig::from_file("config.toml")?;
+let writer = Hdf5KpsWriter::new("output_dir", config)?;
 
-// V1.2 delivery with statistics tracking
-let report = KpsConverter::new("input.mcap", "output_dir")
-    .config("config.toml")
-    .v12_delivery()
+// Or use the v1.2 delivery builder
+let delivery = V12DeliveryBuilder::new()
     .robot("Kuavo4Pro")
     .end_effector("Dexhand")
     .scene("Housekeeper")
-    .sub_scene("Kitchen")
     .task("Dispose_of_takeout_containers")
-    .with_statistics()  // Auto-rename directory with actual stats
-    .run()?;
+    .build()?;
 ```
 
 KPS configuration format (TOML):
@@ -196,13 +236,13 @@ image_format = "mp4"
 Python bindings provide full access to the Rust core:
 
 ```python
-from robocodec import Reader, Writer, decode, encode
+from robocodec import RoboReader, RoboWriter, decode, encode
 
 # Read from file
-reader = Reader("data.mcap")
+reader = RoboReader("data.mcap")
 
 # Write to file
-writer = Writer("output.bag")
+writer = RoboWriter("output.bag")
 
 # Decode binary messages
 data = decode(b"<binary data>", schema)
@@ -213,11 +253,16 @@ binary = encode(data, schema)
 
 ## Optional Features
 
-- `python` - Python bindings via PyO3
-- `kps-hdf5` - KPS HDF5 dataset support
-- `kps-parquet` - KPS Parquet dataset support
-- `kps-depth` - KPS depth video support
-- `kps-all` - All KPS features
+| Feature | Description |
+|---------|-------------|
+| `python` | Python bindings via PyO3 |
+| `kps-hdf5` | KPS HDF5 dataset support |
+| `kps-parquet` | KPS Parquet dataset support |
+| `kps-depth` | KPS depth video support |
+| `kps-all` | All KPS features |
+| `jemalloc` | Use jemalloc allocator (Linux only) |
+| `cli` | CLI tools |
+| `profiling` | Profiling support |
 
 > **Note**: KPS features (`kps-*`) are experimental and APIs may change.
 
@@ -225,12 +270,11 @@ binary = encode(data, schema)
 
 | Tool | Description |
 |------|-------------|
-| `robocodec-convert` | Convert between bag/MCAP formats |
-| `robocodec-extract` | Extract data from files |
-| `robocodec-inspect` | Inspect file metadata |
-| `robocodec-schema` | Work with schema definitions |
-| `robocodec-search` | Search through data files |
-| `robocodec-extract_sample` | Create sample datasets |
+| `convert` | Convert between bag/MCAP formats |
+| `extract` | Extract data from files |
+| `inspect` | Inspect file metadata |
+| `schema` | Work with schema definitions |
+| `search` | Search through data files |
 
 ## Development
 
