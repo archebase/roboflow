@@ -461,6 +461,7 @@ impl PyReader {
 #[pyclass(name = "Writer", unsendable)]
 pub struct PyWriter {
     writer: Option<RoboWriter>,
+    #[allow(dead_code)]
     path: String,
     channel_registry: std::collections::HashMap<String, u16>,
     message_buffer: Vec<RawMessage>,
@@ -531,9 +532,8 @@ impl PyWriter {
         let decoded = py_dict_to_decoded_message(message)?;
         let data = match encoding {
             "cdr" => {
-                let schema = schema_text.ok_or_else(|| {
-                    PyValueError::new_err("CDR encoding requires schema_text")
-                })?;
+                let schema = schema_text
+                    .ok_or_else(|| PyValueError::new_err("CDR encoding requires schema_text"))?;
                 let schema = parse_schema(message_type, schema).map_err(codec_error_to_py)?;
                 let mut encoder = crate::encoding::CdrEncoder::new();
                 encoder
@@ -842,16 +842,47 @@ fn encode(
 }
 
 // =============================================================================
+// Module-level open() function for cleaner API
+// =============================================================================
+
+/// Open input files for conversion.
+///
+/// This is the main entry point for the fluent API.
+///
+/// Args:
+///     paths: List of input file paths (bag or mcap files)
+///
+/// Returns:
+///     Pipeline builder for method chaining
+///
+/// Example:
+///     >>> import robocodec
+///     >>> result = robocodec.open(["input.bag"]).write_to("output.mcap").run()
+#[pyfunction]
+#[pyo3(name = "open")]
+fn py_open(paths: Vec<String>) -> PyResult<fluent::PyRobocodec> {
+    fluent::PyRobocodec::create(paths)
+}
+
+// =============================================================================
 // Python module definition
 // =============================================================================
 
-/// Robocodec Python module.
+/// Robocodec Python module - Fluent API for robotics data conversion.
+///
+/// Example:
+///     >>> import robocodec
+///     >>> result = robocodec.open(["input.bag"]).write_to("output.mcap").run()
+///     >>> print(f"Converted at {result.average_throughput_mb_s:.1f} MB/s")
 #[pymodule]
 fn _robocodec(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Version info
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
-    // Functions
+    // Main entry point - module-level open() function
+    m.add_function(wrap_pyfunction!(py_open, m)?)?;
+
+    // Utility functions
     m.add_function(wrap_pyfunction!(parse_schema_text, m)?)?;
     m.add_function(wrap_pyfunction!(convert, m)?)?;
     m.add_function(wrap_pyfunction!(transform, m)?)?;
@@ -859,26 +890,25 @@ fn _robocodec(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode, m)?)?;
     m.add_function(wrap_pyfunction!(encode, m)?)?;
 
-    // Classes - Decoders
-    m.add_class::<PyCdrDecoder>()?;
-    m.add_class::<PyProtobufDecoder>()?;
-    m.add_class::<PyJsonDecoder>()?;
-
-    // Classes - Reader
-    m.add_class::<PyReader>()?;
-    m.add_class::<PyMessageIter>()?;
-
-    // Classes - Writer
-    m.add_class::<PyWriter>()?;
-
-    // Classes - Fluent API
+    // Fluent API classes
     m.add_class::<fluent::PyRobocodec>()?;
     m.add_class::<fluent::PyCompressionPreset>()?;
     m.add_class::<fluent::PyTransformBuilder>()?;
+
+    // Report classes (returned by run())
     m.add_class::<fluent::PyPipelineReport>()?;
     m.add_class::<fluent::PyHyperPipelineReport>()?;
     m.add_class::<fluent::PyFileResult>()?;
     m.add_class::<fluent::PyBatchReport>()?;
+
+    // Decoders
+    m.add_class::<PyCdrDecoder>()?;
+    m.add_class::<PyProtobufDecoder>()?;
+    m.add_class::<PyJsonDecoder>()?;
+
+    // Reader and Writer
+    m.add_class::<PyReader>()?;
+    m.add_class::<PyWriter>()?;
 
     Ok(())
 }

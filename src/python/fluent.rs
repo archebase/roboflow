@@ -9,9 +9,7 @@ use std::mem;
 use std::path::{Path, PathBuf};
 
 use crate::core::CodecError;
-use crate::pipeline::fluent::{
-    BatchReport, CompressionPreset, FileResult, Robocodec, RunOutput,
-};
+use crate::pipeline::fluent::{BatchReport, CompressionPreset, FileResult, Robocodec, RunOutput};
 use crate::pipeline::hyper::HyperPipelineReport;
 use crate::pipeline::orchestrator::PipelineReport;
 use crate::transform::TransformBuilder;
@@ -103,7 +101,11 @@ impl PyTransformBuilder {
     }
 
     /// Add a topic rename mapping.
-    fn with_topic_rename(mut slf: PyRefMut<'_, Self>, from: String, to: String) -> PyResult<PyRefMut<'_, Self>> {
+    fn with_topic_rename(
+        mut slf: PyRefMut<'_, Self>,
+        from: String,
+        to: String,
+    ) -> PyResult<PyRefMut<'_, Self>> {
         let builder = mem::take(&mut slf.builder);
         slf.builder = builder.with_topic_rename(from, to);
         Ok(slf)
@@ -124,7 +126,11 @@ impl PyTransformBuilder {
     }
 
     /// Add a type rename mapping.
-    fn with_type_rename(mut slf: PyRefMut<'_, Self>, from: String, to: String) -> PyResult<PyRefMut<'_, Self>> {
+    fn with_type_rename(
+        mut slf: PyRefMut<'_, Self>,
+        from: String,
+        to: String,
+    ) -> PyResult<PyRefMut<'_, Self>> {
         let builder = mem::take(&mut slf.builder);
         slf.builder = builder.with_type_rename(from, to);
         Ok(slf)
@@ -255,9 +261,7 @@ impl PyPipelineReport {
     fn __repr__(&self) -> String {
         format!(
             "PipelineReport(input_file={}, output_file={}, throughput_mb_s={:.2})",
-            self.report.input_file,
-            self.report.output_file,
-            self.report.average_throughput_mb_s
+            self.report.input_file, self.report.output_file, self.report.average_throughput_mb_s
         )
     }
 }
@@ -334,9 +338,7 @@ impl PyHyperPipelineReport {
     fn __repr__(&self) -> String {
         format!(
             "HyperPipelineReport(input_file={}, output_file={}, throughput_mb_s={:.2})",
-            self.report.input_file,
-            self.report.output_file,
-            self.report.throughput_mb_s
+            self.report.input_file, self.report.output_file, self.report.throughput_mb_s
         )
     }
 }
@@ -377,17 +379,25 @@ impl PyFileResult {
     /// Standard pipeline report (if available).
     #[getter]
     fn standard_report(&self, py: Python<'_>) -> Option<PyObject> {
-        self.result
-            .standard_report()
-            .map(|r| PyPipelineReport { report: r.clone() }.into_pyobject(py).ok().unwrap().into())
+        self.result.standard_report().map(|r| {
+            PyPipelineReport { report: r.clone() }
+                .into_pyobject(py)
+                .ok()
+                .unwrap()
+                .into()
+        })
     }
 
     /// Hyper pipeline report (if available).
     #[getter]
     fn hyper_report(&self, py: Python<'_>) -> Option<PyObject> {
-        self.result
-            .hyper_report()
-            .map(|r| PyHyperPipelineReport { report: r.clone() }.into_pyobject(py).ok().unwrap().into())
+        self.result.hyper_report().map(|r| {
+            PyHyperPipelineReport { report: r.clone() }
+                .into_pyobject(py)
+                .ok()
+                .unwrap()
+                .into()
+        })
     }
 
     fn __repr__(&self) -> String {
@@ -475,7 +485,6 @@ pub struct PyRobocodec {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BuilderState {
-    Initial,
     WithInput,
     WithOutput,
 }
@@ -486,6 +495,36 @@ impl PyRobocodec {
         TRANSFORM_REGISTRY.with(|registry| {
             let mut registry = registry.borrow_mut();
             registry.pipelines.remove(&id)
+        })
+    }
+
+    /// Create a new Robocodec builder with input files (Rust-callable).
+    pub fn create(paths: Vec<String>) -> PyResult<Self> {
+        if paths.is_empty() {
+            return Err(PyValueError::new_err("No input files provided"));
+        }
+
+        let input_files: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+
+        // Validate all files exist
+        for path in &input_files {
+            if !path.exists() {
+                return Err(PyIOError::new_err(format!(
+                    "Input file not found: {}",
+                    path.display()
+                )));
+            }
+        }
+
+        Ok(Self {
+            input_files: Some(input_files),
+            output_path: None,
+            compression_preset: CompressionPreset::default(),
+            chunk_size: None,
+            threads: None,
+            hyper_mode: false,
+            transform_id: None,
+            state: BuilderState::WithInput,
         })
     }
 }
@@ -505,15 +544,10 @@ impl PyRobocodec {
     #[staticmethod]
     fn open(paths: Vec<String>) -> PyResult<Self> {
         if paths.is_empty() {
-            return Err(PyValueError::new_err(
-                "No input files provided",
-            ));
+            return Err(PyValueError::new_err("No input files provided"));
         }
 
-        let input_files: Vec<PathBuf> = paths
-            .into_iter()
-            .map(|p| PathBuf::from(p))
-            .collect();
+        let input_files: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
 
         // Validate all files exist
         for path in &input_files {
@@ -572,7 +606,10 @@ impl PyRobocodec {
         Ok(slf)
     }
 
-    /// Enable hyper mode for maximum throughput.
+    /// Use the hyper pipeline for maximum throughput (~1800 MB/s).
+    ///
+    /// The hyper pipeline is a 7-stage pipeline optimized for high performance.
+    /// Best for large files where throughput matters.
     ///
     /// Returns:
     ///     Self for method chaining
@@ -700,7 +737,8 @@ impl PyRobocodec {
                 builder
             };
 
-            py.allow_threads(|| builder.run()).map_err(codec_error_to_py)?
+            py.allow_threads(|| builder.run())
+                .map_err(codec_error_to_py)?
         } else {
             // Without transform path: open() -> write_to() -> configure -> run()
             let builder = Robocodec::open(paths).map_err(codec_error_to_py)?;
@@ -724,36 +762,38 @@ impl PyRobocodec {
                 builder
             };
 
-            py.allow_threads(|| builder.run()).map_err(codec_error_to_py)?
+            py.allow_threads(|| builder.run())
+                .map_err(codec_error_to_py)?
         };
 
         // Convert output to Python object
         match output {
-            RunOutput::Single(report) => {
-                Ok(PyPipelineReport { report }.into_pyobject(py)?.into())
-            }
+            RunOutput::Single(report) => Ok(PyPipelineReport { report }.into_pyobject(py)?.into()),
             RunOutput::Hyper(report) => {
                 Ok(PyHyperPipelineReport { report }.into_pyobject(py)?.into())
             }
-            RunOutput::Batch(report) => {
-                Ok(PyBatchReport { report }.into_pyobject(py)?.into())
-            }
+            RunOutput::Batch(report) => Ok(PyBatchReport { report }.into_pyobject(py)?.into()),
         }
     }
 
     fn __repr__(&self) -> String {
         match self.state {
-            BuilderState::Initial => "Robocodec()".to_string(),
             BuilderState::WithInput => {
                 format!(
                     "Robocodec(inputs={:?})",
-                    self.input_files.as_ref().map(|v| v.iter().map(|p| p.display().to_string()).collect::<Vec<_>>())
+                    self.input_files.as_ref().map(|v| v
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>())
                 )
             }
             BuilderState::WithOutput => {
                 format!(
                     "Robocodec(inputs={:?}, output={:?})",
-                    self.input_files.as_ref().map(|v| v.iter().map(|p| p.display().to_string()).collect::<Vec<_>>()),
+                    self.input_files.as_ref().map(|v| v
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()),
                     self.output_path.as_ref().map(|p| p.display().to_string())
                 )
             }

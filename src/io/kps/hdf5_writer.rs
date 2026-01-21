@@ -7,16 +7,11 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::config::KpsConfig;
-use crate::format::kps::config::Mapping;
-use crate::io::kps::writers::base::KpsWriterError;
 
 /// Buffered image data for HDF5 writing.
 #[derive(Debug, Clone)]
+#[cfg(feature = "kps-hdf5")]
 struct BufferedImageData {
-    #[allow(dead_code)]
-    width: u32,
-    #[allow(dead_code)]
-    height: u32,
     data: Vec<u8>,
 }
 
@@ -29,9 +24,12 @@ pub struct Hdf5KpsWriter {
     frame_count: usize,
     image_shapes: HashMap<String, (usize, usize)>,
     state_shapes: HashMap<String, usize>,
-    // Buffers for data collection
+    /// Buffers for data collection (only used with kps-hdf5 feature)
+    #[cfg(feature = "kps-hdf5")]
     image_buffers: HashMap<String, Vec<BufferedImageData>>,
+    #[cfg(feature = "kps-hdf5")]
     state_buffers: HashMap<String, Vec<Vec<f32>>>,
+    #[cfg(feature = "kps-hdf5")]
     action_buffers: HashMap<String, Vec<Vec<f32>>>,
 }
 
@@ -46,15 +44,22 @@ impl Hdf5KpsWriter {
         let output_dir = output_dir.as_ref();
         std::fs::create_dir_all(output_dir)?;
 
+        #[cfg(feature = "kps-hdf5")]
+        let (image_buffers, state_buffers, action_buffers) =
+            (HashMap::new(), HashMap::new(), HashMap::new());
+
         Ok(Self {
             episode_id,
             output_dir: output_dir.to_path_buf(),
             frame_count: 0,
             image_shapes: HashMap::new(),
             state_shapes: HashMap::new(),
-            image_buffers: HashMap::new(),
-            state_buffers: HashMap::new(),
-            action_buffers: HashMap::new(),
+            #[cfg(feature = "kps-hdf5")]
+            image_buffers,
+            #[cfg(feature = "kps-hdf5")]
+            state_buffers,
+            #[cfg(feature = "kps-hdf5")]
+            action_buffers,
         })
     }
 
@@ -179,7 +184,7 @@ impl Hdf5KpsWriter {
     #[cfg(feature = "kps-hdf5")]
     fn buffer_image_data(
         &mut self,
-        mapping: &Mapping,
+        mapping: &crate::format::kps::config::Mapping,
         msg: &crate::DecodedMessage,
     ) -> Result<(), Box<dyn std::error::Error>> {
         use crate::CodecValue;
@@ -223,11 +228,7 @@ impl Hdf5KpsWriter {
         self.image_buffers
             .entry(sanitized_name)
             .or_default()
-            .push(BufferedImageData {
-                width,
-                height,
-                data,
-            });
+            .push(BufferedImageData { data });
 
         Ok(())
     }
@@ -236,7 +237,7 @@ impl Hdf5KpsWriter {
     #[cfg(feature = "kps-hdf5")]
     fn buffer_state_data(
         &mut self,
-        mapping: &Mapping,
+        mapping: &crate::format::kps::config::Mapping,
         msg: &crate::DecodedMessage,
         is_action: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -304,7 +305,7 @@ impl Hdf5KpsWriter {
                 .new_dataset::<VarLenArray<u8>>()
                 .shape(images.len())
                 .create(&**name)
-                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+                .map_err(|e| crate::io::kps::writers::base::KpsWriterError::Hdf5(e.to_string()))?;
 
             // Convert images to VarLenArray and write
             let varlen_images: Vec<VarLenArray<u8>> = images
@@ -347,7 +348,7 @@ impl Hdf5KpsWriter {
                 .new_dataset::<f32>()
                 .shape([states.len(), dim])
                 .create(&**name)
-                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+                .map_err(|e| crate::io::kps::writers::base::KpsWriterError::Hdf5(e.to_string()))?;
 
             // Flatten data into 1D array for HDF5
             let flat_data: Vec<f32> = states.iter().flatten().copied().collect();
@@ -377,7 +378,7 @@ impl Hdf5KpsWriter {
             group
                 .attr(key)?
                 .write(&value)
-                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+                .map_err(|e| crate::io::kps::writers::base::KpsWriterError::Hdf5(e.to_string()))?;
         }
 
         Ok(())
