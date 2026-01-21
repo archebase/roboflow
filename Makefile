@@ -92,16 +92,13 @@ fmt: ## Format all code
 
 lint: ## Lint all code
 	@echo "Linting with all features..."
-	cargo clippy --all-targets --features python,kps-all -- -D warnings
+	cargo clippy --all-targets --all-features -- -D warnings
 	@echo "✓ Linting passed"
 
 lint-all: ## Lint with all features including HDF5 (requires compatible HDF5)
-	@echo "Linting with all features (python + kps-all)..."
-	@echo "Note: hdf5 crate 0.8.1 doesn't support Homebrew HDF5 1.14.x"
-	@echo "      Use 'make lint-parquet' for Kps support on macOS"
-	cargo clippy --all-targets --features python,kps-all -- -D warnings 2>/dev/null || \
-		(echo "⚠ HDF5 feature failed (expected on macOS with Homebrew HDF5 1.14.x)"; \
-		 echo "  Use 'make lint-parquet' for Kps Parquet support instead"; exit 0)
+	@echo "Linting with all features..."
+	cargo clippy --all-targets --all-features -- -D warnings
+	@echo "✓ Linting passed"
 
 check: fmt lint ## Run format check and lint
 
