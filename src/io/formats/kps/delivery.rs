@@ -26,7 +26,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::io::kps::{KpsConfig, RobotCalibration};
+use crate::io::formats::kps::{KpsConfig, RobotCalibration};
 
 /// Configuration for delivery structure generation.
 #[derive(Debug, Clone)]

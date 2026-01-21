@@ -63,9 +63,6 @@ pub mod hyper;
 // Fluent API for batch processing
 pub mod fluent;
 
-// KPS format integration
-pub mod kps;
-
 // Re-exports for convenience
 pub use auto_config::{PerformanceMode, PipelineAutoConfig};
 pub use compression::ParallelCompressor;
@@ -77,6 +74,3 @@ pub use types::{ArenaMessage, CompressedChunk, MessageArena, MessageChunk};
 
 // HyperPipeline re-exports
 pub use hyper::{HyperPipeline, HyperPipelineConfig, HyperPipelineReport};
-
-// KPS re-exports
-pub use kps::{KpsPipeline, KpsPipelineConfig, KpsReport};

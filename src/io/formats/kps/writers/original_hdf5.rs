@@ -29,7 +29,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::io::kps::writers::base::KpsWriterError;
+use crate::io::formats::kps::writers::base::KpsWriterError;
 use crate::io::metadata::ChannelInfo;
 
 /// Original decoded message with timestamp.

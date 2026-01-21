@@ -10,6 +10,12 @@
     "code-review@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
     "greptile@claude-plugins-official": true,
-    "serena@claude-plugins-official": true
+    "serena@claude-plugins-official": true,
+    "claude-code-settings@claude-code-settings": true,
+    "codex-skill@claude-code-settings": true,
+    "autonomous-skill@claude-code-settings": true,
+    "nanobanana-skill@claude-code-settings": true,
+    "kiro-skill@claude-code-settings": true,
+    "spec-kit-skill@claude-code-settings": true
   }
 }

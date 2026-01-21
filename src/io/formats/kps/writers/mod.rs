@@ -51,9 +51,9 @@ pub use audio_writer::{AudioWriter, AudioWriterFactory};
 pub fn create_writer(
     output_dir: impl AsRef<std::path::Path>,
     episode_id: usize,
-    config: &crate::io::kps::KpsConfig,
+    config: &crate::io::formats::kps::KpsConfig,
 ) -> Result<Box<dyn KpsWriter>, KpsWriterError> {
-    use crate::io::kps::OutputFormat;
+    use crate::io::formats::kps::OutputFormat;
 
     // Check which formats are requested
     let formats = &config.output.formats;
@@ -100,14 +100,14 @@ mod tests {
 
     #[test]
     fn test_factory_no_feature() {
-        let config = crate::io::kps::KpsConfig {
-            dataset: crate::io::kps::DatasetConfig {
+        let config = crate::io::formats::kps::KpsConfig {
+            dataset: crate::io::formats::kps::DatasetConfig {
                 name: "test".to_string(),
                 fps: 30,
                 robot_type: None,
             },
             mappings: vec![],
-            output: crate::io::kps::OutputConfig::default(),
+            output: crate::io::formats::kps::OutputConfig::default(),
         };
 
         let result = create_writer("/tmp", 0, &config);

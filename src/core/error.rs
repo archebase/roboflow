@@ -392,8 +392,8 @@ impl From<std::io::Error> for CodecError {
 
 // Forward KPS writer errors to codec errors
 #[cfg(feature = "kps-hdf5")]
-impl From<crate::io::kps::writers::KpsWriterError> for CodecError {
-    fn from(err: crate::io::kps::writers::KpsWriterError) -> Self {
+impl From<crate::io::formats::kps::writers::KpsWriterError> for CodecError {
+    fn from(err: crate::io::formats::kps::writers::KpsWriterError) -> Self {
         CodecError::EncodeError {
             codec: "KpsWriter".to_string(),
             message: err.to_string(),
@@ -402,20 +402,10 @@ impl From<crate::io::kps::writers::KpsWriterError> for CodecError {
 }
 
 #[cfg(all(feature = "kps-parquet", not(feature = "kps-hdf5")))]
-impl From<crate::io::kps::writers::KpsWriterError> for CodecError {
-    fn from(err: crate::io::kps::writers::KpsWriterError) -> Self {
+impl From<crate::io::formats::kps::writers::KpsWriterError> for CodecError {
+    fn from(err: crate::io::formats::kps::writers::KpsWriterError) -> Self {
         CodecError::EncodeError {
             codec: "KpsWriter".to_string(),
-            message: err.to_string(),
-        }
-    }
-}
-
-// Forward time alignment errors to codec errors
-impl From<crate::pipeline::kps::traits::time_alignment::TimeAlignError> for CodecError {
-    fn from(err: crate::pipeline::kps::traits::time_alignment::TimeAlignError) -> Self {
-        CodecError::EncodeError {
-            codec: "TimeAligner".to_string(),
             message: err.to_string(),
         }
     }

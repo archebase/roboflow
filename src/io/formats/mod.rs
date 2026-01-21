@@ -15,6 +15,7 @@
 //!
 //! - **MCAP**: `mcap`, `mcap_two_pass`, `sequential_mcap`
 //! - **BAG**: `bag`, `bag_parallel`, `sequential_bag`
+//! - **KPS**: `kps` (dataset format for robotics learning)
 //!
 //! ## Example: Parallel reading
 //!
@@ -34,6 +35,7 @@
 pub mod bag;
 pub mod bag_parallel;
 pub mod bag_parser;
+pub mod kps;
 pub mod mcap;
 pub mod mcap_constants;
 pub mod mcap_two_pass;

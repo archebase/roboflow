@@ -11,7 +11,7 @@ Usage:
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional, Tuple
 import h5py
 import numpy as np
 
@@ -132,15 +132,44 @@ def _collect_messages(
     """
     Collect messages from MCAP, organized by topic.
 
+    Args:
+        reader: Robocodec reader for MCAP file
+        config: Configuration dict containing mappings
+        task_info: Optional KPS 1.2 task info with action_config for filtering.
+                   If provided, only collects messages within the frame ranges
+                   specified in action_config segments.
+
     Returns:
         Dictionary mapping topic names to lists of (timestamp, decoded_message) tuples
     """
     data_by_topic: Dict[str, List[Any]] = {}
-    mappings = config.get('mappings', [])
+
+    # Compute valid frame range from task_info action_config (KPS 1.2 spec)
+    frame_range: Optional[Tuple[int, int]] = None
+    if task_info and len(task_info) > 0:
+        episode = task_info[0]
+        action_config = episode.get('label_info', {}).get('action_config', [])
+        if action_config:
+            # Get the overall range from all action segments
+            min_start = min(seg.get('start_frame', 0) for seg in action_config)
+            max_end = max(seg.get('end_frame', float('inf')) for seg in action_config)
+            frame_range = (min_start, max_end)
+            print(f"Filtering to frame range: {min_start} to {max_end}")
 
     print("Processing messages...")
+    frame_count = 0
     for i, (msg_dict, channel_info) in enumerate(reader.iter_messages()):
         topic = channel_info['topic']
+
+        # Apply frame range filtering if task_info specifies action_config
+        if frame_range is not None:
+            start_frame, end_frame = frame_range
+            if frame_count < start_frame or frame_count >= end_frame:
+                frame_count += 1
+                continue
+            frame_count += 1
+        else:
+            frame_count = i
 
         # Initialize topic list if needed
         if topic not in data_by_topic:
@@ -154,6 +183,10 @@ def _collect_messages(
 
         if i % 1000 == 0:
             print(f"  Processed {i} messages...")
+
+    if frame_range is not None:
+        total_collected = sum(len(msgs) for msgs in data_by_topic.values())
+        print(f"Collected {total_collected} messages within frame range {frame_range}")
 
     return data_by_topic
 
@@ -206,7 +239,7 @@ def _write_proprio_stats_hdf5(
             if topic not in data_by_topic or not data_by_topic[topic]:
                 continue
 
-            # Parse feature path (e.g., "observation.joint_position" -> group="observations", name="joint_position")
+            # Parse feature path (e.g., "observation.joint.position" -> category="observation", subgroup="joint", field="position")
             parts = feature.split('.')
             if len(parts) < 2:
                 continue
@@ -221,6 +254,26 @@ def _write_proprio_stats_hdf5(
                 target_group = state_group  # In Kps, observations are in /state
             else:
                 continue
+
+            # Parse intermediate subgroup from feature_name (e.g., "joint.position" -> subgroup="joint", field_spec="position")
+            # Features can have formats like:
+            # - "joint.position" -> subgroup="joint", field="position"
+            # - "joint_name" -> subgroup=None, field="joint_name"
+            feature_parts = feature_name.split('.', 1)
+            if len(feature_parts) == 2:
+                subgroup_name = feature_parts[0]
+                field_spec = feature_parts[1]
+            else:
+                # No intermediate subgroup, use flat structure
+                subgroup_name = None
+                field_spec = feature_name
+
+            # Create intermediate subgroup if specified
+            if subgroup_name:
+                if subgroup_name not in target_group:
+                    target_group = target_group.create_group(subgroup_name)
+                else:
+                    target_group = target_group[subgroup_name]
 
             # Extract data from messages
             data = data_by_topic[topic]

@@ -9,7 +9,7 @@
 //! - [`core`] - Core types (CodecValue, errors, registry)
 //! - [`schema`] - IDL/MSG schema parser using Pest
 //! - [`encoding`] - Message encoding/decoding (CDR, Protobuf, JSON)
-//! - [`format`] - File format handlers (MCAP, ROS1 bag)
+//! - [`format`] - File format handlers (MCAP, ROS1 bag, KPS)
 //! - [`transform`] - Cross-format transformations
 //! - [`io`] - Unified I/O layer
 //! - [`pipeline`] - Parallel processing pipeline
@@ -101,6 +101,16 @@ pub use transform::{TopicRenameTransform, TransformBuilder, TransformPipeline};
 
 // Unified I/O
 pub use io::{ReaderBuilder, RoboReader, RoboWriter, WriterBuilder};
+
+// KPS dataset format
+pub use io::formats::kps::{
+    config::{KpsConfig, Mapping, MappingType, OutputFormat},
+    delivery_v12::{
+        SeriesDeliveryConfig, SeriesDeliveryConfigBuilder, StatisticsCollector, TaskInfo,
+        TaskStatistics, V12DeliveryBuilder,
+    },
+    Hdf5KpsWriter, ParquetKpsWriter,
+};
 
 // Unified rewriter
 pub use rewriter::{detect_format as io_detect_format, RewriteOptions, RoboRewriter};

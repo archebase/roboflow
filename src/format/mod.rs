@@ -56,10 +56,10 @@ pub mod reader;
 pub mod rewriter;
 pub mod writer;
 
-// Re-export kps from io::kps for backwards compatibility
+// Re-export kps from io::formats::kps for backwards compatibility
 // This allows existing code using `format::kps::*` to continue working
 pub mod kps {
-    pub use crate::io::kps::*;
+    pub use crate::io::formats::kps::*;
 }
 
 // Re-export transform types for convenience
@@ -79,5 +79,5 @@ pub use writer::{BagMessage, BagWriter, ParallelMcapWriter};
 // Rewriter
 pub use rewriter::{BagRewriter, McapRewriteEngine, McapRewriteStats, McapRewriter};
 
-// KPS - re-export from io::kps for backwards compatibility
-pub use crate::io::kps::{KpsConfig, Mapping, MappingType, OutputFormat};
+// KPS - re-export from io::formats::kps for backwards compatibility
+pub use crate::io::formats::kps::{KpsConfig, Mapping, MappingType, OutputFormat};

@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 
 use crate::core::Result;
-use crate::io::kps::camera_params::CameraParamCollector;
-use crate::io::kps::config::KpsConfig;
+use crate::io::formats::kps::camera_params::CameraParamCollector;
+use crate::io::formats::kps::config::KpsConfig;
 use crate::io::metadata::ChannelInfo;
 use crate::CodecValue;
 

@@ -2,14 +2,8 @@
 //!
 //! These tests validate the KPS conversion pipeline with real MCAP files.
 
-use std::collections::HashMap;
-use std::path::Path;
-
-use robocodec::io::kps::config::ImageFormat;
-use robocodec::io::kps::{KpsConfig, Mapping, MappingType, OutputConfig, OutputFormat};
-use robocodec::pipeline::kps::{
-    config::CameraExtractorConfig, KpsPipeline, KpsPipelineConfig, TimeAlignerConfig,
-};
+use robocodec::io::formats::kps::config::ImageFormat;
+use robocodec::io::formats::kps::{KpsConfig, Mapping, MappingType, OutputConfig, OutputFormat};
 
 /// Path to the fixtures directory.
 const FIXTURES_DIR: &str = "tests/fixtures";
@@ -32,6 +26,10 @@ fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
     })
 }
 
+// NOTE: The following tests are commented out because they depend on
+// `pipeline::kps::KpsPipeline` which was removed during refactoring.
+// KPS is now just a format/writer in `io::formats::kps`, not a separate pipeline.
+
 /// Create a minimal KPS config for testing.
 ///
 /// Uses topics that exist in robocodec_test_2.mcap:
@@ -39,7 +37,7 @@ fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
 /// - /hal/arm_joint_state for joint states
 fn test_kps_config() -> KpsConfig {
     KpsConfig {
-        dataset: robocodec::io::kps::DatasetConfig {
+        dataset: robocodec::io::formats::kps::DatasetConfig {
             name: "test_dataset".to_string(),
             fps: 30,
             robot_type: None,
@@ -64,6 +62,10 @@ fn test_kps_config() -> KpsConfig {
     }
 }
 
+// Tests below are commented out - they depend on deleted `pipeline::kps` module
+// TODO: Rewrite these tests to use the new KPS writer API directly
+
+/*
 /// Test basic KPS pipeline creation.
 #[test]
 fn test_kps_pipeline_creation() {
@@ -112,12 +114,6 @@ fn test_kps_pipeline_with_mcap() {
                 "KPS conversion complete: {} frames, {} images encoded",
                 report.frames_written, report.images_encoded
             );
-            // Note: Some test fixtures may not have data matching the configured topics.
-            // The assertion is intentionally skipped to allow testing with various fixtures.
-            // If frames == 0, it typically means:
-            // 1. The MCAP file doesn't have the configured topics
-            // 2. The MCAP file exists but has no messages
-            // 3. Message timestamps don't align with target FPS
         }
         Err(e) => {
             eprintln!("Pipeline execution failed (may be expected): {}", e);
@@ -135,7 +131,6 @@ fn test_kps_pipeline_with_camera_extraction() {
 
     let kps_config = test_kps_config();
 
-    // Add camera topics mapping
     let mut camera_topics = HashMap::new();
     camera_topics.insert("camera_high".to_string(), "/camera/high".to_string());
 
@@ -189,32 +184,30 @@ fn test_time_alignment_strategies() {
         HoldLastValue, LinearInterpolation, NearestNeighbor, TimeAlignmentStrategy,
     };
 
-    // Test LinearInterpolation
     let linear = LinearInterpolation::new();
     let times = linear
         .generate_target_timestamps(0, 1_000_000_000, 30)
         .unwrap();
     assert!(!times.is_empty());
 
-    // Test HoldLastValue
     let hold = HoldLastValue::new();
     let times = hold
         .generate_target_timestamps(0, 1_000_000_000, 30)
         .unwrap();
     assert!(!times.is_empty());
 
-    // Test NearestNeighbor
     let nearest = NearestNeighbor::new();
     let times = nearest
         .generate_target_timestamps(0, 1_000_000_000, 30)
         .unwrap();
     assert!(!times.is_empty());
 }
+*/
 
 /// Test video encoder with fallback.
 #[test]
 fn test_video_encoder_fallback() {
-    use robocodec::io::kps::video_encoder::{
+    use robocodec::io::formats::kps::video_encoder::{
         Mp4Encoder, VideoEncoderConfig, VideoFrame, VideoFrameBuffer,
     };
 

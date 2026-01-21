@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::core::Result;
-use crate::io::kps::config::KpsConfig;
-use crate::io::kps::writers::base::{
+use crate::io::formats::kps::config::KpsConfig;
+use crate::io::formats::kps::writers::base::{
     AlignedFrame, ImageData, KpsWriter, KpsWriterError, WriterStats,
 };
 use crate::io::metadata::ChannelInfo;
@@ -325,7 +325,7 @@ impl StreamingHdf5Writer {
 
     /// Write metadata files (info.json, episode.jsonl).
     fn write_metadata_files(&self, config: &KpsConfig) -> std::result::Result<(), KpsWriterError> {
-        use crate::io::kps::info;
+        use crate::io::formats::kps::info;
 
         // Write info.json
         info::write_info_json(
@@ -401,7 +401,7 @@ impl KpsWriter for StreamingHdf5Writer {
                     .unwrap_or(&mapping.feature);
 
                 let is_observation = mapping.feature.starts_with("observation.");
-                let is_image = matches!(mapping.mapping_type, crate::io::kps::MappingType::Image);
+                let is_image = matches!(mapping.mapping_type, crate::io::formats::kps::MappingType::Image);
 
                 // Clone the appropriate group to avoid borrow checker issues
                 // hdf5::Group uses reference counting internally
@@ -497,7 +497,7 @@ impl KpsWriter for StreamingHdf5Writer {
     fn finalize(
         &mut self,
         config: &KpsConfig,
-        _camera_params: Option<&crate::io::kps::camera_params::CameraParamCollector>,
+        _camera_params: Option<&crate::io::formats::kps::camera_params::CameraParamCollector>,
     ) -> Result<WriterStats> {
         #[cfg(feature = "kps-hdf5")]
         {
@@ -548,13 +548,13 @@ mod tests {
     fn test_create_writer() {
         let temp_dir = std::env::temp_dir();
         let config = KpsConfig {
-            dataset: crate::io::kps::DatasetConfig {
+            dataset: crate::io::formats::kps::DatasetConfig {
                 name: "test".to_string(),
                 fps: 30,
                 robot_type: None,
             },
             mappings: vec![],
-            output: crate::io::kps::OutputConfig::default(),
+            output: crate::io::formats::kps::OutputConfig::default(),
         };
 
         let result = StreamingHdf5Writer::create(&temp_dir, 0, &config);

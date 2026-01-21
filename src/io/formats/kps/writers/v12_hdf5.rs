@@ -40,8 +40,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::core::Result;
-use crate::io::kps::config::KpsConfig;
-use crate::io::kps::writers::base::{AlignedFrame, KpsWriter, KpsWriterError, WriterStats};
+use crate::io::formats::kps::config::KpsConfig;
+use crate::io::formats::kps::writers::base::{AlignedFrame, KpsWriter, KpsWriterError, WriterStats};
 use crate::io::metadata::ChannelInfo;
 
 /// Dataset specification for v1.2 HDF5 structure.
@@ -663,7 +663,7 @@ impl KpsWriter for V12Hdf5Writer {
     fn finalize(
         &mut self,
         _config: &KpsConfig,
-        _camera_params: Option<&crate::io::kps::camera_params::CameraParamCollector>,
+        _camera_params: Option<&crate::io::formats::kps::camera_params::CameraParamCollector>,
     ) -> Result<WriterStats> {
         #[cfg(feature = "kps-hdf5")]
         {
@@ -721,13 +721,13 @@ mod tests {
     fn test_map_feature_to_v12_path() {
         // Create a dummy writer for testing
         let config = KpsConfig {
-            dataset: crate::io::kps::DatasetConfig {
+            dataset: crate::io::formats::kps::DatasetConfig {
                 name: "test".to_string(),
                 fps: 30,
                 robot_type: None,
             },
             mappings: vec![],
-            output: crate::io::kps::OutputConfig::default(),
+            output: crate::io::formats::kps::OutputConfig::default(),
         };
 
         let temp_dir = std::env::temp_dir();

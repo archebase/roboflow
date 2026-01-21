@@ -56,9 +56,6 @@ pub mod writer;
 // Format-specific implementations
 pub mod formats;
 
-// KPS dataset format support
-pub mod kps;
-
 // Re-exports for convenience
 pub use arena::MmapArena;
 pub use detection::detect_format;
@@ -80,10 +77,8 @@ pub use writer::{
 pub use formats::{
     bag::BagFormat, mcap::McapFormat, sequential_bag::SequentialBagReader,
     sequential_mcap::SequentialMcapReader,
-};
-
-// KPS exports
-pub use kps::{
-    config::{KpsConfig, Mapping, MappingType, OutputFormat},
-    Hdf5KpsWriter, ParquetKpsWriter,
+    kps::{
+        config::{KpsConfig, Mapping, MappingType, OutputFormat},
+        Hdf5KpsWriter, ParquetKpsWriter,
+    },
 };

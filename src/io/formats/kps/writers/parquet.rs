@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::io::kps::config::KpsConfig;
-use crate::io::kps::writers::base::{
+use crate::io::formats::kps::config::KpsConfig;
+use crate::io::formats::kps::writers::base::{
     AlignedFrame, ImageData, KpsWriter, KpsWriterError, WriterStats,
 };
 use crate::io::metadata::ChannelInfo;
@@ -166,7 +166,7 @@ impl StreamingParquetWriter {
 
     /// Write metadata files (info.json, episode.jsonl).
     fn write_metadata_files(&self, config: &KpsConfig) -> crate::core::Result<()> {
-        use crate::io::kps::info;
+        use crate::io::formats::kps::info;
 
         // Write info.json
         info::write_info_json(
@@ -196,7 +196,7 @@ impl StreamingParquetWriter {
     /// Uses ffmpeg to encode buffered images as MP4 videos.
     /// Falls back to individual PPM files if ffmpeg is not available.
     fn process_images(&mut self) -> crate::core::Result<()> {
-        use crate::io::kps::video_encoder::{Mp4Encoder, VideoFrame, VideoFrameBuffer};
+        use crate::io::formats::kps::video_encoder::{Mp4Encoder, VideoFrame, VideoFrameBuffer};
 
         if self.image_buffer.is_empty() {
             return Ok(());
@@ -209,7 +209,7 @@ impl StreamingParquetWriter {
 
         // Create encoder with FPS from config
         let encoder = Mp4Encoder::with_config(
-            crate::io::kps::video_encoder::VideoEncoderConfig::default().with_fps(fps),
+            crate::io::formats::kps::video_encoder::VideoEncoderConfig::default().with_fps(fps),
         );
 
         // Process each camera's images
@@ -297,7 +297,7 @@ impl KpsWriter for StreamingParquetWriter {
                 .unwrap_or(&mapping.feature);
 
             if mapping.feature.starts_with("observation.")
-                && matches!(mapping.mapping_type, crate::io::kps::MappingType::State)
+                && matches!(mapping.mapping_type, crate::io::formats::kps::MappingType::State)
             {
                 self.observation_buffer
                     .insert(feature_name.to_string(), Vec::new());
@@ -383,7 +383,7 @@ impl KpsWriter for StreamingParquetWriter {
     fn finalize(
         &mut self,
         config: &KpsConfig,
-        _camera_params: Option<&crate::io::kps::camera_params::CameraParamCollector>,
+        _camera_params: Option<&crate::io::formats::kps::camera_params::CameraParamCollector>,
     ) -> crate::core::Result<WriterStats> {
         // Write final shard
         #[cfg(feature = "kps-parquet")]
@@ -430,13 +430,13 @@ mod tests {
     fn test_create_writer() {
         let temp_dir = std::env::temp_dir();
         let config = KpsConfig {
-            dataset: crate::io::kps::DatasetConfig {
+            dataset: crate::io::formats::kps::DatasetConfig {
                 name: "test".to_string(),
                 fps: 30,
                 robot_type: None,
             },
             mappings: vec![],
-            output: crate::io::kps::OutputConfig::default(),
+            output: crate::io::formats::kps::OutputConfig::default(),
         };
 
         let result = StreamingParquetWriter::create(&temp_dir, 0, &config);

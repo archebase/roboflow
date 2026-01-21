@@ -305,7 +305,7 @@ impl Hdf5KpsWriter {
                 .new_dataset::<VarLenArray<u8>>()
                 .shape(images.len())
                 .create(&**name)
-                .map_err(|e| crate::io::kps::writers::base::KpsWriterError::Hdf5(e.to_string()))?;
+                .map_err(|e| crate::io::formats::kps::writers::base::KpsWriterError::Hdf5(e.to_string()))?;
 
             // Convert images to VarLenArray and write
             let varlen_images: Vec<VarLenArray<u8>> = images
@@ -348,7 +348,7 @@ impl Hdf5KpsWriter {
                 .new_dataset::<f32>()
                 .shape([states.len(), dim])
                 .create(&**name)
-                .map_err(|e| crate::io::kps::writers::base::KpsWriterError::Hdf5(e.to_string()))?;
+                .map_err(|e| crate::io::formats::kps::writers::base::KpsWriterError::Hdf5(e.to_string()))?;
 
             // Flatten data into 1D array for HDF5
             let flat_data: Vec<f32> = states.iter().flatten().copied().collect();
@@ -378,7 +378,7 @@ impl Hdf5KpsWriter {
             group
                 .attr(key)?
                 .write(&value)
-                .map_err(|e| crate::io::kps::writers::base::KpsWriterError::Hdf5(e.to_string()))?;
+                .map_err(|e| crate::io::formats::kps::writers::base::KpsWriterError::Hdf5(e.to_string()))?;
         }
 
         Ok(())

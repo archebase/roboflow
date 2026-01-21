@@ -46,7 +46,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::io::kps::{KpsConfig, RobotCalibration};
+use crate::io::formats::kps::{KpsConfig, RobotCalibration};
 
 /// Statistics calculated from episodes for task directory naming.
 #[derive(Debug, Clone)]
@@ -1064,13 +1064,13 @@ mod tests {
         };
 
         let dataset_config = KpsConfig {
-            dataset: crate::io::kps::DatasetConfig {
+            dataset: crate::io::formats::kps::DatasetConfig {
                 name: "test".to_string(),
                 fps: 30,
                 robot_type: None,
             },
             mappings: vec![],
-            output: crate::io::kps::OutputConfig::default(),
+            output: crate::io::formats::kps::OutputConfig::default(),
         };
 
         let task_info = TaskInfo::from_config(&config, &dataset_config, 1, 1000);
