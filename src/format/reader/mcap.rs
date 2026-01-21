@@ -700,16 +700,15 @@ impl<'a> Iterator for DecodedMessageStream<'a> {
                         )))
                     }
                 };
-                let parsed_schema =
-                    match crate::parse_schema(&channel_info.message_type, schema) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            return Some(Err(CodecError::parse(
-                                channel_info.message_type.as_str(),
-                                format!("Failed to parse schema: {e}"),
-                            )))
-                        }
-                    };
+                let parsed_schema = match crate::parse_schema(&channel_info.message_type, schema) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return Some(Err(CodecError::parse(
+                            channel_info.message_type.as_str(),
+                            format!("Failed to parse schema: {e}"),
+                        )))
+                    }
+                };
                 cdr_decoder
                     .decode(
                         &parsed_schema,
@@ -717,10 +716,7 @@ impl<'a> Iterator for DecodedMessageStream<'a> {
                         Some(&channel_info.message_type),
                     )
                     .map_err(|e| {
-                        CodecError::parse(
-                            "CDR",
-                            format!("{}: {}", channel_info.message_type, e),
-                        )
+                        CodecError::parse("CDR", format!("{}: {}", channel_info.message_type, e))
                     })
             }
         };
@@ -843,16 +839,15 @@ impl<'a> Iterator for DecodedMessageWithTimestampStream<'a> {
                         )))
                     }
                 };
-                let parsed_schema =
-                    match crate::parse_schema(&channel_info.message_type, schema) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            return Some(Err(CodecError::parse(
-                                "Schema",
-                                format!("{}: {}", channel_info.message_type, e),
-                            )))
-                        }
-                    };
+                let parsed_schema = match crate::parse_schema(&channel_info.message_type, schema) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return Some(Err(CodecError::parse(
+                            "Schema",
+                            format!("{}: {}", channel_info.message_type, e),
+                        )))
+                    }
+                };
                 cdr_decoder
                     .decode(
                         &parsed_schema,
@@ -860,10 +855,7 @@ impl<'a> Iterator for DecodedMessageWithTimestampStream<'a> {
                         Some(&channel_info.message_type),
                     )
                     .map_err(|e| {
-                        CodecError::parse(
-                            "CDR",
-                            format!("{}: {}", channel_info.message_type, e),
-                        )
+                        CodecError::parse("CDR", format!("{}: {}", channel_info.message_type, e))
                     })
             }
         };

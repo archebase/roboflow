@@ -60,6 +60,11 @@ jobs:
 
       - name: Install maturin
         run: pip install maturin[patchelf]
+        if: runner.os != 'Windows'
+
+      - name: Install maturin (Windows)
+        run: pip install maturin
+        if: runner.os == 'Windows'
 
       - name: Build and install Python package
         run: maturin build --release --features python --strip && pip install target/wheels/robocodec*.whl

@@ -168,18 +168,12 @@ impl CameraParamCollector {
 
     /// Update intrinsics for a camera.
     pub fn update_intrinsics(&mut self, name: &str, intrinsics: IntrinsicParams) {
-        self.cameras
-            .entry(name.to_string())
-            .or_default()
-            .intrinsics = Some(intrinsics);
+        self.cameras.entry(name.to_string()).or_default().intrinsics = Some(intrinsics);
     }
 
     /// Update extrinsics for a camera.
     pub fn update_extrinsics(&mut self, name: &str, extrinsics: ExtrinsicParams) {
-        self.cameras
-            .entry(name.to_string())
-            .or_default()
-            .extrinsics = Some(extrinsics);
+        self.cameras.entry(name.to_string()).or_default().extrinsics = Some(extrinsics);
     }
 
     /// Get all camera names.

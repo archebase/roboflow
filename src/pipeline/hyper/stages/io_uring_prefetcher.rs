@@ -24,7 +24,6 @@
 //! ```
 
 #[cfg(all(target_os = "linux", feature = "io-uring-io"))]
-
 use std::fs::File;
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
@@ -96,7 +95,9 @@ impl IoUringPrefetcher {
         thread::Builder::new()
             .name("io_uring-prefetcher".to_string())
             .spawn(move || self.run())
-            .map_err(|e| CodecError::encode("IoUringPrefetcher", format!("Failed to spawn thread: {e}")))
+            .map_err(|e| {
+                CodecError::encode("IoUringPrefetcher", format!("Failed to spawn thread: {e}"))
+            })
     }
 
     #[instrument(skip(self))]
@@ -121,7 +122,10 @@ impl IoUringPrefetcher {
 
         // Create io_uring instance
         let ring = IoUring::new(self.config.queue_depth).map_err(|e| {
-            CodecError::encode("IoUringPrefetcher", format!("Failed to create io_uring: {e}"))
+            CodecError::encode(
+                "IoUringPrefetcher",
+                format!("Failed to create io_uring: {e}"),
+            )
         })?;
 
         let mut blocks_processed = 0u64;
@@ -134,12 +138,8 @@ impl IoUringPrefetcher {
 
             // Submit read operation
             let mut entries = [io_uring::squeue::Entry::default()];
-            entries[0] = opcode::Read::new(
-                types::Fd(file.as_raw_fd()),
-                offset as u64,
-                block_size,
-            )
-            .build();
+            entries[0] =
+                opcode::Read::new(types::Fd(file.as_raw_fd()), offset as u64, block_size).build();
 
             unsafe {
                 ring.submission()
@@ -154,11 +154,9 @@ impl IoUringPrefetcher {
             // Wait for completion
             let mut cqe = None;
             while cqe.is_none() {
-                ring.completion()
-                    .wait(&mut cqe)
-                    .map_err(|e| {
-                        CodecError::encode("IoUringPrefetcher", format!("Failed to wait: {e}"))
-                    })?;
+                ring.completion().wait(&mut cqe).map_err(|e| {
+                    CodecError::encode("IoUringPrefetcher", format!("Failed to wait: {e}"))
+                })?;
             }
 
             let cqe = cqe.unwrap();
