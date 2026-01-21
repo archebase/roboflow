@@ -65,8 +65,8 @@ jobs:
           name: wheels-${{ matrix.os }}-${{ matrix.target }}
           path: dist/
 
-  build-musllinux:
-    name: Build musllinux wheels
+  build-manylinux:
+    name: Build manylinux wheels
     runs-on: ubuntu-latest
     container: ghcr.io/pyo3/maturin:main
     steps:
@@ -78,12 +78,12 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-musllinux
+          name: wheels-manylinux
           path: dist/
 
   publish-pypi:
     name: Publish to PyPI
-    needs: [build, build-musllinux]
+    needs: [build, build-manylinux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

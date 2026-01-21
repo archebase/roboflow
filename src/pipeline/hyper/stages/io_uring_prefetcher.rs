@@ -138,7 +138,7 @@ impl IoUringPrefetcher {
             // Allocate buffer for read
             let mut buffer = vec![0u8; block_size];
 
-            // Submit read operation using io-uring 0.7.x API
+            // Submit read operation to io_uring
             let read_entry = opcode::Read::new(
                 types::Fd(file.as_raw_fd()),
                 buffer.as_mut_ptr(),
@@ -149,18 +149,18 @@ impl IoUringPrefetcher {
 
             unsafe {
                 ring.submission()
-                    .available()
-                    .push(read_entry)
+                    .push(&read_entry)
                     .expect("submission queue is full");
             }
 
-            ring.submit().map_err(|e| {
-                CodecError::encode("IoUringPrefetcher", format!("Failed to submit: {e}"))
+            // Submit and wait for completion
+            ring.submit_and_wait(1).map_err(|e| {
+                CodecError::encode("IoUringPrefetcher", format!("Failed to submit and wait: {e}"))
             })?;
 
-            // Wait for completion
-            let cqe = ring.wait_for_cqe().map_err(|e| {
-                CodecError::encode("IoUringPrefetcher", format!("Failed to wait for CQE: {e}"))
+            // Get completion entry
+            let cqe = ring.completion().next().ok_or_else(|| {
+                CodecError::encode("IoUringPrefetcher", "No completion entry available")
             })?;
 
             let result = cqe.result();
