@@ -8,11 +8,12 @@
 //! These bindings are **experimental** and may not cover all nvCOMP functionality.
 //! They require the nvCOMP library to be installed on the system.
 
-use std::ffi::{c_char, c_int, c_uint, c_void};
+use std::ffi::{c_char, c_int, c_void};
 
 /// nvCOMP compression algorithms supported.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)]
 pub enum nvcompCompressionAlgorithm {
     /// No compression
     nvcompNoCompression = 0,
@@ -29,6 +30,7 @@ pub enum nvcompCompressionAlgorithm {
 /// nvCOMP status codes.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)]
 pub enum nvcompStatus_t {
     /// Success
     nvcompSuccess = 0,

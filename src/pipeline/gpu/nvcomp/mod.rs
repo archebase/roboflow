@@ -18,8 +18,8 @@
 
 pub mod sys;
 
-use super::{CompressedChunk, CompressorType, CpuCompressor, GpuCompressionError, GpuResult};
-use sys::*;
+use super::backend::{CompressedChunk, CompressorBackend, CompressorType, CpuCompressor};
+use super::{GpuCompressionError, GpuResult};
 
 /// nvCOMP compression backend.
 ///
@@ -96,7 +96,7 @@ impl NvComCompressor {
     }
 }
 
-impl super::backend::CompressorBackend for NvComCompressor {
+impl CompressorBackend for NvComCompressor {
     fn compress_chunk(
         &self,
         chunk: &super::backend::ChunkToCompress,

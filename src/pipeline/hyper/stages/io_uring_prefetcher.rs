@@ -27,17 +27,16 @@
 use std::fs::File;
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use io_uring::{opcode, types, IoUring};
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, instrument};
 
 use crate::core::{CodecError, Result};
-use crate::pipeline::hyper::types::{BlockType, CompressionType, PrefetchedBlock, PrefetcherStats};
+use crate::pipeline::hyper::types::{BlockType, PrefetchedBlock, PrefetcherStats};
 
 /// Configuration for the io_uring prefetcher.
 #[derive(Debug, Clone)]
@@ -136,15 +135,23 @@ impl IoUringPrefetcher {
         while offset < file_len {
             let block_size = self.config.block_size.min(file_len - offset);
 
-            // Submit read operation
-            let mut entries = [io_uring::squeue::Entry::default()];
-            entries[0] =
-                opcode::Read::new(types::Fd(file.as_raw_fd()), offset as u64, block_size).build();
+            // Allocate buffer for read
+            let mut buffer = vec![0u8; block_size];
+
+            // Submit read operation using io-uring 0.7.x API
+            let read_entry = opcode::Read::new(
+                types::Fd(file.as_raw_fd()),
+                buffer.as_mut_ptr(),
+                block_size as u32,
+            )
+            .offset(offset as u64)
+            .build();
 
             unsafe {
                 ring.submission()
-                    .add(&entries)
-                    .expect("failed to add entry");
+                    .available()
+                    .push(read_entry)
+                    .expect("submission queue is full");
             }
 
             ring.submit().map_err(|e| {
@@ -152,14 +159,10 @@ impl IoUringPrefetcher {
             })?;
 
             // Wait for completion
-            let mut cqe = None;
-            while cqe.is_none() {
-                ring.completion().wait(&mut cqe).map_err(|e| {
-                    CodecError::encode("IoUringPrefetcher", format!("Failed to wait: {e}"))
-                })?;
-            }
+            let cqe = ring.wait_for_cqe().map_err(|e| {
+                CodecError::encode("IoUringPrefetcher", format!("Failed to wait for CQE: {e}"))
+            })?;
 
-            let cqe = cqe.unwrap();
             let result = cqe.result();
             if result < 0 {
                 return Err(CodecError::encode(
@@ -168,12 +171,12 @@ impl IoUringPrefetcher {
                 ));
             }
 
-            // Create block (simplified - in real implementation would read actual data)
+            // Create block with the read data
             let block = PrefetchedBlock {
                 sequence: blocks_processed,
                 offset: offset as u64,
-                data: Arc::new(vec![0u8; block_size]),
-                block_type: BlockType::McapData,
+                data: Arc::from(buffer),
+                block_type: BlockType::Unknown,
                 estimated_uncompressed_size: block_size,
                 source_path: None,
             };
@@ -207,7 +210,7 @@ impl IoUringPrefetcher {
             blocks = stats.blocks_prefetched,
             bytes = stats.bytes_prefetched,
             duration_sec = stats.io_time_sec,
-            throughput_mb_sec = (stats.bytes_processed as f64 / 1_048_576.0) / stats.duration_sec,
+            throughput_mb_sec = (stats.bytes_prefetched as f64 / 1_048_576.0) / stats.io_time_sec,
             "Prefetcher completed"
         );
 

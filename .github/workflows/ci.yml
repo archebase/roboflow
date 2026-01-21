@@ -12,7 +12,10 @@ env:
 jobs:
   rust-lint:
     name: Rust Lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -26,14 +29,23 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Install HDF5
-        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y libhdf5-dev
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            brew install hdf5
+          fi
+        shell: bash
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   rust-test:
     name: Rust Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -42,7 +54,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install HDF5
-        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y libhdf5-dev
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            brew install hdf5
+          fi
+        shell: bash
 
       - name: Run tests
         run: cargo test --all-features
