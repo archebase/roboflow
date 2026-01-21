@@ -48,8 +48,10 @@ fn test_mcap_file(fixture_path: &Path, _expectations: &FixtureExpectations) -> T
         );
     }
 
-    let mut test_summary = TestSummary::default();
-    test_summary.channels_tested = channels.len();
+    let mut test_summary = TestSummary {
+        channels_tested: channels.len(),
+        ..Default::default()
+    };
 
     // Test each channel using robocodec's decoded message iterator
     let decoded_iter = reader

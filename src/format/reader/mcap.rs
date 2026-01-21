@@ -665,71 +665,69 @@ impl<'a> Iterator for DecodedMessageStream<'a> {
         let proto_decoder = Arc::clone(&self.proto_decoder);
         let json_decoder = Arc::clone(&self.json_decoder);
 
-        loop {
-            let (raw_msg, channel_info) = match self.raw_stream.next()? {
-                Ok(msg) => msg,
-                Err(e) => return Some(Err(e)),
-            };
+        let (raw_msg, channel_info) = match self.raw_stream.next()? {
+            Ok(msg) => msg,
+            Err(e) => return Some(Err(e)),
+        };
 
-            // Decode based on encoding
-            let decoded: Result<DecodedMessage> = match channel_info.encoding.as_str() {
-                "protobuf" => proto_decoder
-                    .decode(&raw_msg.data)
-                    .map_err(|e| CodecError::parse("Protobuf", e.to_string())),
-                "json" => {
-                    let json_str = match std::str::from_utf8(&raw_msg.data) {
+        // Decode based on encoding
+        let decoded: Result<DecodedMessage> = match channel_info.encoding.as_str() {
+            "protobuf" => proto_decoder
+                .decode(&raw_msg.data)
+                .map_err(|e| CodecError::parse("Protobuf", e.to_string())),
+            "json" => {
+                let json_str = match std::str::from_utf8(&raw_msg.data) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return Some(Err(CodecError::parse(
+                            "JSON",
+                            format!("Invalid UTF-8: {e}"),
+                        )))
+                    }
+                };
+                json_decoder
+                    .decode(json_str)
+                    .map_err(|e| CodecError::parse("JSON", e.to_string()))
+            }
+            _ => {
+                // CDR decoding
+                let schema = match channel_info.schema.as_deref() {
+                    Some(s) => s,
+                    None => {
+                        return Some(Err(CodecError::parse(
+                            channel_info.message_type.as_str(),
+                            "No schema available",
+                        )))
+                    }
+                };
+                let parsed_schema =
+                    match crate::parse_schema(&channel_info.message_type, schema) {
                         Ok(s) => s,
                         Err(e) => {
                             return Some(Err(CodecError::parse(
-                                "JSON",
-                                format!("Invalid UTF-8: {e}"),
-                            )))
-                        }
-                    };
-                    json_decoder
-                        .decode(json_str)
-                        .map_err(|e| CodecError::parse("JSON", e.to_string()))
-                }
-                _ => {
-                    // CDR decoding
-                    let schema = match channel_info.schema.as_deref() {
-                        Some(s) => s,
-                        None => {
-                            return Some(Err(CodecError::parse(
                                 channel_info.message_type.as_str(),
-                                "No schema available",
+                                format!("Failed to parse schema: {e}"),
                             )))
                         }
                     };
-                    let parsed_schema =
-                        match crate::parse_schema(&channel_info.message_type, schema) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                return Some(Err(CodecError::parse(
-                                    channel_info.message_type.as_str(),
-                                    format!("Failed to parse schema: {e}"),
-                                )))
-                            }
-                        };
-                    cdr_decoder
-                        .decode(
-                            &parsed_schema,
-                            &raw_msg.data,
-                            Some(&channel_info.message_type),
+                cdr_decoder
+                    .decode(
+                        &parsed_schema,
+                        &raw_msg.data,
+                        Some(&channel_info.message_type),
+                    )
+                    .map_err(|e| {
+                        CodecError::parse(
+                            "CDR",
+                            format!("{}: {}", channel_info.message_type, e),
                         )
-                        .map_err(|e| {
-                            CodecError::parse(
-                                "CDR",
-                                format!("{}: {}", channel_info.message_type, e),
-                            )
-                        })
-                }
-            };
-
-            match decoded {
-                Ok(msg) => return Some(Ok((msg, channel_info))),
-                Err(e) => return Some(Err(e)),
+                    })
             }
+        };
+
+        match decoded {
+            Ok(msg) => Some(Ok((msg, channel_info))),
+            Err(e) => Some(Err(e)),
         }
     }
 }
@@ -807,88 +805,82 @@ impl<'a> Iterator for DecodedMessageWithTimestampStream<'a> {
         let proto_decoder = Arc::clone(&self.proto_decoder);
         let json_decoder = Arc::clone(&self.json_decoder);
 
-        loop {
-            let (raw_msg, channel_info) = match self.raw_stream.next()? {
-                Ok(msg) => msg,
-                Err(e) => return Some(Err(e)),
-            };
+        let (raw_msg, channel_info) = match self.raw_stream.next()? {
+            Ok(msg) => msg,
+            Err(e) => return Some(Err(e)),
+        };
 
-            let log_time = raw_msg.log_time;
-            let publish_time = raw_msg.publish_time;
+        let log_time = raw_msg.log_time;
+        let publish_time = raw_msg.publish_time;
 
-            // Decode based on encoding (same logic as DecodedMessageStream)
-            let decoded: Result<DecodedMessage> = match channel_info.encoding.as_str() {
-                "protobuf" => proto_decoder
-                    .decode(&raw_msg.data)
-                    .map_err(|e| CodecError::parse("Protobuf", e.to_string())),
-                "json" => {
-                    let json_str = match std::str::from_utf8(&raw_msg.data) {
+        // Decode based on encoding (same logic as DecodedMessageStream)
+        let decoded: Result<DecodedMessage> = match channel_info.encoding.as_str() {
+            "protobuf" => proto_decoder
+                .decode(&raw_msg.data)
+                .map_err(|e| CodecError::parse("Protobuf", e.to_string())),
+            "json" => {
+                let json_str = match std::str::from_utf8(&raw_msg.data) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return Some(Err(CodecError::parse(
+                            "JSON",
+                            format!("Invalid UTF-8: {e}"),
+                        )))
+                    }
+                };
+                json_decoder
+                    .decode(json_str)
+                    .map_err(|e| CodecError::parse("JSON", e.to_string()))
+            }
+            _ => {
+                // CDR decoding
+                let schema = match channel_info.schema.as_deref() {
+                    Some(s) => s,
+                    None => {
+                        return Some(Err(CodecError::parse(
+                            "CDR",
+                            format!("No schema available for {}", channel_info.message_type),
+                        )))
+                    }
+                };
+                let parsed_schema =
+                    match crate::parse_schema(&channel_info.message_type, schema) {
                         Ok(s) => s,
                         Err(e) => {
                             return Some(Err(CodecError::parse(
-                                "JSON",
-                                format!("Invalid UTF-8: {e}"),
-                            )))
-                        }
-                    };
-                    json_decoder
-                        .decode(json_str)
-                        .map_err(|e| CodecError::parse("JSON", e.to_string()))
-                }
-                _ => {
-                    // CDR decoding
-                    let schema = match channel_info.schema.as_deref() {
-                        Some(s) => s,
-                        None => {
-                            return Some(Err(CodecError::parse(
-                                "CDR",
-                                format!("No schema available for {}", channel_info.message_type),
-                            )))
-                        }
-                    };
-                    let parsed_schema =
-                        match crate::parse_schema(&channel_info.message_type, schema) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                return Some(Err(CodecError::parse(
-                                    "Schema",
-                                    format!("{}: {}", channel_info.message_type, e),
-                                )))
-                            }
-                        };
-                    cdr_decoder
-                        .decode(
-                            &parsed_schema,
-                            &raw_msg.data,
-                            Some(&channel_info.message_type),
-                        )
-                        .map_err(|e| {
-                            CodecError::parse(
-                                "CDR",
+                                "Schema",
                                 format!("{}: {}", channel_info.message_type, e),
-                            )
-                        })
-                }
-            };
-
-            match decoded {
-                Ok(msg) => {
-                    return Some(Ok((
-                        TimestampedDecodedMessage {
-                            message: msg,
-                            log_time,
-                            publish_time,
-                        },
-                        channel_info,
-                    )))
-                }
-                Err(e) => {
-                    return Some(Err(CodecError::parse(
-                        "Message",
-                        format!("{}: {}", channel_info.topic, e),
-                    )))
-                }
+                            )))
+                        }
+                    };
+                cdr_decoder
+                    .decode(
+                        &parsed_schema,
+                        &raw_msg.data,
+                        Some(&channel_info.message_type),
+                    )
+                    .map_err(|e| {
+                        CodecError::parse(
+                            "CDR",
+                            format!("{}: {}", channel_info.message_type, e),
+                        )
+                    })
             }
+        };
+
+        match decoded {
+            Ok(msg) => Some(Ok((
+                TimestampedDecodedMessage {
+                    message: msg,
+                    log_time,
+                    publish_time,
+                },
+                channel_info,
+            ))),
+            Err(e) => Some(Err(CodecError::parse(
+                "Message",
+                format!("{}: {}", channel_info.topic, e),
+            ))),
         }
     }
 }

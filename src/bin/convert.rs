@@ -322,7 +322,7 @@ fn convert_bag_to_mcap(input: &str, output: &str) -> Result<(), Box<dyn std::err
 
         msg_count += 1;
 
-        if msg_count % 1000 == 0 {
+        if msg_count.is_multiple_of(1000) {
             println!("Processed {} messages...", msg_count);
         }
     }
@@ -389,7 +389,7 @@ fn convert_mcap_to_bag(input: &str, output: &str) -> Result<(), Box<dyn std::err
 
         msg_count += 1;
 
-        if msg_count % 1000 == 0 {
+        if msg_count.is_multiple_of(1000) {
             println!("Processed {} messages...", msg_count);
         }
     }

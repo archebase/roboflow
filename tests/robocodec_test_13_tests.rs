@@ -58,26 +58,24 @@ fn test_robocodec_test_13_fixture() {
 
             if let Ok(raw_iter) = reader.iter_raw() {
                 if let Ok(stream) = raw_iter.into_stream() {
-                    for msg_result in stream {
-                        if let Ok((msg, _ch)) = msg_result {
-                            if msg.channel_id == channel_id {
-                                match decoder.decode(&msg.data) {
-                                    Ok(decoded) => {
-                                        if !decoded.is_empty() {
-                                            messages_tested += 1;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        let err_msg =
-                                            format!("Decode error on channel [{channel_id}]: {e}");
-                                        eprintln!("    {err_msg}");
-                                        decode_errors.push(err_msg);
+                    for (msg, _ch) in stream.flatten() {
+                        if msg.channel_id == channel_id {
+                            match decoder.decode(&msg.data) {
+                                Ok(decoded) => {
+                                    if !decoded.is_empty() {
+                                        messages_tested += 1;
                                     }
                                 }
+                                Err(e) => {
+                                    let err_msg =
+                                        format!("Decode error on channel [{channel_id}]: {e}");
+                                    eprintln!("    {err_msg}");
+                                    decode_errors.push(err_msg);
+                                }
+                            }
 
-                                if messages_tested >= 1 {
-                                    break;
-                                }
+                            if messages_tested >= 1 {
+                                break;
                             }
                         }
                     }
@@ -99,25 +97,23 @@ fn test_robocodec_test_13_fixture() {
 
                         if let Ok(raw_iter) = reader.iter_raw() {
                             if let Ok(stream) = raw_iter.into_stream() {
-                                for msg_result in stream {
-                                    if let Ok((msg, _ch)) = msg_result {
-                                        if msg.channel_id == channel_id {
-                                            match decoder.decode(&schema, &msg.data, None) {
-                                                Ok(_) => {
-                                                    messages_tested += 1;
-                                                }
-                                                Err(e) => {
-                                                    let err_msg = format!(
-                                                        "Decode error on channel [{channel_id}]: {e}"
-                                                    );
-                                                    eprintln!("    {err_msg}");
-                                                    decode_errors.push(err_msg);
-                                                }
+                                for (msg, _ch) in stream.flatten() {
+                                    if msg.channel_id == channel_id {
+                                        match decoder.decode(&schema, &msg.data, None) {
+                                            Ok(_) => {
+                                                messages_tested += 1;
                                             }
+                                            Err(e) => {
+                                                let err_msg = format!(
+                                                    "Decode error on channel [{channel_id}]: {e}"
+                                                );
+                                                eprintln!("    {err_msg}");
+                                                decode_errors.push(err_msg);
+                                            }
+                                        }
 
-                                            if messages_tested >= 1 {
-                                                break;
-                                            }
+                                        if messages_tested >= 1 {
+                                            break;
                                         }
                                     }
                                 }

@@ -231,18 +231,18 @@ impl<'arena> MmapArenaRef<'arena> {
 
     /// Create a slice with bounds checking.
     pub fn slice(&self, offset: usize, len: usize) -> Result<&'arena [u8], CodecError> {
-        self.arena.slice(offset, len).map(|slice| {
-            // SAFETY: The slice is valid for 'arena because it borrows from
-            // the arena which lives for 'arena
-            unsafe { &*(slice as *const [u8] as *const [u8]) }
-        })
+        self.arena.slice(offset, len)
     }
 
     /// Create a slice without bounds checking.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the range is valid.
     pub unsafe fn slice_unchecked(&self, offset: usize, len: usize) -> &'arena [u8] {
         // SAFETY: Caller ensures the range is valid, and the borrow is tied
         // to 'arena which is the arena's lifetime
-        &*(self.arena.slice_unchecked(offset, len) as *const [u8] as *const [u8])
+        self.arena.slice_unchecked(offset, len)
     }
 }
 

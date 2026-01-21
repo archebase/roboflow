@@ -325,9 +325,7 @@ impl MessageExtractor {
             }
         }
 
-        let Some(image_data) = data else {
-            return None;
-        };
+        let image_data = data?;
 
         Some(ImageData {
             width,

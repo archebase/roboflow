@@ -17,10 +17,11 @@ const NANOS_PER_SEC: i64 = 1_000_000_000;
 /// CDR encapsulation kind.
 ///
 /// Defines the encoding format and endianness of the CDR data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum EncapsulationKind {
     /// CDR, Little Endian
+    #[default]
     CdrLe = 0x01,
     /// CDR, Big Endian
     CdrBe = 0x00,
@@ -75,12 +76,6 @@ impl EncapsulationKind {
         } else {
             8
         }
-    }
-}
-
-impl Default for EncapsulationKind {
-    fn default() -> Self {
-        Self::CdrLe
     }
 }
 
@@ -1655,7 +1650,6 @@ mod tests {
 
     // Note: test_round_trip_cdr2_float64_alignment removed because cursor doesn't support CDR2 alignment
     // CDR2 uses 4-byte alignment for 64-bit values, while cursor always uses 8-byte alignment
-    // TODO: Add CDR2 support to cursor with encapsulation kind detection
 
     #[test]
     fn test_round_trip_multiple_values() {

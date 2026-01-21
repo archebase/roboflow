@@ -31,7 +31,7 @@ dev = [
 ]
 
 [tool.maturin]
-features = ["pyo3/extension-module"]
+features = ["extension-module"]
 python-source = "python"
 module-name = "robocodec._robocodec"
 manifest-path = "Cargo.toml"

@@ -131,13 +131,10 @@ impl ArenaBlock {
 
         let data = unsafe { std::alloc::alloc(layout) };
         if data.is_null() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "Failed to allocate arena block: {} bytes. System may be out of memory.",
-                    capacity
-                ),
-            ));
+            return Err(std::io::Error::other(format!(
+                "Failed to allocate arena block: {} bytes. System may be out of memory.",
+                capacity
+            )));
         }
 
         // SAFETY: We just checked that data is not null above
@@ -286,13 +283,10 @@ impl MessageArena {
         let new_block_size = self.block_size.max(len);
         let block = ArenaBlock::new(new_block_size)?;
         let offset = block.try_allocate(len, 1).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "Failed to allocate {} bytes from fresh block of {} bytes",
-                    len, new_block_size
-                ),
-            )
+            std::io::Error::other(format!(
+                "Failed to allocate {} bytes from fresh block of {} bytes",
+                len, new_block_size
+            ))
         })?;
 
         let new_block_idx = self.blocks.len();
@@ -357,6 +351,7 @@ unsafe impl Sync for ArenaSlice<'_> {}
 impl<'arena> ArenaSlice<'arena> {
     /// Get a reference to the slice data.
     #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn as_ref(&self) -> &[u8] {
         if self.len == 0 {
             &[]

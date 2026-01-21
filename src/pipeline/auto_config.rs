@@ -10,7 +10,7 @@ use tracing::{debug, info};
 /// Performance mode for the pipeline.
 ///
 /// Controls the trade-off between throughput, latency, and memory usage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PerformanceMode {
     /// **Throughput** - Aggressive tuning for maximum throughput on beefy machines.
     ///
@@ -24,6 +24,7 @@ pub enum PerformanceMode {
     /// **Balanced** - Middle ground between throughput and resource usage.
     ///
     /// Default mode that works well for most systems.
+    #[default]
     Balanced,
 
     /// **MemoryEfficient** - Conserve memory at the cost of some throughput.
@@ -32,12 +33,6 @@ pub enum PerformanceMode {
     /// - Systems with limited memory
     /// - Running alongside other memory-intensive workloads
     MemoryEfficient,
-}
-
-impl Default for PerformanceMode {
-    fn default() -> Self {
-        Self::Balanced
-    }
 }
 
 impl PerformanceMode {
@@ -296,7 +291,7 @@ impl PipelineAutoConfig {
 
     /// Get the effective writer buffer size.
     pub fn effective_writer_buffer_size(&self) -> usize {
-        self.writer_buffer_size.unwrap_or_else(|| {
+        self.writer_buffer_size.unwrap_or({
             match self.mode {
                 PerformanceMode::Throughput => 16 * 1024 * 1024, // 16MB
                 PerformanceMode::Balanced => 8 * 1024 * 1024,    // 8MB

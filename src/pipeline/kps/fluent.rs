@@ -32,9 +32,12 @@ use std::path::{Path, PathBuf};
 
 use crate::core::{CodecError, Result};
 use crate::io::kps::{
-    delivery_v12::{SeriesDeliveryConfig, StatisticsCollector, TaskStatistics, V12DeliveryBuilder},
+    delivery_v12::{SeriesDeliveryConfig, StatisticsCollector, V12DeliveryBuilder},
     KpsConfig, RobotCalibration,
 };
+
+#[cfg(test)]
+use crate::io::kps::delivery_v12::TaskStatistics;
 use crate::pipeline::kps::{config::TimeAlignerConfig, KpsPipeline, KpsPipelineConfig, KpsReport};
 
 /// Fluent API builder for KPS conversion.

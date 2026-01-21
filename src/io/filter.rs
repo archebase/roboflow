@@ -11,9 +11,10 @@ use std::sync::Arc;
 use crate::io::metadata::ChannelInfo;
 
 /// Filter for selecting topics/connections during parallel reading.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum TopicFilter {
     /// Read all topics (no filtering)
+    #[default]
     All,
     /// Read only specific topics
     Include(Vec<String>),
@@ -82,12 +83,6 @@ impl TopicFilter {
     }
 }
 
-impl Default for TopicFilter {
-    fn default() -> Self {
-        Self::All
-    }
-}
-
 /// Channel filter mapping topic names to channel IDs.
 #[derive(Debug, Clone)]
 pub struct ChannelFilter {
@@ -108,7 +103,7 @@ impl ChannelFilter {
                 allowed_channels.insert(id);
                 topic_to_channels
                     .entry(channel.topic.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(id);
             }
         }
@@ -122,13 +117,13 @@ impl ChannelFilter {
     /// Create a filter that includes all channels.
     pub fn all(channels: &HashMap<u16, ChannelInfo>) -> Self {
         let mut allowed_channels = HashSet::new();
-        let mut topic_to_channels = HashMap::new();
+        let mut topic_to_channels: HashMap<String, Vec<u16>> = HashMap::new();
 
         for (&id, channel) in channels {
             allowed_channels.insert(id);
             topic_to_channels
                 .entry(channel.topic.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(id);
         }
 

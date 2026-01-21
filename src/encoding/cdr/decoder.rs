@@ -432,8 +432,7 @@ impl CdrDecoder {
                             field_path.clone(),
                             CodecValue::Struct(std::collections::HashMap::new()),
                         );
-                    } else {
-                        let parent_path = scope_stack.last().unwrap();
+                    } else if let Some(parent_path) = scope_stack.last() {
                         if let Some(CodecValue::Struct(parent)) = result.get_mut(parent_path) {
                             let field_name = field_path
                                 .strip_prefix(&format!("{parent_path}."))
@@ -477,13 +476,14 @@ impl CdrDecoder {
             result.insert(field_path.to_string(), value);
         } else {
             // Find the parent struct
-            let parent_path = scope_stack.last().unwrap();
-            if let Some(CodecValue::Struct(parent)) = result.get_mut(parent_path) {
-                // Extract the field name from the full path
-                let field_name = field_path
-                    .strip_prefix(&format!("{parent_path}."))
-                    .unwrap_or(field_path);
-                parent.insert(field_name.to_string(), value);
+            if let Some(parent_path) = scope_stack.last() {
+                if let Some(CodecValue::Struct(parent)) = result.get_mut(parent_path) {
+                    // Extract the field name from the full path
+                    let field_name = field_path
+                        .strip_prefix(&format!("{parent_path}."))
+                        .unwrap_or(field_path);
+                    parent.insert(field_name.to_string(), value);
+                }
             }
         }
         Ok(())

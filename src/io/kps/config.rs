@@ -85,12 +85,13 @@ pub struct Mapping {
 }
 
 /// Type of data being mapped.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum MappingType {
     /// Image data (camera)
     Image,
     /// State/joint data
+    #[default]
     State,
     /// Action data
     Action,
@@ -100,12 +101,6 @@ pub enum MappingType {
     OtherSensor,
     /// Audio data
     Audio,
-}
-
-impl Default for MappingType {
-    fn default() -> Self {
-        Self::State
-    }
 }
 
 /// Output format configuration.

@@ -29,12 +29,14 @@ pub struct PooledBuffer {
 impl PooledBuffer {
     /// Get a mutable reference to the buffer data.
     #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn as_mut(&mut self) -> &mut Vec<u8> {
         &mut self.data
     }
 
     /// Get a reference to the buffer data.
     #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn as_ref(&self) -> &[u8] {
         &self.data
     }

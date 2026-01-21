@@ -172,7 +172,7 @@ impl TransformStage {
 
         // Transform each channel
         let mut transformed = HashMap::new();
-        for (_original_id, channel) in &self.channels {
+        for channel in self.channels.values() {
             let transformed_channel = pipeline.transform_channel(channel);
             // Use sequential IDs starting from 0 for transformed channels
             let new_id = transformed.len() as u16;
@@ -196,7 +196,7 @@ impl TransformStage {
         }
 
         // Map original channel ID to transformed channel ID
-        for (original_id, _) in &self.channels {
+        for original_id in self.channels.keys() {
             if let Some(&idx) = original_to_index.get(original_id) {
                 map.insert(*original_id, idx as u16);
             }

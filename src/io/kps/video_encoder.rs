@@ -255,7 +255,7 @@ impl Mp4Encoder {
             .arg("-vcodec")
             .arg("ppm")
             .arg("-r")
-            .arg(&self.config.fps.to_string())
+            .arg(self.config.fps.to_string())
             .arg("-i")
             .arg("-") // Read from stdin
             .arg("-c:v")
@@ -265,7 +265,7 @@ impl Mp4Encoder {
             .arg("-preset")
             .arg(&self.config.preset)
             .arg("-crf")
-            .arg(&self.config.crf.to_string())
+            .arg(self.config.crf.to_string())
             .arg("-movflags")
             .arg("+faststart") // Enable fast start for web playback
             .arg(output_path)
@@ -549,9 +549,9 @@ impl DepthMkvEncoder {
             .arg("-pix_fmt")
             .arg("gray16le") // 16-bit little-endian grayscale
             .arg("-s")
-            .arg(&format!("{}x{}", width, height))
+            .arg(format!("{}x{}", width, height))
             .arg("-r")
-            .arg(&self.config.fps.to_string())
+            .arg(self.config.fps.to_string())
             .arg("-i")
             .arg("-") // Stdin
             .arg("-c:v")

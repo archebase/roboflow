@@ -422,7 +422,7 @@ fn test_channel_info_preservation() {
     );
 
     // Verify each channel's topic and message type
-    for (_in_id, in_ch) in &input_channels {
+    for in_ch in input_channels.values() {
         let found = output_channels
             .values()
             .any(|out_ch| out_ch.topic == in_ch.topic && out_ch.message_type == in_ch.message_type);

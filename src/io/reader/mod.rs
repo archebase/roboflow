@@ -128,7 +128,7 @@ impl RoboReader {
     }
 }
 
-impl<'a> FormatReader for RoboReader {
+impl FormatReader for RoboReader {
     fn channels(&self) -> &std::collections::HashMap<u16, crate::io::metadata::ChannelInfo> {
         self.inner.channels()
     }

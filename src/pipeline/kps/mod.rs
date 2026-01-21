@@ -58,7 +58,6 @@ use crate::io::kps::{create_writer, AlignedFrame, CameraParamCollector};
 use crate::io::metadata::ChannelInfo;
 
 #[allow(unused_imports)]
-
 /// Report from a Kps pipeline execution.
 #[derive(Debug, Clone)]
 pub struct KpsReport {
@@ -190,7 +189,7 @@ impl KpsPipeline {
         let _decode_result = self.decode_messages(reader, decoded_sender);
 
         // Wait for stages to complete
-        let _ = time_aligner_handle.join().map_err(|e| {
+        time_aligner_handle.join().map_err(|e| {
             CodecError::encode("KpsPipeline", format!("Time aligner panicked: {:?}", e))
         })??;
 
@@ -314,7 +313,7 @@ impl KpsPipeline {
         for mapping in &mappings {
             topic_mappings
                 .entry(mapping.topic.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(mapping);
         }
 
@@ -339,7 +338,7 @@ impl KpsPipeline {
 
             message_buffers
                 .entry(entry.1.topic.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(entry);
         }
 
@@ -371,11 +370,7 @@ impl KpsPipeline {
                     }
                 }) {
                     // Check if within tolerance
-                    let dist = if *msg_time > target_time {
-                        *msg_time - target_time
-                    } else {
-                        target_time - *msg_time
-                    };
+                    let dist = msg_time.abs_diff(target_time);
 
                     // Use different tolerances for different data types
                     for mapping in mappings_for_topic {

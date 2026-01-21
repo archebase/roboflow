@@ -603,6 +603,7 @@ impl V12DeliveryBuilder {
     ///
     /// # Returns
     /// Path to the episode directory (UUID directory)
+    #[allow(clippy::too_many_arguments)]
     pub fn create_delivery_structure(
         source_dir: &Path,
         config: &SeriesDeliveryConfig,
@@ -875,6 +876,7 @@ impl V12DeliveryBuilder {
     }
 
     /// Recursively copy a directory.
+    #[allow(dead_code)]
     fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), Box<dyn std::error::Error>> {
         fs::create_dir_all(target)?;
 

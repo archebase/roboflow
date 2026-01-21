@@ -22,13 +22,14 @@ use crate::{CodecError, Result};
 /// - Sequential: Read messages in order (works for all formats)
 /// - Parallel: Read chunks in parallel (MCAP with summary only)
 /// - Auto: Automatically choose based on file capabilities
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReadStrategy {
     /// Sequential reading - processes messages one by one
     Sequential,
     /// Parallel reading - processes chunks concurrently
     Parallel,
     /// Auto-detect - choose optimal strategy based on file
+    #[default]
     Auto,
 }
 
@@ -99,12 +100,6 @@ impl ReadStrategy {
     /// Check if this is the auto strategy.
     pub fn is_auto(&self) -> bool {
         matches!(self, ReadStrategy::Auto)
-    }
-}
-
-impl Default for ReadStrategy {
-    fn default() -> Self {
-        ReadStrategy::Auto
     }
 }
 

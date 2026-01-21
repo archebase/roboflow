@@ -90,7 +90,7 @@ fn show_info(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Robotics Data File: {file} ===");
     println!("Format: {ext}");
 
-    let _channels = match ext {
+    match ext {
         "mcap" => {
             let reader = robocodec::format::McapReader::open(file)?;
             println!("Channels: {}", reader.channels().len());
@@ -161,7 +161,7 @@ fn show_info(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-    };
+    }
 
     Ok(())
 }
@@ -699,7 +699,7 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
             println!("Size distribution:");
             let max_mb = max / (1024 * 1024) + 1;
             let bucket_count = 10usize;
-            let bucket_size = (max_mb / bucket_count as usize).max(1);
+            let bucket_size = (max_mb / bucket_count).max(1);
             let mut buckets = vec![0usize; bucket_count];
 
             for size in &sizes {

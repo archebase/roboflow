@@ -494,7 +494,6 @@ mod tests {
     #[test]
     fn test_parallel_bag_reader_compile() {
         // This test just verifies that the type compiles correctly
-        assert!(true);
     }
 
     #[test]

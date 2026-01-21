@@ -32,7 +32,6 @@ use super::metadata::FileFormat;
 ///
 /// MCAP files don't have a simple magic string - they have a structured header.
 /// We detect MCAP by checking for the MCAP record structure.
-
 /// Try to detect the file format from the file content.
 ///
 /// This function reads the file header and checks for magic numbers

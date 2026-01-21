@@ -215,7 +215,7 @@ impl HardwareInfo {
 fn detect_memory_macos() -> u64 {
     unsafe {
         let mut len: std::os::raw::c_uint = 0;
-        let name = b"hw.memsize\0".as_ptr() as *const i8;
+        let name = c"hw.memsize".as_ptr();
 
         // First call to get the length
         if libc::sysctlbyname(

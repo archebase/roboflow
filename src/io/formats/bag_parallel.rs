@@ -468,7 +468,6 @@ mod tests {
     fn test_parallel_bag_reader_compile() {
         // This test just verifies that the type compiles correctly
         // We can't create a ParallelBagReader without a valid bag file
-        assert!(true);
     }
 
     #[test]

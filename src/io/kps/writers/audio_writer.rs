@@ -17,6 +17,7 @@ pub struct AudioWriter {
     output_dir: PathBuf,
 
     /// Episode ID.
+    #[allow(dead_code)]
     episode_id: String,
 }
 
@@ -32,7 +33,7 @@ impl AudioWriter {
     /// Initialize the audio writer (creates audio/ directory).
     pub fn initialize(&mut self) -> Result<(), KpsWriterError> {
         let audio_dir = self.output_dir.join("audio");
-        std::fs::create_dir_all(&audio_dir).map_err(|e| KpsWriterError::Io(e))?;
+        std::fs::create_dir_all(&audio_dir).map_err(KpsWriterError::Io)?;
 
         tracing::info!(
             path = %audio_dir.display(),
@@ -56,10 +57,10 @@ impl AudioWriter {
         let wav_path = audio_dir.join(format!("{}.wav", name));
 
         // Ensure directory exists
-        std::fs::create_dir_all(&audio_dir).map_err(|e| KpsWriterError::Io(e))?;
+        std::fs::create_dir_all(&audio_dir).map_err(KpsWriterError::Io)?;
 
         // Write WAV file
-        let mut file = File::create(&wav_path).map_err(|e| KpsWriterError::Io(e))?;
+        let mut file = File::create(&wav_path).map_err(KpsWriterError::Io)?;
 
         // Write WAV header
         self.write_wav_header(&mut file, data)?;
@@ -68,7 +69,7 @@ impl AudioWriter {
         for &sample in &data.samples {
             let sample_i16 = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
             file.write_all(&sample_i16.to_le_bytes())
-                .map_err(|e| KpsWriterError::Io(e))?;
+                .map_err(KpsWriterError::Io)?;
         }
 
         tracing::info!(
@@ -90,32 +91,32 @@ impl AudioWriter {
         let file_size = 36 + data_size;
 
         // RIFF header
-        file.write_all(b"RIFF").map_err(|e| KpsWriterError::Io(e))?;
+        file.write_all(b"RIFF").map_err(KpsWriterError::Io)?;
         file.write_all(&file_size.to_le_bytes())
-            .map_err(|e| KpsWriterError::Io(e))?;
-        file.write_all(b"WAVE").map_err(|e| KpsWriterError::Io(e))?;
+            .map_err(KpsWriterError::Io)?;
+        file.write_all(b"WAVE").map_err(KpsWriterError::Io)?;
 
         // fmt chunk
-        file.write_all(b"fmt ").map_err(|e| KpsWriterError::Io(e))?;
+        file.write_all(b"fmt ").map_err(KpsWriterError::Io)?;
         file.write_all(&16u32.to_le_bytes()) // Chunk size
-            .map_err(|e| KpsWriterError::Io(e))?;
+            .map_err(KpsWriterError::Io)?;
         file.write_all(&1u16.to_le_bytes()) // Audio format (1 = PCM)
-            .map_err(|e| KpsWriterError::Io(e))?;
+            .map_err(KpsWriterError::Io)?;
         file.write_all(&data.channels.to_le_bytes())
-            .map_err(|e| KpsWriterError::Io(e))?;
+            .map_err(KpsWriterError::Io)?;
         file.write_all(&data.sample_rate.to_le_bytes())
-            .map_err(|e| KpsWriterError::Io(e))?;
+            .map_err(KpsWriterError::Io)?;
         file.write_all(&byte_rate.to_le_bytes())
-            .map_err(|e| KpsWriterError::Io(e))?;
+            .map_err(KpsWriterError::Io)?;
         file.write_all(&block_align.to_le_bytes())
-            .map_err(|e| KpsWriterError::Io(e))?;
+            .map_err(KpsWriterError::Io)?;
         file.write_all(&16u16.to_le_bytes()) // Bits per sample
-            .map_err(|e| KpsWriterError::Io(e))?;
+            .map_err(KpsWriterError::Io)?;
 
         // data chunk
-        file.write_all(b"data").map_err(|e| KpsWriterError::Io(e))?;
+        file.write_all(b"data").map_err(KpsWriterError::Io)?;
         file.write_all(&data_size.to_le_bytes())
-            .map_err(|e| KpsWriterError::Io(e))?;
+            .map_err(KpsWriterError::Io)?;
 
         Ok(())
     }

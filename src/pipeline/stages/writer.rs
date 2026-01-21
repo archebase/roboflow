@@ -430,9 +430,9 @@ mod tests {
     #[test]
     fn test_chunk_sequence_monotonic() {
         // Test that sequence numbers are strictly increasing
-        let sequences = vec![0u64, 5u64, 100u64, 999u64];
+        let sequences = [0u64, 5u64, 100u64, 999u64];
 
-        for (_i, &seq) in sequences.iter().enumerate() {
+        for &seq in sequences.iter() {
             let chunk = make_test_chunk(seq, 10);
             assert_eq!(chunk.sequence, seq);
             assert_eq!(chunk.message_start_time, seq * 1000);

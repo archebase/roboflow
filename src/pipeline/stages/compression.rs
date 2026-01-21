@@ -239,6 +239,7 @@ impl CompressionStage {
     }
 
     /// Compression worker - pulls chunks from channel and compresses them.
+    #[allow(clippy::too_many_arguments)]
     fn compression_worker(
         worker_id: usize,
         receiver: Receiver<MessageChunk<'static>>,

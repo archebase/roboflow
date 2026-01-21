@@ -248,6 +248,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_from_urdf_str() {
         let calibration = RobotCalibrationGenerator::from_urdf_str(SAMPLE_URDF).unwrap();
         assert_eq!(calibration.joints.len(), 3);

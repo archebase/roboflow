@@ -73,6 +73,7 @@ pub struct KpsWriterStage {
 }
 
 /// Messages sent to the writer stage.
+#[allow(clippy::large_enum_variant)]
 pub enum StageMessage {
     /// An aligned frame to write.
     Frame(AlignedFrame),

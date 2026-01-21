@@ -122,18 +122,10 @@ impl Iterator for ChannelChunkIterator {
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Default)]
 pub struct ParallelReaderIteratorBuilder {
     config: crate::io::traits::ParallelReaderConfig,
     thread_name: Option<String>,
-}
-
-impl Default for ParallelReaderIteratorBuilder {
-    fn default() -> Self {
-        Self {
-            config: crate::io::traits::ParallelReaderConfig::default(),
-            thread_name: None,
-        }
-    }
 }
 
 impl ParallelReaderIteratorBuilder {

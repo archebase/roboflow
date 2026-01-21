@@ -229,7 +229,7 @@ impl AsyncPipeline {
             // Apple Silicon (M1/M2/M3) has unified memory architecture
             // Optimal is 24-25 based on benchmarks
             info!("Apple Silicon detected, using WindowLog: 25 (32 MB)");
-            return Ok(Some(25));
+            Ok(Some(25))
         }
 
         #[cfg(all(target_arch = "aarch64", not(target_vendor = "apple")))]

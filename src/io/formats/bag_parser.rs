@@ -197,7 +197,7 @@ impl BagParser {
             )
         })?;
 
-        if &magic != Self::MAGIC {
+        if magic != Self::MAGIC {
             return Err(CodecError::parse(
                 "BagParser::parse_magic",
                 format!("Invalid BAG magic: {:?}", String::from_utf8_lossy(&magic)),

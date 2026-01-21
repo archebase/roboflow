@@ -135,17 +135,16 @@ impl ParallelMcapReader {
         })?;
 
         // Read metadata from file
-        let (channels, message_count, start_time, end_time, chunk_indexes) =
-            Self::read_metadata(&mmap)?;
+        let metadata = Self::read_metadata(&mmap)?;
 
         Ok(Self {
             path: path_str,
             mmap,
-            channels,
-            message_count,
-            start_time,
-            end_time,
-            chunk_indexes,
+            channels: metadata.channels,
+            message_count: metadata.message_count,
+            start_time: metadata.start_time,
+            end_time: metadata.end_time,
+            chunk_indexes: metadata.chunk_indexes,
             file_size,
         })
     }
@@ -156,15 +155,7 @@ impl ParallelMcapReader {
     }
 
     /// Read metadata (channels, message count, timestamps, chunk indexes) from an MCAP file.
-    fn read_metadata(
-        data: &[u8],
-    ) -> Result<(
-        HashMap<u16, ChannelInfo>,
-        u64,
-        Option<u64>,
-        Option<u64>,
-        Vec<ChunkIndex>,
-    )> {
+    fn read_metadata(data: &[u8]) -> Result<McapMetadata> {
         let mut cursor = Cursor::new(data);
 
         // Verify and skip magic
@@ -191,7 +182,6 @@ impl ParallelMcapReader {
                     channels = data_channels;
                 }
 
-                let message_count = stats.message_count;
                 let start_time = if stats.message_start_time > 0 {
                     Some(stats.message_start_time)
                 } else {
@@ -202,17 +192,30 @@ impl ParallelMcapReader {
                 } else {
                     None
                 };
-                Ok((channels, message_count, start_time, end_time, chunk_indexes))
+                Ok(McapMetadata {
+                    channels,
+                    message_count: stats.message_count,
+                    start_time,
+                    end_time,
+                    chunk_indexes,
+                })
             }
             Ok(None) | Err(_) => {
                 // No summary or failed to read - scan the data section
                 let (channels, chunk_indexes) = Self::scan_data_section(data)?;
-                Ok((channels, 0, None, None, chunk_indexes))
+                Ok(McapMetadata {
+                    channels,
+                    message_count: 0,
+                    start_time: None,
+                    end_time: None,
+                    chunk_indexes,
+                })
             }
         }
     }
 
     /// Read summary section from footer.
+    #[allow(clippy::type_complexity)]
     pub fn read_summary_from_footer(
         data: &[u8],
     ) -> Result<Option<(HashMap<u16, ChannelInfo>, McapStatistics, Vec<ChunkIndex>)>> {
@@ -229,7 +232,7 @@ impl ParallelMcapReader {
 
         // Find footer by checking trailing magic
         let magic_start = file_len - 8;
-        if &data[magic_start..] != MCAP_MAGIC {
+        if data[magic_start..] != MCAP_MAGIC {
             return Ok(None);
         }
 
@@ -262,6 +265,7 @@ impl ParallelMcapReader {
     }
 
     /// Read the summary section starting at the given offset.
+    #[allow(clippy::type_complexity)]
     fn read_summary_section(
         data: &[u8],
         summary_start: usize,
@@ -889,6 +893,24 @@ pub struct McapStatistics {
     message_end_time: u64,
 }
 
+/// MCAP file metadata extracted from the file.
+///
+/// Contains the channels, message count, timestamps, and chunk indexes
+/// needed to read an MCAP file efficiently.
+#[derive(Debug, Clone)]
+struct McapMetadata {
+    /// Channel ID to channel info mapping
+    channels: HashMap<u16, ChannelInfo>,
+    /// Total message count
+    message_count: u64,
+    /// Earliest message timestamp (nanoseconds)
+    start_time: Option<u64>,
+    /// Latest message timestamp (nanoseconds)
+    end_time: Option<u64>,
+    /// Chunk indexes for parallel reading
+    chunk_indexes: Vec<ChunkIndex>,
+}
+
 /// Raw message data extracted from a chunk.
 #[derive(Debug)]
 struct McapMessageData {
@@ -1272,7 +1294,7 @@ mod tests {
     fn test_chunk_header_with_invalid_offset() {
         // Test chunk reading with truncated data that causes read failure
         // The function reads: u64 + u64 + u64 + u32 + u32 + string + u64 = at least 40 bytes
-        let file_data = vec![0u8; 10]; // Too small for a valid chunk header
+        let file_data = [0u8; 10]; // Too small for a valid chunk header
 
         let result = ParallelMcapReader::read_chunk_header(&mut Cursor::new(&file_data[..]), 0, 0);
 

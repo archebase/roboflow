@@ -14,7 +14,7 @@
 /// let preset = CompressionPreset::Balanced; // Level 3
 /// assert_eq!(preset.compression_level(), 3);
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CompressionPreset {
     /// Fast compression (ZSTD level 1).
     ///
@@ -30,6 +30,7 @@ pub enum CompressionPreset {
     /// - General-purpose use
     /// - Good balance of speed and size
     /// - Most common scenarios
+    #[default]
     Balanced,
 
     /// Slow compression (ZSTD level 9).
@@ -63,12 +64,6 @@ impl CompressionPreset {
             CompressionPreset::Balanced => 16 * 1024 * 1024, // 16MB
             CompressionPreset::Slow => 16 * 1024 * 1024,     // 16MB
         }
-    }
-}
-
-impl Default for CompressionPreset {
-    fn default() -> Self {
-        CompressionPreset::Balanced
     }
 }
 

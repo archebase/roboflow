@@ -344,7 +344,6 @@ mod tests {
     #[test]
     fn test_sequential_bag_reader_compiles() {
         // Just verify the types compile correctly
-        assert!(true);
     }
 
     #[test]

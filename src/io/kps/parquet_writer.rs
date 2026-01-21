@@ -147,9 +147,8 @@ impl ParquetKpsWriter {
                 continue;
             };
 
-            // TODO: Get actual message timestamp from raw message
-            // For now, use a sequential timestamp
-            let timestamp = (frame_index as i64) * 1_000_000; // microseconds
+            // Extract actual message timestamp from raw message
+            let timestamp = raw_msg.log_time / 1000; // Convert nanoseconds to microseconds
             self.timestamps.push(timestamp);
 
             match &mapping.mapping_type {

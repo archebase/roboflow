@@ -88,7 +88,7 @@ impl WriterBuilder {
 
         // For new files, we trust the extension
         let format = match format {
-            Ok(f) if matches!(f, crate::io::metadata::FileFormat::Unknown) => {
+            Ok(crate::io::metadata::FileFormat::Unknown) => {
                 // If unknown, try extension
                 match path.extension().and_then(|e| e.to_str()) {
                     Some("mcap") => crate::io::metadata::FileFormat::Mcap,

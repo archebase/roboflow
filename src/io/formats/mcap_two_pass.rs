@@ -261,7 +261,7 @@ impl TwoPassMcapReader {
                         compression,
                         message_start_time,
                         message_end_time,
-                        message_count: message_count as u64,
+                        message_count,
                     });
 
                     // Skip to next record
@@ -377,7 +377,7 @@ impl TwoPassMcapReader {
                     cursor.set_position(record_end);
                 }
                 // Attachment (0x09), AttachmentIndex (0x0A), Statistics (0x0B) - Skip
-                0x09 | 0x0A | 0x0B => {
+                0x09..=0x0B => {
                     cursor.set_position(record_end);
                 }
                 // ChunkIndex (0x08), MessageIndex (0x07) - Skip (only in summary)
@@ -742,6 +742,5 @@ mod tests {
     fn test_two_pass_mcap_reader_compile() {
         // This test just verifies that the type compiles correctly
         // We can't create a TwoPassMcapReader without a valid MCAP file
-        assert!(true);
     }
 }

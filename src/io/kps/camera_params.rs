@@ -170,7 +170,7 @@ impl CameraParamCollector {
     pub fn update_intrinsics(&mut self, name: &str, intrinsics: IntrinsicParams) {
         self.cameras
             .entry(name.to_string())
-            .or_insert_with(CameraParams::default)
+            .or_default()
             .intrinsics = Some(intrinsics);
     }
 
@@ -178,7 +178,7 @@ impl CameraParamCollector {
     pub fn update_extrinsics(&mut self, name: &str, extrinsics: ExtrinsicParams) {
         self.cameras
             .entry(name.to_string())
-            .or_insert_with(CameraParams::default)
+            .or_default()
             .extrinsics = Some(extrinsics);
     }
 
@@ -393,7 +393,7 @@ impl CameraParamCollector {
 
                         transforms
                             .entry(child_frame_id)
-                            .or_insert_with(Vec::new)
+                            .or_default()
                             .push((frame_id.clone(), extrinsics));
                     }
                 }

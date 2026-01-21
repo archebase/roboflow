@@ -241,8 +241,8 @@ impl PrefetcherStage {
                     self.emit_block(block)?;
                     sequence += 1;
                 }
-                0x02 | 0x03 | 0x04 => {
-                    // Schema (0x02), Channel (0x03), Message (0x04)
+                0x02..=0x0F => {
+                    // Schema (0x02), Channel (0x03), Message (0x04), etc.
                     // These are metadata, emit as metadata block
                     let block = PrefetchedBlock {
                         sequence,
@@ -254,9 +254,6 @@ impl PrefetcherStage {
                     };
                     self.emit_block(block)?;
                     sequence += 1;
-                }
-                0x02..=0x0F => {
-                    // Other known records, skip for now
                 }
                 _ => {
                     // Unknown opcode, stop scanning

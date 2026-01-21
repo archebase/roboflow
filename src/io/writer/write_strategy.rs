@@ -3,18 +3,13 @@
 /// Writing strategy selector.
 ///
 /// Determines how data is written to the file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WriteStrategy {
     /// Sequential writing - processes messages one by one
+    #[default]
     Sequential,
     /// Parallel writing - compresses chunks in parallel
     Parallel,
-}
-
-impl Default for WriteStrategy {
-    fn default() -> Self {
-        WriteStrategy::Sequential
-    }
 }
 
 /// Sequential writing strategy.
@@ -32,16 +27,10 @@ impl SequentialWrite {
 /// Parallel writing strategy.
 ///
 /// Compresses chunks in parallel for improved throughput.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ParallelWrite {
     /// Number of compression threads
     pub num_threads: Option<usize>,
-}
-
-impl Default for ParallelWrite {
-    fn default() -> Self {
-        Self { num_threads: None }
-    }
 }
 
 impl ParallelWrite {

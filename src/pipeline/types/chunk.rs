@@ -291,8 +291,7 @@ impl<'arena> Drop for MessageChunk<'arena> {
             // No pool - we need to free the arena
             // Reconstruct the Box to drop it properly
             unsafe {
-                let _ =
-                    Box::from_raw(self.arena as *mut crate::pipeline::types::arena::MessageArena);
+                let _ = Box::from_raw(self.arena);
             }
         }
     }

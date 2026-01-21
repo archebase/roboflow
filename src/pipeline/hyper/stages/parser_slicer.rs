@@ -149,7 +149,7 @@ impl ParserSlicerStage {
             blocks_processed: self.stats.blocks_processed.load(Ordering::Relaxed),
             messages_parsed: self.stats.messages_parsed.load(Ordering::Relaxed),
             chunks_produced: self.stats.chunks_produced.load(Ordering::Relaxed),
-            decompress_time_sec: 0.0, // TODO: track per-worker
+            decompress_time_sec: 0.0, // Aggregate from workers if needed
             parse_time_sec: duration.as_secs_f64(),
         };
 
@@ -377,6 +377,7 @@ impl ParserSlicerStage {
     }
 
     /// Parse MCAP message records from decompressed chunk data.
+    #[allow(clippy::type_complexity)]
     fn parse_mcap_messages(data: &[u8]) -> Result<Vec<(u16, u64, u64, u32, Vec<u8>)>> {
         const OP_MESSAGE: u8 = 0x05;
 
