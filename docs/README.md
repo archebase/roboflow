@@ -15,7 +15,6 @@ This directory contains detailed architecture and design documentation for Roboc
 ### For Users
 
 - See the main [README.md](../README.md) for installation and usage
-- See [benches/README.md](../benches/README.md) for benchmarking guide
 - See [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution guidelines
 
 ### For Contributors
@@ -31,7 +30,6 @@ This directory contains detailed architecture and design documentation for Roboc
 - [PIPELINE.md - Performance Characteristics](PIPELINE.md#performance-characteristics)
 - [PIPELINE.md - Auto-Configuration](PIPELINE.md#auto-configuration)
 - [MEMORY.md - Performance Impact](MEMORY.md#performance-impact)
-- [benches/README.md](../benches/README.md) - Benchmarking and profiling
 
 ## Key Features
 
@@ -56,12 +54,11 @@ Hardware-aware automatic tuning with three performance modes:
 Type-safe builder API for easy file processing:
 
 ```rust
-use robocodec::pipeline::fluent::{Robocodec, CompressionPreset};
+use robocodec::pipeline::fluent::Robocodec;
 
 // Standard pipeline
 Robocodec::open(vec!["input.bag"])?
     .write_to("output.mcap")
-    .with_compression(CompressionPreset::Balanced)
     .run()?;
 
 // HyperPipeline with auto-configuration
@@ -72,11 +69,16 @@ Robocodec::open(vec!["input.bag"])?
     .run()?;
 ```
 
-### GPU Compression
+### KPS Format Writer
 
-Experimental GPU acceleration (feature flags required):
-- `gpu-nvcomp`: NVIDIA GPUs via nvCOMP (Linux)
-- `gpu-accelerate`: Apple Silicon via libcompression
+Experimental KPS dataset format writer for robotics learning applications:
+
+```rust
+Robocodec::open(vec!["input.mcap"])?
+    .write_to_kps("output_dir")
+    .config("kps_config.toml")
+    .run()?;
+```
 
 ## Related Resources
 
@@ -88,17 +90,26 @@ Experimental GPU acceleration (feature flags required):
   - Fluent API: `src/pipeline/fluent/`
   - Auto-configuration: `src/pipeline/auto_config.rs`
   - GPU: `src/pipeline/gpu/`
-- Types: `src/pipeline/types/`
-- Format handlers: `src/format/`
-- Encoding: `src/encoding/`
+- I/O Layer: `src/io/`
+  - Arena allocation: `src/io/arena.rs`
+  - Format handlers: `src/io/formats/`
+  - Format readers: `src/io/reader/`
+  - Format writers: `src/io/writer/`
+- Transform: `src/transform/`
+- Format Library: `robofmt/src/`
+  - Encoding: `robofmt/src/encoding/`
+  - Schema parsing: `robofmt/src/schema/`
 
 ### Tools
 
 - Convert: `src/bin/convert.rs` - Unified convert command
-- Benchmark: `benches/profiler.rs` - Profiling and benchmarking tool
+- Extract: `src/bin/extract.rs` - Extract data from files
+- Inspect: `src/bin/inspect.rs` - Inspect file metadata
+- Schema: `src/bin/schema.rs` - Work with schema definitions
+- Search: `src/bin/search.rs` - Search through data files
 
 ### Configuration
 
 - Transformation configs: TOML-based topic and type mapping
-- LeRobot configs: Dataset conversion settings
+- KPS configs: Dataset conversion settings
 - Performance modes: Auto-detected hardware parameters

@@ -22,17 +22,17 @@ pub mod schema;
 pub mod io;
 
 // Re-export key I/O types
-pub use io::{MmapArena, MmapArenaRef};
 pub use io::metadata::{ChannelInfo, FileFormat, FileInfo, MessageMetadata, RawMessage};
 pub use io::traits::{FormatReader, FormatWriter};
+pub use io::{MmapArena, MmapArenaRef};
 
 // Format-specific readers
-pub mod mcap;
 pub mod bag;
+pub mod mcap;
 
 // Re-export format types
-pub use mcap::{McapFormat, ParallelMcapReader};
 pub use bag::{BagFormat, ParallelBagReader};
+pub use mcap::{McapFormat, ParallelMcapReader};
 
 /// Decoder trait for generic decoding operations.
 pub trait Decoder: Send + Sync {

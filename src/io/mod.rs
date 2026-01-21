@@ -72,10 +72,9 @@ pub use writer::{
 
 // Re-export from crate::formats for backwards compatibility
 pub use crate::formats::{
-    bag::{BagFormat, ParallelBagReader, SequentialBagReader, SequentialBagRawIter},
+    bag::{BagFormat, ParallelBagReader, SequentialBagRawIter, SequentialBagReader},
     mcap::{McapFormat, ParallelMcapReader, SequentialMcapReader, SequentialRawIter},
 };
 
 // Keep the formats module for KPS (which remains at io::formats::kps)
 pub mod formats;
-

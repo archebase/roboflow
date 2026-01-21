@@ -14,17 +14,18 @@
 Robocodec is organized as a Cargo workspace with two crates:
 
 - **`robofmt`** - Low-level robotics data format library
-  - Format-specific readers and writers (MCAP, ROS1 bag)
   - Message codecs (CDR, Protobuf, JSON)
   - Schema parser (ROS .msg, ROS2 IDL, OMG IDL)
   - Core types and error handling
+  - Arena allocation primitives
 
 - **`robocodec`** - High-level pipeline and conversion tool
+  - Format-specific readers and writers (MCAP, ROS1 bag)
   - Parallel processing pipelines (Standard, HyperPipeline)
   - Fluent API for batch operations
   - Data transformations (topic renaming, type normalization)
   - Python bindings via PyO3
-  - KPS dataset format support (experimental)
+  - KPS dataset format writer (experimental)
 
 ## Features
 
@@ -172,25 +173,19 @@ Robocodec::open(vec!["input.bag"])?
 
 > **⚠️ Experimental**: The KPS conversion API is experimental and may change between versions.
 
-Convert robotics data to KPS dataset format with v1.2 specification support:
+Convert robotics data to KPS dataset format. The KPS writer integrates with the pipeline for efficient dataset generation:
 
 ```rust
-use robocodec::io::formats::kps::{
-    Hdf5KpsWriter, KpsConfig, V12DeliveryBuilder
-};
+use robocodec::pipeline::fluent::Robocodec;
 
-// Create KPS writer with configuration
-let config = KpsConfig::from_file("config.toml")?;
-let writer = Hdf5KpsWriter::new("output_dir", config)?;
-
-// Or use the v1.2 delivery builder
-let delivery = V12DeliveryBuilder::new()
-    .robot("Kuavo4Pro")
-    .end_effector("Dexhand")
-    .scene("Housekeeper")
-    .task("Dispose_of_takeout_containers")
-    .build()?;
+// Convert to KPS format using the fluent API
+Robocodec::open(vec!["input.mcap"])?
+    .write_to_kps("output_dir")
+    .config("kps_config.toml")
+    .run()?;
 ```
+
+KPS configuration format (TOML):
 
 KPS configuration format (TOML):
 

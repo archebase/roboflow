@@ -826,11 +826,8 @@ impl FormatWriter for BagWriter {
     }
 
     fn write(&mut self, message: &RawMessage) -> Result<()> {
-        let bag_msg = BagMessage::from_raw(
-            message.channel_id,
-            message.log_time,
-            message.data.clone(),
-        );
+        let bag_msg =
+            BagMessage::from_raw(message.channel_id, message.log_time, message.data.clone());
         self.write_message(&bag_msg)
     }
 

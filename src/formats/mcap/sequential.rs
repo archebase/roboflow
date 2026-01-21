@@ -86,8 +86,7 @@ impl SequentialMcapReader {
                         .as_ref()
                         .and_then(|s| summary.schemas.get(&s.id));
 
-                    let schema_text =
-                        schema.and_then(|s| String::from_utf8(s.data.to_vec()).ok());
+                    let schema_text = schema.and_then(|s| String::from_utf8(s.data.to_vec()).ok());
                     let schema_data = schema.map(|s| s.data.to_vec());
                     let schema_encoding = schema.map(|s| s.encoding.clone());
 

@@ -18,8 +18,8 @@ use rayon::prelude::*;
 use crate::io::filter::ChannelFilter;
 use crate::io::metadata::{ChannelInfo, FileFormat, RawMessage};
 use crate::io::traits::{
-    FormatReader, FormatWriter, ParallelReader, ParallelReaderConfig, ParallelReaderStats,
-    MessageChunkData,
+    FormatReader, FormatWriter, MessageChunkData, ParallelReader, ParallelReaderConfig,
+    ParallelReaderStats,
 };
 use crate::{CodecError, Result};
 
@@ -41,9 +41,7 @@ impl BagFormat {
     }
 
     /// Create a BAG writer (not yet implemented).
-    pub fn create_writer<P: AsRef<Path>>(
-        _path: P,
-    ) -> Result<Box<dyn FormatWriter>> {
+    pub fn create_writer<P: AsRef<Path>>(_path: P) -> Result<Box<dyn FormatWriter>> {
         Err(CodecError::unsupported(
             "BAG writer not yet implemented in robofmt",
         ))

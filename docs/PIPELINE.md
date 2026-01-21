@@ -4,13 +4,12 @@ This document describes the pipeline architectures used in Robocodec for high-pe
 
 ## Overview
 
-Robocodec provides **three pipeline implementations** optimized for different use cases:
+Robocodec provides **two pipeline implementations** optimized for different use cases:
 
 | Pipeline | Stages | Target Throughput | Use Case |
 |----------|--------|-------------------|----------|
 | **Standard** | 4 | ~200 MB/s | Balanced performance, simplicity |
 | **HyperPipeline** | 7 | ~1800+ MB/s | Maximum throughput, large-scale conversions |
-| **KPS Pipeline** | 5+ | Varies | Robotics dataset conversion (experimental) |
 
 ```
 Standard Pipeline:
@@ -24,12 +23,6 @@ HyperPipeline:
 │ Prefetch │→│  Parse  │→│  Batch  │→│ Transform │→│ Compress  │→│ CRC │→│ Writer │
 │   (1)    │  │  (1)    │  │  (1)    │  │   (1)     │  │   (N)     │  │(1)  │  │  (1)   │
 └──────────┘ └─────────┘ └─────────┘ └──────────┘ └───────────┘ └─────┘ └────────┘
-
-KPS Pipeline (experimental):
-┌─────────┐ ┌───────────┐ ┌──────────────┐ ┌───────┐ ┌──────────┐
-│ Decode  │→│TimeAlign  │→│CameraExtract │→│Encode │→│ Delivery │
-│  (1)    │  │   (1)     │  │    (1)       │  │  (N)  │  │   (1)    │
-└─────────┘ └───────────┘ └──────────────┘ └───────┘ └──────────┘
 ```
 
 ## Design Principles
@@ -66,7 +59,7 @@ Input File → Reader → [Transform] → Compression → Writer → Output File
 
 **Characteristics:**
 - Single-threaded (sequential file I/O)
-- Format-agnostic via `BagSource` trait
+- Format-agnostic via unified reader interface
 - Chunk-based batching for efficient compression
 
 #### Transform Stage (Optional)
@@ -109,12 +102,12 @@ Input File → Reader → [Transform] → Compression → Writer → Output File
 **Characteristics:**
 - Single-threaded (sequential writes)
 - Ordering buffer for reordering
-- Format-agnostic via `BagWriter` trait
+- Format-agnostic via unified writer interface
 
 ### Configuration
 
 ```rust
-use robocodec::pipeline::Orchestrator;
+use robocodec::pipeline::{Orchestrator, PipelineConfig};
 
 let config = PipelineConfig {
     chunk_size: 16 * 1024 * 1024,  // 16MB
@@ -304,225 +297,6 @@ let report = pipeline.run()?;
 
 ---
 
-## KPS Pipeline (Experimental)
-
-> **⚠️ Experimental Feature**: The KPS pipeline is currently experimental and under active development. APIs may change between versions.
-
-**Location**: `src/pipeline/kps/`
-
-### Overview
-
-The KPS (Kupas) pipeline converts robotics data from MCAP format to KPS dataset format for robotics learning applications. It supports the v1.2 specification with compliant directory structures and statistics tracking.
-
-### Architecture
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                        KPS Pipeline (5+ stages)                      │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  MCAP Input                                                          │
-│     │                                                                │
-│     ▼                                                                │
-│  ┌─────────┐   Decoded messages    ┌──────────────┐                 │
-│  │ Decode  │──────────────────────→│ Time Aligner │                 │
-│  │  Stage  │                       │              │                 │
-│  └─────────┘                       └──────────────┘                 │
-│                                           │                          │
-│                                           ▼                          │
-│                                    ┌──────────────┐                 │
-│                                    │Camera Extract │                 │
-│                                    │    (opt)      │                 │
-│                                    └──────────────┘                 │
-│                                           │                          │
-│                                           ▼                          │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │                    Encoders (parallel)                       │   │
-│  │  ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐    │   │
-│  │  │ HDF5    │ │ Parquet  │ │  Video   │ │    Audio     │    │   │
-│  │  │ Writer  │ │  Writer  │ │ Encoder  │ │   Writer     │    │   │
-│  │  └─────────┘ └──────────┘ └──────────┘ └──────────────┘    │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                                           │                          │
-│                                           ▼                          │
-│  ┌─────────┐   Final dataset        ┌──────────┐                   │
-│  │Delivery │───────────────────────→│   Output │                   │
-│  │ Builder │                        │  Directory│                   │
-│  └─────────┘                        └──────────┘                   │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-### Stages
-
-#### 1. Decode Stage
-
-**Location**: `src/pipeline/kps/mod.rs`
-
-- Opens and reads MCAP file
-- Decodes CDR/Protobuf messages
-- Groups messages by timestamp
-- Extracts image data for video encoding
-
-**Characteristics:**
-- Schema-aware decoding using message definitions
-- Topic-based message routing
-- Timestamp ordering
-
-#### 2. Time Alignment Stage
-
-**Location**: `src/pipeline/kps/traits/time_alignment.rs`
-
-Resamples data to target FPS:
-
-| Strategy | Description |
-|----------|-------------|
-| LinearInterpolation | Linear interpolation between samples |
-| NearestNeighbor | Use nearest sample without interpolation |
-| HoldLastValue | Hold last value until next sample arrives |
-
-**Configuration:**
-```rust
-pub struct TimeAlignerConfig {
-    pub target_fps: u32,
-    pub strategy: TimeAlignmentStrategyType,
-    pub state_interpolation_max_gap_ns: u64,
-    pub image_sync_tolerance_ns: u64,
-}
-```
-
-#### 3. Camera Extraction Stage (Optional)
-
-**Location**: `src/io/kps/delivery_v12.rs`
-
-- Extracts camera parameters from TF messages
-- Reads camera_info topics
-- Generates calibration files
-
-**Configuration:**
-```rust
-pub struct CameraExtractorConfig {
-    pub enabled: bool,
-    pub camera_topics: HashMap<String, String>,
-    pub parent_frame: String,
-    pub camera_info_suffix: String,
-    pub tf_topic: String,
-}
-```
-
-#### 4. Encode Stage
-
-**Location**: `src/io/kps/writers/`
-
-Multiple parallel encoders:
-
-| Encoder | Output | Feature Flag |
-|---------|--------|--------------|
-| `V12Hdf5Writer` | HDF5 with v1.2 structure | `kps-hdf5` |
-| `OriginalHdf5Writer` | Original unaligned data | `kps-hdf5` |
-| `ParquetWriter` | Parquet data files | `kps-parquet` |
-| `Mp4Encoder` | MP4 video files | default |
-| `DepthEncoder` | Depth video | `kps-depth` |
-| `AudioWriter` | WAV audio files | default |
-
-#### 5. Delivery Stage
-
-**Location**: `src/io/kps/delivery_v12.rs`
-
-Creates v1.2 compliant directory structure:
-
-```
-{Robot}-{EndEffector}-{Scene}/
-├── task_info/
-│   └── {Scene}-{SubScene}-{Task}.json
-├── {Scene}/
-│   └── {SubScene}/
-│       └── {Task}-{stats}/
-│           ├── {UUID}/
-│           │   ├── camera/
-│           │   │   ├── video/
-│           │   │   └── depth/
-│           │   ├── parameters/
-│           │   ├── proprio_stats/
-│           │   └── audio/
-└── URDF/
-    └── {Robot}-{EndEffector}-{version}/
-```
-
-### Configuration
-
-**TOML Configuration:**
-```toml
-[dataset]
-name = "my_dataset"
-fps = 30
-robot_type = "Kuavo4Pro"
-
-[[mappings]]
-topic = "/camera/high"
-feature = "observation.camera_0"
-type = "image"
-
-[[mappings]]
-topic = "/joint_states"
-feature = "observation.joint_position"
-type = "state"
-
-[output]
-formats = ["parquet"]
-image_format = "mp4"
-```
-
-**Fluent API:**
-```rust
-use robocodec::pipeline::kps::KpsConverter;
-
-// Simple conversion
-let report = KpsConverter::new("input.mcap", "output_dir")
-    .config("config.toml")
-    .run()?;
-
-// V1.2 delivery with full configuration
-let report = KpsConverter::new("input.mcap", "output_dir")
-    .config("config.toml")
-    .v12_delivery()
-    .robot("Kuavo4Pro")
-    .end_effector("Dexhand")
-    .scene("Housekeeper")
-    .sub_scene("Kitchen")
-    .task("Dispose_of_takeout_containers")
-    .calibration("robot_calibration.json")
-    .urdf("robot.urdf")
-    .with_statistics()
-    .run()?;
-```
-
-### Statistics Tracking
-
-The pipeline tracks statistics during conversion and updates the directory name:
-
-```rust
-pub struct TaskStatistics {
-    pub total_bytes: u64,
-    pub frame_count: usize,
-    pub duration_hours: f64,
-}
-
-// Directory name format: {Task}-{size}GB_{counts}counts_{duration}h
-// Example: Dispose_of_takeout_containers-53p21GB_2000counts_85p30h
-```
-
-### Feature Flags
-
-| Flag | Description |
-|------|-------------|
-| `kps-hdf5` | HDF5 dataset support |
-| `kps-parquet` | Parquet dataset support |
-| `kps-depth` | Depth video support |
-| `kps-all` | All KPS features |
-
----
-
 ## Auto-Configuration
 
 **Location**: `src/pipeline/auto_config.rs`
@@ -566,12 +340,11 @@ pub enum PerformanceMode {
 Type-safe builder API for both pipelines:
 
 ```rust
-use robocodec::pipeline::fluent::{Robocodec, CompressionPreset};
+use robocodec::pipeline::fluent::Robocodec;
 
 // Standard pipeline
 Robocodec::open(vec!["input.bag"])?
     .write_to("output.mcap")
-    .with_compression(CompressionPreset::Balanced)
     .run()?;
 
 // HyperPipeline with auto-configuration
@@ -593,7 +366,7 @@ Robocodec::open(vec!["file1.bag", "file2.bag"])?
 
 ### MessageChunk
 
-**Location**: `src/pipeline/types/chunk.rs`
+**Location**: `src/io/arena.rs`
 
 ```rust
 pub struct MessageChunk<'arena> {
@@ -608,7 +381,7 @@ pub struct MessageChunk<'arena> {
 
 ### Arena Allocation
 
-**Location**: `src/pipeline/types/arena.rs`
+**Location**: `src/io/arena.rs`
 
 ```rust
 pub struct MessageArena {
@@ -637,13 +410,11 @@ See [MEMORY.md](MEMORY.md) for detailed memory management documentation.
 |----------|-----------------|
 | Standard | 100-200ms |
 | HyperPipeline | 50-100ms |
-| KPS Pipeline | Varies by encoding |
 
 ### Scalability
 
 - **Standard**: Scales to ~8 cores (compression-bound)
 - **HyperPipeline**: Scales to 16+ cores (better isolation)
-- **KPS Pipeline**: Scales with encoder parallelism
 
 ---
 
@@ -655,8 +426,8 @@ Experimental GPU acceleration:
 
 | Platform | Backend | Feature Flag |
 |----------|---------|--------------|
-| NVIDIA (Linux) | nvCOMP | `gpu-nvcomp` |
-| Apple Silicon | libcompression | `gpu-accelerate` |
+| NVIDIA (Linux) | nvCOMP | `gpu` |
+| Apple Silicon | libcompression | `gpu` |
 | Fallback | CPU ZSTD | default |
 
 ```rust
@@ -712,27 +483,10 @@ let pipeline = HyperPipeline::new(config)?;
 pipeline.run()?;
 ```
 
-### KPS Pipeline
-
-```rust
-use robocodec::pipeline::kps::KpsConverter;
-
-let report = KpsConverter::new("input.mcap", "output_dir")
-    .config("config.toml")
-    .v12_delivery()
-    .robot("Kuavo4Pro")
-    .end_effector("Dexhand")
-    .scene("Housekeeper")
-    .sub_scene("Kitchen")
-    .task("Dispose_of_takeout_containers")
-    .with_statistics()
-    .run()?;
-```
-
 ### Fluent API
 
 ```rust
-use robocodec::pipeline::fluent::{Robocodec, CompressionPreset};
+use robocodec::pipeline::fluent::Robocodec;
 
 Robocodec::open(vec!["input.bag"])?
     .write_to("output.mcap")
@@ -741,10 +495,47 @@ Robocodec::open(vec!["input.bag"])?
     .run()?;
 ```
 
+### KPS Format Conversion
+
+The KPS format writer is available through the fluent API:
+
+```rust
+use robocodec::pipeline::fluent::Robocodec;
+
+// Convert robotics data to KPS dataset format
+Robocodec::open(vec!["input.mcap"])?
+    .write_to_kps("output_dir")
+    .config("kps_config.toml")
+    .run()?;
+```
+
+KPS configuration format (TOML):
+
+```toml
+[dataset]
+name = "my_dataset"
+fps = 30
+robot_type = "Kuavo4Pro"
+
+[[mappings]]
+topic = "/camera/high"
+feature = "observation.camera_0"
+type = "image"
+
+[[mappings]]
+topic = "/joint_states"
+feature = "observation.joint_position"
+type = "state"
+
+[output]
+formats = ["parquet"]
+image_format = "mp4"
+```
+
 ---
 
 ## See Also
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) - High-level system architecture
 - [MEMORY.md](MEMORY.md) - Memory management details
-- [benches/README.md](../benches/README.md) - Benchmarking guide
+- [README.md](../README.md) - Usage documentation

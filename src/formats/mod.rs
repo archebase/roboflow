@@ -20,6 +20,5 @@ pub mod bag;
 pub mod mcap;
 
 // Re-exports for convenience
-pub use mcap::{McapFormat, ParallelMcapReader, SequentialMcapReader};
 pub use bag::{BagFormat, ParallelBagReader, SequentialBagReader};
-
+pub use mcap::{McapFormat, ParallelMcapReader, SequentialMcapReader};

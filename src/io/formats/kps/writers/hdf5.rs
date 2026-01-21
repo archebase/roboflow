@@ -401,7 +401,10 @@ impl KpsWriter for StreamingHdf5Writer {
                     .unwrap_or(&mapping.feature);
 
                 let is_observation = mapping.feature.starts_with("observation.");
-                let is_image = matches!(mapping.mapping_type, crate::io::formats::kps::MappingType::Image);
+                let is_image = matches!(
+                    mapping.mapping_type,
+                    crate::io::formats::kps::MappingType::Image
+                );
 
                 // Clone the appropriate group to avoid borrow checker issues
                 // hdf5::Group uses reference counting internally

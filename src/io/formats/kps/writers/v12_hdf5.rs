@@ -41,7 +41,9 @@ use std::path::Path;
 
 use crate::core::Result;
 use crate::io::formats::kps::config::KpsConfig;
-use crate::io::formats::kps::writers::base::{AlignedFrame, KpsWriter, KpsWriterError, WriterStats};
+use crate::io::formats::kps::writers::base::{
+    AlignedFrame, KpsWriter, KpsWriterError, WriterStats,
+};
 use crate::io::metadata::ChannelInfo;
 
 /// Dataset specification for v1.2 HDF5 structure.

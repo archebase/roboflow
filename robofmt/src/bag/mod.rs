@@ -5,5 +5,5 @@
 pub mod parser;
 pub mod reader;
 
-pub use reader::{BagFormat, ParallelBagReader, BagRawIter};
-pub use parser::{BagConnection, BagChunkInfo, BagParser, BagMessageData};
+pub use parser::{BagChunkInfo, BagConnection, BagMessageData, BagParser};
+pub use reader::{BagFormat, BagRawIter, ParallelBagReader};

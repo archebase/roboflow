@@ -107,20 +107,16 @@ impl McapReader {
         let path_ref = path.as_ref();
         let path_str = path_ref.to_string_lossy().to_string();
 
-        let file = File::open(path_ref).map_err(|e| {
-            CodecError::encode("McapReader", format!("Failed to open file: {e}"))
-        })?;
+        let file = File::open(path_ref)
+            .map_err(|e| CodecError::encode("McapReader", format!("Failed to open file: {e}")))?;
 
         let file_size = file
             .metadata()
-            .map_err(|e| {
-                CodecError::encode("McapReader", format!("Failed to get metadata: {e}"))
-            })?
+            .map_err(|e| CodecError::encode("McapReader", format!("Failed to get metadata: {e}")))?
             .len();
 
-        let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
-            CodecError::encode("McapReader", format!("Failed to mmap file: {e}"))
-        })?;
+        let mmap = unsafe { memmap2::Mmap::map(&file) }
+            .map_err(|e| CodecError::encode("McapReader", format!("Failed to mmap file: {e}")))?;
 
         let mut cursor = Cursor::new(&mmap[..]);
 
@@ -224,7 +220,10 @@ impl McapReader {
     }
 
     /// Read the summary section.
-    fn read_summary_section(&self, summary_start: u64) -> Result<(Vec<ChunkIndex>, McapStatistics)> {
+    fn read_summary_section(
+        &self,
+        summary_start: u64,
+    ) -> Result<(Vec<ChunkIndex>, McapStatistics)> {
         let mut cursor = Cursor::new(&self.mmap[..]);
         cursor.set_position(summary_start);
 
@@ -265,13 +264,16 @@ impl McapReader {
             }
         }
 
-        Ok((chunk_indexes, stats.unwrap_or(McapStatistics {
-            message_count: 0,
-            channel_count: 0,
-            schema_count: 0,
-            message_start_time: 0,
-            message_end_time: 0,
-        })))
+        Ok((
+            chunk_indexes,
+            stats.unwrap_or(McapStatistics {
+                message_count: 0,
+                channel_count: 0,
+                schema_count: 0,
+                message_start_time: 0,
+                message_end_time: 0,
+            }),
+        ))
     }
 
     /// Read a chunk index record.
@@ -381,7 +383,9 @@ impl McapReader {
                     }
                 }
                 OP_CHANNEL => {
-                    if let Ok((id, topic, schema_id, encoding)) = self.read_channel(&mut cursor, len) {
+                    if let Ok((id, topic, schema_id, encoding)) =
+                        self.read_channel(&mut cursor, len)
+                    {
                         channel_records.insert(id, (topic, schema_id, encoding));
                     }
                 }
@@ -422,10 +426,7 @@ impl McapReader {
                 ChannelInfo {
                     id,
                     topic,
-                    message_type: schema
-                        .as_ref()
-                        .map(|s| s.name.clone())
-                        .unwrap_or_default(),
+                    message_type: schema.as_ref().map(|s| s.name.clone()).unwrap_or_default(),
                     encoding,
                     schema: schema_text,
                     schema_data,
@@ -453,11 +454,20 @@ impl McapReader {
         let mut data = vec![0u8; data_len];
         cursor.read_exact(&mut data)?;
 
-        Ok(SchemaInfo { id, name, encoding, data })
+        Ok(SchemaInfo {
+            id,
+            name,
+            encoding,
+            data,
+        })
     }
 
     /// Read a channel record.
-    fn read_channel(&self, cursor: &mut Cursor<&[u8]>, _len: u64) -> Result<(u16, String, u16, String)> {
+    fn read_channel(
+        &self,
+        cursor: &mut Cursor<&[u8]>,
+        _len: u64,
+    ) -> Result<(u16, String, u16, String)> {
         let id = cursor.read_u16::<LittleEndian>()?;
         let topic_len = cursor.read_u16::<LittleEndian>()? as usize;
         let topic = Self::read_string(cursor, topic_len)?;
@@ -556,14 +566,13 @@ impl McapReader {
 
         match chunk_index.compression.as_str() {
             "zstd" | "zst" => Ok(zstd::bulk::decompress(
-            compressed_data,
-            chunk_index.uncompressed_size as usize,
-        )?),
-            "lz4" => lz4_flex::decompress(
-            compressed_data,
-            chunk_index.uncompressed_size as usize,
-        )
-        .map_err(|e| CodecError::encode("McapReader", format!("LZ4 decompression failed: {e}"))),
+                compressed_data,
+                chunk_index.uncompressed_size as usize,
+            )?),
+            "lz4" => lz4_flex::decompress(compressed_data, chunk_index.uncompressed_size as usize)
+                .map_err(|e| {
+                    CodecError::encode("McapReader", format!("LZ4 decompression failed: {e}"))
+                }),
             "" | "none" => Ok(compressed_data.to_vec()),
             _ => Err(CodecError::unsupported(format!(
                 "Unsupported compression: {}",
@@ -584,10 +593,7 @@ impl FormatReader for McapReader {
     }
 
     fn message_count(&self) -> u64 {
-        self.stats
-            .as_ref()
-            .map(|s| s.message_count)
-            .unwrap_or(0)
+        self.stats.as_ref().map(|s| s.message_count).unwrap_or(0)
     }
 
     fn start_time(&self) -> Option<u64> {
@@ -720,6 +726,9 @@ mod tests {
 
     #[test]
     fn test_mcap_magic() {
-        assert_eq!(&MCAP_MAGIC, &[0x89, b'M', b'C', b'A', b'P', 0x30, b'\r', b'\n']);
+        assert_eq!(
+            &MCAP_MAGIC,
+            &[0x89, b'M', b'C', b'A', b'P', 0x30, b'\r', b'\n']
+        );
     }
 }

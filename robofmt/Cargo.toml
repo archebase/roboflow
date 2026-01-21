@@ -43,15 +43,6 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 tikv-jemallocator = { version = "0.6", optional = true }
 pyo3 = { version = "0.25", features = ["abi3-py311", "extension-module"], optional = true }
 
-# KPS support (optional dependencies)
-hdf5 = { git = "https://github.com/archebase/hdf5-rs", optional = true }
-polars = { version = "0.41", features = ["parquet"], optional = true }
-png = { version = "0.17", optional = true }
-
 [features]
 python = ["pyo3"]
 jemalloc = ["dep:tikv-jemallocator"]
-kps-hdf5 = ["dep:hdf5"]
-kps-parquet = ["dep:polars"]
-kps-depth = ["dep:png"]
-kps-all = ["kps-hdf5", "kps-parquet", "kps-depth"]

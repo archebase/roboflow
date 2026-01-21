@@ -6,8 +6,8 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
-use robocodec::io::detection::detect_format;
 use robocodec::formats::McapFormat;
+use robocodec::io::detection::detect_format;
 use robocodec::io::metadata::{ChannelInfo, FileFormat, RawMessage};
 use robocodec::io::{ReadStrategy, ReaderBuilder};
 

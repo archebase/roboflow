@@ -19,5 +19,5 @@ pub mod writer;
 
 // Re-exports
 pub use parallel::{BagFormat, ParallelBagReader};
+pub use sequential::{BagSequentialFormat, SequentialBagRawIter, SequentialBagReader};
 pub use writer::{BagMessage, BagWriter};
-pub use sequential::{BagSequentialFormat, SequentialBagReader, SequentialBagRawIter};

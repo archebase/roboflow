@@ -6,5 +6,5 @@
 pub mod constants;
 pub mod reader;
 
-pub use reader::{McapFormat, ParallelMcapReader};
 pub use constants::MCAP_MAGIC;
+pub use reader::{McapFormat, ParallelMcapReader};

@@ -390,27 +390,6 @@ impl From<std::io::Error> for CodecError {
     }
 }
 
-// Forward KPS writer errors to codec errors
-#[cfg(feature = "kps-hdf5")]
-impl From<crate::io::formats::kps::writers::KpsWriterError> for CodecError {
-    fn from(err: crate::io::formats::kps::writers::KpsWriterError) -> Self {
-        CodecError::EncodeError {
-            codec: "KpsWriter".to_string(),
-            message: err.to_string(),
-        }
-    }
-}
-
-#[cfg(all(feature = "kps-parquet", not(feature = "kps-hdf5")))]
-impl From<crate::io::formats::kps::writers::KpsWriterError> for CodecError {
-    fn from(err: crate::io::formats::kps::writers::KpsWriterError) -> Self {
-        CodecError::EncodeError {
-            codec: "KpsWriter".to_string(),
-            message: err.to_string(),
-        }
-    }
-}
-
 /// Result type for codec operations.
 pub type Result<T> = std::result::Result<T, CodecError>;
 

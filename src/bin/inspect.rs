@@ -794,9 +794,7 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
                     }
                 }
                 Err(_) => {
-                    if let Ok(reader) =
-                        robocodec::formats::bag::ParallelBagReader::open(file)
-                    {
+                    if let Ok(reader) = robocodec::formats::bag::ParallelBagReader::open(file) {
                         if !reader.chunks().is_empty() {
                             return show_chunks(file, "bag");
                         }

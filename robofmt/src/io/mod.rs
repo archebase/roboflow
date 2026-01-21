@@ -17,9 +17,7 @@ pub mod traits;
 pub use traits::{FormatReader, FormatWriter};
 
 // Re-export parallel reader types
-pub use traits::{
-    ParallelReader, ParallelReaderConfig, ParallelReaderStats, MessageChunkData,
-};
+pub use traits::{MessageChunkData, ParallelReader, ParallelReaderConfig, ParallelReaderStats};
 
 // Filter for topic filtering
 pub mod filter;

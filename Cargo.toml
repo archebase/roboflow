@@ -92,10 +92,10 @@ io-uring = { version = "0.7", optional = true }
 
 # KPS features (optional, disabled by default)
 [features]
-kps-hdf5 = ["dep:hdf5", "robofmt/kps-hdf5"]
-kps-parquet = ["dep:polars", "robofmt/kps-parquet"]
-kps-depth = ["dep:png", "robofmt/kps-depth"]
-kps-all = ["kps-hdf5", "kps-parquet", "kps-depth", "robofmt/kps-all"]
+kps-hdf5 = ["dep:hdf5"]
+kps-parquet = ["dep:polars"]
+kps-depth = ["dep:png"]
+kps-all = ["kps-hdf5", "kps-parquet", "kps-depth"]
 # Python bindings via PyO3 (extension-module mode to prevent libpython linking)
 python = ["pyo3", "robofmt/python"]
 # Python extension module (alias for python, since extension-module is now default)

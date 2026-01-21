@@ -10,7 +10,10 @@
 //! for the parallel reader. The sequential reader uses the mcap crate for compatibility.
 
 // Re-export constants at module level for convenience
-pub use constants::{MCAP_MAGIC, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX, OP_DATA_END, OP_FOOTER, OP_HEADER, OP_MESSAGE, OP_SCHEMA, OP_STATISTICS, OP_SUMMARY_OFFSET};
+pub use constants::{
+    MCAP_MAGIC, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX, OP_DATA_END, OP_FOOTER, OP_HEADER,
+    OP_MESSAGE, OP_SCHEMA, OP_STATISTICS, OP_SUMMARY_OFFSET,
+};
 
 // Constants module (pub for format/writer/mcap.rs access)
 pub mod constants;
@@ -36,9 +39,9 @@ mod reader;
 // Re-exports
 pub use parallel::{ChunkIndex, McapFormat, ParallelMcapReader};
 pub use reader::{ChannelInfo, McapReader, RawMessage, TimestampedDecodedMessage};
-pub use writer::ParallelMcapWriter;
 pub use sequential::{SequentialMcapReader, SequentialRawIter};
 pub use two_pass::TwoPassMcapReader;
+pub use writer::ParallelMcapWriter;
 
 // Re-export DecodedMessage from core
 pub use crate::core::DecodedMessage;

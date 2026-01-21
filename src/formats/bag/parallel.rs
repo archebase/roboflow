@@ -17,7 +17,9 @@ use rayon::prelude::*;
 
 use crate::io::filter::ChannelFilter;
 use crate::io::metadata::{ChannelInfo, FileFormat, RawMessage};
-use crate::io::traits::{FormatReader, FormatWriter, ParallelReader, ParallelReaderConfig, ParallelReaderStats};
+use crate::io::traits::{
+    FormatReader, FormatWriter, ParallelReader, ParallelReaderConfig, ParallelReaderStats,
+};
 use crate::pipeline::types::arena_pool::global_pool;
 use crate::pipeline::types::chunk::MessageChunk;
 use crate::{CodecError, Result};

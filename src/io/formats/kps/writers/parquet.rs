@@ -297,7 +297,10 @@ impl KpsWriter for StreamingParquetWriter {
                 .unwrap_or(&mapping.feature);
 
             if mapping.feature.starts_with("observation.")
-                && matches!(mapping.mapping_type, crate::io::formats::kps::MappingType::State)
+                && matches!(
+                    mapping.mapping_type,
+                    crate::io::formats::kps::MappingType::State
+                )
             {
                 self.observation_buffer
                     .insert(feature_name.to_string(), Vec::new());

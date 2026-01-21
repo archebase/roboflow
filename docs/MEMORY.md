@@ -30,7 +30,7 @@ Arena Allocation (per chunk):
 
 ### MessageArena
 
-**Location**: `src/pipeline/types/arena.rs`
+**Location**: `src/io/arena.rs`
 
 ```rust
 pub struct MessageArena {
@@ -95,7 +95,7 @@ impl Drop for ArenaBlock {
 
 ## Arena Pool
 
-**Location**: `src/pipeline/types/arena_pool.rs`
+**Location**: `src/io/arena.rs`
 
 ### Purpose
 
@@ -127,7 +127,7 @@ impl ArenaPool {
 
 ## Buffer Pool
 
-**Location**: `src/pipeline/types/buffer_pool.rs`
+**Location**: `src/pipeline/compression/`
 
 ### Purpose
 
@@ -173,7 +173,7 @@ let compressed = zstd_compressor.compress_to_buffer(&input, &mut output)?;
 
 ### Arena Slices
 
-**Location**: `src/pipeline/types/arena.rs`
+**Location**: `src/io/arena.rs`
 
 ```rust
 #[repr(C)]
@@ -225,6 +225,8 @@ let slice = &mmap[offset..offset + length];
 ## Memory Layout
 
 ### MessageChunk
+
+**Location**: `src/io/arena.rs`
 
 ```rust
 pub struct MessageChunk<'arena> {
@@ -365,7 +367,6 @@ Arena allocation improves cache locality:
 
 ## References
 
-- `src/pipeline/types/arena.rs` - Arena implementation
-- `src/pipeline/types/arena_pool.rs` - Arena pool
-- `src/pipeline/types/buffer_pool.rs` - Buffer pool
-- `src/pipeline/types/chunk.rs` - Chunk design
+- `src/io/arena.rs` - Arena implementation and chunk design
+- `src/pipeline/compression/` - Buffer pool for compression
+- `src/pipeline/stages/` - Pipeline stages that use arena allocation
