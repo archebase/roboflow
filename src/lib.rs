@@ -1,123 +1,127 @@
-//! # Robocodec
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
+//! # Roboflow
 //!
 //! A universal, schema-driven runtime decoding engine for Rust.
+//!
 //! Supports CDR, Protobuf, and JSON message formats with full MCAP support.
 //!
 //! ## Modules
 //!
 //! - [`core`] - Core types (CodecValue, errors, registry)
-//! - [`schema`] - IDL/MSG schema parser using Pest
-//! - [`encoding`] - Message encoding/decoding (CDR, Protobuf, JSON)
-//! - [`format`] - File format handlers (MCAP, ROS1 bag)
+//! - [`encoding`] - Message encoding/decoding (CDR, Protobuf, JSON) - from robocodec
+//! - [`schema`] - IDL/MSG schema parser using Pest - from robocodec
+//! - [`pipeline`] - Parallel processing pipeline
+//! - [`dataset::kps`] - KPS dataset format (experimental)
 //!
 //! ## Example
 //!
-//! ```ignore
-//! use robocodec::{schema, encoding::CdrDecoder};
+//! ```no_run
+//! use roboflow::Robocodec;
 //!
-//! // Parse a schema
-//! let schema = schema::parse_schema("TestMsg", "int32 value\nfloat64 data")?;
-//!
-//! // Decode CDR data
-//! let decoder = CdrDecoder::new();
-//! let decoded = decoder.decode(&schema, &[0x2A, 0x00, 0x00, 0x00, ...])?;
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Convert between formats
+//! Robocodec::open(vec!["input.bag"])?
+//!     .write_to("output.mcap")
+//!     .run()?;
+//! # Ok(())
+//! # }
 //! ```
 
 // =============================================================================
-// Core modules
+// Global Allocator
+// =============================================================================
+// Platform-specific allocator selection:
+// - macOS: Use default system allocator (already excellent for concurrent workloads)
+// - Linux: Use jemalloc (better than glibc malloc for multi-threaded workloads)
+// - Other platforms: Use default
+#[cfg(all(feature = "jemalloc", target_os = "linux", not(target_arch = "wasm32")))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(all(feature = "jemalloc", target_os = "linux", not(target_arch = "wasm32")))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
+// =============================================================================
+// Core modules (minimal public API - prefer crate::* imports)
 // =============================================================================
 pub mod config;
 pub mod core;
-pub mod reader;
-pub mod writer;
-pub mod rewriter;
 
 // =============================================================================
-// Schema parsing
+// Parallel processing pipeline
 // =============================================================================
-pub mod schema;
+pub mod pipeline;
 
 // =============================================================================
-// Encoding/decoding
+// Schema parsing and encoding (re-exported from robocodec)
 // =============================================================================
-pub mod encoding;
+// Schema and encoding are provided by robofmt - use robocodec::schema::* and robocodec::encoding::*
 
 // =============================================================================
-// File formats
+// Dataset structures (KPS)
 // =============================================================================
-pub mod format;
+pub mod dataset;
 
 // =============================================================================
-// Re-exports for convenience
+// Re-exports (minimal, focused on user-facing API)
 // =============================================================================
 
-// Core types
-pub use core::{
-    CodecError, CodecValue, DecodedMessage, PrimitiveType, Result,
-    SchemaProvider, TypeAccessor, TypeRegistry,
+// Core types (essential)
+pub use core::{CodecError, CodecValue, DecodedMessage, PrimitiveType, Result, RoboflowError};
+
+// Schema parsing (re-exported from robocodec)
+pub use robocodec::schema::{parse_schema, FieldType, MessageSchema};
+
+// I/O types (re-exported from robocodec)
+pub use robocodec::io::{
+    metadata::RawMessage,
+    reader::{ReaderBuilder, RoboReader},
+    traits::{FormatReader, FormatWriter},
+    writer::RoboWriter,
+    ChannelInfo,
 };
+pub use robocodec::transform::TransformBuilder;
 
-// Schema parsing
-pub use schema::{parse_schema, Field, FieldType, MessageSchema, SchemaFormat};
-
-// Encoding
-pub use encoding::{
-    CdrDecoder, CdrEncoder, CodecFactory, DynCodec, JsonDecoder, MessageCodec,
-    ProtobufCodec, ProtobufDecoder,
-};
-
-// Schema transformers
-pub use encoding::{
-    CdrSchemaTransformer, ProtobufSchemaTransformer, SchemaMetadata, SchemaTransformer,
-};
-
-// File formats - MCAP
-pub use format::{
-    ChannelInfo, DecodedMessageIter, DecodedMessageStream, DecodedMessageWithTimestampIter,
-    DecodedMessageWithTimestampStream, McapReader, McapRewriter, RawMessage, RawMessageIter, RawMessageStream,
-    TimestampedDecodedMessage,
-};
-
-// Unified reader (supports both MCAP and BAG)
-pub use reader::RoboReader;
-
-// Unified writer (supports both MCAP and BAG)
-pub use writer::RoboWriter;
-
-// Unified rewriter
-pub use rewriter::{detect_format, FormatRewriter, RewriteOptions, RewriteStats, RoboRewriter};
-
-// File formats - ROS1 bag
-pub use format::{BagMessage, BagWriter};
-
-// File formats - LeRobot
-pub use format::lerobot::{Hdf5LeRobotWriter, LeRobotConfig, Mapping, MappingType, ParquetLeRobotWriter};
-
-// MCAP transforms
-pub use format::mcap::transform::{
-    McapTransform, TopicAwareTypeRenameTransform, TopicRenameTransform, TransformBuilder,
-    TransformError, TransformPipeline, TransformedChannel, TypeNormalization, TypeRenameTransform,
+// KPS dataset format
+pub use dataset::kps::{
+    config::{KpsConfig, Mapping, MappingType, OutputFormat},
+    delivery_v12::{
+        SeriesDeliveryConfig, SeriesDeliveryConfigBuilder, StatisticsCollector, TaskInfo,
+        TaskStatistics, V12DeliveryBuilder,
+    },
+    Hdf5KpsWriter, ParquetKpsWriter,
 };
 
 // Configuration
-pub use config::{NormalizeConfig, TopicMapping, TopicTypeMapping};
+pub use config::NormalizeConfig;
 
-// MCAP rewrite engine (format-specific)
-pub use format::mcap::{McapRewriteEngine, McapRewriteStats};
+// Pipeline
+#[cfg(feature = "gpu")]
+pub use pipeline::gpu::GpuCompressionConfig;
+pub use pipeline::{AsyncPipeline, CompressionConfig};
+
+// Fluent API
+pub use pipeline::fluent::{BatchReport, CompressionPreset, PipelineMode, ReadOptions, Robocodec};
 
 // =============================================================================
-// Legacy Type Aliases for strata-core compatibility
+// Python bindings (conditional compilation)
+// =============================================================================
+#[cfg(feature = "python")]
+pub mod python;
+
+// =============================================================================
+// Common types (for public API)
 // =============================================================================
 
-/// Type alias for legacy code - use `CodecValue` in new code
-pub type MessageValue = CodecValue;
-
-/// Type alias for legacy code - use `ProtobufDecoder` in new code
-pub type ProtoDecoder = ProtobufDecoder;
+// Simplified type aliases for the unified API
+// TODO: Re-add high-level reader/writer type aliases once API is stabilized
+// pub type Reader = io::RoboReader;
+// pub type Writer = io::RoboWriter;
 
 /// Decoder trait for generic decoding operations.
-///
-/// This trait provides a common interface for all decoders in robocodec.
 pub trait Decoder: Send + Sync {
     /// Decode data into a DecodedMessage.
     fn decode(&self, data: &[u8], schema: &str, type_name: Option<&str>) -> Result<DecodedMessage>;
@@ -159,24 +163,3 @@ impl Encoding {
         }
     }
 }
-
-/// Prelude module for common imports.
-pub mod prelude {
-    pub use crate::encoding::CdrDecoder;
-    pub use crate::core::*;
-    pub use crate::schema::{parse_schema, SchemaFormat};
-    pub use crate::encoding::JsonDecoder;
-    pub use crate::encoding::ProtobufDecoder;
-}
-
-// =============================================================================
-// Tests (conditional compilation)
-// =============================================================================
-#[cfg(test)]
-mod reader_tests;
-
-// =============================================================================
-// Python bindings (conditional compilation)
-// =============================================================================
-#[cfg(feature = "python")]
-pub mod python;

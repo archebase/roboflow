@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
 //! Common utilities for MCAP integration tests.
 
 #![allow(dead_code)]
@@ -186,8 +190,8 @@ pub fn is_acceptable_error(error: &str, skip_unsupported: bool) -> bool {
     if error.contains("Type not found") && error.contains("/msg/") {
         return true;
     }
-    // Normalized types (robocodec.*) may not have schema definitions after normalization
-    if error.contains("Type not found") && error.contains("robocodec.") {
+    // Normalized types (roboflow.*) may not have schema definitions after normalization
+    if error.contains("Type not found") && error.contains("roboflow.") {
         return true;
     }
     false

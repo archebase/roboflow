@@ -1,13 +1,24 @@
+[workspace]
+members = ["robocodec", "."]
+resolver = "2"
+
+[workspace.dependencies]
+robocodec = { path = "robocodec" }
+
 [package]
-name = "robocodec"
+name = "roboflow"
 version = "0.1.0"
 edition = "2021"
 authors = ["Strata Contributors"]
-license = "Apache-2.0"
-repository = "https://github.com/yourusername/strata"
+license = "MulanPSL-2.0"
+repository = "https://github.com/archebase/roboflow"
 description = "Schema-driven message codec supporting CDR, protobuf, and JSON"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
+robocodec = { path = "robocodec" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
@@ -15,36 +26,102 @@ anyhow = "1.0"
 pest = "2.7"
 pest_derive = "2.7"
 byteorder = "1.5"
-mcap = "0.24"
 memmap2 = "0.9"
 prost = "0.13"
 prost-types = "0.13"
 prost-reflect = "0.14"
-rosbag = "0.6"
 hex = "0.4"
 toml = "0.8"
 regex = "1.10"
+
+# Parallel processing
+rayon = "1.10"
+crossbeam-channel = "0.5"
+crossbeam = "0.8"
+crossbeam-queue = "0.3"
+
+# Low-level system calls (for madvise on macOS)
+libc = "0.2"
+
+# System detection
+num_cpus = "1.16"
+sysinfo = "0.30"
+raw-cpuid = { version = "11.0", optional = true }
+
+# Compression
+zstd = "0.13"
+lz4_flex = "0.11"
+bzip2 = "0.4"
+crc32fast = "1.4"
+
+# ROS bag and MCAP format support
+mcap = "0.24"
+rosbag = "0.6"
+
+# Arena allocation for zero-copy pipeline
+bumpalo = "3.16"
+bytemuck = "1.15"
+chrono = "0.4"
+
 # Structured logging
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# LeRobot support (optional dependencies)
-hdf5 = { version = "0.8", optional = true }
+# KPS support (optional dependencies)
+hdf5 = { git = "https://github.com/archebase/hdf5-rs", optional = true }
 polars = { version = "0.41", features = ["parquet"], optional = true }
+png = { version = "0.17", optional = true }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+
+# Memory allocator (optional, for better concurrent performance on Linux)
+tikv-jemallocator = { version = "0.6", optional = true }
 
 # PyO3 for Python bindings (optional, gated by "python" feature)
-pyo3 = { version = "0.25", features = ["extension-module", "abi3-py311"], optional = true }
+# Note: extension-module is included here to prevent libpython linking
+pyo3 = { version = "0.25", features = ["abi3-py311", "extension-module"], optional = true }
 
-# LeRobot features (optional, disabled by default)
+# CLI argument parsing (used by profiler and other binaries)
+clap = { version = "4.5", features = ["derive"], optional = true }
+
+# Profiling support (optional, for profiler binary)
+pprof = { version = "0.14", features = ["flamegraph", "cpp", "prost-codec", "frame-pointer"], optional = true }
+
+# io_uring for Linux async I/O (optional, Linux only)
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring = { version = "0.7", optional = true }
+
+# KPS features (optional, disabled by default)
 [features]
-lerobot-hdf5 = ["dep:hdf5"]
-lerobot-parquet = ["dep:polars"]
-lerobot-all = ["lerobot-hdf5", "lerobot-parquet"]
-# Python bindings via PyO3
-python = ["pyo3"]
+kps-hdf5 = ["dep:hdf5"]
+kps-parquet = ["dep:polars"]
+kps-depth = ["dep:png"]
+kps-all = ["kps-hdf5", "kps-parquet", "kps-depth"]
+# Python bindings via PyO3 (extension-module mode to prevent libpython linking)
+python = ["pyo3", "robocodec/python"]
+# Python extension module (alias for python, since extension-module is now default)
+extension-module = ["python"]
+# GPU compression (experimental)
+# Enables GPU-accelerated compression via nvCOMP
+# Requires: NVIDIA GPU, CUDA toolkit, nvCOMP library (Linux)
+gpu = []
+# Use jemalloc as global allocator on Linux (better for concurrent workloads)
+# On macOS, the default allocator is already excellent and jemalloc is not used
+jemalloc = ["dep:tikv-jemallocator", "robocodec/jemalloc"]
+# CLI support for binaries (profiler, etc.)
+cli = ["dep:clap"]
+# Profiling support for profiler binary (flamegraph generation)
+profiling = ["dep:pprof", "cli"]
+# CPU-aware WindowLog detection using CPUID (x86_64 only)
+cpuid = ["dep:raw-cpuid"]
+# io_uring support for Linux (high-performance async I/O)
+# Requires: Linux 5.6+ kernel
+io-uring-io = ["dep:io-uring"]
 
 [dev-dependencies]
 pretty_assertions = "1.4"
 paste = "1.0"
+criterion = "0.5"
+tempfile = "3.10"
 
 # Binaries
 [[bin]]
@@ -67,6 +144,13 @@ path = "src/bin/schema.rs"
 name = "search"
 path = "src/bin/search.rs"
 
-[[bin]]
-name = "extract_sample"
-path = "src/bin/extract_sample.rs"
+# Benchmarks
+[[bench]]
+name = "profiler"
+path = "benches/profiler.rs"
+harness = false
+required-features = ["profiling"]
+
+
+[profile.release]
+debug = true

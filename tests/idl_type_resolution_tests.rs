@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
 //! IDL type resolution tests.
 //!
 //! This module tests the IDL parser's ability to resolve types across
@@ -6,7 +10,7 @@
 //! - `/msg/` separator (ROS2 convention): `pkg/msg/TypeName`
 //! - Short form: `pkg/TypeName`
 
-use robocodec::schema::{self, parse_schema, FieldType};
+use robocodec::schema::{parse_schema, FieldType};
 
 /// Test that type lookup works with the `/msg/` separator (ROS2 convention).
 ///
@@ -209,7 +213,7 @@ string basic_string
     assert_eq!(test_type.fields[0].name, "basic_string");
     assert!(matches!(
         test_type.fields[0].type_name,
-        robocodec::FieldType::Primitive(robocodec::schema::PrimitiveType::String)
+        roboflow::FieldType::Primitive(robocodec::schema::PrimitiveType::String)
     ));
 }
 

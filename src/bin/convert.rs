@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
 //! Unified format conversion tool for robotics data files.
 //!
 //! Supports bidirectional conversion between MCAP and BAG formats,
@@ -9,17 +13,174 @@
 //!   convert normalize <input> <output> <config>      - Normalize using config
 //!   convert to-lerobot <input.mcap> <output_dir> <config> - Convert MCAP to LeRobot
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 
+use robocodec::io::formats::mcap::writer::ParallelMcapWriter;
+
+// ============================================================================
+// Fluent API Types
+// ============================================================================
+
+/// Convert BAG to MCAP format using the fluent API.
+///
+/// # Examples
+///
+/// ```no_run
+/// # mod convert;
+/// // Simple conversion
+/// convert::bag_to_mcap("input.bag", "output.mcap")
+///     .run()
+///     .unwrap();
+/// ```
+fn bag_to_mcap<'a>(input: &'a str, output: &'a str) -> ConversionBuilder<'a> {
+    ConversionBuilder::BagToMcap { input, output }
+}
+
+/// Convert MCAP to BAG format using the fluent API.
+///
+/// # Examples
+///
+/// ```no_run
+/// # mod convert;
+/// convert::mcap_to_bag("input.mcap", "output.bag")
+///     .run()
+///     .unwrap();
+/// ```
+fn mcap_to_bag<'a>(input: &'a str, output: &'a str) -> ConversionBuilder<'a> {
+    ConversionBuilder::McapToBag { input, output }
+}
+
+/// Normalize a file using the fluent API.
+///
+/// # Examples
+///
+/// ```no_run
+/// # mod convert;
+/// convert::normalize("input.bag", "output.mcap")
+///     .config("config.toml")
+///     .run()
+///     .unwrap();
+/// ```
+fn normalize<'a>(input: &'a str, output: &'a str) -> NormalizeBuilder<'a> {
+    NormalizeBuilder::new(input, output)
+}
+
+/// Convert MCAP to LeRobot dataset using the fluent API.
+///
+/// # Examples
+///
+/// ```no_run
+/// # mod convert;
+/// convert::to_lerobot("input.mcap", "output_dir")
+///     .config("config.toml")
+///     .run()
+///     .unwrap();
+/// ```
+#[cfg(feature = "kps-all")]
+fn to_lerobot<'a>(input: &'a str, output_dir: &'a str) -> LeRobotBuilder<'a> {
+    LeRobotBuilder::new(input, output_dir)
+}
+
+/// Builder for simple conversions (BAG ↔ MCAP).
+enum ConversionBuilder<'a> {
+    BagToMcap { input: &'a str, output: &'a str },
+    McapToBag { input: &'a str, output: &'a str },
+}
+
+impl<'a> ConversionBuilder<'a> {
+    /// Execute the conversion.
+    fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        match self {
+            Self::BagToMcap { input, output } => convert_bag_to_mcap(input, output),
+            Self::McapToBag { input, output } => convert_mcap_to_bag(input, output),
+        }
+    }
+}
+
+/// Builder for normalize conversions.
+struct NormalizeBuilder<'a> {
+    input: &'a str,
+    output: &'a str,
+    config: Option<&'a str>,
+}
+
+impl<'a> NormalizeBuilder<'a> {
+    fn new(input: &'a str, output: &'a str) -> Self {
+        Self {
+            input,
+            output,
+            config: None,
+        }
+    }
+
+    fn config(mut self, config: &'a str) -> Self {
+        self.config = Some(config);
+        self
+    }
+
+    fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        let config = self.config.ok_or("normalize requires a config file")?;
+        normalize_file(self.input, self.output, config)
+    }
+}
+
+/// Builder for LeRobot conversions.
+#[cfg(feature = "kps-all")]
+struct LeRobotBuilder<'a> {
+    input: &'a str,
+    output_dir: &'a str,
+    config: Option<&'a str>,
+}
+
+#[cfg(feature = "kps-all")]
+impl<'a> LeRobotBuilder<'a> {
+    fn new(input: &'a str, output_dir: &'a str) -> Self {
+        Self {
+            input,
+            output_dir,
+            config: None,
+        }
+    }
+
+    fn config(mut self, config: &'a str) -> Self {
+        self.config = Some(config);
+        self
+    }
+
+    fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        let config = self.config.ok_or("to-lerobot requires a config file")?;
+        convert_to_lerobot(self.input, self.output_dir, config)
+    }
+}
+
+// ============================================================================
+// Command Line Parsing
+// ============================================================================
+
 enum Command {
-    BagToMcap { input: String, output: String },
-    McapToBag { input: String, output: String },
-    Normalize { input: String, output: String, config: String },
-    ToLeRobot { input: String, output: String, config: String },
+    BagToMcap {
+        input: String,
+        output: String,
+    },
+    McapToBag {
+        input: String,
+        output: String,
+    },
+    Normalize {
+        input: String,
+        output: String,
+        config: String,
+    },
+    #[cfg(feature = "kps-all")]
+    ToLeRobot {
+        input: String,
+        output: String,
+        config: String,
+    },
 }
 
 fn parse_args(args: &[String]) -> Result<Command, String> {
@@ -39,7 +200,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
     let input = args[2].clone();
     let output = args[3].clone();
 
-    let cmd = match command.as_str() {
+    Ok(match command.as_str() {
         "bag-to-mcap" => Command::BagToMcap { input, output },
         "mcap-to-bag" => Command::McapToBag { input, output },
         "normalize" => {
@@ -47,43 +208,65 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                 return Err("normalize command requires a config file argument".to_string());
             }
             let config = args[4].clone();
-            Command::Normalize { input, output, config }
+            Command::Normalize {
+                input,
+                output,
+                config,
+            }
         }
+        #[cfg(feature = "kps-all")]
         "to-lerobot" => {
             if args.len() < 5 {
                 return Err("to-lerobot command requires a config file argument".to_string());
             }
             let config = args[4].clone();
-            Command::ToLeRobot { input, output, config }
+            Command::ToLeRobot {
+                input,
+                output,
+                config,
+            }
         }
         _ => return Err(format!("Unknown command: {command}")),
-    };
-
-    Ok(cmd)
+    })
 }
 
 fn run_convert(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
     match cmd {
-        Command::BagToMcap { input, output } => convert_bag_to_mcap(&input, &output),
-        Command::McapToBag { input, output } => convert_mcap_to_bag(&input, &output),
-        Command::Normalize { input, output, config } => normalize_file(&input, &output, &config),
-        Command::ToLeRobot { input, output, config } => convert_to_lerobot(&input, &output, &config),
+        Command::BagToMcap { input, output } => bag_to_mcap(&input, &output).run(),
+        Command::McapToBag { input, output } => mcap_to_bag(&input, &output).run(),
+        Command::Normalize {
+            input,
+            output,
+            config,
+        } => normalize(&input, &output).config(&config).run(),
+        #[cfg(feature = "kps-all")]
+        Command::ToLeRobot {
+            input,
+            output,
+            config,
+        } => to_lerobot(&input, &output).config(&config).run(),
     }
 }
 
+// ============================================================================
+// Conversion Implementations
+// ============================================================================
+
 /// Convert ROS1 BAG to MCAP format.
 fn convert_bag_to_mcap(input: &str, output: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use robocodec::io::traits::FormatReader;
+    use robocodec::BagFormat;
+
     println!("Converting BAG to MCAP: {} -> {}", input, output);
 
-    let reader = robocodec::RoboReader::open(input)?;
+    let reader = BagFormat::open(input)?;
     println!("Channels: {}", reader.channels().len());
 
     let output_file = File::create(output)?;
-    let mut mcap_writer = mcap::Writer::new(BufWriter::new(output_file))?;
+    let mut mcap_writer = ParallelMcapWriter::new(BufWriter::new(output_file))?;
 
     let mut schema_ids: HashMap<String, u16> = HashMap::new();
     let mut channel_ids: HashMap<u16, u16> = HashMap::new();
-    let mut sequences: HashMap<u16, u32> = HashMap::new();
     let mut msg_count = 0u64;
     let mut failures = 0u64;
 
@@ -97,7 +280,12 @@ fn convert_bag_to_mcap(input: &str, output: &str) -> Result<(), Box<dyn std::err
             } else {
                 let id = mcap_writer
                     .add_schema(&channel.message_type, encoding, schema.as_bytes())
-                    .map_err(|e| format!("Failed to add schema for type {}: {}", channel.message_type, e))?;
+                    .map_err(|e| {
+                        format!(
+                            "Failed to add schema for type {}: {}",
+                            channel.message_type, e
+                        )
+                    })?;
                 schema_ids.insert(channel.message_type.clone(), id);
                 id
             }
@@ -109,54 +297,47 @@ fn convert_bag_to_mcap(input: &str, output: &str) -> Result<(), Box<dyn std::err
             schema_id,
             &channel.topic,
             &channel.encoding,
-            &BTreeMap::new(),
+            &HashMap::new(),
         )?;
 
         channel_ids.insert(ch_id, out_ch_id);
-        sequences.insert(out_ch_id, 0);
     }
 
     // Convert messages using raw data to avoid decode/encode issues
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_ch_id = match channel_ids.get(&msg.channel_id) {
             Some(&id) => id,
             None => {
-                eprintln!("Warning: Unknown channel_id {}, skipping message", msg.channel_id);
+                eprintln!(
+                    "Warning: Unknown channel_id {}, skipping message",
+                    msg.channel_id
+                );
                 continue;
             }
         };
 
-        let seq = *sequences.get(&out_ch_id).unwrap_or(&0);
-
         // Write raw message data (preserves original encoding)
-        if let Err(e) = mcap_writer.write_to_known_channel(
-            &mcap::records::MessageHeader {
-                channel_id: out_ch_id,
-                sequence: seq,
-                log_time: msg.log_time,
-                publish_time: msg.publish_time,
-            },
-            &msg.data,
-        ) {
+        if let Err(e) =
+            mcap_writer.write_message(out_ch_id, msg.log_time, msg.publish_time, &msg.data)
+        {
             eprintln!("Warning: Failed to write message: {}", e);
             failures += 1;
             continue;
         }
 
-        sequences.insert(out_ch_id, seq + 1);
         msg_count += 1;
 
-        if msg_count % 1000 == 0 {
+        if msg_count.is_multiple_of(1000) {
             println!("Processed {} messages...", msg_count);
         }
     }
 
-    drop(mcap_writer);
+    mcap_writer.finish()?;
 
     println!();
     println!("=== Conversion Complete ===");
@@ -173,17 +354,17 @@ fn convert_bag_to_mcap(input: &str, output: &str) -> Result<(), Box<dyn std::err
 fn convert_mcap_to_bag(input: &str, output: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Converting MCAP to BAG: {} -> {}", input, output);
 
-    let reader = robocodec::RoboReader::open(input)?;
+    let reader = robocodec::McapReader::open(input)?;
     println!("Channels: {}", reader.channels().len());
 
     let mut writer = robocodec::BagWriter::create(output)?;
-    let mut conn_id = 0u16;
     let mut channel_ids: HashMap<u16, u16> = HashMap::new();
     let mut msg_count = 0u64;
     let mut failures = 0u64;
 
     // Add connections, preserving callerid
-    for (&ch_id, channel) in reader.channels() {
+    for (conn_id, (&ch_id, channel)) in reader.channels().iter().enumerate() {
+        let conn_id = conn_id as u16;
         let schema = channel.schema.as_deref().unwrap_or("");
         let callerid = channel.callerid.as_deref().unwrap_or("");
         writer.add_connection_with_callerid(
@@ -194,14 +375,13 @@ fn convert_mcap_to_bag(input: &str, output: &str) -> Result<(), Box<dyn std::err
             callerid,
         )?;
         channel_ids.insert(ch_id, conn_id);
-        conn_id += 1;
     }
 
     // Convert messages using raw data
-    let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let raw_iter = reader.iter_raw()?;
+    let stream = raw_iter.stream()?;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_conn_id = match channel_ids.get(&msg.channel_id) {
@@ -219,7 +399,7 @@ fn convert_mcap_to_bag(input: &str, output: &str) -> Result<(), Box<dyn std::err
 
         msg_count += 1;
 
-        if msg_count % 1000 == 0 {
+        if msg_count.is_multiple_of(1000) {
             println!("Processed {} messages...", msg_count);
         }
     }
@@ -238,12 +418,16 @@ fn convert_mcap_to_bag(input: &str, output: &str) -> Result<(), Box<dyn std::err
 }
 
 /// Normalize a file using a config.
-fn normalize_file(input: &str, output: &str, config_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn normalize_file(
+    input: &str,
+    output: &str,
+    config_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("Normalizing: {} -> {}", input, output);
     println!("Config: {}", config_path);
 
     // Load normalization config
-    let config = robocodec::config::NormalizeConfig::from_file(config_path)?;
+    let config = roboflow::config::NormalizeConfig::from_file(config_path)?;
     let pipeline = config.to_pipeline();
 
     println!("Type mappings: {}", config.type_mappings.len());
@@ -268,11 +452,14 @@ fn normalize_file(input: &str, output: &str, config_path: &str) -> Result<(), Bo
 
 fn normalize_to_mcap(
     input: &str,
-    pipeline: &robocodec::format::mcap::transform::TransformPipeline,
+    pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let input_path = std::path::Path::new(input);
-    let input_ext = input_path.extension().and_then(|s| s.to_str()).unwrap_or("");
+    let input_ext = input_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
 
     match input_ext {
         "mcap" => mcap_to_mcap_normalized(input, pipeline, output),
@@ -284,21 +471,20 @@ fn normalize_to_mcap(
 /// Convert MCAP file to MCAP format with transformations.
 fn mcap_to_mcap_normalized(
     input: &str,
-    pipeline: &robocodec::format::mcap::transform::TransformPipeline,
+    pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::format::mcap::{McapReader, McapRewriteEngine};
+    use robocodec::{rewriter::engine::McapRewriteEngine, McapReader};
 
     let mcap_reader = McapReader::open(input)?;
     let mut engine = McapRewriteEngine::new();
     engine.prepare_schemas(&mcap_reader, Some(pipeline))?;
 
     let output_file = File::create(output)?;
-    let mut mcap_writer = mcap::Writer::new(BufWriter::new(output_file))?;
+    let mut mcap_writer = ParallelMcapWriter::new(BufWriter::new(output_file))?;
 
     let mut schema_ids: HashMap<String, u16> = HashMap::new();
     let mut channel_ids: HashMap<u16, u16> = HashMap::new();
-    let mut sequences: HashMap<u16, u32> = HashMap::new();
     let mut msg_count = 0;
 
     // Add transformed schemas and channels
@@ -332,7 +518,9 @@ fn mcap_to_mcap_normalized(
                 } else {
                     let id = mcap_writer
                         .add_schema(&type_name, encoding, &bytes)
-                        .map_err(|e| format!("Failed to add schema for type {}: {}", type_name, e))?;
+                        .map_err(|e| {
+                            format!("Failed to add schema for type {}: {}", type_name, e)
+                        })?;
                     schema_ids.insert(type_name.clone(), id);
                     id
                 }
@@ -347,47 +535,41 @@ fn mcap_to_mcap_normalized(
             schema_id,
             &transformed_topic,
             &channel.encoding,
-            &BTreeMap::new(),
+            &HashMap::new(),
         )?;
 
         channel_ids.insert(ch_id, out_ch_id);
-        sequences.insert(out_ch_id, 0);
     }
 
     // Copy messages (data stays the same, only metadata is transformed)
-    let iter = mcap_reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let raw_iter = mcap_reader.iter_raw()?;
+    let stream = raw_iter.stream()?;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_ch_id = match channel_ids.get(&msg.channel_id) {
             Some(&id) => id,
             None => {
-                eprintln!("Warning: Unknown channel_id {}, skipping message", msg.channel_id);
+                eprintln!(
+                    "Warning: Unknown channel_id {}, skipping message",
+                    msg.channel_id
+                );
                 continue;
             }
         };
 
-        let seq = *sequences.get(&out_ch_id).unwrap_or(&0);
+        mcap_writer.write_message(out_ch_id, msg.log_time, msg.publish_time, &msg.data)?;
 
-        mcap_writer.write_to_known_channel(
-            &mcap::records::MessageHeader {
-                channel_id: out_ch_id,
-                sequence: seq,
-                log_time: msg.log_time,
-                publish_time: msg.publish_time,
-            },
-            &msg.data,
-        )?;
-
-        sequences.insert(out_ch_id, seq + 1);
         msg_count += 1;
     }
 
-    drop(mcap_writer);
+    mcap_writer.finish()?;
 
-    println!("Normalized {} messages from MCAP to MCAP: {}", msg_count, output);
+    println!(
+        "Normalized {} messages from MCAP to MCAP: {}",
+        msg_count, output
+    );
 
     Ok(())
 }
@@ -395,34 +577,39 @@ fn mcap_to_mcap_normalized(
 /// Convert BAG file to MCAP format with transformations.
 fn bag_to_mcap_normalized(
     input: &str,
-    pipeline: &robocodec::format::mcap::transform::TransformPipeline,
+    pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::reader::{BagFormatReader, BagRawMessageIter, FormatReader};
+    use robocodec::io::formats::bag::BagFormat;
+    use robocodec::io::traits::FormatReader;
 
     println!("Converting BAG to MCAP with transforms");
     println!("  Input: {}", input);
     println!("  Output: {}", output);
 
-    let reader = BagFormatReader::open(input)?;
+    let reader = BagFormat::open(input)?;
     let channels = FormatReader::channels(&reader).clone();
-    let conn_id_map = reader.conn_id_map().clone();
 
     let output_file = File::create(output)?;
-    let mut mcap_writer = mcap::Writer::new(BufWriter::new(output_file))?;
+    let mut mcap_writer = ParallelMcapWriter::new(BufWriter::new(output_file))?;
 
     let mut schema_ids: HashMap<String, u16> = HashMap::new();
     let mut channel_ids: HashMap<u16, u16> = HashMap::new();
-    let mut sequences: HashMap<u16, u32> = HashMap::new();
     let mut msg_count = 0;
 
     // Apply transforms and add schemas and channels
     for (&ch_id, channel) in &channels {
-        let (transformed_type, transformed_schema) = pipeline.transform_type(&channel.message_type, channel.schema.as_deref());
-        let transformed_topic = pipeline.transform_topic(&channel.topic).unwrap_or_else(|| channel.topic.clone());
+        let (transformed_type, transformed_schema) =
+            pipeline.transform_type(&channel.message_type, channel.schema.as_deref());
+        let transformed_topic = pipeline
+            .transform_topic(&channel.topic)
+            .unwrap_or_else(|| channel.topic.clone());
 
         // Use the transformed schema if available, otherwise use the original
-        let schema_text = transformed_schema.as_deref().or(channel.schema.as_deref()).unwrap_or("");
+        let schema_text = transformed_schema
+            .as_deref()
+            .or(channel.schema.as_deref())
+            .unwrap_or("");
         let schema_bytes = schema_text.as_bytes();
 
         // Check if schema already exists, and if not, add it with proper error handling
@@ -432,7 +619,9 @@ fn bag_to_mcap_normalized(
             } else {
                 let id = mcap_writer
                     .add_schema(&transformed_type, "ros1msg", schema_bytes)
-                    .map_err(|e| format!("Failed to add schema for type {}: {}", transformed_type, e))?;
+                    .map_err(|e| {
+                        format!("Failed to add schema for type {}: {}", transformed_type, e)
+                    })?;
                 schema_ids.insert(transformed_type.clone(), id);
                 id
             }
@@ -445,63 +634,60 @@ fn bag_to_mcap_normalized(
                 schema_id,
                 &transformed_topic,
                 &channel.encoding,
-                &BTreeMap::new(),
+                &HashMap::new(),
             )
             .map_err(|e| format!("Failed to add channel: {e}"))?;
 
         channel_ids.insert(ch_id, channel_id);
-        sequences.insert(channel_id, 0);
     }
 
     // Copy messages using BagRawMessageIter
-    let iter = BagRawMessageIter::new(input.to_string(), channels.clone(), conn_id_map);
-    let mut stream = iter.into_stream()?;
+    let stream = reader.iter_raw()?;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_ch_id = match channel_ids.get(&msg.channel_id) {
             Some(&id) => id,
             None => {
-                eprintln!("Warning: Unknown channel_id {}, skipping message", msg.channel_id);
+                eprintln!(
+                    "Warning: Unknown channel_id {}, skipping message",
+                    msg.channel_id
+                );
                 continue;
             }
         };
 
-        let seq = *sequences.get(&out_ch_id).unwrap_or(&0);
-        mcap_writer.write_to_known_channel(
-            &mcap::records::MessageHeader {
-                channel_id: out_ch_id,
-                sequence: seq,
-                log_time: msg.log_time,
-                publish_time: msg.publish_time,
-            },
-            &msg.data,
-        )?;
+        mcap_writer.write_message(out_ch_id, msg.log_time, msg.publish_time, &msg.data)?;
 
-        sequences.insert(out_ch_id, seq + 1);
         msg_count += 1;
     }
 
-    drop(mcap_writer);
+    mcap_writer.finish()?;
 
-    println!("Converted {} messages from BAG to MCAP: {}", msg_count, output);
+    println!(
+        "Converted {} messages from BAG to MCAP: {}",
+        msg_count, output
+    );
     Ok(())
 }
 
 fn normalize_to_bag(
     input: &str,
-    pipeline: &robocodec::format::mcap::transform::TransformPipeline,
+    pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Detect input format
     let input_path = std::path::Path::new(input);
-    let input_ext = input_path.extension().and_then(|s| s.to_str()).unwrap_or("");
+    let input_ext = input_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
 
     match input_ext {
         "mcap" => {
             // MCAP → BAG: existing code path
-            mcap_to_bag(input, pipeline, output)
+            mcap_to_bag_normalized(input, pipeline, output)
         }
         "bag" => {
             // BAG → BAG: use BagRewriter
@@ -512,24 +698,24 @@ fn normalize_to_bag(
 }
 
 /// Convert MCAP file to BAG format.
-fn mcap_to_bag(
+fn mcap_to_bag_normalized(
     input: &str,
-    pipeline: &robocodec::format::mcap::transform::TransformPipeline,
+    pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::format::mcap::{McapReader, McapRewriteEngine};
+    use robocodec::{rewriter::engine::McapRewriteEngine, McapReader};
 
     let reader = McapReader::open(input)?;
     let mut engine = McapRewriteEngine::new();
     engine.prepare_schemas(&reader, Some(pipeline))?;
 
     let mut writer = robocodec::BagWriter::create(output)?;
-    let mut conn_id = 0u16;
     let mut channel_ids: HashMap<u16, u16> = HashMap::new();
     let mut msg_count = 0;
 
     // Add transformed connections
-    for (&ch_id, channel) in reader.channels() {
+    for (conn_id, (&ch_id, channel)) in reader.channels().iter().enumerate() {
+        let conn_id = conn_id as u16;
         let transformed_topic = engine
             .get_transformed_topic(ch_id)
             .unwrap_or(&channel.topic)
@@ -547,21 +733,29 @@ fn mcap_to_bag(
             };
             (type_name, definition)
         } else {
-            (channel.message_type.clone(), channel.schema.clone().unwrap_or_default())
+            (
+                channel.message_type.clone(),
+                channel.schema.clone().unwrap_or_default(),
+            )
         };
 
         // Preserve callerid from the original channel
         let callerid = channel.callerid.as_deref().unwrap_or("");
-        writer.add_connection_with_callerid(conn_id, &transformed_topic, &message_type, &message_definition, callerid)?;
+        writer.add_connection_with_callerid(
+            conn_id,
+            &transformed_topic,
+            &message_type,
+            &message_definition,
+            callerid,
+        )?;
         channel_ids.insert(ch_id, conn_id);
-        conn_id += 1;
     }
 
     // Copy messages
-    let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let raw_iter = reader.iter_raw()?;
+    let stream = raw_iter.stream()?;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_conn_id = match channel_ids.get(&msg.channel_id) {
@@ -583,43 +777,50 @@ fn mcap_to_bag(
 /// Convert BAG file to BAG format with transformations.
 fn bag_to_bag(
     input: &str,
-    pipeline: &robocodec::format::mcap::transform::TransformPipeline,
+    pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::reader::{BagFormatReader, BagRawMessageIter, FormatReader};
+    use robocodec::io::formats::bag::BagFormat;
+    use robocodec::io::traits::FormatReader;
 
     println!("Converting BAG to BAG with transforms");
     println!("  Input: {}", input);
     println!("  Output: {}", output);
 
-    let reader = BagFormatReader::open(input)?;
+    let reader = BagFormat::open(input)?;
     let channels = FormatReader::channels(&reader).clone();
-    let conn_id_map = reader.conn_id_map().clone();
 
     let mut writer = robocodec::BagWriter::create(output)?;
-    let mut conn_id = 0u16;
     let mut channel_ids: HashMap<u16, u16> = HashMap::new();
     let mut msg_count = 0;
 
     // Build transformed connections
-    for (&ch_id, channel) in &channels {
-        let (transformed_type, transformed_schema) = pipeline.transform_type(&channel.message_type, channel.schema.as_deref());
-        let transformed_topic = pipeline.transform_topic(&channel.topic).unwrap_or_else(|| channel.topic.clone());
+    for (conn_id, (&ch_id, channel)) in channels.iter().enumerate() {
+        let conn_id = conn_id as u16;
+        let (transformed_type, transformed_schema) =
+            pipeline.transform_type(&channel.message_type, channel.schema.as_deref());
+        let transformed_topic = pipeline
+            .transform_topic(&channel.topic)
+            .unwrap_or_else(|| channel.topic.clone());
 
         // Preserve callerid from the original channel
         let callerid = channel.callerid.as_deref().unwrap_or("");
 
         let schema = transformed_schema.as_deref().unwrap_or("");
-        writer.add_connection_with_callerid(conn_id, &transformed_topic, &transformed_type, schema, callerid)?;
+        writer.add_connection_with_callerid(
+            conn_id,
+            &transformed_topic,
+            &transformed_type,
+            schema,
+            callerid,
+        )?;
         channel_ids.insert(ch_id, conn_id);
-        conn_id += 1;
     }
 
     // Copy messages
-    let iter = BagRawMessageIter::new(input.to_string(), channels.clone(), conn_id_map);
-    let mut stream = iter.into_stream()?;
+    let stream = reader.iter_raw()?;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         let out_conn_id = match channel_ids.get(&msg.channel_id) {
@@ -634,22 +835,32 @@ fn bag_to_bag(
 
     writer.finish()?;
 
-    println!("Rewritten {} channels, {} messages to BAG: {}", channel_ids.len(), msg_count, output);
+    println!(
+        "Rewritten {} channels, {} messages to BAG: {}",
+        channel_ids.len(),
+        msg_count,
+        output
+    );
     Ok(())
 }
 
-/// Convert MCAP to LeRobot dataset format.
-fn convert_to_lerobot(input: &str, output_dir: &str, config_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::format::lerobot::{LeRobotConfig, OutputFormat};
+/// Convert MCAP to KPS dataset format.
+#[cfg(feature = "kps-all")]
+fn convert_to_lerobot(
+    input: &str,
+    output_dir: &str,
+    config_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use roboflow::dataset::kps::{KpsConfig, OutputFormat};
 
-    println!("Converting MCAP to LeRobot dataset");
+    println!("Converting MCAP to KPS dataset");
     println!("  Input: {}", input);
     println!("  Output: {}", output_dir);
     println!("  Config: {}", config_path);
 
-    // Load LeRobot config
+    // Load KPS config
     let config_content = std::fs::read_to_string(config_path)?;
-    let config: LeRobotConfig = toml::from_str(&config_content)?;
+    let config: KpsConfig = toml::from_str(&config_content)?;
 
     println!("  Dataset: {}", config.dataset.name);
     println!("  Robot type: {:?}", config.dataset.robot_type);
@@ -663,41 +874,43 @@ fn convert_to_lerobot(input: &str, output_dir: &str, config_path: &str) -> Resul
 
     // Convert to HDF5
     if use_hdf5 {
-        #[cfg(feature = "lerobot-hdf5")]
+        #[cfg(feature = "kps-hdf5")]
         {
-            use robocodec::format::lerobot::Hdf5LeRobotWriter;
+            use roboflow::dataset::kps::Hdf5KpsWriter;
 
             println!();
             println!("Creating HDF5 format...");
-            let mut writer = Hdf5LeRobotWriter::create(output_dir, 0)?;
+            let mut writer = Hdf5KpsWriter::create(output_dir, 0)?;
             writer.write_from_mcap(input, &config)?;
             writer.finish(&config)?;
         }
 
-        #[cfg(not(feature = "lerobot-hdf5"))]
+        #[cfg(not(feature = "kps-hdf5"))]
         {
-            eprintln!("Warning: HDF5 format requested but 'lerobot-hdf5' feature is not enabled.");
-            eprintln!("  Run with: cargo run --bin convert --features lerobot-hdf5 -- to-lerobot ...");
+            eprintln!("Warning: HDF5 format requested but 'kps-hdf5' feature is not enabled.");
+            eprintln!("  Run with: cargo run --bin convert --features kps-hdf5 -- to-kps ...");
         }
     }
 
     // Convert to Parquet+MP4
     if use_parquet {
-        #[cfg(feature = "lerobot-parquet")]
+        #[cfg(feature = "kps-parquet")]
         {
-            use robocodec::format::lerobot::ParquetLeRobotWriter;
+            use roboflow::dataset::kps::ParquetKpsWriter;
 
             println!();
             println!("Creating Parquet+MP4 format...");
-            let mut writer = ParquetLeRobotWriter::create(output_dir, 0)?;
+            let mut writer = ParquetKpsWriter::create(output_dir, 0)?;
             writer.write_from_mcap(input, &config)?;
             writer.finish(&config)?;
         }
 
-        #[cfg(not(feature = "lerobot-parquet"))]
+        #[cfg(not(feature = "kps-parquet"))]
         {
-            eprintln!("Warning: Parquet format requested but 'lerobot-parquet' feature is not enabled.");
-            eprintln!("  Run with: cargo run --bin convert --features lerobot-parquet -- to-lerobot ...");
+            eprintln!(
+                "Warning: Parquet format requested but 'kps-parquet' feature is not enabled."
+            );
+            eprintln!("  Run with: cargo run --bin convert --features kps-parquet -- to-kps ...");
         }
     }
 

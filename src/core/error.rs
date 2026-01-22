@@ -1,4 +1,8 @@
-//! Core error types for robocodec.
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
+//! Core error types for roboflow.
 //!
 //! Provides a unified error type that all codec crates can use.
 //!
@@ -52,9 +56,9 @@ impl ErrorCategory {
     }
 }
 
-/// Errors that can occur during codec operations.
+/// Errors that can occur during roboflow operations.
 #[derive(Debug, Clone)]
-pub enum CodecError {
+pub enum RoboflowError {
     /// Parse error in schema or data
     ParseError {
         /// What was being parsed
@@ -139,6 +143,12 @@ pub enum CodecError {
         message: String,
     },
 
+    /// Format I/O error (wrapped from robocodec)
+    CodecError {
+        /// Error message from robocodec
+        message: String,
+    },
+
     /// Invariant violation (for unsafe block validation failures)
     InvariantViolation {
         /// Description of the invariant that was violated
@@ -149,10 +159,10 @@ pub enum CodecError {
     Other(String),
 }
 
-impl CodecError {
+impl RoboflowError {
     /// Create a parse error.
     pub fn parse(context: impl Into<String>, message: impl Into<String>) -> Self {
-        CodecError::ParseError {
+        RoboflowError::ParseError {
             context: context.into(),
             message: message.into(),
         }
@@ -160,7 +170,7 @@ impl CodecError {
 
     /// Create an invalid schema error.
     pub fn invalid_schema(schema_name: impl Into<String>, reason: impl Into<String>) -> Self {
-        CodecError::InvalidSchema {
+        RoboflowError::InvalidSchema {
             schema_name: schema_name.into(),
             reason: reason.into(),
         }
@@ -168,14 +178,14 @@ impl CodecError {
 
     /// Create a type not found error.
     pub fn type_not_found(type_name: impl Into<String>) -> Self {
-        CodecError::TypeNotFound {
+        RoboflowError::TypeNotFound {
             type_name: type_name.into(),
         }
     }
 
     /// Create a buffer too short error.
     pub fn buffer_too_short(requested: usize, available: usize, cursor_pos: u64) -> Self {
-        CodecError::BufferTooShort {
+        RoboflowError::BufferTooShort {
             requested,
             available,
             cursor_pos,
@@ -184,14 +194,14 @@ impl CodecError {
 
     /// Create an unsupported error.
     pub fn unsupported(feature: impl Into<String>) -> Self {
-        CodecError::Unsupported {
+        RoboflowError::Unsupported {
             feature: feature.into(),
         }
     }
 
     /// Create an encode error.
     pub fn encode(codec: impl Into<String>, message: impl Into<String>) -> Self {
-        CodecError::EncodeError {
+        RoboflowError::EncodeError {
             codec: codec.into(),
             message: message.into(),
         }
@@ -199,7 +209,7 @@ impl CodecError {
 
     /// Create a transform error.
     pub fn transform(transform_type: impl Into<String>, message: impl Into<String>) -> Self {
-        CodecError::TransformError {
+        RoboflowError::TransformError {
             transform_type: transform_type.into(),
             message: message.into(),
         }
@@ -207,7 +217,7 @@ impl CodecError {
 
     /// Create an invariant violation error (for unsafe block validation).
     pub fn invariant_violation(invariant: impl Into<String>) -> Self {
-        CodecError::InvariantViolation {
+        RoboflowError::InvariantViolation {
             invariant: invariant.into(),
         }
     }
@@ -215,18 +225,19 @@ impl CodecError {
     /// Get the error category for this error.
     pub fn category(&self) -> ErrorCategory {
         match self {
-            CodecError::ParseError { .. } => ErrorCategory::Parse,
-            CodecError::InvalidSchema { .. } => ErrorCategory::Schema,
-            CodecError::TypeNotFound { .. } => ErrorCategory::Schema,
-            CodecError::BufferTooShort { .. } => ErrorCategory::Runtime,
-            CodecError::AlignmentError { .. } => ErrorCategory::Runtime,
-            CodecError::LengthExceeded { .. } => ErrorCategory::Runtime,
-            CodecError::FieldDecodeError { .. } => ErrorCategory::Runtime,
-            CodecError::Unsupported { .. } => ErrorCategory::Codec,
-            CodecError::EncodeError { .. } => ErrorCategory::Codec,
-            CodecError::TransformError { .. } => ErrorCategory::Transform,
-            CodecError::InvariantViolation { .. } => ErrorCategory::Runtime,
-            CodecError::Other(_) => ErrorCategory::Runtime,
+            RoboflowError::ParseError { .. } => ErrorCategory::Parse,
+            RoboflowError::InvalidSchema { .. } => ErrorCategory::Schema,
+            RoboflowError::TypeNotFound { .. } => ErrorCategory::Schema,
+            RoboflowError::BufferTooShort { .. } => ErrorCategory::Runtime,
+            RoboflowError::AlignmentError { .. } => ErrorCategory::Runtime,
+            RoboflowError::LengthExceeded { .. } => ErrorCategory::Runtime,
+            RoboflowError::FieldDecodeError { .. } => ErrorCategory::Runtime,
+            RoboflowError::Unsupported { .. } => ErrorCategory::Codec,
+            RoboflowError::EncodeError { .. } => ErrorCategory::Codec,
+            RoboflowError::TransformError { .. } => ErrorCategory::Transform,
+            RoboflowError::CodecError { .. } => ErrorCategory::Runtime,
+            RoboflowError::InvariantViolation { .. } => ErrorCategory::Runtime,
+            RoboflowError::Other(_) => ErrorCategory::Runtime,
         }
     }
 
@@ -234,33 +245,34 @@ impl CodecError {
     pub fn code(&self) -> u16 {
         let base = self.category().code_prefix();
         match self {
-            CodecError::ParseError { .. } => base + 1,
-            CodecError::InvalidSchema { .. } => base + 1,
-            CodecError::TypeNotFound { .. } => base + 2,
-            CodecError::BufferTooShort { .. } => base + 1,
-            CodecError::AlignmentError { .. } => base + 2,
-            CodecError::LengthExceeded { .. } => base + 3,
-            CodecError::FieldDecodeError { .. } => base + 4,
-            CodecError::Unsupported { .. } => base + 1,
-            CodecError::EncodeError { .. } => base + 2,
-            CodecError::TransformError { .. } => base + 1,
-            CodecError::InvariantViolation { .. } => base + 5,
-            CodecError::Other(_) => base + 99,
+            RoboflowError::ParseError { .. } => base + 1,
+            RoboflowError::InvalidSchema { .. } => base + 1,
+            RoboflowError::TypeNotFound { .. } => base + 2,
+            RoboflowError::BufferTooShort { .. } => base + 1,
+            RoboflowError::AlignmentError { .. } => base + 2,
+            RoboflowError::LengthExceeded { .. } => base + 3,
+            RoboflowError::FieldDecodeError { .. } => base + 4,
+            RoboflowError::Unsupported { .. } => base + 1,
+            RoboflowError::EncodeError { .. } => base + 2,
+            RoboflowError::TransformError { .. } => base + 1,
+            RoboflowError::CodecError { .. } => base + 6,
+            RoboflowError::InvariantViolation { .. } => base + 5,
+            RoboflowError::Other(_) => base + 99,
         }
     }
 
     /// Get structured fields for logging.
     pub fn log_fields(&self) -> Vec<(&'static str, String)> {
         match self {
-            CodecError::ParseError { context, message } => {
+            RoboflowError::ParseError { context, message } => {
                 vec![("context", context.clone()), ("message", message.clone())]
             }
-            CodecError::InvalidSchema {
+            RoboflowError::InvalidSchema {
                 schema_name,
                 reason,
             } => vec![("schema", schema_name.clone()), ("reason", reason.clone())],
-            CodecError::TypeNotFound { type_name } => vec![("type", type_name.clone())],
-            CodecError::BufferTooShort {
+            RoboflowError::TypeNotFound { type_name } => vec![("type", type_name.clone())],
+            RoboflowError::BufferTooShort {
                 requested,
                 available,
                 cursor_pos,
@@ -269,11 +281,11 @@ impl CodecError {
                 ("available", available.to_string()),
                 ("cursor", cursor_pos.to_string()),
             ],
-            CodecError::AlignmentError { expected, actual } => vec![
+            RoboflowError::AlignmentError { expected, actual } => vec![
                 ("expected", expected.to_string()),
                 ("actual", actual.to_string()),
             ],
-            CodecError::LengthExceeded {
+            RoboflowError::LengthExceeded {
                 length,
                 position,
                 buffer_len,
@@ -282,7 +294,7 @@ impl CodecError {
                 ("position", position.to_string()),
                 ("buffer_len", buffer_len.to_string()),
             ],
-            CodecError::FieldDecodeError {
+            RoboflowError::FieldDecodeError {
                 field_name,
                 field_type,
                 cursor_pos,
@@ -293,44 +305,45 @@ impl CodecError {
                 ("cursor", cursor_pos.to_string()),
                 ("cause", cause.clone()),
             ],
-            CodecError::Unsupported { feature } => vec![("feature", feature.clone())],
-            CodecError::EncodeError { codec, message } => {
+            RoboflowError::Unsupported { feature } => vec![("feature", feature.clone())],
+            RoboflowError::EncodeError { codec, message } => {
                 vec![("codec", codec.clone()), ("message", message.clone())]
             }
-            CodecError::TransformError {
+            RoboflowError::TransformError {
                 transform_type,
                 message,
             } => vec![
                 ("transform", transform_type.clone()),
                 ("message", message.clone()),
             ],
-            CodecError::InvariantViolation { invariant } => {
+            RoboflowError::CodecError { message } => vec![("error", message.clone())],
+            RoboflowError::InvariantViolation { invariant } => {
                 vec![("invariant", invariant.clone())]
             }
-            CodecError::Other(msg) => vec![("message", msg.clone())],
+            RoboflowError::Other(msg) => vec![("message", msg.clone())],
         }
     }
 }
 
-impl fmt::Display for CodecError {
+impl fmt::Display for RoboflowError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let category = self.category();
         let code = self.code();
         write!(f, "[{}-{:04}] ", category.as_str(), code)?;
         match self {
-            CodecError::ParseError { context, message } => {
+            RoboflowError::ParseError { context, message } => {
                 write!(f, "Parse error in '{context}': {message}")
             }
-            CodecError::InvalidSchema {
+            RoboflowError::InvalidSchema {
                 schema_name,
                 reason,
             } => {
                 write!(f, "Invalid schema '{schema_name}': {reason}")
             }
-            CodecError::TypeNotFound { type_name } => {
+            RoboflowError::TypeNotFound { type_name } => {
                 write!(f, "Type not found: '{type_name}'")
             }
-            CodecError::BufferTooShort {
+            RoboflowError::BufferTooShort {
                 requested,
                 available,
                 cursor_pos,
@@ -338,11 +351,11 @@ impl fmt::Display for CodecError {
                 f,
                 "Buffer too short: requested {requested} bytes at position {cursor_pos}, but only {available} bytes available"
             ),
-            CodecError::AlignmentError { expected, actual } => write!(
+            RoboflowError::AlignmentError { expected, actual } => write!(
                 f,
                 "Alignment error: expected alignment of {expected}, but position is {actual}"
             ),
-            CodecError::LengthExceeded {
+            RoboflowError::LengthExceeded {
                 length,
                 position,
                 buffer_len,
@@ -350,7 +363,7 @@ impl fmt::Display for CodecError {
                 f,
                 "Length {length} exceeds buffer at position {position} (buffer length: {buffer_len})"
             ),
-            CodecError::FieldDecodeError {
+            RoboflowError::FieldDecodeError {
                 field_name,
                 field_type,
                 cursor_pos,
@@ -359,30 +372,71 @@ impl fmt::Display for CodecError {
                 f,
                 "Failed to decode field '{field_name}' (type: '{field_type}', cursor_pos: {cursor_pos}): {cause}"
             ),
-            CodecError::Unsupported { feature } => {
+            RoboflowError::Unsupported { feature } => {
                 write!(f, "Unsupported feature: '{feature}'")
             }
-            CodecError::EncodeError { codec, message } => {
+            RoboflowError::EncodeError { codec, message } => {
                 write!(f, "{codec} encode error: {message}")
             }
-            CodecError::TransformError {
+            RoboflowError::TransformError {
                 transform_type,
                 message,
             } => {
                 write!(f, "Transform error ({transform_type}): {message}")
             }
-            CodecError::InvariantViolation { invariant } => {
+            RoboflowError::CodecError { message } => {
+                write!(f, "Format I/O error: {message}")
+            }
+            RoboflowError::InvariantViolation { invariant } => {
                 write!(f, "Invariant violation: {invariant}")
             }
-            CodecError::Other(msg) => write!(f, "{msg}"),
+            RoboflowError::Other(msg) => write!(f, "{msg}"),
         }
     }
 }
 
-impl std::error::Error for CodecError {}
+impl std::error::Error for RoboflowError {}
+
+impl From<std::io::Error> for RoboflowError {
+    fn from(err: std::io::Error) -> Self {
+        RoboflowError::EncodeError {
+            codec: "IO".to_string(),
+            message: err.to_string(),
+        }
+    }
+}
+
+impl From<robocodec::CodecError> for RoboflowError {
+    fn from(err: robocodec::CodecError) -> Self {
+        RoboflowError::CodecError {
+            message: err.to_string(),
+        }
+    }
+}
+
+// Forward KPS writer errors to codec errors
+#[cfg(feature = "kps-hdf5")]
+impl From<crate::dataset::kps::writers::KpsWriterError> for RoboflowError {
+    fn from(err: crate::dataset::kps::writers::KpsWriterError) -> Self {
+        RoboflowError::EncodeError {
+            codec: "KpsWriter".to_string(),
+            message: err.to_string(),
+        }
+    }
+}
+
+#[cfg(all(feature = "kps-parquet", not(feature = "kps-hdf5")))]
+impl From<crate::dataset::kps::writers::KpsWriterError> for RoboflowError {
+    fn from(err: crate::dataset::kps::writers::KpsWriterError) -> Self {
+        RoboflowError::EncodeError {
+            codec: "KpsWriter".to_string(),
+            message: err.to_string(),
+        }
+    }
+}
 
 /// Result type for codec operations.
-pub type Result<T> = std::result::Result<T, CodecError>;
+pub type Result<T> = std::result::Result<T, RoboflowError>;
 
 /// Helper macro for creating structured error logs.
 ///
@@ -414,33 +468,33 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        let err = CodecError::parse("schema", "unexpected token");
+        let err = RoboflowError::parse("schema", "unexpected token");
         assert!(format!("{err}").contains("[PARSE-1001]"));
         assert!(format!("{err}").contains("Parse error in 'schema': unexpected token"));
 
-        let err = CodecError::type_not_found("MyType");
+        let err = RoboflowError::type_not_found("MyType");
         assert!(format!("{err}").contains("[SCHEMA-2002]"));
         assert!(format!("{err}").contains("Type not found: 'MyType'"));
     }
 
     #[test]
     fn test_error_category() {
-        let err = CodecError::parse("test", "test");
+        let err = RoboflowError::parse("test", "test");
         assert_eq!(err.category(), ErrorCategory::Parse);
         assert_eq!(err.code(), 1001);
 
-        let err = CodecError::invalid_schema("test", "test");
+        let err = RoboflowError::invalid_schema("test", "test");
         assert_eq!(err.category(), ErrorCategory::Schema);
         assert_eq!(err.code(), 2001);
 
-        let err = CodecError::buffer_too_short(10, 5, 0);
+        let err = RoboflowError::buffer_too_short(10, 5, 0);
         assert_eq!(err.category(), ErrorCategory::Runtime);
         assert_eq!(err.code(), 3001);
     }
 
     #[test]
     fn test_log_fields() {
-        let err = CodecError::type_not_found("MyType");
+        let err = RoboflowError::type_not_found("MyType");
         let fields = err.log_fields();
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].0, "type");
@@ -449,7 +503,7 @@ mod tests {
 
     #[test]
     fn test_transform_error() {
-        let err = CodecError::transform("TopicRename", "collision detected");
+        let err = RoboflowError::transform("TopicRename", "collision detected");
         assert_eq!(err.category(), ErrorCategory::Transform);
         assert_eq!(err.code(), 5001);
         assert!(format!("{err}").contains("Transform error (TopicRename)"));
@@ -457,7 +511,7 @@ mod tests {
 
     #[test]
     fn test_invariant_violation() {
-        let err = CodecError::invariant_violation("mmap data dropped while stream active");
+        let err = RoboflowError::invariant_violation("mmap data dropped while stream active");
         assert_eq!(err.category(), ErrorCategory::Runtime);
         assert_eq!(err.code(), 3005);
         assert!(format!("{err}").contains("Invariant violation"));

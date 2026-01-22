@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
 //! Unified data extraction tool for robotics data files.
 //!
 //! Usage:
@@ -7,17 +11,36 @@
 //!   extract fixture <input> <name>              - Create minimal fixture with one message
 //!   extract time <input> <output> <start> <end>  - Extract messages in time range (nanoseconds)
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 
+use robocodec::io::formats::mcap::writer::ParallelMcapWriter;
+use robocodec::io::formats::mcap::SequentialMcapReader;
+use robocodec::io::traits::FormatReader;
+
 enum Command {
-    Messages { output: String, count: Option<usize> },
-    Topics { output: String, topics: Vec<String> },
-    PerTopic { output: String, count: usize },
-    Fixture { name: String },
-    TimeRange { output: String, start: u64, end: u64 },
+    Messages {
+        output: String,
+        count: Option<usize>,
+    },
+    Topics {
+        output: String,
+        topics: Vec<String>,
+    },
+    PerTopic {
+        output: String,
+        count: usize,
+    },
+    Fixture {
+        name: String,
+    },
+    TimeRange {
+        output: String,
+        start: u64,
+        end: u64,
+    },
 }
 
 fn parse_args(args: &[String]) -> Result<(String, Command), String> {
@@ -103,9 +126,7 @@ fn run_extract(input: &str, cmd: Command) -> Result<(), Box<dyn std::error::Erro
                 extract_mcap_topics(input, &output, &topics)?
             }
         }
-        Command::PerTopic { output, count } => {
-            extract_per_topic(input, &output, count, &ext)?
-        }
+        Command::PerTopic { output, count } => extract_per_topic(input, &output, count, &ext)?,
         Command::Fixture { name } => {
             if ext == "bag" {
                 create_fixture_from_bag(input, &name)?
@@ -131,7 +152,7 @@ fn extract_mcap_messages(
     output: &str,
     count: Option<usize>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let reader = robocodec::RoboReader::open(input)?;
+    let reader = SequentialMcapReader::open(input)?;
 
     println!("Extracting from MCAP: {}", input);
     println!("Output: {}", output);
@@ -141,34 +162,45 @@ fn extract_mcap_messages(
 
     // Create output MCAP
     let output_file = File::create(output)?;
-    let mut mcap_writer = mcap::Writer::new(BufWriter::new(output_file))?;
+    let mut mcap_writer = ParallelMcapWriter::new(BufWriter::new(output_file))?;
 
     // Add schemas and channels
-    let mut schema_ids: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
-    let mut channel_ids: std::collections::HashMap<u16, u16> = std::collections::HashMap::new();
-    let mut sequences: std::collections::HashMap<u16, u32> = std::collections::HashMap::new();
+    let mut schema_ids: HashMap<String, u16> = HashMap::new();
+    let mut channel_ids: HashMap<u16, u16> = HashMap::new();
 
     for (&ch_id, channel) in reader.channels() {
         let schema_id = if let Some(schema) = &channel.schema {
             let encoding = channel.schema_encoding.as_deref().unwrap_or("ros2msg");
-            *schema_ids
-                .entry(channel.message_type.clone())
-                .or_insert_with(|| mcap_writer.add_schema(&channel.message_type, encoding, schema.as_bytes()).unwrap_or(0))
+            let msg_type = channel.message_type.clone();
+            match schema_ids.get(&msg_type) {
+                Some(&id) => id,
+                None => {
+                    let id: u16 = mcap_writer
+                        .add_schema(&channel.message_type, encoding, schema.as_bytes())
+                        .unwrap_or(0);
+                    schema_ids.insert(msg_type, id);
+                    id
+                }
+            }
         } else {
             0
         };
 
-        let out_ch_id = mcap_writer.add_channel(schema_id, &channel.topic, &channel.encoding, &BTreeMap::new())?;
+        let out_ch_id = mcap_writer.add_channel(
+            schema_id,
+            &channel.topic,
+            &channel.encoding,
+            &HashMap::new(),
+        )?;
         channel_ids.insert(ch_id, out_ch_id);
-        sequences.insert(out_ch_id, 0);
     }
 
     // Copy messages
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_iter();
     let mut written = 0;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         if let Some(limit) = count {
             if written >= limit {
                 break;
@@ -178,18 +210,8 @@ fn extract_mcap_messages(
         let (msg, _channel) = result?;
         let out_ch_id = channel_ids.get(&msg.channel_id).copied().unwrap_or(0);
 
-        let seq = *sequences.get(&out_ch_id).unwrap_or(&0);
-        mcap_writer.write_to_known_channel(
-            &mcap::records::MessageHeader {
-                channel_id: out_ch_id,
-                sequence: seq,
-                log_time: msg.log_time,
-                publish_time: msg.publish_time,
-            },
-            &msg.data,
-        )?;
+        mcap_writer.write_message(out_ch_id, msg.log_time, msg.publish_time, &msg.data)?;
 
-        sequences.insert(out_ch_id, seq + 1);
         written += 1;
 
         if written % 1000 == 0 {
@@ -197,7 +219,7 @@ fn extract_mcap_messages(
         }
     }
 
-    drop(mcap_writer);
+    mcap_writer.finish()?;
     println!("Extracted {} messages to {}", written, output);
 
     Ok(())
@@ -209,7 +231,8 @@ fn extract_bag_messages(
     output: &str,
     count: Option<usize>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let reader = robocodec::RoboReader::open(input)?;
+    use robocodec::io::traits::FormatReader;
+    let reader = robocodec::BagFormat::open(input)?;
 
     println!("Extracting from BAG: {}", input);
     println!("Output: {}", output);
@@ -223,15 +246,20 @@ fn extract_bag_messages(
     for (ch_id, channel) in reader.channels() {
         let schema = channel.schema.as_deref().unwrap_or("");
         let callerid = channel.callerid.as_deref().unwrap_or("");
-        writer.add_connection_with_callerid(*ch_id, &channel.topic, &channel.message_type, schema, callerid)?;
+        writer.add_connection_with_callerid(
+            *ch_id,
+            &channel.topic,
+            &channel.message_type,
+            schema,
+            callerid,
+        )?;
     }
 
     // Copy messages
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
     let mut written = 0;
 
-    while let Some(result) = stream.next() {
+    for result in iter {
         if let Some(limit) = count {
             if written >= limit {
                 break;
@@ -260,7 +288,7 @@ fn extract_mcap_topics(
     output: &str,
     topics: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let reader = robocodec::RoboReader::open(input)?;
+    let reader = SequentialMcapReader::open(input)?;
 
     println!("Extracting topics from MCAP: {}", input);
     println!("Topics: {:?}", topics);
@@ -283,12 +311,11 @@ fn extract_mcap_topics(
 
     // Create output MCAP
     let output_file = File::create(output)?;
-    let mut mcap_writer = mcap::Writer::new(BufWriter::new(output_file))?;
+    let mut mcap_writer = ParallelMcapWriter::new(BufWriter::new(output_file))?;
 
     // Add schemas and channels for filtered topics
-    let mut schema_ids: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
-    let mut channel_ids: std::collections::HashMap<u16, u16> = std::collections::HashMap::new();
-    let mut sequences: std::collections::HashMap<u16, u32> = std::collections::HashMap::new();
+    let mut schema_ids: HashMap<String, u16> = HashMap::new();
+    let mut channel_ids: HashMap<u16, u16> = HashMap::new();
 
     for (&ch_id, channel) in reader.channels() {
         if !channel_filter.contains(&ch_id) {
@@ -297,44 +324,45 @@ fn extract_mcap_topics(
 
         let schema_id = if let Some(schema) = &channel.schema {
             let encoding = channel.schema_encoding.as_deref().unwrap_or("ros2msg");
-            *schema_ids
-                .entry(channel.message_type.clone())
-                .or_insert_with(|| mcap_writer.add_schema(&channel.message_type, encoding, schema.as_bytes()).unwrap_or(0))
+            let msg_type = channel.message_type.clone();
+            match schema_ids.get(&msg_type) {
+                Some(&id) => id,
+                None => {
+                    let id: u16 = mcap_writer
+                        .add_schema(&channel.message_type, encoding, schema.as_bytes())
+                        .unwrap_or(0);
+                    schema_ids.insert(msg_type, id);
+                    id
+                }
+            }
         } else {
             0
         };
 
-        let out_ch_id = mcap_writer.add_channel(schema_id, &channel.topic, &channel.encoding, &BTreeMap::new())?;
+        let out_ch_id = mcap_writer.add_channel(
+            schema_id,
+            &channel.topic,
+            &channel.encoding,
+            &HashMap::new(),
+        )?;
         channel_ids.insert(ch_id, out_ch_id);
-        sequences.insert(out_ch_id, 0);
     }
 
     // Copy filtered messages
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_iter();
     let mut written = 0;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         if let Some(&out_ch_id) = channel_ids.get(&msg.channel_id) {
-            let seq = *sequences.get(&out_ch_id).unwrap_or(&0);
-            mcap_writer.write_to_known_channel(
-                &mcap::records::MessageHeader {
-                    channel_id: out_ch_id,
-                    sequence: seq,
-                    log_time: msg.log_time,
-                    publish_time: msg.publish_time,
-                },
-                &msg.data,
-            )?;
-
-            sequences.insert(out_ch_id, seq + 1);
+            mcap_writer.write_message(out_ch_id, msg.log_time, msg.publish_time, &msg.data)?;
             written += 1;
         }
     }
 
-    drop(mcap_writer);
+    mcap_writer.finish()?;
     println!("Extracted {} messages to {}", written, output);
 
     Ok(())
@@ -346,7 +374,8 @@ fn extract_bag_topics(
     output: &str,
     topics: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let reader = robocodec::RoboReader::open(input)?;
+    use robocodec::io::traits::FormatReader;
+    let reader = robocodec::BagFormat::open(input)?;
 
     println!("Extracting topics from BAG: {}", input);
     println!("Topics: {:?}", topics);
@@ -354,7 +383,7 @@ fn extract_bag_topics(
 
     // Build channel ID filter
     let mut channel_filter = std::collections::HashSet::new();
-    let mut channel_map: std::collections::HashMap<u16, u16> = std::collections::HashMap::new();
+    let mut channel_map: HashMap<u16, u16> = HashMap::new();
     let mut new_conn_id = 0u16;
 
     for (&ch_id, channel) in reader.channels() {
@@ -380,16 +409,21 @@ fn extract_bag_topics(
         if let Some(&new_id) = channel_map.get(&ch_id) {
             let schema = channel.schema.as_deref().unwrap_or("");
             let callerid = channel.callerid.as_deref().unwrap_or("");
-            writer.add_connection_with_callerid(new_id, &channel.topic, &channel.message_type, schema, callerid)?;
+            writer.add_connection_with_callerid(
+                new_id,
+                &channel.topic,
+                &channel.message_type,
+                schema,
+                callerid,
+            )?;
         }
     }
 
     // Copy filtered messages
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
     let mut written = 0;
 
-    while let Some(result) = stream.next() {
+    for result in iter {
         let (msg, _channel) = result?;
 
         if let Some(&new_id) = channel_map.get(&msg.channel_id) {
@@ -406,46 +440,58 @@ fn extract_bag_topics(
 }
 
 /// Extract N messages per topic from BAG or MCAP file.
+/// For BAG files, tracks per (topic, callerid) to handle multiple publishers.
 fn extract_per_topic(
     input: &str,
     output: &str,
     count: usize,
     ext: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let reader = robocodec::RoboReader::open(input)?;
-
-    println!("Extracting {} messages per topic from {}: {}", count, ext.to_uppercase(), input);
+    println!(
+        "Extracting {} messages per topic from {}: {}",
+        count,
+        ext.to_uppercase(),
+        input
+    );
     println!("Output: {}", output);
 
-    // Track messages written per topic
-    let mut messages_per_topic: HashMap<String, usize> = HashMap::new();
+    // Track messages written per (topic, callerid) combination
+    let mut messages_per_topic: HashMap<(String, Option<String>), usize> = HashMap::new();
     let mut written = 0;
 
     if ext == "bag" {
+        use robocodec::io::traits::FormatReader;
+        let reader = robocodec::BagFormat::open(input)?;
         let mut writer = robocodec::BagWriter::create(output)?;
 
         // Copy all connections, preserving callerid from the original bag
         for (ch_id, channel) in reader.channels() {
             let schema = channel.schema.as_deref().unwrap_or("");
             let callerid = channel.callerid.as_deref().unwrap_or("");
-            writer.add_connection_with_callerid(*ch_id, &channel.topic, &channel.message_type, schema, callerid)?;
+            writer.add_connection_with_callerid(
+                *ch_id,
+                &channel.topic,
+                &channel.message_type,
+                schema,
+                callerid,
+            )?;
         }
 
         // Copy messages up to count per topic using unified iter_raw
         let iter = reader.iter_raw()?;
-        let mut stream = iter.into_stream()?;
 
-        while let Some(result) = stream.next() {
+        for result in iter {
             let (msg, channel) = result?;
 
-            let topic = &channel.topic;
-            let written_for_topic = messages_per_topic.entry(topic.clone()).or_insert(0);
+            let key = (channel.topic.clone(), channel.callerid.clone());
+            let written_for_topic = messages_per_topic.entry(key).or_insert(0);
 
             if *written_for_topic >= count {
                 continue;
             }
 
-            let bag_msg = robocodec::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
+            let bag_msg =
+                robocodec::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
             writer.write_message(&bag_msg)?;
 
             *written_for_topic += 1;
@@ -455,65 +501,67 @@ fn extract_per_topic(
         writer.finish()?;
     } else {
         // MCAP output
+        let reader = SequentialMcapReader::open(input)?;
         let output_file = File::create(output)?;
-        let mut mcap_writer = mcap::Writer::new(BufWriter::new(output_file))?;
+        let mut mcap_writer = ParallelMcapWriter::new(BufWriter::new(output_file))?;
 
         // Add schemas and channels
         let mut schema_ids: HashMap<String, u16> = HashMap::new();
         let mut channel_ids: HashMap<u16, u16> = HashMap::new();
-        let mut sequences: HashMap<u16, u32> = HashMap::new();
 
         for (&ch_id, channel) in reader.channels() {
             let schema_id = if let Some(schema) = &channel.schema {
                 let encoding = channel.schema_encoding.as_deref().unwrap_or("ros2msg");
                 *schema_ids
                     .entry(channel.message_type.clone())
-                    .or_insert_with(|| mcap_writer.add_schema(&channel.message_type, encoding, schema.as_bytes()).unwrap_or(0))
+                    .or_insert_with(|| {
+                        mcap_writer
+                            .add_schema(&channel.message_type, encoding, schema.as_bytes())
+                            .unwrap_or(0)
+                    })
             } else {
                 0
             };
 
-            let out_ch_id = mcap_writer.add_channel(schema_id, &channel.topic, &channel.encoding, &BTreeMap::new())?;
+            let out_ch_id = mcap_writer.add_channel(
+                schema_id,
+                &channel.topic,
+                &channel.encoding,
+                &HashMap::new(),
+            )?;
             channel_ids.insert(ch_id, out_ch_id);
-            sequences.insert(out_ch_id, 0);
         }
 
         // Copy messages up to count per topic
         let iter = reader.iter_raw()?;
-        let mut stream = iter.into_stream()?;
+        let stream = iter.into_iter();
 
-        while let Some(result) = stream.next() {
+        for result in stream {
             let (msg, channel) = result?;
 
-            let topic = &channel.topic;
-            let written_for_topic = messages_per_topic.entry(topic.clone()).or_insert(0);
+            // MCAP doesn't have callerid, use None (ROS2 concept)
+            let key = (channel.topic.clone(), None);
+            let written_for_topic = messages_per_topic.entry(key).or_insert(0);
 
             if *written_for_topic >= count {
                 continue;
             }
 
             let out_ch_id = channel_ids.get(&msg.channel_id).copied().unwrap_or(0);
-            let seq = *sequences.get(&out_ch_id).unwrap_or(&0);
 
-            mcap_writer.write_to_known_channel(
-                &mcap::records::MessageHeader {
-                    channel_id: out_ch_id,
-                    sequence: seq,
-                    log_time: msg.log_time,
-                    publish_time: msg.publish_time,
-                },
-                &msg.data,
-            )?;
+            mcap_writer.write_message(out_ch_id, msg.log_time, msg.publish_time, &msg.data)?;
 
-            sequences.insert(out_ch_id, seq + 1);
             *written_for_topic += 1;
             written += 1;
         }
 
-        drop(mcap_writer);
+        mcap_writer.finish()?;
     }
 
-    println!("Extracted {} messages ({} per topic) to {}", written, count, output);
+    println!(
+        "Extracted {} messages (up to {} per topic/callerid) to {}",
+        written, count, output
+    );
 
     Ok(())
 }
@@ -522,40 +570,35 @@ fn extract_per_topic(
 fn create_fixture_from_bag(input: &str, name: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Creating fixture from BAG: {}", input);
 
-    let bag = rosbag::RosBag::new(Path::new(input))?;
+    let reader = robocodec::BagFormat::open(input)?;
 
     // Find the first message
-    for record in bag.chunk_records() {
-        let record = record?;
-        if let rosbag::ChunkRecord::Chunk(chunk) = record {
-            for msg_result in chunk.messages() {
-                let msg_result = msg_result?;
-                if let rosbag::MessageRecord::MessageData(msg) = msg_result {
-                    // Find connection info
-                    for conn_record in bag.index_records() {
-                        if let Ok(rosbag::IndexRecord::Connection(conn)) = conn_record {
-                            if conn.id == msg.conn_id {
-                                write_fixture_mcap(name, &msg.data, msg.time, &conn.topic, &conn.tp, &conn.message_definition)?;
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-            }
+    match reader.iter_raw()?.next() {
+        Some(Ok((msg, channel))) => {
+            write_fixture_mcap(
+                name,
+                &msg.data,
+                msg.log_time,
+                &channel.topic,
+                &channel.message_type,
+                channel.schema.as_deref().unwrap_or(""),
+            )?;
+            Ok(())
+        }
+        _ => {
+            eprintln!("No messages found in bag file");
+            std::process::exit(1);
         }
     }
-
-    eprintln!("No messages found in bag file");
-    std::process::exit(1);
 }
 
 /// Create minimal fixture from MCAP file.
 fn create_fixture_from_mcap(input: &str, name: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Creating fixture from MCAP: {}", input);
 
-    let reader = robocodec::RoboReader::open(input)?;
+    let reader = SequentialMcapReader::open(input)?;
 
-    match reader.iter_raw()?.into_stream()?.next() {
+    match reader.iter_raw()?.next() {
         Some(Ok((raw_msg, channel_info))) => {
             write_fixture_mcap(
                 name,
@@ -592,26 +635,18 @@ fn write_fixture_mcap(
     println!("  Type: {}", msg_type);
 
     let output_file = File::create(&output_path)?;
-    let mut mcap_writer = mcap::Writer::new(BufWriter::new(output_file))?;
+    let mut mcap_writer = ParallelMcapWriter::new(BufWriter::new(output_file))?;
 
     // Determine encoding from schema content
     let is_ros1 = schema.trim().starts_with("Header header") || schema.contains("ros1msg");
     let encoding = if is_ros1 { "ros1msg" } else { "ros2msg" };
 
     let schema_id = mcap_writer.add_schema(msg_type, encoding, schema.as_bytes())?;
-    let ch_id = mcap_writer.add_channel(schema_id, topic, "cdr", &BTreeMap::new())?;
+    let ch_id = mcap_writer.add_channel(schema_id, topic, "cdr", &HashMap::new())?;
 
-    mcap_writer.write_to_known_channel(
-        &mcap::records::MessageHeader {
-            channel_id: ch_id,
-            sequence: 0,
-            log_time: timestamp,
-            publish_time: timestamp,
-        },
-        data,
-    )?;
+    mcap_writer.write_message(ch_id, timestamp, timestamp, data)?;
 
-    drop(mcap_writer);
+    mcap_writer.finish()?;
 
     let output_size = std::fs::metadata(&output_path)?.len();
     println!("  Size: {} bytes", output_size);
@@ -626,7 +661,7 @@ fn extract_mcap_time_range(
     start: u64,
     end: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let reader = robocodec::RoboReader::open(input)?;
+    let reader = SequentialMcapReader::open(input)?;
 
     println!("Extracting from MCAP: {}", input);
     println!("Time range: {} - {} ns", start, end);
@@ -634,56 +669,57 @@ fn extract_mcap_time_range(
 
     // Create output MCAP
     let output_file = File::create(output)?;
-    let mut mcap_writer = mcap::Writer::new(BufWriter::new(output_file))?;
+    let mut mcap_writer = ParallelMcapWriter::new(BufWriter::new(output_file))?;
 
     // Add schemas and channels
-    let mut schema_ids: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
-    let mut channel_ids: std::collections::HashMap<u16, u16> = std::collections::HashMap::new();
-    let mut sequences: std::collections::HashMap<u16, u32> = std::collections::HashMap::new();
+    let mut schema_ids: HashMap<String, u16> = HashMap::new();
+    let mut channel_ids: HashMap<u16, u16> = HashMap::new();
 
     for (&ch_id, channel) in reader.channels() {
         let schema_id = if let Some(schema) = &channel.schema {
             let encoding = channel.schema_encoding.as_deref().unwrap_or("ros2msg");
-            *schema_ids
-                .entry(channel.message_type.clone())
-                .or_insert_with(|| mcap_writer.add_schema(&channel.message_type, encoding, schema.as_bytes()).unwrap_or(0))
+            let msg_type = channel.message_type.clone();
+            match schema_ids.get(&msg_type) {
+                Some(&id) => id,
+                None => {
+                    let id: u16 = mcap_writer
+                        .add_schema(&channel.message_type, encoding, schema.as_bytes())
+                        .unwrap_or(0);
+                    schema_ids.insert(msg_type, id);
+                    id
+                }
+            }
         } else {
             0
         };
 
-        let out_ch_id = mcap_writer.add_channel(schema_id, &channel.topic, &channel.encoding, &BTreeMap::new())?;
+        let out_ch_id = mcap_writer.add_channel(
+            schema_id,
+            &channel.topic,
+            &channel.encoding,
+            &HashMap::new(),
+        )?;
         channel_ids.insert(ch_id, out_ch_id);
-        sequences.insert(out_ch_id, 0);
     }
 
     // Copy messages in time range
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
+    let stream = iter.into_iter();
     let mut written = 0;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         let (msg, _channel) = result?;
 
         if msg.publish_time >= start && msg.publish_time <= end {
             let out_ch_id = channel_ids.get(&msg.channel_id).copied().unwrap_or(0);
 
-            let seq = *sequences.get(&out_ch_id).unwrap_or(&0);
-            mcap_writer.write_to_known_channel(
-                &mcap::records::MessageHeader {
-                    channel_id: out_ch_id,
-                    sequence: seq,
-                    log_time: msg.log_time,
-                    publish_time: msg.publish_time,
-                },
-                &msg.data,
-            )?;
+            mcap_writer.write_message(out_ch_id, msg.log_time, msg.publish_time, &msg.data)?;
 
-            sequences.insert(out_ch_id, seq + 1);
             written += 1;
         }
     }
 
-    drop(mcap_writer);
+    mcap_writer.finish()?;
     println!("Extracted {} messages to {}", written, output);
 
     Ok(())
@@ -696,7 +732,8 @@ fn extract_bag_time_range(
     start: u64,
     end: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let reader = robocodec::RoboReader::open(input)?;
+    use robocodec::io::traits::FormatReader;
+    let reader = robocodec::BagFormat::open(input)?;
 
     println!("Extracting from BAG: {}", input);
     println!("Time range: {} - {} ns", start, end);
@@ -708,19 +745,25 @@ fn extract_bag_time_range(
     for (ch_id, channel) in reader.channels() {
         let schema = channel.schema.as_deref().unwrap_or("");
         let callerid = channel.callerid.as_deref().unwrap_or("");
-        writer.add_connection_with_callerid(*ch_id, &channel.topic, &channel.message_type, schema, callerid)?;
+        writer.add_connection_with_callerid(
+            *ch_id,
+            &channel.topic,
+            &channel.message_type,
+            schema,
+            callerid,
+        )?;
     }
 
     // Copy messages in time range
     let iter = reader.iter_raw()?;
-    let mut stream = iter.into_stream()?;
     let mut written = 0;
 
-    while let Some(result) = stream.next() {
+    for result in iter {
         let (msg, _channel) = result?;
 
         if msg.publish_time >= start && msg.publish_time <= end {
-            let bag_msg = robocodec::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
+            let bag_msg =
+                robocodec::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
             writer.write_message(&bag_msg)?;
             written += 1;
         }

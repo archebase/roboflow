@@ -1,0 +1,222 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  license:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install reuse tool
+        run: pip install reuse
+
+      - name: Check REUSE compliance
+        run: reuse lint
+
+  rust-lint:
+    name: Rust Lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run fmt check
+        run: cargo fmt -- --check
+
+      - name: Install HDF5
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y libhdf5-dev
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            brew install hdf5
+          fi
+        shell: bash
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  rust-test:
+    name: Rust Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install HDF5
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y libhdf5-dev
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            brew install hdf5
+          fi
+        shell: bash
+
+      # Note: Do NOT use --all-features or --features python here.
+      # PyO3's extension-module feature prevents linking in standalone test binaries.
+      # Python bindings are tested separately via maturin in the python job.
+      - name: Run tests
+        run: cargo test --features kps-all
+
+  python:
+    name: Python Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Create virtual environment (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          python -m venv .venv
+          echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+
+      - name: Create virtual environment (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          python -m venv .venv
+          echo "VIRTUAL_ENV=$pwd\.venv" >> $env:GITHUB_ENV
+          echo "$pwd\.venv\Scripts" >> $env:GITHUB_PATH
+
+      - name: Install maturin (Unix)
+        if: runner.os != 'Windows'
+        run: pip install maturin[patchelf]
+
+      - name: Install maturin (Windows)
+        if: runner.os == 'Windows'
+        run: pip install maturin
+
+      - name: Build and install Python package
+        run: maturin develop --release --features python
+
+      - name: Install pytest
+        run: pip install pytest pytest-cov
+
+      - name: Run Python tests
+        run: pytest python/ -v
+
+  lint:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Create virtual environment
+        run: |
+          python -m venv .venv
+          echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: pip install maturin[patchelf] mypy
+
+      - name: Build and install Python package
+        run: maturin develop --release --features python
+
+      - name: Run mypy
+        run: mypy python/roboflow
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache cargo-llvm-cov
+        uses: actions/cache@v4
+        id: cache-llvm-cov
+        with:
+          path: ~/.cargo/bin/cargo-llvm-cov
+          key: ${{ runner.os }}-cargo-llvm-cov-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-llvm-cov
+        if: steps.cache-llvm-cov.outputs.cache-hit != 'true'
+        run: cargo install cargo-llvm-cov
+
+      - name: Create virtual environment
+        run: |
+          python -m venv .venv
+          echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: pip install maturin[patchelf] pytest pytest-cov
+
+      - name: Install HDF5
+        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
+
+      # Note: Do NOT use --all-features here - PyO3's extension-module prevents linking.
+      # Rust coverage excludes python feature; Python coverage is generated separately below.
+      - name: Generate Rust coverage
+        run: cargo llvm-cov --features kps-all --workspace --lcov --output-path lcov.info
+
+      - name: Generate Python coverage
+        run: |
+          maturin develop --release --features python
+          pytest python/ --cov=roboflow --cov-report=xml:coverage-python.xml --cov-report=term
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./lcov.info,./coverage-python.xml
+          flags: rust,python
+          name: codecov-umbrella

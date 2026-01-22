@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
 //! Unified search and analysis tool for robotics data files.
 //!
 //! Usage:
@@ -9,14 +13,33 @@
 //!   search stats <file>                     - Show file statistics
 
 use std::env;
+use std::path::Path;
 
 enum Command {
-    Bytes { file: String, pattern: Vec<u8> },
-    String { file: String, text: String },
-    Topics { file: String, pattern: String },
-    Fields { file: String, topic: String },
-    Values { file: String, topic: String, field: String },
-    Stats { file: String },
+    Bytes {
+        file: String,
+        pattern: Vec<u8>,
+    },
+    String {
+        file: String,
+        text: String,
+    },
+    Topics {
+        file: String,
+        pattern: String,
+    },
+    Fields {
+        file: String,
+        topic: String,
+    },
+    Values {
+        file: String,
+        topic: String,
+        field: String,
+    },
+    Stats {
+        file: String,
+    },
 }
 
 fn parse_args(args: &[String]) -> Result<Command, String> {
@@ -109,7 +132,10 @@ fn search_bytes(file: &str, pattern: &[u8]) -> Result<(), Box<dyn std::error::Er
     let mut search_pos = 0;
 
     while search_pos + pattern.len() <= data.len() {
-        if let Some(pos) = data[search_pos..].windows(pattern.len()).position(|w| w == pattern) {
+        if let Some(pos) = data[search_pos..]
+            .windows(pattern.len())
+            .position(|w| w == pattern)
+        {
             let actual_pos = search_pos + pos;
             found_count += 1;
 
@@ -168,7 +194,10 @@ fn search_string(file: &str, text: &str) -> Result<(), Box<dyn std::error::Error
     let mut search_pos = 0;
 
     while search_pos + pattern.len() <= data.len() {
-        if let Some(pos) = data[search_pos..].windows(pattern.len()).position(|w| w == pattern) {
+        if let Some(pos) = data[search_pos..]
+            .windows(pattern.len())
+            .position(|w| w == pattern)
+        {
             let actual_pos = search_pos + pos;
             found_count += 1;
 
@@ -183,7 +212,7 @@ fn search_string(file: &str, text: &str) -> Result<(), Box<dyn std::error::Error
                 let abs_pos = start + i;
                 if abs_pos >= actual_pos && abs_pos < actual_pos + pattern.len() {
                     print!(">>>{}<<<", b as char);
-                } else if b >= 32 && b <= 126 {
+                } else if (32..=126).contains(&b) {
                     print!("{}", b as char);
                 } else if b == b'\n' {
                     print!("\\n");
@@ -220,23 +249,89 @@ fn search_string(file: &str, text: &str) -> Result<(), Box<dyn std::error::Error
 
 /// Find topics matching pattern.
 fn search_topics(file: &str, pattern: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let reader = robocodec::RoboReader::open(file)?;
-
-    println!("Searching for topics matching: {:?}", pattern);
-    println!();
+    let ext = Path::new(file)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
 
     let pattern_lower = pattern.to_lowercase();
     let mut found = false;
 
-    for channel in reader.channels().values() {
-        if channel.topic.to_lowercase().contains(&pattern_lower)
-            || channel.message_type.to_lowercase().contains(&pattern_lower)
-        {
-            found = true;
-            println!("Topic: {}", channel.topic);
-            println!("  Type: {}", channel.message_type);
-            println!("  Messages: {}", channel.message_count);
+    match ext.as_str() {
+        "mcap" => {
+            let reader = robocodec::mcap::McapReader::open(file)?;
+            println!("Searching for topics matching: {:?}", pattern);
             println!();
+
+            for channel in reader.channels().values() {
+                if channel.topic.to_lowercase().contains(&pattern_lower)
+                    || channel.message_type.to_lowercase().contains(&pattern_lower)
+                {
+                    found = true;
+                    println!("Topic: {}", channel.topic);
+                    println!("  Type: {}", channel.message_type);
+                    println!("  Messages: {}", channel.message_count);
+                    println!();
+                }
+            }
+        }
+        "bag" => {
+            use robocodec::io::traits::FormatReader;
+            let reader = robocodec::BagFormat::open(file)?;
+            println!("Searching for topics matching: {:?}", pattern);
+            println!();
+
+            for channel in reader.channels().values() {
+                if channel.topic.to_lowercase().contains(&pattern_lower)
+                    || channel.message_type.to_lowercase().contains(&pattern_lower)
+                {
+                    found = true;
+                    println!("Topic: {}", channel.topic);
+                    println!("  Type: {}", channel.message_type);
+                    println!("  Messages: {}", channel.message_count);
+                    println!();
+                }
+            }
+        }
+        _ => {
+            // Try MCAP first
+            match robocodec::mcap::McapReader::open(file) {
+                Ok(reader) => {
+                    println!("Searching for topics matching: {:?}", pattern);
+                    println!();
+
+                    for channel in reader.channels().values() {
+                        if channel.topic.to_lowercase().contains(&pattern_lower)
+                            || channel.message_type.to_lowercase().contains(&pattern_lower)
+                        {
+                            found = true;
+                            println!("Topic: {}", channel.topic);
+                            println!("  Type: {}", channel.message_type);
+                            println!("  Messages: {}", channel.message_count);
+                            println!();
+                        }
+                    }
+                }
+                Err(_) => {
+                    use robocodec::io::traits::FormatReader;
+                    let reader = robocodec::BagFormat::open(file)?;
+                    println!("Searching for topics matching: {:?}", pattern);
+                    println!();
+
+                    for channel in reader.channels().values() {
+                        if channel.topic.to_lowercase().contains(&pattern_lower)
+                            || channel.message_type.to_lowercase().contains(&pattern_lower)
+                        {
+                            found = true;
+                            println!("Topic: {}", channel.topic);
+                            println!("  Type: {}", channel.message_type);
+                            println!("  Messages: {}", channel.message_count);
+                            println!();
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -249,41 +344,145 @@ fn search_topics(file: &str, pattern: &str) -> Result<(), Box<dyn std::error::Er
 
 /// Show field names for a topic.
 fn show_fields(file: &str, topic: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let reader = robocodec::RoboReader::open(file)?;
+    let ext = Path::new(file)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
 
-    // Find the channel
-    let channel = reader
-        .channels()
-        .values()
-        .find(|ch| ch.topic == topic || ch.topic.contains(topic));
+    let (channel, message_type, schema, schema_encoding): (String, String, String, Option<String>) =
+        match ext.as_str() {
+            "mcap" => {
+                let reader = robocodec::mcap::McapReader::open(file)?;
 
-    let channel = match channel {
-        Some(ch) => ch,
-        None => {
-            eprintln!("Topic '{}' not found", topic);
-            eprintln!();
-            eprintln!("Available topics:");
-            for ch in reader.channels().values() {
-                eprintln!("  {}", ch.topic);
+                let channel = reader
+                    .channels()
+                    .values()
+                    .find(|ch| ch.topic == topic || ch.topic.contains(topic));
+
+                let channel = match channel {
+                    Some(ch) => ch,
+                    None => {
+                        eprintln!("Topic '{}' not found", topic);
+                        eprintln!();
+                        eprintln!("Available topics:");
+                        for ch in reader.channels().values() {
+                            eprintln!("  {}", ch.topic);
+                        }
+                        std::process::exit(1);
+                    }
+                };
+
+                let schema = channel.schema.clone().unwrap_or_default();
+                let schema_encoding = channel.schema_encoding.clone();
+                (
+                    channel.topic.clone(),
+                    channel.message_type.clone(),
+                    schema,
+                    schema_encoding,
+                )
             }
-            std::process::exit(1);
-        }
-    };
+            "bag" => {
+                use robocodec::io::traits::FormatReader;
+                let reader = robocodec::BagFormat::open(file)?;
 
-    println!("Fields for topic: {}", channel.topic);
-    println!("Message type: {}", channel.message_type);
+                let channel = reader
+                    .channels()
+                    .values()
+                    .find(|ch| ch.topic == topic || ch.topic.contains(topic));
+
+                let channel = match channel {
+                    Some(ch) => ch,
+                    None => {
+                        eprintln!("Topic '{}' not found", topic);
+                        eprintln!();
+                        eprintln!("Available topics:");
+                        for ch in reader.channels().values() {
+                            eprintln!("  {}", ch.topic);
+                        }
+                        std::process::exit(1);
+                    }
+                };
+
+                let schema = channel.schema.clone().unwrap_or_default();
+                let schema_encoding = channel.schema_encoding.clone();
+                (
+                    channel.topic.clone(),
+                    channel.message_type.clone(),
+                    schema,
+                    schema_encoding,
+                )
+            }
+            _ => {
+                // Try MCAP first
+                match robocodec::mcap::McapReader::open(file) {
+                    Ok(reader) => {
+                        let channel = reader
+                            .channels()
+                            .values()
+                            .find(|ch| ch.topic == topic || ch.topic.contains(topic));
+
+                        let channel = match channel {
+                            Some(ch) => ch,
+                            None => {
+                                eprintln!("Topic '{}' not found", topic);
+                                std::process::exit(1);
+                            }
+                        };
+
+                        let schema = channel.schema.clone().unwrap_or_default();
+                        let schema_encoding = channel.schema_encoding.clone();
+                        (
+                            channel.topic.clone(),
+                            channel.message_type.clone(),
+                            schema,
+                            schema_encoding,
+                        )
+                    }
+                    Err(_) => {
+                        use robocodec::io::traits::FormatReader;
+                        let reader = robocodec::BagFormat::open(file)?;
+
+                        let channel = reader
+                            .channels()
+                            .values()
+                            .find(|ch| ch.topic == topic || ch.topic.contains(topic));
+
+                        let channel = match channel {
+                            Some(ch) => ch,
+                            None => {
+                                eprintln!("Topic '{}' not found", topic);
+                                std::process::exit(1);
+                            }
+                        };
+
+                        let schema = channel.schema.clone().unwrap_or_default();
+                        let schema_encoding = channel.schema_encoding.clone();
+                        (
+                            channel.topic.clone(),
+                            channel.message_type.clone(),
+                            schema,
+                            schema_encoding,
+                        )
+                    }
+                }
+            }
+        };
+
+    println!("Fields for topic: {}", channel);
+    println!("Message type: {}", message_type);
     println!();
 
-    let Some(schema) = &channel.schema else {
+    if schema.is_empty() {
         println!("(no schema available)");
         return Ok(());
-    };
+    }
 
     // Parse the schema and extract field names
     let parsed = robocodec::schema::parser::parse_schema_with_encoding_str(
-        &channel.message_type,
-        schema,
-        channel.schema_encoding.as_deref().unwrap_or("ros2msg"),
+        &message_type,
+        &schema,
+        schema_encoding.as_deref().unwrap_or("ros2msg"),
     );
 
     let parsed = match parsed {
@@ -293,7 +492,7 @@ fn show_fields(file: &str, topic: &str) -> Result<(), Box<dyn std::error::Error>
             eprintln!("Warning: Failed to parse schema: {}", e);
             println!("Schema (parsed from text):");
             println!();
-            print_schema_fields(schema);
+            print_schema_fields(&schema);
             return Ok(());
         }
     };
@@ -341,8 +540,21 @@ fn print_schema_fields(schema: &str) {
 }
 
 /// Show values for a field across messages.
+/// Note: This currently only works for MCAP files.
 fn show_values(file: &str, topic: &str, field: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let reader = robocodec::RoboReader::open(file)?;
+    let ext = Path::new(file)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if ext != "mcap" {
+        eprintln!("Error: The 'values' command currently only supports MCAP files");
+        eprintln!("For BAG files, use 'inspect messages' to see message data");
+        std::process::exit(1);
+    }
+
+    let reader = robocodec::mcap::McapReader::open(file)?;
 
     println!("Searching for field '{}' in topic '{}'", field, topic);
     println!();
@@ -379,11 +591,19 @@ fn show_values(file: &str, topic: &str, field: &str) -> Result<(), Box<dyn std::
                 found_count += 1;
 
                 if found_count == 1 {
-                    println!("Found field '{}' with {} messages:", key, channel_info.topic);
+                    println!(
+                        "Found field '{}' with {} messages:",
+                        key, channel_info.topic
+                    );
                     println!();
                 }
 
-                println!("  Message {}: {} = {}", found_count, key, format_value(&value));
+                println!(
+                    "  Message {}: {} = {}",
+                    found_count,
+                    key,
+                    format_value(value)
+                );
                 println!();
 
                 if found_count >= 10 {
@@ -402,67 +622,158 @@ fn show_values(file: &str, topic: &str, field: &str) -> Result<(), Box<dyn std::
 }
 
 /// Format a CodecValue for display.
-fn format_value(value: &robocodec::CodecValue) -> String {
+fn format_value(value: &roboflow::CodecValue) -> String {
     match value {
-        robocodec::CodecValue::Bool(b) => b.to_string(),
-        robocodec::CodecValue::UInt8(n) => n.to_string(),
-        robocodec::CodecValue::UInt16(n) => n.to_string(),
-        robocodec::CodecValue::UInt32(n) => n.to_string(),
-        robocodec::CodecValue::UInt64(n) => n.to_string(),
-        robocodec::CodecValue::Int8(n) => n.to_string(),
-        robocodec::CodecValue::Int16(n) => n.to_string(),
-        robocodec::CodecValue::Int32(n) => n.to_string(),
-        robocodec::CodecValue::Int64(n) => n.to_string(),
-        robocodec::CodecValue::Float32(n) => n.to_string(),
-        robocodec::CodecValue::Float64(n) => n.to_string(),
-        robocodec::CodecValue::String(s) => format!("\"{}\"", s),
-        robocodec::CodecValue::Bytes(b) => format!("[{} bytes]", b.len()),
-        robocodec::CodecValue::Array(_) => "[array]".to_string(),
-        robocodec::CodecValue::Struct(_) => "[struct]".to_string(),
-        robocodec::CodecValue::Null => "[null]".to_string(),
-        robocodec::CodecValue::Timestamp(_) => "[timestamp]".to_string(),
-        robocodec::CodecValue::Duration(_) => "[duration]".to_string(),
+        roboflow::CodecValue::Bool(b) => b.to_string(),
+        roboflow::CodecValue::UInt8(n) => n.to_string(),
+        roboflow::CodecValue::UInt16(n) => n.to_string(),
+        roboflow::CodecValue::UInt32(n) => n.to_string(),
+        roboflow::CodecValue::UInt64(n) => n.to_string(),
+        roboflow::CodecValue::Int8(n) => n.to_string(),
+        roboflow::CodecValue::Int16(n) => n.to_string(),
+        roboflow::CodecValue::Int32(n) => n.to_string(),
+        roboflow::CodecValue::Int64(n) => n.to_string(),
+        roboflow::CodecValue::Float32(n) => n.to_string(),
+        roboflow::CodecValue::Float64(n) => n.to_string(),
+        roboflow::CodecValue::String(s) => format!("\"{}\"", s),
+        roboflow::CodecValue::Bytes(b) => format!("[{} bytes]", b.len()),
+        roboflow::CodecValue::Array(_) => "[array]".to_string(),
+        roboflow::CodecValue::Struct(_) => "[struct]".to_string(),
+        roboflow::CodecValue::Null => "[null]".to_string(),
+        roboflow::CodecValue::Timestamp(_) => "[timestamp]".to_string(),
+        roboflow::CodecValue::Duration(_) => "[duration]".to_string(),
     }
 }
 
 /// Show file statistics.
 fn show_stats(file: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let reader = robocodec::RoboReader::open(file)?;
+    let ext = Path::new(file)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
 
     println!("=== File Statistics ===");
     println!();
-    println!("File: {}", reader.path());
-    println!("Channels: {}", reader.channels().len());
-    println!("Messages: {}", reader.message_count());
+    println!("File: {}", file);
 
-    if let (Some(start), Some(end)) = (reader.start_time(), reader.end_time()) {
-        let duration = (end - start) / 1_000_000_000;
-        let start_sec = start / 1_000_000_000;
-        let end_sec = end / 1_000_000_000;
-        println!("Start time: {} s ({})", start_sec, start);
-        println!("End time: {} s ({})", end_sec, end);
-        println!("Duration: {} s", duration);
-    }
+    match ext.as_str() {
+        "mcap" => {
+            let reader = robocodec::mcap::McapReader::open(file)?;
+            println!("Channels: {}", reader.channels().len());
+            println!("Messages: {}", reader.message_count());
 
-    println!();
-    println!("=== Channel Details ===");
-    println!();
+            if let (Some(start), Some(end)) = (reader.start_time(), reader.end_time()) {
+                let duration = (end - start) / 1_000_000_000;
+                let start_sec = start / 1_000_000_000;
+                let end_sec = end / 1_000_000_000;
+                println!("Start time: {} s ({})", start_sec, start);
+                println!("End time: {} s ({})", end_sec, end);
+                println!("Duration: {} s", duration);
+            }
 
-    let mut channel_msgs: Vec<_> = reader.channels().values().collect();
-    channel_msgs.sort_by(|a, b| b.message_count.cmp(&a.message_count));
+            println!();
+            println!("=== Channel Details ===");
+            println!();
 
-    for channel in channel_msgs {
-        let percentage = if reader.message_count() > 0 {
-            (channel.message_count as f64 / reader.message_count() as f64) * 100.0
-        } else {
-            0.0
-        };
-        println!(
-            "  {}: {} ({:.1}% of messages)",
-            channel.topic, channel.message_count, percentage
-        );
-        println!("    Type: {}", channel.message_type);
-        println!();
+            let mut channel_msgs: Vec<_> = reader.channels().values().collect();
+            channel_msgs.sort_by(|a, b| b.message_count.cmp(&a.message_count));
+
+            for channel in channel_msgs {
+                let percentage = if reader.message_count() > 0 {
+                    (channel.message_count as f64 / reader.message_count() as f64) * 100.0
+                } else {
+                    0.0
+                };
+                println!(
+                    "  {}: {} ({:.1}% of messages)",
+                    channel.topic, channel.message_count, percentage
+                );
+                println!("    Type: {}", channel.message_type);
+                println!();
+            }
+        }
+        "bag" => {
+            use robocodec::io::traits::FormatReader;
+            let reader = robocodec::BagFormat::open(file)?;
+            println!("Channels: {}", reader.channels().len());
+            println!("Messages: {}", reader.message_count());
+
+            if let (Some(start), Some(end)) = (reader.start_time(), reader.end_time()) {
+                let duration = (end - start) / 1_000_000_000;
+                let start_sec = start / 1_000_000_000;
+                let end_sec = end / 1_000_000_000;
+                println!("Start time: {} s ({})", start_sec, start);
+                println!("End time: {} s ({})", end_sec, end);
+                println!("Duration: {} s", duration);
+            }
+
+            println!();
+            println!("=== Channel Details ===");
+            println!();
+
+            let mut channel_msgs: Vec<_> = reader.channels().values().collect();
+            channel_msgs.sort_by(|a, b| b.message_count.cmp(&a.message_count));
+
+            for channel in channel_msgs {
+                let percentage = if reader.message_count() > 0 {
+                    (channel.message_count as f64 / reader.message_count() as f64) * 100.0
+                } else {
+                    0.0
+                };
+                println!(
+                    "  {}: {} ({:.1}% of messages)",
+                    channel.topic, channel.message_count, percentage
+                );
+                println!("    Type: {}", channel.message_type);
+                println!();
+            }
+        }
+        _ => {
+            // Try MCAP first
+            match robocodec::mcap::McapReader::open(file) {
+                Ok(reader) => {
+                    println!("Channels: {}", reader.channels().len());
+                    println!("Messages: {}", reader.message_count());
+
+                    if let (Some(start), Some(end)) = (reader.start_time(), reader.end_time()) {
+                        let duration = (end - start) / 1_000_000_000;
+                        println!("Duration: {} s", duration);
+                    }
+
+                    println!();
+                    println!("=== Channel Details ===");
+                    println!();
+
+                    for channel in reader.channels().values() {
+                        println!("  {}: {}", channel.topic, channel.message_count);
+                        println!("    Type: {}", channel.message_type);
+                        println!();
+                    }
+                }
+                Err(_) => {
+                    use robocodec::io::traits::FormatReader;
+                    let reader = robocodec::BagFormat::open(file)?;
+                    println!("Channels: {}", reader.channels().len());
+                    println!("Messages: {}", reader.message_count());
+
+                    if let (Some(start), Some(end)) = (reader.start_time(), reader.end_time()) {
+                        let duration = (end - start) / 1_000_000_000;
+                        println!("Duration: {} s", duration);
+                    }
+
+                    println!();
+                    println!("=== Channel Details ===");
+                    println!();
+
+                    for channel in reader.channels().values() {
+                        println!("  {}: {}", channel.topic, channel.message_count);
+                        println!("    Type: {}", channel.message_type);
+                        println!();
+                    }
+                }
+            }
+        }
     }
 
     Ok(())

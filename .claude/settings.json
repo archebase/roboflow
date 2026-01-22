@@ -1,0 +1,28 @@
+{
+  "enabledPlugins": {
+    "github@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": true,
+    "systems-programming@claude-code-workflows": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "c4-architecture@claude-code-workflows": true,
+    "commit-commands@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "greptile@claude-plugins-official": true,
+    "serena@claude-plugins-official": true,
+    "claude-code-settings@claude-code-settings": true,
+    "codex-skill@claude-code-settings": true,
+    "autonomous-skill@claude-code-settings": true,
+    "nanobanana-skill@claude-code-settings": true,
+    "kiro-skill@claude-code-settings": true,
+    "spec-kit-skill@claude-code-settings": true,
+    "code-simplifier@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "engineering-skills@claude-code-skills": true
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline-apple.sh"
+  }
+}

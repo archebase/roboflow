@@ -1,0 +1,33 @@
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        base: auto
+    patch:
+      default:
+        target: auto
+        threshold: 1%
+        base: auto
+
+comment:
+  layout: "reach,diff,flags,files,footer"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+
+ignore:
+  - "*/tests/*"
+  - "*/test_*"
+  - "*/examples/*"
+  - "python/tests/*"
+
+flag_management:
+  default_flags:
+    - rust
+    - python
+  individual_flags:
+    - rust
+    - python

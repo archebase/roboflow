@@ -1,8 +1,12 @@
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
 //! Configuration file parser for type normalization.
 //!
 //! Loads type mappings from TOML config files.
 
-use crate::format::mcap::transform::{TransformBuilder, TransformPipeline, TypeRenameTransform};
+use robocodec::transform::{MultiTransform, TransformBuilder, TypeRenameTransform};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -34,7 +38,7 @@ pub struct NormalizeConfig {
     #[serde(default)]
     pub type_mappings: HashMap<String, String>,
 
-    /// Wildcard type mappings (e.g., "genie_msgs/msg/*" = "robocodec.msg.*")
+    /// Wildcard type mappings (e.g., "genie_msgs/msg/*" = "roboflow.msg.*")
     #[serde(default)]
     pub wildcard_mappings: HashMap<String, String>,
 
@@ -61,7 +65,7 @@ impl NormalizeConfig {
     ///
     /// Looks for `normalize.toml` in:
     /// 1. Current directory
-    /// 2. `tests/fixtures/` directory (for robocodec)
+    /// 2. `tests/fixtures/` directory (for roboflow)
     pub fn load_default() -> Result<Self, Box<dyn std::error::Error>> {
         // Try current directory first
         if Path::new("normalize.toml").exists() {
@@ -110,12 +114,12 @@ impl NormalizeConfig {
         match format {
             TypeFormat::Proto => {
                 // Proto: package.Type format where the last dot separates package from type
-                // Examples: nmx.msg.JointStates, robocodec.msg.CameraIntrinsic
+                // Examples: nmx.msg.JointStates, roboflow.msg.CameraIntrinsic
                 // The package can have dots (e.g., nmx.msg), but there should be exactly
                 // ONE "separator" dot between the package and the type.
                 //
                 // Valid: "nmx.msg.JointStates" (package=nmx.msg, type=JointStates)
-                // Valid: "robocodec.msg.CameraIntrinsic" (package=robocodec.msg, type=CameraIntrinsic)
+                // Valid: "roboflow.msg.CameraIntrinsic" (package=roboflow.msg, type=CameraIntrinsic)
                 // Invalid: "nmx.msg.camid_1.intrinsic" (implies package=nmx.msg.camid_1 - breaks consistency)
 
                 // Count total dots - a valid proto type has at least 2 dots
@@ -124,7 +128,7 @@ impl NormalizeConfig {
 
                 // Validation rule: Proto type names must have exactly 1-2 dots total.
                 // Format: "package.Type" (1 dot) or "package.subpackage.Type" (2 dots)
-                // Examples: "nmx.msg.JointStates", "robocodec.msg.CameraIntrinsic"
+                // Examples: "nmx.msg.JointStates", "roboflow.msg.CameraIntrinsic"
                 // Invalid: "nmx.msg.camid_1.intrinsic" (3+ dots - too much nesting)
 
                 if dots == 1 {
@@ -134,13 +138,13 @@ impl NormalizeConfig {
                     // Format: "pkg.nested.Type" - nested package like "nmx.msg.JointStates"
                     Ok(())
                 } else {
-                    return Err(format!(
+                    Err(format!(
                         "Invalid proto type '{type_name}': proto types should use 'package.Type' format. \
                          Examples: 'nmx.msg.JointStates' (package=nmx.msg, type=JointStates), \
-                         'robocodec.msg.CameraIntrinsic'. \
+                         'roboflow.msg.CameraIntrinsic'. \
                          For nested types within the same package, use underscore \
-                         (e.g., 'robocodec.msg.Type_Name' not 'robocodec.msg.nested.Type')"
-                    ).into());
+                         (e.g., 'roboflow.msg.Type_Name' not 'roboflow.msg.nested.Type')"
+                    ).into())
                 }
             }
             TypeFormat::Ros1 | TypeFormat::Ros2 | TypeFormat::Unknown => Ok(()),
@@ -162,8 +166,8 @@ impl NormalizeConfig {
         }
     }
 
-    /// Convert config to a TransformPipeline.
-    pub fn to_pipeline(&self) -> TransformPipeline {
+    /// Convert config to a MultiTransform.
+    pub fn to_pipeline(&self) -> MultiTransform {
         let mut builder = TransformBuilder::new();
 
         // Add global type mappings
@@ -242,7 +246,7 @@ mod tests {
     fn test_parse_wildcard_config() {
         let toml_content = r#"
 [wildcard_mappings]
-"genie_msgs/msg/*" = "robocodec.msg.*"
+"genie_msgs/msg/*" = "roboflow.msg.*"
 "#;
 
         let config: NormalizeConfig = toml::from_str(toml_content).unwrap();
@@ -256,7 +260,7 @@ mod tests {
 [[topic_type_mappings]]
 topic = "/lowdim/joint"
 from = "nmx.msg.LowdimData"
-to = "robocodec.msg.JointStates"
+to = "roboflow.msg.JointStates"
 "#;
 
         let config: NormalizeConfig = toml::from_str(toml_content).unwrap();
@@ -281,7 +285,7 @@ to = "/new/topic"
     #[test]
     fn test_valid_proto_type() {
         assert!(NormalizeConfig::validate_type_name("nmx.msg.JointStates").is_ok());
-        assert!(NormalizeConfig::validate_type_name("robocodec.msg.CameraIntrinsic").is_ok());
+        assert!(NormalizeConfig::validate_type_name("roboflow.msg.CameraIntrinsic").is_ok());
     }
 
     #[test]

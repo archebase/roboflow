@@ -3,11 +3,11 @@ requires = ["maturin>=1.8,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "robocodec"
+name = "roboflow"
 version = "0.1.0"
 description = "Schema-driven robotics message codec (CDR, Protobuf, JSON, MCAP, BAG)"
 requires-python = ">=3.11"
-license = {text = "Apache-2.0"}
+license = {text = "MulanPSL-2.0"}
 authors = [
     {name = "Strata Contributors"}
 ]
@@ -31,9 +31,9 @@ dev = [
 ]
 
 [tool.maturin]
-features = ["pyo3/extension-module"]
+features = ["extension-module"]
 python-source = "python"
-module-name = "robocodec._robocodec"
+module-name = "roboflow._roboflow"
 manifest-path = "Cargo.toml"
 
 [tool.mypy]
