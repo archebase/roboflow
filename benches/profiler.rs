@@ -1,11 +1,6 @@
-// Copyright (c) 2026 ArcheBase
-// Roboflow is licensed under Mulan PSL v2.
-// You can use this software according to the terms and conditions of the Mulan PSL v2.
-// You may obtain a copy of Mulan PSL v2 at:
-//     http://license.coscl.org.cn/MulanPSL2
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
-// EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
-// MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
 
 //! Benchmark and profiling tool for roboflow optimization.
 //!
@@ -351,7 +346,7 @@ fn filter_cargo_bench_args(args: &[String]) -> Vec<String> {
                 // Peek at next arg to see if it's the value (starts with digit)
                 if let Some(next) = iter.peek() {
                     // If next looks like a number (the thread count), skip it
-                    if next.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+                    if next.chars().next().is_some_and(|c| c.is_ascii_digit()) {
                         iter.next();
                     }
                 }

@@ -10,6 +10,18 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  license:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install reuse tool
+        run: pip install reuse
+
+      - name: Check REUSE compliance
+        run: reuse lint
+
   rust-lint:
     name: Rust Lint
     runs-on: ${{ matrix.os }}

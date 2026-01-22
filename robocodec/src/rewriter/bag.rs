@@ -1,11 +1,6 @@
-// Copyright (c) 2026 ArcheBase
-// Roboflow is licensed under Mulan PSL v2.
-// You can use this software according to the terms and conditions of the Mulan PSL v2.
-// You may obtain a copy of Mulan PSL v2 at:
-//     http://license.coscl.org.cn/MulanPSL2
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
-// EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
-// MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
 
 //! ROS1 bag file rewriter using decode-encode-write flow.
 //!
@@ -17,10 +12,10 @@ use std::path::Path;
 
 use tracing::warn;
 
-use crate::io::formats::bag::writer::BagWriter;
-use crate::io::formats::bag::BagFormat;
 use crate::core::{CodecError, Result};
 use crate::encoding::{CdrDecoder, CdrEncoder};
+use crate::io::formats::bag::writer::BagWriter;
+use crate::io::formats::bag::BagFormat;
 use crate::io::traits::FormatReader;
 use crate::rewriter::{FormatRewriter, RewriteOptions, RewriteStats};
 use crate::schema::{parse_schema, MessageSchema};

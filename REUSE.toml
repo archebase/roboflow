@@ -1,0 +1,10 @@
+version = 1
+SPDX-PackageName = "Roboflow"
+SPDX-PackageSupplier = "ArcheBase Contributors"
+SPDX-PackageDownloadLocation = "https://github.com/archebase/roboflow"
+
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 ArcheBase"
+SPDX-License-Identifier = "MulanPSL-2.0"

@@ -1,4 +1,4 @@
-.PHONY: all build build-release test test-rust test-python test-all coverage coverage-rust coverage-python clippy fmt lint clean publish publish-pypi publish-crates help
+.PHONY: all build build-release test test-rust test-python test-all coverage coverage-rust coverage-python clippy fmt lint clean publish publish-pypi publish-crates check-license help
 
 # Default target
 all: build
@@ -103,6 +103,15 @@ lint-all: ## Lint with all features including HDF5 (requires compatible HDF5)
 	@echo "✓ Linting passed"
 
 check: fmt lint ## Run format check and lint
+
+check-license: ## Check REUSE license compliance
+	@echo "Checking REUSE license compliance..."
+	@if command -v reuse >/dev/null 2>&1; then \
+		reuse lint; \
+	else \
+		echo "⚠ reuse tool not found. Install with: pip install reuse"; \
+		exit 1; \
+	fi
 
 # ============================================================================
 # Utilities

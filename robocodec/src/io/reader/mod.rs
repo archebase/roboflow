@@ -1,11 +1,6 @@
-// Copyright (c) 2026 ArcheBase
-// Roboflow is licensed under Mulan PSL v2.
-// You can use this software according to the terms and conditions of the Mulan PSL v2.
-// You may obtain a copy of Mulan PSL v2 at:
-//     http://license.coscl.org.cn/MulanPSL2
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
-// EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
-// MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
 
 //! Unified reader with automatic strategy selection.
 //!
@@ -145,7 +140,9 @@ impl RoboReader {
     /// # Returns
     ///
     /// An iterator yielding `(DecodedMessage, ChannelInfo)` tuples.
-    pub fn decode_messages(&self) -> Result<crate::io::formats::mcap::reader::DecodedMessageIter<'_>> {
+    pub fn decode_messages(
+        &self,
+    ) -> Result<crate::io::formats::mcap::reader::DecodedMessageIter<'_>> {
         use crate::io::formats::mcap::reader::McapReader;
 
         // Try to downcast to McapReader (which has decode_messages)

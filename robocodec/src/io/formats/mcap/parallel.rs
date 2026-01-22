@@ -1,11 +1,6 @@
-// Copyright (c) 2026 ArcheBase
-// Roboflow is licensed under Mulan PSL v2.
-// You can use this software according to the terms and conditions of the Mulan PSL v2.
-// You may obtain a copy of Mulan PSL v2 at:
-//     http://license.coscl.org.cn/MulanPSL2
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
-// EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
-// MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
 
 //! Parallel MCAP reader with memory-mapped file access.
 //!
@@ -28,13 +23,13 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use rayon::prelude::*;
 
 use crate::io::filter::ChannelFilter;
-use crate::io::metadata::{ChannelInfo, FileFormat, RawMessage};
-use crate::io::traits::{
-    FormatReader, MessageChunkData, ParallelReader, ParallelReaderConfig, ParallelReaderStats,
-};
 use crate::io::formats::mcap::constants::{
     MCAP_MAGIC, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX, OP_DATA_END, OP_FOOTER, OP_HEADER,
     OP_MESSAGE, OP_SCHEMA, OP_STATISTICS,
+};
+use crate::io::metadata::{ChannelInfo, FileFormat, RawMessage};
+use crate::io::traits::{
+    FormatReader, MessageChunkData, ParallelReader, ParallelReaderConfig, ParallelReaderStats,
 };
 use crate::{CodecError, Result};
 

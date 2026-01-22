@@ -1,11 +1,6 @@
-// Copyright (c) 2026 ArcheBase
-// Roboflow is licensed under Mulan PSL v2.
-// You can use this software according to the terms and conditions of the Mulan PSL v2.
-// You may obtain a copy of Mulan PSL v2 at:
-//     http://license.coscl.org.cn/MulanPSL2
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
-// EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
-// MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
 
 //! Unified format conversion tool for robotics data files.
 //!
@@ -479,7 +474,7 @@ fn mcap_to_mcap_normalized(
     pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::{McapReader, rewriter::engine::McapRewriteEngine};
+    use robocodec::{rewriter::engine::McapRewriteEngine, McapReader};
 
     let mcap_reader = McapReader::open(input)?;
     let mut engine = McapRewriteEngine::new();
@@ -708,7 +703,7 @@ fn mcap_to_bag_normalized(
     pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::{McapReader, rewriter::engine::McapRewriteEngine};
+    use robocodec::{rewriter::engine::McapRewriteEngine, McapReader};
 
     let reader = McapReader::open(input)?;
     let mut engine = McapRewriteEngine::new();

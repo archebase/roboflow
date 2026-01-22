@@ -1,11 +1,6 @@
-// Copyright (c) 2026 ArcheBase
-// Roboflow is licensed under Mulan PSL v2.
-// You can use this software according to the terms and conditions of the Mulan PSL v2.
-// You may obtain a copy of Mulan PSL v2 at:
-//     http://license.coscl.org.cn/MulanPSL2
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
-// EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
-// MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
 
 #![allow(dead_code)]
 #![allow(private_interfaces)]
@@ -44,12 +39,12 @@ use std::path::Path;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 
-use crate::io::metadata::{ChannelInfo, FileFormat, RawMessage};
-use crate::io::traits::FormatReader;
 use crate::io::formats::mcap::constants::{
     MCAP_MAGIC, OP_ATTACHMENT, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX, OP_DATA_END, OP_FOOTER,
     OP_MESSAGE, OP_MESSAGE_INDEX, OP_METADATA, OP_SCHEMA, OP_STATISTICS,
 };
+use crate::io::metadata::{ChannelInfo, FileFormat, RawMessage};
+use crate::io::traits::FormatReader;
 use crate::{CodecError, Result};
 
 /// Schema information.
