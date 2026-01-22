@@ -16,9 +16,9 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 
+use robocodec::io::traits::FormatReader;
 use robocodec::mcap::ParallelMcapWriter;
 use robocodec::mcap::SequentialMcapReader;
-use robocodec::io::traits::FormatReader;
 
 enum Command {
     Messages {
@@ -267,7 +267,8 @@ fn extract_bag_messages(
         }
 
         let (msg, _channel) = result?;
-        let bag_msg = robocodec::bag::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
+        let bag_msg =
+            robocodec::bag::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
         writer.write_message(&bag_msg)?;
         written += 1;
 

@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 use std::io::{BufWriter, Cursor};
 
-use robocodec::mcap::MCAP_MAGIC;
 use robocodec::mcap::ParallelMcapWriter;
+use robocodec::mcap::MCAP_MAGIC;
 
 #[test]
 fn test_channel_record_format_readable_by_mcap_crate() {

@@ -21,8 +21,8 @@ use crossbeam_channel::Receiver;
 
 use crate::core::{Result, RoboflowError};
 use robocodec::io::metadata::ChannelInfo;
-use robocodec::types::chunk::CompressedChunk;
 use robocodec::mcap::ParallelMcapWriter;
+use robocodec::types::chunk::CompressedChunk;
 
 /// Maximum number of out-of-order chunks to buffer.
 const MAX_CHUNK_BUFFER_SIZE: usize = 1024;

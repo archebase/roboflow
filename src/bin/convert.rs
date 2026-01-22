@@ -254,8 +254,8 @@ fn run_convert(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Convert ROS1 BAG to MCAP format.
 fn convert_bag_to_mcap(input: &str, output: &str) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::io::traits::FormatReader;
     use robocodec::bag::BagFormat;
+    use robocodec::io::traits::FormatReader;
 
     println!("Converting BAG to MCAP: {} -> {}", input, output);
 
@@ -474,8 +474,8 @@ fn mcap_to_mcap_normalized(
     pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::rewriter::engine::McapRewriteEngine;
     use robocodec::mcap::McapReader;
+    use robocodec::rewriter::engine::McapRewriteEngine;
 
     let mcap_reader = McapReader::open(input)?;
     let mut engine = McapRewriteEngine::new();
@@ -704,8 +704,8 @@ fn mcap_to_bag_normalized(
     pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::rewriter::engine::McapRewriteEngine;
     use robocodec::mcap::McapReader;
+    use robocodec::rewriter::engine::McapRewriteEngine;
 
     let reader = McapReader::open(input)?;
     let mut engine = McapRewriteEngine::new();

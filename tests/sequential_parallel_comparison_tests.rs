@@ -10,7 +10,9 @@
 use std::path::Path;
 
 use robocodec::io::traits::FormatReader;
-use robocodec::{bag::BagFormat, bag::SequentialBagReader, mcap::McapFormat, mcap::SequentialMcapReader};
+use robocodec::{
+    bag::BagFormat, bag::SequentialBagReader, mcap::McapFormat, mcap::SequentialMcapReader,
+};
 
 /// Helper to collect all messages from a sequential MCAP reader.
 fn collect_mcap_messages_sequential(path: &str) -> Vec<(u16, u64, Vec<u8>)> {
