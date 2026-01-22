@@ -101,7 +101,7 @@ roboflow = { version = "0.1", features = ["python", "kps-all"] }
 After building with `maturin develop`, you can use the Python package:
 
 ```python
-from roboflow import Reader, Writer, decode, encode
+import roboflow
 ```
 
 ## Quick Start
@@ -109,29 +109,34 @@ from roboflow import Reader, Writer, decode, encode
 ### Rust API
 
 ```rust
-use roboflow::RoboReader;
+use roboflow::Robocodec;
 
-// Open a robotics data file (auto-detects format)
-let reader = RoboReader::open("data.bag")?;
+// Convert between formats (single file)
+Robocodec::open(vec!["input.bag"])?
+    .write_to("output.mcap")
+    .run()?;
 
-// Iterate through messages
-for result in reader.iter_messages() {
-    let (topic, message) = result?;
-    println!("Topic: {}, Data: {}", topic, message);
-}
+// Batch processing multiple files
+Robocodec::open(vec!["a.bag", "b.bag"])?
+    .write_to("/output/dir")
+    .run()?;
 ```
 
 ### Python API
 
 ```python
-from roboflow import RoboReader
+import roboflow
 
-# Open a robotics data file (auto-detects format)
-reader = RoboReader("data.bag")
+# Convert between formats (single file)
+result = roboflow.Roboflow.open(["input.bag"]) \
+    .write_to("output.mcap") \
+    .run()
 
-# Iterate through messages
-for topic, message in reader:
-    print(f"Topic: {topic}, Data: {message}")
+# With compression preset
+result = roboflow.Roboflow.open(["input.bag"]) \
+    .write_to("output.mcap") \
+    .with_compression(roboflow.CompressionPreset.Fast) \
+    .run()
 ```
 
 ### Command Line Tools
@@ -152,7 +157,7 @@ extract data.bag --topics /camera/image_raw --output extracted/
 ### Fluent API for Batch Processing
 
 ```rust
-use roboflow::Robocodec;
+use roboflow::{Robocodec, pipeline::fluent::CompressionPreset};
 
 // Simple conversion with auto-detection
 Robocodec::open(vec!["input.bag"])?
@@ -162,8 +167,26 @@ Robocodec::open(vec!["input.bag"])?
 // HyperPipeline with custom compression
 Robocodec::open(vec!["input.bag"])?
     .write_to("output.mcap")
-    .hyper()
-    .compression(CompressionPreset::Balanced)
+    .hyper_mode()
+    .with_compression(CompressionPreset::Balanced)
+    .run()?;
+
+// Batch processing with compression
+Robocodec::open(vec!["a.bag", "b.bag"])?
+    .write_to("/output/dir")
+    .with_compression(CompressionPreset::Fast)
+    .run()?;
+
+// With transformations
+use robocodec::TransformBuilder;
+
+let transform = TransformBuilder::new()
+    .with_topic_rename("/old_topic", "/new_topic")
+    .build();
+
+Robocodec::open(vec!["input.bag"])?
+    .transform(transform)
+    .write_to("output.mcap")
     .run()?;
 ```
 
@@ -171,19 +194,25 @@ Robocodec::open(vec!["input.bag"])?
 
 > **⚠️ Experimental**: The KPS conversion API is experimental and may change between versions.
 
-Convert robotics data to KPS dataset format. The KPS writer integrates with the pipeline for efficient dataset generation:
+Convert robotics data to KPS dataset format for robotics learning:
 
 ```rust
-use roboflow::pipeline::fluent::Robocodec;
+use roboflow::dataset::kps::{KpsConfig, ParquetKpsWriter};
 
-// Convert to KPS format using the fluent API
-Robocodec::open(vec!["input.mcap"])?
-    .write_to_kps("output_dir")
-    .config("kps_config.toml")
-    .run()?;
+// Load configuration from TOML file
+let config = KpsConfig::from_file("kps_config.toml")?;
+
+// Create and run KPS writer
+let writer = ParquetKpsWriter::new("output_dir", config)?;
+writer.process("input.mcap")?;
 ```
 
-KPS configuration format (TOML):
+Or use the CLI:
+
+```bash
+# Convert MCAP to KPS format
+roboflow convert to-kps input.mcap ./output/ config.toml
+```
 
 KPS configuration format (TOML):
 
@@ -229,19 +258,27 @@ image_format = "mp4"
 Python bindings provide full access to the Rust core:
 
 ```python
-from roboflow import RoboReader, RoboWriter, decode, encode
+import roboflow
 
-# Read from file
-reader = RoboReader("data.mcap")
+# Fluent API for conversions
+result = roboflow.Roboflow.open(["input.bag"]) \
+    .write_to("output.mcap") \
+    .run()
 
-# Write to file
-writer = RoboWriter("output.bag")
+# With transformations
+builder = roboflow.TransformBuilder()
+transform_id = builder.with_topic_rename("/old", "/new").build()
 
-# Decode binary messages
-data = decode(b"<binary data>", schema)
+result = roboflow.Roboflow.open(["input.bag"]) \
+    .transform(transform_id) \
+    .write_to("output.mcap") \
+    .run()
 
-# Encode to binary
-binary = encode(data, schema)
+# Hyper mode for maximum throughput
+result = roboflow.Roboflow.open(["input.bag"]) \
+    .write_to("output.mcap") \
+    .hyper_mode() \
+    .run()
 ```
 
 ## Optional Features
@@ -319,5 +356,5 @@ Robocodec was originally developed as part of the [Strata](https://github.com/ar
 
 ## Links
 
-- [Issue Tracker](https://github.com/archebase/robocodec/issues)
+- [Issue Tracker](https://github.com/archebase/roboflow/issues)
 - [Changelog](CHANGELOG.md)
