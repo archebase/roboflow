@@ -16,8 +16,8 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 
-use robocodec::io::formats::mcap::writer::ParallelMcapWriter;
-use robocodec::io::formats::mcap::SequentialMcapReader;
+use robocodec::mcap::ParallelMcapWriter;
+use robocodec::mcap::SequentialMcapReader;
 use robocodec::io::traits::FormatReader;
 
 enum Command {
@@ -232,7 +232,7 @@ fn extract_bag_messages(
     count: Option<usize>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use robocodec::io::traits::FormatReader;
-    let reader = robocodec::BagFormat::open(input)?;
+    let reader = robocodec::bag::BagFormat::open(input)?;
 
     println!("Extracting from BAG: {}", input);
     println!("Output: {}", output);
@@ -240,7 +240,7 @@ fn extract_bag_messages(
         println!("Message limit: {}", n);
     }
 
-    let mut writer = robocodec::BagWriter::create(output)?;
+    let mut writer = robocodec::bag::BagWriter::create(output)?;
 
     // Copy connections, preserving callerid from the original bag
     for (ch_id, channel) in reader.channels() {
@@ -267,7 +267,7 @@ fn extract_bag_messages(
         }
 
         let (msg, _channel) = result?;
-        let bag_msg = robocodec::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
+        let bag_msg = robocodec::bag::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
         writer.write_message(&bag_msg)?;
         written += 1;
 
@@ -375,7 +375,7 @@ fn extract_bag_topics(
     topics: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     use robocodec::io::traits::FormatReader;
-    let reader = robocodec::BagFormat::open(input)?;
+    let reader = robocodec::bag::BagFormat::open(input)?;
 
     println!("Extracting topics from BAG: {}", input);
     println!("Topics: {:?}", topics);
@@ -402,7 +402,7 @@ fn extract_bag_topics(
         std::process::exit(1);
     }
 
-    let mut writer = robocodec::BagWriter::create(output)?;
+    let mut writer = robocodec::bag::BagWriter::create(output)?;
 
     // Add filtered connections, preserving callerid
     for (&ch_id, channel) in reader.channels() {
@@ -427,7 +427,7 @@ fn extract_bag_topics(
         let (msg, _channel) = result?;
 
         if let Some(&new_id) = channel_map.get(&msg.channel_id) {
-            let bag_msg = robocodec::BagMessage::from_raw(new_id, msg.publish_time, msg.data);
+            let bag_msg = robocodec::bag::BagMessage::from_raw(new_id, msg.publish_time, msg.data);
             writer.write_message(&bag_msg)?;
             written += 1;
         }
@@ -461,8 +461,8 @@ fn extract_per_topic(
 
     if ext == "bag" {
         use robocodec::io::traits::FormatReader;
-        let reader = robocodec::BagFormat::open(input)?;
-        let mut writer = robocodec::BagWriter::create(output)?;
+        let reader = robocodec::bag::BagFormat::open(input)?;
+        let mut writer = robocodec::bag::BagWriter::create(output)?;
 
         // Copy all connections, preserving callerid from the original bag
         for (ch_id, channel) in reader.channels() {
@@ -491,7 +491,7 @@ fn extract_per_topic(
             }
 
             let bag_msg =
-                robocodec::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
+                robocodec::bag::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
             writer.write_message(&bag_msg)?;
 
             *written_for_topic += 1;
@@ -570,7 +570,7 @@ fn extract_per_topic(
 fn create_fixture_from_bag(input: &str, name: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Creating fixture from BAG: {}", input);
 
-    let reader = robocodec::BagFormat::open(input)?;
+    let reader = robocodec::bag::BagFormat::open(input)?;
 
     // Find the first message
     match reader.iter_raw()?.next() {
@@ -733,13 +733,13 @@ fn extract_bag_time_range(
     end: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use robocodec::io::traits::FormatReader;
-    let reader = robocodec::BagFormat::open(input)?;
+    let reader = robocodec::bag::BagFormat::open(input)?;
 
     println!("Extracting from BAG: {}", input);
     println!("Time range: {} - {} ns", start, end);
     println!("Output: {}", output);
 
-    let mut writer = robocodec::BagWriter::create(output)?;
+    let mut writer = robocodec::bag::BagWriter::create(output)?;
 
     // Copy connections, preserving callerid from the original bag
     for (ch_id, channel) in reader.channels() {
@@ -763,7 +763,7 @@ fn extract_bag_time_range(
 
         if msg.publish_time >= start && msg.publish_time <= end {
             let bag_msg =
-                robocodec::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
+                robocodec::bag::BagMessage::from_raw(msg.channel_id, msg.publish_time, msg.data);
             writer.write_message(&bag_msg)?;
             written += 1;
         }

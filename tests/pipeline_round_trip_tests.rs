@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use robocodec::io::traits::FormatReader;
-use robocodec::{BagFormat, McapFormat};
+use robocodec::{bag::BagFormat, mcap::McapFormat};
 
 /// Per-channel message data for verification.
 #[derive(Debug, Clone, PartialEq)]

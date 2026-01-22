@@ -18,8 +18,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use robocodec::io::traits::FormatReader;
-use robocodec::BagFormat;
-use robocodec::{BagMessage, BagWriter};
+use robocodec::bag::BagFormat;
+use robocodec::bag::{BagMessage, BagWriter};
 
 // ============================================================================
 // Test Fixtures

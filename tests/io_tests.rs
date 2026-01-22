@@ -13,7 +13,7 @@ use std::path::Path;
 use robocodec::io::detection::detect_format;
 use robocodec::io::metadata::{ChannelInfo, FileFormat, RawMessage};
 use robocodec::io::reader::{ReadStrategy, ReaderBuilder};
-use robocodec::McapFormat;
+use robocodec::mcap::McapFormat;
 
 #[test]
 fn test_detect_format_mcap_extension() {

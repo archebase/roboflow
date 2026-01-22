@@ -19,7 +19,7 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 
-use robocodec::io::formats::mcap::writer::ParallelMcapWriter;
+use robocodec::mcap::ParallelMcapWriter;
 
 // ============================================================================
 // Fluent API Types
@@ -255,7 +255,7 @@ fn run_convert(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
 /// Convert ROS1 BAG to MCAP format.
 fn convert_bag_to_mcap(input: &str, output: &str) -> Result<(), Box<dyn std::error::Error>> {
     use robocodec::io::traits::FormatReader;
-    use robocodec::BagFormat;
+    use robocodec::bag::BagFormat;
 
     println!("Converting BAG to MCAP: {} -> {}", input, output);
 
@@ -354,10 +354,10 @@ fn convert_bag_to_mcap(input: &str, output: &str) -> Result<(), Box<dyn std::err
 fn convert_mcap_to_bag(input: &str, output: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Converting MCAP to BAG: {} -> {}", input, output);
 
-    let reader = robocodec::McapReader::open(input)?;
+    let reader = robocodec::mcap::McapReader::open(input)?;
     println!("Channels: {}", reader.channels().len());
 
-    let mut writer = robocodec::BagWriter::create(output)?;
+    let mut writer = robocodec::bag::BagWriter::create(output)?;
     let mut channel_ids: HashMap<u16, u16> = HashMap::new();
     let mut msg_count = 0u64;
     let mut failures = 0u64;
@@ -389,7 +389,7 @@ fn convert_mcap_to_bag(input: &str, output: &str) -> Result<(), Box<dyn std::err
             None => continue,
         };
 
-        let bag_msg = robocodec::BagMessage::from_raw(out_conn_id, msg.publish_time, msg.data);
+        let bag_msg = robocodec::bag::BagMessage::from_raw(out_conn_id, msg.publish_time, msg.data);
 
         if let Err(e) = writer.write_message(&bag_msg) {
             eprintln!("Warning: Failed to write message: {}", e);
@@ -474,7 +474,8 @@ fn mcap_to_mcap_normalized(
     pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::{rewriter::engine::McapRewriteEngine, McapReader};
+    use robocodec::rewriter::engine::McapRewriteEngine;
+    use robocodec::mcap::McapReader;
 
     let mcap_reader = McapReader::open(input)?;
     let mut engine = McapRewriteEngine::new();
@@ -703,13 +704,14 @@ fn mcap_to_bag_normalized(
     pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::{rewriter::engine::McapRewriteEngine, McapReader};
+    use robocodec::rewriter::engine::McapRewriteEngine;
+    use robocodec::mcap::McapReader;
 
     let reader = McapReader::open(input)?;
     let mut engine = McapRewriteEngine::new();
     engine.prepare_schemas(&reader, Some(pipeline))?;
 
-    let mut writer = robocodec::BagWriter::create(output)?;
+    let mut writer = robocodec::bag::BagWriter::create(output)?;
     let mut channel_ids: HashMap<u16, u16> = HashMap::new();
     let mut msg_count = 0;
 
@@ -763,7 +765,7 @@ fn mcap_to_bag_normalized(
             None => continue,
         };
 
-        let bag_msg = robocodec::BagMessage::from_raw(out_conn_id, msg.publish_time, msg.data);
+        let bag_msg = robocodec::bag::BagMessage::from_raw(out_conn_id, msg.publish_time, msg.data);
         writer.write_message(&bag_msg)?;
         msg_count += 1;
     }
@@ -790,7 +792,7 @@ fn bag_to_bag(
     let reader = BagFormat::open(input)?;
     let channels = FormatReader::channels(&reader).clone();
 
-    let mut writer = robocodec::BagWriter::create(output)?;
+    let mut writer = robocodec::bag::BagWriter::create(output)?;
     let mut channel_ids: HashMap<u16, u16> = HashMap::new();
     let mut msg_count = 0;
 
@@ -828,7 +830,7 @@ fn bag_to_bag(
             None => continue,
         };
 
-        let bag_msg = robocodec::BagMessage::from_raw(out_conn_id, msg.publish_time, msg.data);
+        let bag_msg = robocodec::bag::BagMessage::from_raw(out_conn_id, msg.publish_time, msg.data);
         writer.write_message(&bag_msg)?;
         msg_count += 1;
     }

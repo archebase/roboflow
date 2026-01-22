@@ -36,7 +36,7 @@ use crate::pipeline::stages::reader::{ReaderStage, ReaderStageConfig};
 use robocodec::io::detection::detect_format;
 use robocodec::io::metadata::{ChannelInfo, FileFormat};
 use robocodec::io::traits::FormatReader;
-use robocodec::ParallelMcapWriter;
+use robocodec::mcap::ParallelMcapWriter;
 
 /// Hyper-Pipeline for maximum throughput file conversion.
 ///
@@ -269,12 +269,12 @@ impl HyperPipeline {
     fn get_channel_info(&self, format: &FileFormat) -> Result<HashMap<u16, ChannelInfo>> {
         match format {
             FileFormat::Mcap => {
-                use robocodec::io::formats::mcap::McapFormat;
+                use robocodec::mcap::McapFormat;
                 let reader = McapFormat::open(&self.config.input_path)?;
                 Ok(reader.channels().clone())
             }
             FileFormat::Bag => {
-                use robocodec::io::formats::bag::BagFormat;
+                use robocodec::bag::BagFormat;
                 let reader = BagFormat::open(&self.config.input_path)?;
                 Ok(reader.channels().clone())
             }

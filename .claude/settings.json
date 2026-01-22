@@ -20,9 +20,5 @@
     "code-simplifier@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": true,
     "engineering-skills@claude-code-skills": true
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "~/.claude/statusline-apple.sh"
   }
 }
