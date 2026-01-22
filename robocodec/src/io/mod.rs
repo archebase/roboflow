@@ -14,6 +14,7 @@
 
 pub mod arena;
 pub mod detection;
+pub mod formats;
 pub mod metadata;
 
 // Re-exports

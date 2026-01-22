@@ -53,11 +53,21 @@ jobs:
         if: runner.os == 'Windows'
 
       - name: Build wheels
-        run: maturin build --release --strip --features python --out dist --find-interpreter
+        run: |
+          TARGET_FLAG=""
+          if [ "${{ runner.os }}" == "macOS" ]; then
+            if [ "${{ matrix.target }}" == "x86_64" ]; then
+              TARGET_FLAG="--target x86_64-apple-darwin"
+            fi
+          elif [ "${{ runner.os }}" == "Linux" ] && [ "${{ matrix.target }}" == "aarch64" ]; then
+            TARGET_FLAG="--target aarch64-unknown-linux-gnu"
+          fi
+          maturin build --release --strip --features python --out dist --find-interpreter $TARGET_FLAG
         env:
           # Enable zig compilation for aarch64
           PYO3_CROSS: ${{ matrix.use-zig && '1' || '' }}
           PYO3_CROSS_LIB_DIR: ${{ matrix.use-zig && '/usr/aarch64-linux-gnu' || '' }}
+        shell: bash
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4

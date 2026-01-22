@@ -22,8 +22,8 @@ use std::io::BufWriter;
 use std::path::Path;
 
 use robocodec::io::traits::FormatReader;
-use robocodec::mcap::writer::ParallelMcapWriter;
-use robocodec::mcap::SequentialMcapReader;
+use robocodec::io::formats::mcap::writer::ParallelMcapWriter;
+use robocodec::io::formats::mcap::SequentialMcapReader;
 
 enum Command {
     Messages {

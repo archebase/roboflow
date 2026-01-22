@@ -24,7 +24,7 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 
-use robocodec::mcap::writer::ParallelMcapWriter;
+use robocodec::io::formats::mcap::writer::ParallelMcapWriter;
 
 // ============================================================================
 // Fluent API Types
@@ -359,7 +359,7 @@ fn convert_bag_to_mcap(input: &str, output: &str) -> Result<(), Box<dyn std::err
 fn convert_mcap_to_bag(input: &str, output: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Converting MCAP to BAG: {} -> {}", input, output);
 
-    let reader = robocodec::mcap::McapReader::open(input)?;
+    let reader = robocodec::McapReader::open(input)?;
     println!("Channels: {}", reader.channels().len());
 
     let mut writer = robocodec::BagWriter::create(output)?;
@@ -479,7 +479,7 @@ fn mcap_to_mcap_normalized(
     pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::{mcap::reader::McapReader, rewriter::engine::McapRewriteEngine};
+    use robocodec::{McapReader, rewriter::engine::McapRewriteEngine};
 
     let mcap_reader = McapReader::open(input)?;
     let mut engine = McapRewriteEngine::new();
@@ -585,7 +585,7 @@ fn bag_to_mcap_normalized(
     pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::bag::BagFormat;
+    use robocodec::io::formats::bag::BagFormat;
     use robocodec::io::traits::FormatReader;
 
     println!("Converting BAG to MCAP with transforms");
@@ -708,7 +708,7 @@ fn mcap_to_bag_normalized(
     pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::{mcap::reader::McapReader, rewriter::engine::McapRewriteEngine};
+    use robocodec::{McapReader, rewriter::engine::McapRewriteEngine};
 
     let reader = McapReader::open(input)?;
     let mut engine = McapRewriteEngine::new();
@@ -785,7 +785,7 @@ fn bag_to_bag(
     pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::bag::BagFormat;
+    use robocodec::io::formats::bag::BagFormat;
     use robocodec::io::traits::FormatReader;
 
     println!("Converting BAG to BAG with transforms");

@@ -30,15 +30,15 @@ Each format (MCAP, ROS1 bag) has its own module containing:
                    │
 ┌──────────────────▼──────────────────────────┐
 │  High-Level API Layer                       │
-│  - mcap/reader_api.rs (auto-decoding)       │
-│  - mcap/writer_api.rs (custom writer)        │
-│  - bag/writer.rs (high-level writer)         │
+│  - io/formats/mcap/reader.rs (auto-decode)  │
+│  - io/formats/mcap/writer.rs (custom)       │
+│  - io/formats/bag/writer.rs (high-level)    │
 └──────────────────┬──────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────┐
 │  Low-Level I/O Layer                        │
-│  - mcap/parallel.rs, mcap/reader.rs         │
-│  - bag/parallel.rs, bag/reader.rs           │
+│  - io/formats/mcap/parallel.rs, reader.rs   │
+│  - io/formats/bag/parallel.rs, reader.rs    │
 │  - io/ (unified traits)                      │
 └──────────────────┬──────────────────────────┘
                    │
@@ -79,26 +79,39 @@ User code
 
 **Problem**: Users think in terms of formats ("I'm working with MCAP"), not functionality layers ("I need the reader module").
 
-**Solution**: Organize by format:
+**Solution**: Organize by format under `io/formats/`:
 ```rust
 // Clear: Everything MCAP-related is in one place
-use robocodec::mcap::{reader_api::McapReader, writer_api::ParallelMcapWriter};
+use robocodec::io::formats::mcap::{reader::McapReader, writer::ParallelMcapWriter};
+// Backward compatible (deprecated):
+use robocodec::mcap::{McapReader, ParallelMcapWriter};
 ```
 
-### Why Separate `reader_api` and `writer_api`?
+### Why `io/formats/` Directory Structure?
 
-The `_api` suffix indicates high-level convenience APIs:
-- `reader_api.rs` - Auto-decoding (messages automatically decoded)
-- `writer_api.rs` - Custom writer with manual chunk control
+The I/O layer is organized as:
+- `io/` - Core I/O traits, metadata, unified reader/writer
+- `io/formats/` - Format-specific implementations (mcap, bag)
 
-These are distinct from low-level `reader.rs` and `writer.rs`.
+This structure:
+- Groups related formats together
+- Provides clear separation from I/O infrastructure
+- Makes it easy to add new formats
 
-### Why Keep `surface/` as Deprecated?
+### High-Level vs Low-Level APIs
 
-For backward compatibility during the transition period. Users get:
+Within each format module:
+- `reader.rs` - High-level API with auto-decoding
+- `writer.rs` - Custom writer with manual chunk control
+- `parallel.rs` - Low-level parallel reader
+- `sequential.rs` - Low-level sequential reader
+
+### Backward Compatibility
+
+The crate root maintains deprecated re-exports:
 ```rust
-#[deprecated(note = "Use robocodec::mcap::reader_api::McapReader")]
-pub use crate::mcap::reader_api::McapReader;
+#[deprecated(note = "Use io::formats::mcap instead")]
+pub use io::formats::mcap;
 ```
 
 This allows gradual migration without breaking existing code.
@@ -108,7 +121,7 @@ This allows gradual migration without breaking existing code.
 ### Reading MCAP with Auto-Decoding
 
 ```rust
-use robocodec::mcap::reader_api::McapReader;
+use robocodec::io::formats::mcap::reader::McapReader;
 
 let reader = McapReader::open("file.mcap")?;
 for result in reader.decode_messages()? {
@@ -120,7 +133,7 @@ for result in reader.decode_messages()? {
 ### Writing MCAP with Custom Writer
 
 ```rust
-use robocodec::mcap::writer_api::ParallelMcapWriter;
+use robocodec::io::formats::mcap::writer::ParallelMcapWriter;
 
 let writer = ParallelMcapWriter::create("output.mcap")?;
 writer.add_channel(...)?;
@@ -142,7 +155,7 @@ rewriter.rewrite("output.mcap")?;
 
 To add a new format (e.g., ROS2 bag):
 
-1. Create directory: `robocodec/src/ros2bag/`
+1. Create directory: `robocodec/src/io/formats/ros2bag/`
 2. Implement low-level I/O: `reader.rs`, `writer.rs`
 3. Add high-level APIs if needed: `reader_api.rs`, `writer_api.rs`
 4. Create rewriter: `rewriter/ros2bag.rs`

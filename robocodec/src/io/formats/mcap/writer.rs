@@ -35,7 +35,7 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use crate::core::{CodecError, Result};
 use crate::io::metadata::RawMessage;
 use crate::io::traits::FormatWriter;
-use crate::mcap::constants::{
+use crate::io::formats::mcap::constants::{
     MCAP_MAGIC, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX, OP_DATA_END, OP_FOOTER, OP_HEADER,
     OP_MESSAGE, OP_SCHEMA, OP_STATISTICS, OP_SUMMARY_OFFSET,
 };

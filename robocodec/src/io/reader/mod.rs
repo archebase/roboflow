@@ -117,8 +117,8 @@ impl RoboReader {
     /// # Example
     ///
     /// ```no_run
-    /// # use roboflow::io::RoboReader;
-    /// # use roboflow::io::formats::McapFormat;
+    /// # use robocodec::io::RoboReader;
+    /// # use robocodec::io::formats::mcap::McapFormat;
     /// # fn test() -> Result<(), Box<dyn std::error::Error>> {
     /// # let reader = RoboReader::open("data.mcap")?;
     /// if let Some(mcap) = reader.downcast_ref::<McapFormat>() {
@@ -145,8 +145,8 @@ impl RoboReader {
     /// # Returns
     ///
     /// An iterator yielding `(DecodedMessage, ChannelInfo)` tuples.
-    pub fn decode_messages(&self) -> Result<crate::mcap::reader::DecodedMessageIter<'_>> {
-        use crate::mcap::reader::McapReader;
+    pub fn decode_messages(&self) -> Result<crate::io::formats::mcap::reader::DecodedMessageIter<'_>> {
+        use crate::io::formats::mcap::reader::McapReader;
 
         // Try to downcast to McapReader (which has decode_messages)
         if let Some(mcap) = self.downcast_ref::<McapReader>() {
@@ -165,8 +165,8 @@ impl RoboReader {
     /// for each message.
     pub fn decode_messages_with_timestamp(
         &self,
-    ) -> Result<crate::mcap::reader::DecodedMessageWithTimestampIter<'_>> {
-        use crate::mcap::reader::McapReader;
+    ) -> Result<crate::io::formats::mcap::reader::DecodedMessageWithTimestampIter<'_>> {
+        use crate::io::formats::mcap::reader::McapReader;
 
         if let Some(mcap) = self.downcast_ref::<McapReader>() {
             return mcap.decode_messages_with_timestamp();

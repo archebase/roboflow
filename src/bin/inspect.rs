@@ -658,7 +658,7 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
 
     match ext {
         "mcap" => {
-            use robocodec::mcap::ParallelMcapReader;
+            use robocodec::io::formats::mcap::ParallelMcapReader;
             let reader = ParallelMcapReader::open(file)?;
             let chunks = reader.chunk_indexes();
 
@@ -737,7 +737,7 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
             println!("  Recommended WindowLog: {}", window_log);
         }
         "bag" => {
-            use robocodec::bag::ParallelBagReader;
+            use robocodec::io::formats::bag::ParallelBagReader;
             let reader = ParallelBagReader::open(file)?;
             let chunks = reader.chunks();
 

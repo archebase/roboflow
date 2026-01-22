@@ -117,12 +117,12 @@ impl ReaderStage {
         // Create the appropriate reader based on format and read in parallel
         let stats = match self.format {
             FileFormat::Mcap => {
-                use robocodec::mcap::McapFormat;
+                use robocodec::io::formats::mcap::McapFormat;
                 let reader = McapFormat::open(&self.input_path)?;
                 reader.read_parallel(parallel_config, self.chunks_sender)?
             }
             FileFormat::Bag => {
-                use robocodec::bag::BagFormat;
+                use robocodec::io::formats::bag::BagFormat;
                 let reader = BagFormat::open(&self.input_path)?;
                 reader.read_parallel(parallel_config, self.chunks_sender)?
             }

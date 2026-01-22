@@ -29,8 +29,8 @@ use tracing::warn;
 
 use crate::core::{CodecError, Result};
 use crate::encoding::{CdrDecoder, CdrEncoder};
-use crate::mcap::reader::McapReader;
-use crate::mcap::writer::ParallelMcapWriter;
+use crate::io::formats::mcap::reader::McapReader;
+use crate::io::formats::mcap::writer::ParallelMcapWriter;
 use crate::rewriter::{FormatRewriter, RewriteOptions, RewriteStats};
 use crate::schema::{parse_schema, MessageSchema};
 use crate::transform::ChannelInfo as TransformChannelInfo;

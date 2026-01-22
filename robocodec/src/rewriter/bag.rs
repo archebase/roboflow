@@ -17,8 +17,8 @@ use std::path::Path;
 
 use tracing::warn;
 
-use crate::bag::writer::BagWriter;
-use crate::bag::BagFormat;
+use crate::io::formats::bag::writer::BagWriter;
+use crate::io::formats::bag::BagFormat;
 use crate::core::{CodecError, Result};
 use crate::encoding::{CdrDecoder, CdrEncoder};
 use crate::io::traits::FormatReader;

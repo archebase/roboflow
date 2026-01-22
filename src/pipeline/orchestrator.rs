@@ -301,13 +301,13 @@ impl AsyncPipeline {
             usize,
         ) = match format {
             FileFormat::Mcap => {
-                use robocodec::mcap::McapFormat;
+                use robocodec::io::formats::mcap::McapFormat;
                 let reader = McapFormat::open(&self.config.input_path)?;
                 let count = reader.channels().len();
                 (reader.channels().clone(), count)
             }
             FileFormat::Bag => {
-                use robocodec::bag::BagFormat;
+                use robocodec::io::formats::bag::BagFormat;
                 let reader = BagFormat::open(&self.config.input_path)?;
                 let count = reader.channels().len();
                 (reader.channels().clone(), count)

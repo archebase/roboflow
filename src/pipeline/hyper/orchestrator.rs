@@ -274,12 +274,12 @@ impl HyperPipeline {
     fn get_channel_info(&self, format: &FileFormat) -> Result<HashMap<u16, ChannelInfo>> {
         match format {
             FileFormat::Mcap => {
-                use robocodec::mcap::McapFormat;
+                use robocodec::io::formats::mcap::McapFormat;
                 let reader = McapFormat::open(&self.config.input_path)?;
                 Ok(reader.channels().clone())
             }
             FileFormat::Bag => {
-                use robocodec::bag::BagFormat;
+                use robocodec::io::formats::bag::BagFormat;
                 let reader = BagFormat::open(&self.config.input_path)?;
                 Ok(reader.channels().clone())
             }

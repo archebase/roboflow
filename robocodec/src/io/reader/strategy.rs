@@ -158,8 +158,8 @@ impl ReadStrategyTrait for SequentialStrategy {
         let format = crate::io::detection::detect_format(path)?;
 
         match format {
-            FileFormat::Mcap => Ok(Box::new(crate::mcap::McapFormat::open(path)?)),
-            FileFormat::Bag => Ok(Box::new(crate::bag::BagFormat::open(path)?)),
+            FileFormat::Mcap => Ok(Box::new(crate::io::formats::mcap::McapFormat::open(path)?)),
+            FileFormat::Bag => Ok(Box::new(crate::io::formats::bag::BagFormat::open(path)?)),
             FileFormat::Unknown => Err(CodecError::parse(
                 "SequentialStrategy",
                 format!("Unknown file format: {}", path.display()),
@@ -209,7 +209,7 @@ impl ReadStrategyTrait for ParallelStrategy {
         match format {
             FileFormat::Mcap => {
                 // Check if MCAP has summary with chunk indexes
-                match crate::mcap::McapFormat::check_summary(path) {
+                match crate::io::formats::mcap::McapFormat::check_summary(path) {
                     Ok((_, has_indexes)) => Ok(has_indexes),
                     Err(_) => Ok(false),
                 }
@@ -226,8 +226,8 @@ impl ReadStrategyTrait for ParallelStrategy {
         let format = crate::io::detection::detect_format(path)?;
 
         match format {
-            FileFormat::Mcap => Ok(Box::new(crate::mcap::McapFormat::open(path)?)),
-            FileFormat::Bag => Ok(Box::new(crate::bag::BagFormat::open(path)?)),
+            FileFormat::Mcap => Ok(Box::new(crate::io::formats::mcap::McapFormat::open(path)?)),
+            FileFormat::Bag => Ok(Box::new(crate::io::formats::bag::BagFormat::open(path)?)),
             FileFormat::Unknown => Err(CodecError::parse(
                 "ParallelStrategy",
                 format!("Unknown file format: {}", path.display()),

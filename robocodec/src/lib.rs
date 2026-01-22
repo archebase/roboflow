@@ -12,16 +12,16 @@
 //! Robotics data format library for MCAP and ROS bag files.
 //!
 //! This library provides format handling for robotics data files, organized by format:
-//! - **MCAP** format support in [`mcap`](crate::mcap) module
-//! - **ROS1 bag** format support in [`bag`](crate::bag) module
+//! - **MCAP** format support in [`io::formats::mcap`](crate::io::formats::mcap) module
+//! - **ROS1 bag** format support in [`io::formats::bag`](crate::io::formats::bag) module
 //! - **Rewriters** for data transformation in [`rewriter`](crate::rewriter) module
 //! - **Transforms** for topic/type renaming in [`transform`](crate::transform) module
 //!
 //! ## Architecture
 //!
 //! The library is organized into format-specific modules:
-//! - `mcap/` - All MCAP-related functionality (readers, writers, high-level APIs)
-//! - `bag/` - All ROS1 bag-related functionality (readers, writers)
+//! - `io/formats/mcap/` - All MCAP-related functionality (readers, writers, high-level APIs)
+//! - `io/formats/bag/` - All ROS1 bag-related functionality (readers, writers)
 //! - `rewriter/` - Unified rewriter facade with format-specific implementations
 //! - `transform/` - Channel and topic/type transformations
 //! - `encoding/` - Codec implementations (CDR, Protobuf, JSON)
@@ -31,7 +31,7 @@
 //!
 //! ```rust,no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use robocodec::mcap::reader_api::McapReader;
+//! use robocodec::io::formats::mcap::reader::McapReader;
 //!
 //! let reader = McapReader::open("file.mcap")?;
 //! for result in reader.decode_messages()? {
@@ -91,19 +91,27 @@ pub use transform::{
     TypeNormalization, TypeRenameTransform,
 };
 
-// Format-specific implementations
-pub mod bag;
-pub mod mcap;
+// Backward compatibility re-exports (deprecated - use io::formats::* instead)
+#[deprecated(
+    since = "0.2.0",
+    note = "Use io::formats::bag instead. This re-export will be removed in a future version."
+)]
+pub use io::formats::bag;
+#[deprecated(
+    since = "0.2.0",
+    note = "Use io::formats::mcap instead. This re-export will be removed in a future version."
+)]
+pub use io::formats::mcap;
 
-// Re-export format readers (low-level)
-pub use bag::{BagFormat, ParallelBagReader, SequentialBagReader};
-pub use mcap::{
+// Re-export format readers (low-level) - keep for backward compatibility
+pub use io::formats::bag::{BagFormat, ParallelBagReader, SequentialBagReader};
+pub use io::formats::mcap::{
     McapFormat, ParallelMcapReader, ParallelMcapWriter, SequentialMcapReader, TwoPassMcapReader,
 };
 
-// Re-export high-level format APIs
-pub use bag::{BagMessage, BagWriter};
-pub use mcap::{McapReader, ParallelMcapWriter as McapWriter, RawMessage};
+// Re-export high-level format APIs - keep for backward compatibility
+pub use io::formats::bag::{BagMessage, BagWriter};
+pub use io::formats::mcap::{McapReader, ParallelMcapWriter as McapWriter, RawMessage};
 
 /// Decoder trait for generic decoding operations.
 pub trait Decoder: Send + Sync {

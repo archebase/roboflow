@@ -32,7 +32,7 @@ use crate::io::metadata::{ChannelInfo, FileFormat, RawMessage};
 use crate::io::traits::{
     FormatReader, MessageChunkData, ParallelReader, ParallelReaderConfig, ParallelReaderStats,
 };
-use crate::mcap::constants::{
+use crate::io::formats::mcap::constants::{
     MCAP_MAGIC, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX, OP_DATA_END, OP_FOOTER, OP_HEADER,
     OP_MESSAGE, OP_SCHEMA, OP_STATISTICS,
 };
@@ -62,7 +62,7 @@ impl McapFormat {
     ) -> Result<Box<dyn crate::io::traits::FormatWriter>> {
         // For now, we create a simple writer
         // TODO: Use config options for compression, chunk size, etc.
-        use crate::mcap::writer::ParallelMcapWriter;
+        use crate::io::formats::mcap::writer::ParallelMcapWriter;
         let writer = ParallelMcapWriter::create_with_buffer(path, 64 * 1024)?;
         Ok(Box::new(writer))
     }

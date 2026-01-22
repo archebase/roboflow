@@ -117,10 +117,10 @@ impl WriterBuilder {
         // Create the appropriate writer
         let inner = match format {
             crate::io::metadata::FileFormat::Mcap => {
-                crate::mcap::McapFormat::create_writer(path, &self.config)?
+                crate::io::formats::mcap::McapFormat::create_writer(path, &self.config)?
             }
             crate::io::metadata::FileFormat::Bag => {
-                crate::bag::BagFormat::create_writer(path, &self.config)?
+                crate::io::formats::bag::BagFormat::create_writer(path, &self.config)?
             }
             crate::io::metadata::FileFormat::Unknown => {
                 return Err(CodecError::parse("WriterBuilder", "Unknown file format"))

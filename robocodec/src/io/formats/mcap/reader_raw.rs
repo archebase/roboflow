@@ -46,7 +46,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 
 use crate::io::metadata::{ChannelInfo, FileFormat, RawMessage};
 use crate::io::traits::FormatReader;
-use crate::mcap::constants::{
+use crate::io::formats::mcap::constants::{
     MCAP_MAGIC, OP_ATTACHMENT, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX, OP_DATA_END, OP_FOOTER,
     OP_MESSAGE, OP_MESSAGE_INDEX, OP_METADATA, OP_SCHEMA, OP_STATISTICS,
 };

@@ -325,13 +325,52 @@ fn print_stats(label: &str, durations: &[f64], input_size: u64) {
     );
 }
 
+/// Filters out cargo bench arguments that should not be passed to our CLI.
+/// Properly handles both --flag=value and --flag value formats.
+fn filter_cargo_bench_args(args: &[String]) -> Vec<String> {
+    let mut filtered = Vec::new();
+    let mut iter = args.iter().peekable();
+
+    while let Some(arg) = iter.next() {
+        // Skip --bench and its variants
+        if arg.starts_with("--bench") {
+            continue;
+        }
+
+        // Skip --nocapture
+        if arg == "--nocapture" {
+            continue;
+        }
+
+        // Handle --test-threads in both formats:
+        // 1. --test-threads=N (single arg)
+        // 2. --test-threads N (two args)
+        if arg.starts_with("--test-threads") {
+            // If it's the separate format (--test-threads N), skip the next arg too
+            if arg == "--test-threads" {
+                // Peek at next arg to see if it's the value (starts with digit)
+                if let Some(next) = iter.peek() {
+                    // If next looks like a number (the thread count), skip it
+                    if next.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+                        iter.next();
+                    }
+                }
+            }
+            // Always skip --test-threads (whether it's --test-threads or --test-threads=N)
+            continue;
+        }
+
+        filtered.push(arg.clone());
+    }
+
+    filtered
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Filter out cargo bench's extra arguments (--bench, --nocapture, --test-threads, etc.)
-    let args: Vec<String> = std::env::args()
-        .filter(|arg| {
-            !arg.starts_with("--bench") && arg != "--nocapture" && arg != "--test-threads"
-        })
-        .collect();
+    // Properly handle both --test-threads=N and --test-threads N formats
+    let raw_args: Vec<String> = std::env::args().collect();
+    let args = filter_cargo_bench_args(&raw_args);
     let cli = Cli::parse_from(args);
 
     match cli.command {

@@ -73,9 +73,9 @@ Robocodec is a **schema-driven, universal robotics data codec** that enables eff
 | `core/` | Core types, errors, encoding registry |
 | `encoding/` | Message codecs (CDR, Protobuf, JSON) |
 | `schema/` | Schema parser (ROS .msg, ROS2 IDL, OMG IDL) |
-| `io/` | Arena allocation and low-level I/O traits |
-| `bag/` | ROS bag format support |
-| `mcap/` | MCAP format support |
+| `io/` | Unified I/O layer with format implementations |
+| `io/formats/bag/` | ROS bag format support |
+| `io/formats/mcap/` | MCAP format support |
 
 **Design**: This crate provides the foundational types and codec logic that `robocodec` builds upon. It can be used independently for low-level robotics data access.
 
