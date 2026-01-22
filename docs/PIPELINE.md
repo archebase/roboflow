@@ -1,10 +1,10 @@
 # Pipeline Architecture
 
-This document describes the pipeline architectures used in Robocodec for high-performance robotics data processing.
+This document describes the pipeline architectures used in Roboflow for high-performance robotics data processing.
 
 ## Overview
 
-Robocodec provides **two pipeline implementations** optimized for different use cases:
+Roboflow provides **two pipeline implementations** optimized for different use cases:
 
 | Pipeline | Stages | Target Throughput | Use Case |
 |----------|--------|-------------------|----------|
@@ -27,7 +27,7 @@ HyperPipeline:
 
 ## Design Principles
 
-1. **Zero-Copy**: Minimize data copying through arena allocation
+1. **Zero-Copy**: Minimize data copying through arena allocation (via `robocodec`)
 2. **Backpressure**: Bounded channels prevent memory overload
 3. **Parallelism**: CPU-bound stages use multiple workers
 4. **Isolation**: Each stage runs independently with dedicated channels
@@ -52,14 +52,14 @@ Input File → Reader → [Transform] → Compression → Writer → Output File
 
 **Location**: `src/pipeline/stages/reader.rs`
 
-- Opens and detects file format (MCAP or ROS bag)
+- Opens and detects file format (MCAP or ROS bag) via `robocodec`
 - Reads message data sequentially
 - Batches messages into chunks (default 16MB)
 - Sends chunks to the next stage
 
 **Characteristics:**
 - Single-threaded (sequential file I/O)
-- Format-agnostic via unified reader interface
+- Uses `robocodec` format readers
 - Chunk-based batching for efficient compression
 
 #### Transform Stage (Optional)
@@ -102,12 +102,12 @@ Input File → Reader → [Transform] → Compression → Writer → Output File
 **Characteristics:**
 - Single-threaded (sequential writes)
 - Ordering buffer for reordering
-- Format-agnostic via unified writer interface
+- Uses `robocodec` format writers
 
 ### Configuration
 
 ```rust
-use robocodec::pipeline::{Orchestrator, PipelineConfig};
+use roboflow::pipeline::{Orchestrator, PipelineConfig};
 
 let config = PipelineConfig {
     chunk_size: 16 * 1024 * 1024,  // 16MB
@@ -164,7 +164,7 @@ Platform-optimized I/O prefetching:
 | Generic | Buffered reads |
 
 **Responsibilities:**
-- Detect file format
+- Detect file format via `robocodec`
 - Platform-specific read-ahead optimization
 - Pass raw data to parser
 
@@ -172,8 +172,8 @@ Platform-optimized I/O prefetching:
 
 **Location**: `src/pipeline/hyper/stages/parser.rs`
 
-- Parse message boundaries (BAG records or MCAP chunks)
-- Arena allocation for message data
+- Parse message boundaries (via `robocodec` format parsers)
+- Arena allocation for message data (from `robocodec`)
 - Zero-copy message construction
 
 **Responsibilities:**
@@ -274,7 +274,7 @@ struct HyperPipelineChannels {
 ### Configuration
 
 ```rust
-use robocodec::pipeline::hyper::{HyperPipeline, HyperPipelineConfig};
+use roboflow::pipeline::hyper::{HyperPipeline, HyperPipelineConfig};
 
 // Manual configuration
 let config = HyperPipelineConfig::builder()
@@ -340,22 +340,22 @@ pub enum PerformanceMode {
 Type-safe builder API for both pipelines:
 
 ```rust
-use robocodec::pipeline::fluent::Robocodec;
+use roboflow::pipeline::fluent::Roboflow;
 
 // Standard pipeline
-Robocodec::open(vec!["input.bag"])?
+Roboflow::open(vec!["input.bag"])?
     .write_to("output.mcap")
     .run()?;
 
 // HyperPipeline with auto-configuration
-Robocodec::open(vec!["input.bag"])?
+Roboflow::open(vec!["input.bag"])?
     .write_to("output.mcap")
-    .hyper()                                    // Use HyperPipeline
-    .mode(PerformanceMode::Throughput)          // Auto-configure
+    .hyper_mode()                                // Use HyperPipeline
+    .performance_mode(PerformanceMode::Throughput) // Auto-configure
     .run()?;
 
 // Batch processing
-Robocodec::open(vec!["file1.bag", "file2.bag"])?
+Roboflow::open(vec!["file1.bag", "file2.bag"])?
     .write_to("/output/dir")
     .run()?;
 ```
@@ -366,7 +366,7 @@ Robocodec::open(vec!["file1.bag", "file2.bag"])?
 
 ### MessageChunk
 
-**Location**: `src/io/arena.rs`
+Provided by `robocodec`:
 
 ```rust
 pub struct MessageChunk<'arena> {
@@ -381,7 +381,7 @@ pub struct MessageChunk<'arena> {
 
 ### Arena Allocation
 
-**Location**: `src/io/arena.rs`
+Provided by `robocodec`:
 
 ```rust
 pub struct MessageArena {
@@ -426,8 +426,8 @@ Experimental GPU acceleration:
 
 | Platform | Backend | Feature Flag |
 |----------|---------|--------------|
-| NVIDIA (Linux) | nvCOMP | `gpu` |
-| Apple Silicon | libcompression | `gpu` |
+| NVIDIA (Linux) | nvCOMP | `gpu` (via robocodec) |
+| Apple Silicon | libcompression | `gpu` (via robocodec) |
 | Fallback | CPU ZSTD | default |
 
 ```rust
@@ -443,7 +443,7 @@ let config = HyperPipelineConfig::builder()
 ### Standard Pipeline
 
 ```rust
-use robocodec::pipeline::{Orchestrator, PipelineConfig};
+use roboflow::pipeline::{Orchestrator, PipelineConfig};
 
 let config = PipelineConfig {
     chunk_size: 16 * 1024 * 1024,
@@ -458,7 +458,7 @@ orchestrator.run("input.bag", "output.mcap")?;
 ### HyperPipeline (Manual Config)
 
 ```rust
-use robocodec::pipeline::hyper::{HyperPipeline, HyperPipelineConfig};
+use roboflow::pipeline::hyper::{HyperPipeline, HyperPipelineConfig};
 
 let config = HyperPipelineConfig::builder()
     .input_path("input.bag")
@@ -473,7 +473,7 @@ pipeline.run()?;
 ### HyperPipeline (Auto-Config)
 
 ```rust
-use robocodec::pipeline::{PerformanceMode, PipelineAutoConfig};
+use roboflow::pipeline::{PerformanceMode, PipelineAutoConfig};
 
 let config = PipelineAutoConfig::auto(PerformanceMode::Throughput)
     .to_hyper_config("input.bag", "output.mcap")
@@ -486,50 +486,13 @@ pipeline.run()?;
 ### Fluent API
 
 ```rust
-use robocodec::pipeline::fluent::Robocodec;
+use roboflow::pipeline::fluent::Roboflow;
 
-Robocodec::open(vec!["input.bag"])?
+Roboflow::open(vec!["input.bag"])?
     .write_to("output.mcap")
-    .hyper()
-    .mode(PerformanceMode::Throughput)
+    .hyper_mode()
+    .performance_mode(PerformanceMode::Throughput)
     .run()?;
-```
-
-### KPS Format Conversion
-
-The KPS format writer is available through the fluent API:
-
-```rust
-use robocodec::pipeline::fluent::Robocodec;
-
-// Convert robotics data to KPS dataset format
-Robocodec::open(vec!["input.mcap"])?
-    .write_to_kps("output_dir")
-    .config("kps_config.toml")
-    .run()?;
-```
-
-KPS configuration format (TOML):
-
-```toml
-[dataset]
-name = "my_dataset"
-fps = 30
-robot_type = "Kuavo4Pro"
-
-[[mappings]]
-topic = "/camera/high"
-feature = "observation.camera_0"
-type = "image"
-
-[[mappings]]
-topic = "/joint_states"
-feature = "observation.joint_position"
-type = "state"
-
-[output]
-formats = ["parquet"]
-image_format = "mp4"
 ```
 
 ---

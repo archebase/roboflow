@@ -1,6 +1,6 @@
-# Robocodec Documentation
+# Roboflow Documentation
 
-This directory contains detailed architecture and design documentation for Robocodec.
+This directory contains detailed architecture and design documentation for Roboflow.
 
 ## Documents
 
@@ -31,6 +31,37 @@ This directory contains detailed architecture and design documentation for Roboc
 - [PIPELINE.md - Auto-Configuration](PIPELINE.md#auto-configuration)
 - [MEMORY.md - Performance Impact](MEMORY.md#performance-impact)
 
+## Project Structure
+
+Roboflow is a single-crate project that depends on the external `robocodec` library:
+
+```
+roboflow/
+├── src/                    # Main source code
+│   ├── pipeline/           # Pipeline implementations
+│   │   ├── stages/         # Standard pipeline stages
+│   │   ├── hyper/          # 7-stage HyperPipeline
+│   │   ├── fluent/         # Builder API
+│   │   ├── auto_config.rs  # Hardware-aware configuration
+│   │   └── gpu/            # GPU compression support
+│   ├── python/             # PyO3 bindings
+│   └── bin/                # CLI tools
+└── depends on → robocodec   # External library
+                            # https://github.com/archebase/robocodec
+```
+
+### Robocodec (External Dependency)
+
+The `robocodec` library provides:
+
+| Component | Description |
+|-----------|-------------|
+| **Codec Layer** | CDR, Protobuf, JSON encoding/decoding |
+| **Schema Parser** | ROS `.msg`, ROS2 IDL, OMG IDL parsing |
+| **Format I/O** | MCAP, ROS bag readers/writers |
+| **Transform** | Topic/type renaming, normalization |
+| **Types** | Arena allocation, zero-copy message types |
+
 ## Key Features
 
 ### Pipeline Modes
@@ -54,29 +85,18 @@ Hardware-aware automatic tuning with three performance modes:
 Type-safe builder API for easy file processing:
 
 ```rust
-use robocodec::pipeline::fluent::Robocodec;
+use roboflow::pipeline::fluent::Roboflow;
 
 // Standard pipeline
-Robocodec::open(vec!["input.bag"])?
+Roboflow::open(vec!["input.bag"])?
     .write_to("output.mcap")
     .run()?;
 
 // HyperPipeline with auto-configuration
-Robocodec::open(vec!["input.bag"])?
+Roboflow::open(vec!["input.bag"])?
     .write_to("output.mcap")
-    .hyper()
-    .mode(PerformanceMode::Throughput)
-    .run()?;
-```
-
-### KPS Format Writer
-
-Experimental KPS dataset format writer for robotics learning applications:
-
-```rust
-Robocodec::open(vec!["input.mcap"])?
-    .write_to_kps("output_dir")
-    .config("kps_config.toml")
+    .hyper_mode()
+    .performance_mode(PerformanceMode::Throughput)
     .run()?;
 ```
 
@@ -84,32 +104,34 @@ Robocodec::open(vec!["input.mcap"])?
 
 ### Source Code
 
+**Roboflow (this repository)**:
 - Pipeline: `src/pipeline/`
   - Standard: `src/pipeline/stages/`
   - HyperPipeline: `src/pipeline/hyper/`
   - Fluent API: `src/pipeline/fluent/`
   - Auto-configuration: `src/pipeline/auto_config.rs`
   - GPU: `src/pipeline/gpu/`
-- I/O Layer: `src/io/`
-  - Arena allocation: `src/io/arena.rs`
-  - Format handlers: `src/io/formats/`
-  - Format readers: `src/io/reader/`
-  - Format writers: `src/io/writer/`
-- Transform: `src/transform/`
-- Format Library: `robocodec/src/`
-  - Encoding: `robocodec/src/encoding/`
-  - Schema parsing: `robocodec/src/schema/`
+- Python Bindings: `src/python/`
+- CLI Tools: `src/bin/`
+
+**Robocodec (external library)**:
+- Repository: https://github.com/archebase/robocodec
+- Encoding: `robocodec/src/encoding/`
+- Schema parsing: `robocodec/src/schema/`
+- Format I/O: `robocodec/src/io/`
+- Arena types: `robocodec/src/types/arena/`
 
 ### Tools
 
-- Convert: `src/bin/convert.rs` - Unified convert command
-- Extract: `src/bin/extract.rs` - Extract data from files
-- Inspect: `src/bin/inspect.rs` - Inspect file metadata
-- Schema: `src/bin/schema.rs` - Work with schema definitions
-- Search: `src/bin/search.rs` - Search through data files
+| Tool | Location | Purpose |
+|------|----------|---------|
+| `convert` | `src/bin/convert.rs` | Unified convert command |
+| `extract` | `src/bin/extract.rs` | Extract data from files |
+| `inspect` | `src/bin/inspect.rs` | Inspect file metadata |
+| `schema` | `src/bin/schema.rs` | Work with schema definitions |
+| `search` | `src/bin/search.rs` | Search through data files |
 
 ### Configuration
 
 - Transformation configs: TOML-based topic and type mapping
-- KPS configs: Dataset conversion settings
 - Performance modes: Auto-detected hardware parameters

@@ -1,298 +1,184 @@
-# Robocodec Architecture
+# Roboflow Architecture
 
-This document provides a high-level overview of Robocodec's architecture and design decisions.
+This document provides a high-level overview of Roboflow's architecture and design decisions.
 
 ## Overview
 
-Robocodec is a **schema-driven, universal robotics data codec** that enables efficient conversion between different robotics message formats and storage formats. The project is organized as a Cargo workspace with two crates:
-
-- **`robocodec`** - Low-level format library for robotics data
-- **`robocodec`** - High-level pipeline and conversion tool
+Roboflow is a **high-performance robotics data processing pipeline** built on top of the `robocodec` library. It provides schema-driven conversion between different robotics message formats (CDR, Protobuf, JSON) and storage formats (MCAP, ROS1 bag).
 
 ```
- Workspace: robocodec
- ----------------------------------------------------------------------
-| Crate: robocodec                                                      |
-|  --------       --------       --------                            |
-| |  CDR   |     |Protobuf|     |  JSON  |                           |
-| | Codec  |     | Codec  |     | Codec  |                           |
-|  --------       --------       --------                            |
-|  ----------------------                                         |
-| |   Schema Parser    |                                         |
-| | (ROS .msg, IDL)    |                                         |
-|  ----------------------                                         |
-|  ----------------------                                         |
-| |   Arena Types     |                                         |
-| | (Allocation, I/O) |                                         |
-|  ----------------------                                         |
- ----------------------------------------------------------------------
- ----------------------------------------------------------------------
-| Crate: robocodec                                                     |
-|  ---------------------       -----------------------------------     |
-| | Standard Pipeline  |     |      HyperPipeline (7-stage)  |      |
-| | Reader->Transform->|     |  Prefetch->Parse->Batch->      |     |
-| | Compress->Write    |     |  Transform->Compress->Write   |     |
-|  ---------------------       -----------------------------------     |
-|  ----------------------------------------                          |
-| |     Fluent API: Robocodec::open()->run() |                     |
-|  ----------------------------------------                          |
-|  ----------------------------------------                          |
-| |     Format I/O: MCAP, ROS bag readers/writers  |               |
-|  ----------------------------------------                          |
-|  ----------------------------------------                          |
-| |     Transform: Topic/Type Renaming      |                      |
-|  ----------------------------------------                          |
-|  ----------------------------------------                          |
-| |     KPS Writer (experimental)           |                      |
-|  ----------------------------------------                          |
-|  ----------------------------------------                          |
-| |     Python Bindings (PyO3)              |                      |
-|  ----------------------------------------                          |
- ----------------------------------------------------------------------
- ----------------------------------------------------------------------
-|                       Language Bindings                             |
-|  ------------------          ------------------                      |
-| |    Rust API       |        |    Python API     |                  |
-| |  (native library) |        |  (PyO3 bindings)  |                  |
-|  ------------------          ------------------                      |
- ----------------------------------------------------------------------
+┌─────────────────────────────────────────────────────────────────┐
+│                         Roboflow                                │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │                 Fluent API                            │    │
+│  │            Roboflow::open()->run()                    │    │
+│  └────────────────────────────────────────────────────────┘    │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │              Pipeline System                          │    │
+│  │  ┌──────────────┐  ┌──────────────────────────┐       │    │
+│  │  │   Standard   │  │    HyperPipeline (7)     │       │    │
+│  │  │  (4-stage)   │  │   Maximum throughput     │       │    │
+│  │  └──────────────┘  └──────────────────────────┘       │    │
+│  └────────────────────────────────────────────────────────┘    │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │            Python Bindings (PyO3)                     │    │
+│  └────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+                            │ depends on
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        robocodec                                │
+│                    (external crate)                            │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │              Format I/O Layer                          │    │
+│  │  ┌─────────┐  ┌─────────┐  ┌──────────────────────┐   │    │
+│  │  │  MCAP   │  │ ROS Bag │  │   KPS (experimental) │   │    │
+│  │  └─────────┘  └─────────┘  └──────────────────────┘   │    │
+│  └────────────────────────────────────────────────────────┘    │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │              Codec Layer                              │    │
+│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐               │    │
+│  │  │   CDR   │  │Protobuf │  │  JSON   │               │    │
+│  │  └─────────┘  └─────────┘  └─────────┘               │    │
+│  └────────────────────────────────────────────────────────┘    │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │           Schema Parser & Types                       │    │
+│  │     ROS .msg │ ROS2 IDL │ OMG IDL │ Arena Types      │    │
+│  └────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## Workspace Structure
+## Project Structure
 
-### Crate: robocodec
-
-**Purpose**: Low-level robotics data format library
-
-**Location**: `robocodec/src/`
-
-**Modules**:
-
-| Module | Description |
-|--------|-------------|
-| `core/` | Core types, errors, encoding registry |
-| `encoding/` | Message codecs (CDR, Protobuf, JSON) |
-| `schema/` | Schema parser (ROS .msg, ROS2 IDL, OMG IDL) |
-| `io/` | Unified I/O layer with format implementations |
-| `io/formats/bag/` | ROS bag format support |
-| `io/formats/mcap/` | MCAP format support |
-
-**Design**: This crate provides the foundational types and codec logic that `robocodec` builds upon. It can be used independently for low-level robotics data access.
-
-### Crate: robocodec
-
-**Purpose**: High-level pipeline and conversion tool
+### Roboflow Crate
 
 **Location**: `src/`
 
+**Purpose**: High-level pipeline orchestration and user-facing APIs
+
 **Modules**:
 
 | Module | Description |
 |--------|-------------|
-| `core/` | Core types and configuration |
 | `pipeline/` | Processing pipelines (Standard, HyperPipeline) |
-| `io/` | Unified I/O layer (readers, writers, format detection) |
-| `io/formats/` | Format-specific handlers (MCAP, ROS bag, KPS) |
-| `transform/` | Data transformations (topic/type renaming) |
-| `python/` | Python bindings via PyO3 |
+| `pipeline/fluent/` | Type-safe builder API |
+| `pipeline/hyper/` | 7-stage HyperPipeline implementation |
+| `pipeline/auto_config.rs` | Hardware-aware auto-configuration |
+| `pipeline/gpu/` | GPU compression support (experimental) |
+| `python/` | PyO3 bindings for Python API |
+| `bin/` | CLI tools (convert, extract, inspect, schema, search) |
 
-**Design**: This crate depends on `robocodec` and provides the user-facing APIs including the fluent API, format I/O, transformations, and Python bindings.
+**Design**: Roboflow depends on the external `robocodec` crate for all low-level format handling, codecs, and schema parsing.
+
+### Robocodec (External Dependency)
+
+**Source**: `https://github.com/archebase/robocodec`
+
+**Purpose**: Low-level robotics data format library
+
+**Capabilities**:
+- **Codec Layer**: CDR, Protobuf, JSON encoding/decoding
+- **Schema Parser**: ROS `.msg`, ROS2 IDL, OMG IDL
+- **Format I/O**: MCAP, ROS bag readers/writers
+- **Transform**: Topic/type renaming, normalization
+- **Types**: Arena allocation, zero-copy message types
+
+**Why External?**
+- **Separation of concerns**: Format handling vs. pipeline orchestration
+- **Reusability**: `robocodec` can be used independently
+- **Focused development**: Each crate has a clear responsibility
 
 ## Core Components
 
-### 1. Codec Layer (robocodec)
-
-**Location**: `robocodec/src/encoding/`
-
-The codec layer handles message encoding and decoding:
-
-| Codec | Purpose | File |
-|-------|---------|------|
-| CDR | ROS1/ROS2 serialization | `robocodec/src/encoding/cdr.rs` |
-| Protobuf | Protocol Buffers | `robocodec/src/encoding/protobuf.rs` |
-| JSON | Human-readable format | `robocodec/src/encoding/json.rs` |
-
-**Design**: Each codec implements a common trait for encode/decode operations.
-
-### 2. Schema Parser (robocodec)
-
-**Location**: `robocodec/src/schema/`
-
-Parses robotics interface definition languages:
-
-- **ROS `.msg` files**: ROS1 message definitions
-- **ROS2 IDL**: ROS2 interface definitions
-- **OMG IDL**: Standard IDL format
-
-**Implementation**: Uses Pest parser combinator for grammar definitions.
-
-### 3. Format I/O Layer (robocodec)
-
-**Location**: `src/io/`
-
-Unified interface for robotics data file formats:
-
-| Module | Description |
-|--------|-------------|
-| `reader/` | Unified reader interface with format auto-detection |
-| `writer/` | Unified writer interface |
-| `formats/` | Format-specific implementations (MCAP, ROS bag, KPS) |
-| `detection.rs` | File format detection |
-| `traits.rs` | Core I/O traits |
-| `arena.rs` | Arena allocation types |
-
-**Format Handlers** (in `src/io/formats/`):
-
-| Format | Reader | Writer |
-|--------|--------|--------|
-| MCAP | `mcap.rs`, `mcap_sequential.rs`, `mcap_two_pass.rs` | Via writer interface |
-| ROS Bag | `bag.rs`, `bag_parser.rs`, `bag_parallel.rs` | Via writer interface |
-| KPS | — | `kps/` directory (experimental) |
-
-### 4. Pipeline System (robocodec)
+### 1. Pipeline System
 
 **Location**: `src/pipeline/`
 
-See [PIPELINE.md](PIPELINE.md) for detailed documentation.
+Two pipeline implementations for different use cases:
 
-**Two pipeline implementations:**
+| Pipeline | Stages | Target Throughput | Use Case |
+|----------|--------|-------------------|----------|
+| **Standard** | 4 | ~200 MB/s | Balanced performance, simplicity |
+| **HyperPipeline** | 7 | ~1800+ MB/s | Maximum throughput, large-scale conversions |
 
-1. **Standard Pipeline** (`src/pipeline/stages/`): 4-stage design for balanced performance
-2. **HyperPipeline** (`src/pipeline/hyper/`): 7-stage design for maximum throughput
-
-### 5. Fluent API (robocodec)
+### 2. Fluent API
 
 **Location**: `src/pipeline/fluent/`
 
-User-friendly, type-safe API for file processing:
+User-friendly, type-safe API:
 
 ```rust
-use robocodec::pipeline::fluent::Robocodec;
+use roboflow::pipeline::fluent::Roboflow;
 
-// Simple conversion with auto-detection
-Robocodec::open(vec!["input.bag"])?
+// Simple conversion
+Roboflow::open(vec!["input.bag"])?
     .write_to("output.mcap")
     .run()?;
 
 // HyperPipeline with auto-configuration
-Robocodec::open(vec!["input.bag"])?
+Roboflow::open(vec!["input.bag"])?
     .write_to("output.mcap")
-    .hyper()
-    .mode(PerformanceMode::Throughput)
-    .run()?;
-
-// Batch processing
-Robocodec::open(vec!["file1.bag", "file2.bag"])?
-    .write_to("/output/dir")
+    .hyper_mode()
     .run()?;
 ```
 
-**Features:**
-- Type-state pattern ensures valid API usage
-- Automatic output file naming
-- Single file and batch processing modes
-- Progress reporting for batch operations
-
-### 6. Auto-Configuration (robocodec)
+### 3. Auto-Configuration
 
 **Location**: `src/pipeline/auto_config.rs`
 
-Hardware-aware automatic pipeline configuration:
+Hardware-aware automatic pipeline tuning:
 
 ```rust
 pub enum PerformanceMode {
-    Throughput,        // Maximum throughput on beefy machines
+    Throughput,        // Maximum throughput
     Balanced,          // Middle ground (default)
     MemoryEfficient,   // Conserve memory
 }
 
-// Auto-detect hardware and configure
 let config = PipelineAutoConfig::auto(PerformanceMode::Throughput)
     .to_hyper_config(input, output)
     .build();
 ```
 
-**Auto-detected parameters:**
-- CPU core count (with reservation for system)
-- Available memory
-- L3 cache size (for ZSTD WindowLog tuning)
-- Optimal batch sizes
-- Channel capacities
+### 4. Python Bindings
 
-### 7. GPU Compression (robocodec)
+**Location**: `src/python/`
 
-**Location**: `src/pipeline/gpu/`
+PyO3 bindings with feature parity:
 
-Experimental GPU-accelerated compression:
+```python
+from roboflow import Roboflow
 
-| Platform | Backend | Feature Flag |
-|----------|---------|--------------|
-| NVIDIA (Linux) | nvCOMP | `gpu` |
-| Apple Silicon | libcompression | `gpu` |
-| Fallback | CPU ZSTD | default |
-
-**Usage:**
-```rust
-// Automatically selected when feature enabled
-let config = HyperPipelineConfig::builder()
-    .compression_backend(CompressionBackend::Auto)
-    .build()?;
+# Use via fluent API
+Roboflow.open(["input.bag"]).write_to("output.mcap").run()
 ```
 
-### 8. Transform Layer (robocodec)
+## CLI Tools
 
-**Location**: `src/transform/`
-
-Data transformation capabilities:
-
-- **Topic renaming**: Rename topics during conversion
-- **Type renaming**: Rename message types
-- **Type normalization**: Normalize ROS1/ROS2 type differences
-
-```rust
-let transform = TransformBuilder::new()
-    .with_topic_rename("/old", "/new")
-    .with_type_rename("std_msgs/String", "std_msgs/msg/String")
-    .build();
-```
-
-### 9. KPS Format Writer (robocodec, experimental)
-
-**Location**: `src/io/formats/kps/`
-
-Converts robotics data to KPS dataset format for robotics learning:
-
-- **v1.2 Specification Support**: Compliant directory structure
-- **Multiple Output Formats**: HDF5, Parquet + MP4
-- **Configuration**: TOML-based configuration
-
-```rust
-use robocodec::pipeline::fluent::Robocodec;
-
-// Convert to KPS format
-Robocodec::open(vec!["input.mcap"])?
-    .write_to_kps("output_dir")
-    .config("kps_config.toml")
-    .run()?;
-```
+| Tool | Location | Purpose |
+|------|----------|---------|
+| `convert` | `src/bin/convert.rs` | Unified format conversion |
+| `extract` | `src/bin/extract.rs` | Extract data from files |
+| `inspect` | `src/bin/inspect.rs` | Inspect file metadata |
+| `schema` | `src/bin/schema.rs` | Work with schema definitions |
+| `search` | `src/bin/search.rs` | Search through data files |
 
 ## Design Decisions
 
-### Why Split into Two Crates?
+### Why Separate Crates?
 
-The workspace structure separates concerns:
+| Roboflow | Robocodec |
+|----------|-----------|
+| Pipeline orchestration | Format handling |
+| Fluent API | Codecs (CDR/Protobuf/JSON) |
+| Auto-configuration | Schema parsing |
+| Python bindings | MCAP/ROS bag I/O |
+| GPU compression | Arena types |
 
-1. **`robocodec`** - Low-level format handling
-   - Can be used independently
-   - Stable API for format access
-   - Minimal dependencies
-
-2. **`robocodec`** - High-level processing
-   - Depends on `robocodec`
-   - Fluent API and transformations
-   - Python bindings
-
-This allows other projects to use `robocodec` for format access without pulling in the full pipeline infrastructure.
+This separation allows:
+1. **Independent development**: Format handling evolves separately from pipeline logic
+2. **Reusability**: `robocodec` can be used in other projects
+3. **Clear boundaries**: Each crate has a focused responsibility
 
 ### Why Rust?
 
@@ -301,114 +187,64 @@ This allows other projects to use `robocodec` for format access without pulling 
 - **Cross-platform**: Linux, macOS, Windows
 - **FFI friendly**: Easy Python bindings via PyO3
 
-### Why Arena Allocation?
-
-Robotics data processing involves millions of small messages:
-- Traditional allocation: High overhead
-- Arena allocation: Bulk allocation, bulk deallocation
-- **Result**: ~22% CPU reduction
-
 ### Why Two Pipeline Designs?
 
-**Standard Pipeline**: Simpler, easier to understand, good for most use cases
-
-**HyperPipeline**: Maximum throughput for large-scale conversions
-- More stages = better parallelization
-- Isolated stages = no contention
-- Platform-specific I/O optimizations
-- **Result**: 3-5x higher throughput on multi-core systems
-
-### Why Schema-Driven?
-
-Robotics uses many message types:
-- Hand-written codecs: Impractical for hundreds of types
-- Schema-driven: Parse once, encode/decode many times
-- **Result**: Support for any ROS message without code generation
+| Standard | HyperPipeline |
+|----------|---------------|
+| Simpler, easier to understand | Maximum throughput |
+| Good for most use cases | Large-scale conversions |
+| ~200 MB/s | ~1800+ MB/s (9x faster) |
 
 ## Performance Characteristics
 
 ### Throughput
 
-| Pipeline Mode | Operation | Typical Throughput |
-|---------------|-----------|-------------------|
-| Standard | BAG → MCAP (no compression) | ~500 MB/s |
+| Pipeline Mode | Operation | Throughput |
+|---------------|-----------|------------|
 | Standard | BAG → MCAP (ZSTD-3) | ~200 MB/s |
 | HyperPipeline | BAG → MCAP (ZSTD-3) | ~1800 MB/s |
-| HyperPipeline | MCAP → BAG (decompress) | ~2500 MB/s |
 
 ### Memory
 
-Per-operation memory usage:
-- **Arena pool**: ~100MB (depends on CPU count)
-- **Buffer pool**: ~50MB (depends on worker count)
-- **In-flight data**: ~256MB (16 chunks × 16MB)
+| Component | Typical Usage |
+|-----------|---------------|
+| Arena pool | ~100MB (depends on CPU count) |
+| Buffer pool | ~50MB (depends on worker count) |
+| In-flight data | ~256MB (16 chunks × 16MB) |
+| **Total** | ~600MB (8-core system) |
 
 ## Language Support
 
-### Rust API
+### Rust API (Native)
 
-Native library with full feature access:
 ```rust
-use robocodec::pipeline::fluent::Robocodec;
+use roboflow::pipeline::fluent::Roboflow;
 
-Robocodec::open(vec!["input.bag"])?
+Roboflow::open(vec!["input.bag"])?
     .write_to("output.mcap")
     .run()?;
 ```
 
-### Python API
+### Python API (PyO3)
 
-PyO3 bindings with feature parity:
 ```python
-from robocodec import RoboReader, RoboWriter
+from roboflow import Roboflow
 
-with RoboReader("data.bag") as reader:
-    with RoboWriter("output.mcap") as writer:
-        for topic, message in reader:
-            writer.write(topic, message)
+Roboflow.open(["input.bag"]).write_to("output.mcap").run()
 ```
 
-## Extensibility
+## Feature Flags
 
-### Adding a New Codec
-
-1. Implement codec trait in `robocodec/src/encoding/`
-2. Register in `robocodec/src/core/registry.rs`
-3. Add schema parser if needed
-
-### Adding a New File Format
-
-1. Implement format reader/writer in `src/io/formats/`
-2. Add format detection in `src/io/detection.rs`
-3. Implement the I/O traits from `src/io/traits.rs`
-
-### Adding a New Transform
-
-1. Implement transform trait in `src/transform/`
-2. Add to `TransformBuilder`
-3. Wire into pipeline
-
-## Trade-offs
-
-### Simplicity vs Performance
-
-We offer two pipeline modes:
-- **Standard**: Simpler code, easier debugging, good performance
-- **HyperPipeline**: More complex, but 3-5x faster
-
-### Memory vs Throughput
-
-HyperPipeline uses more memory for better throughput:
-- Large batching: Better compression and parallelism
-- More stages: Higher in-flight data
-- **Result**: ~1-2GB typical usage for maximum throughput
-
-### Compatibility vs Features
-
-ROS has many edge cases:
-- We focus on common cases
-- Handle ROS1 and ROS2
-- **Result**: Works with 99% of real-world data
+| Flag | Description |
+|------|-------------|
+| `python` | Python bindings via PyO3 |
+| `kps-hdf5` | HDF5 dataset support |
+| `kps-parquet` | Parquet dataset support |
+| `kps-depth` | Depth video support |
+| `kps-all` | All KPS features |
+| `cli` | CLI tools |
+| `jemalloc` | Use jemalloc allocator (Linux) |
+| `gpu` | GPU compression support |
 
 ## See Also
 

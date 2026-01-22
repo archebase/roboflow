@@ -19,7 +19,6 @@ New format (3 lines):
 // SPDX-License-Identifier: MulanPSL-2.0
 """
 
-import os
 import re
 from pathlib import Path
 
@@ -56,11 +55,11 @@ NEW_HEADER_PYTHON = """# SPDX-FileCopyrightText: 2026 ArcheBase
 
 def update_rust_file(filepath: Path) -> bool:
     """Update a Rust file's license header."""
-    with open(filepath, 'r', encoding='utf-8') as f:
+    with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()
 
     # Check if file already has SPDX header
-    if 'SPDX-License-Identifier' in content:
+    if "SPDX-License-Identifier" in content:
         print(f"  ✓ {filepath}: Already has SPDX header")
         return False
 
@@ -68,7 +67,7 @@ def update_rust_file(filepath: Path) -> bool:
     new_content = re.sub(OLD_HEADER_RUST, NEW_HEADER_RUST, content, count=1)
 
     if new_content != content:
-        with open(filepath, 'w', encoding='utf-8') as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             f.write(new_content)
         print(f"  ✓ {filepath}: Updated")
         return True
@@ -79,11 +78,11 @@ def update_rust_file(filepath: Path) -> bool:
 
 def update_python_file(filepath: Path) -> bool:
     """Update a Python file's license header."""
-    with open(filepath, 'r', encoding='utf-8') as f:
+    with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()
 
     # Check if file already has SPDX header
-    if 'SPDX-License-Identifier' in content:
+    if "SPDX-License-Identifier" in content:
         print(f"  ✓ {filepath}: Already has SPDX header")
         return False
 
@@ -91,7 +90,7 @@ def update_python_file(filepath: Path) -> bool:
     new_content = re.sub(OLD_HEADER_PYTHON, NEW_HEADER_PYTHON, content, count=1)
 
     if new_content != content:
-        with open(filepath, 'w', encoding='utf-8') as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             f.write(new_content)
         print(f"  ✓ {filepath}: Updated")
         return True
@@ -109,32 +108,32 @@ def main():
 
     # Process Rust files
     print("\nProcessing Rust files:")
-    rust_dirs = ['src', 'robocodec/src', 'tests', 'benches', 'examples']
+    rust_dirs = ["src", "robocodec/src", "tests", "benches", "examples"]
     for dir_name in rust_dirs:
         dir_path = root / dir_name
         if not dir_path.exists():
             continue
 
-        for rs_file in dir_path.rglob('*.rs'):
+        for rs_file in dir_path.rglob("*.rs"):
             if update_rust_file(rs_file):
                 updated_count += 1
 
     # Process Python files
     print("\nProcessing Python files:")
-    python_dirs = ['python']
+    python_dirs = ["python"]
     for dir_name in python_dirs:
         dir_path = root / dir_name
         if not dir_path.exists():
             continue
 
-        for py_file in dir_path.rglob('*.py'):
+        for py_file in dir_path.rglob("*.py"):
             if update_python_file(py_file):
                 updated_count += 1
 
     print(f"\n✓ Updated {updated_count} files with SPDX headers")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
 
 # REUSE-IgnoreEnd

@@ -1,10 +1,10 @@
 # Memory Management
 
-This document describes Robocodec's memory management strategies, focusing on zero-copy optimizations and arena allocation.
+This document describes memory management strategies in Roboflow, focusing on zero-copy optimizations and arena allocation provided by the `robocodec` library.
 
 ## Overview
 
-Robotics data processing involves handling millions of small messages with varying sizes. Traditional memory management (malloc/free) creates significant overhead. Robocodec uses **arena allocation** and **object pooling** to minimize allocation overhead and maximize cache locality.
+Robotics data processing involves handling millions of small messages with varying sizes. Traditional memory management (malloc/free) creates significant overhead. Roboflow uses **arena allocation** and **object pooling** from the `robocodec` library to minimize allocation overhead and maximize cache locality.
 
 ```
 Traditional Allocation (per message):
@@ -26,11 +26,13 @@ Arena Allocation (per chunk):
          ↓ (single free)
 ```
 
-## Arena Allocation
+## Arena Allocation (via robocodec)
 
 ### MessageArena
 
-**Location**: `src/io/arena.rs`
+**Provided by**: `robocodec` crate
+
+The `robocodec` library provides arena allocation types used throughout Roboflow:
 
 ```rust
 pub struct MessageArena {
@@ -93,9 +95,9 @@ impl Drop for ArenaBlock {
 | Blocks per arena | 1-4 | Based on typical chunk size |
 | Arena pool size | `num_cpus × 2` | Match parallel processing |
 
-## Arena Pool
+## Arena Pool (via robocodec)
 
-**Location**: `src/io/arena.rs`
+**Provided by**: `robocodec` crate
 
 ### Purpose
 
@@ -125,9 +127,9 @@ impl ArenaPool {
 - **Lock-free**: Uses crossbeam channels
 - **Automatic**: Drop trait returns arenas to pool
 
-## Buffer Pool
+## Buffer Pool (via robocodec)
 
-**Location**: `src/pipeline/compression/`
+**Provided by**: `robocodec` crate
 
 ### Purpose
 
@@ -169,11 +171,11 @@ let compressed = zstd_compressor.compress_to_buffer(&input, &mut output)?;
 - **Capacity preservation**: Buffers grow to max size, stay there
 - **Lock-free**: Uses `ArrayQueue` for concurrent access
 
-## Zero-Copy Design
+## Zero-Copy Design (via robocodec)
 
 ### Arena Slices
 
-**Location**: `src/io/arena.rs`
+**Provided by**: `robocodec` crate
 
 ```rust
 #[repr(C)]
@@ -226,7 +228,7 @@ let slice = &mmap[offset..offset + length];
 
 ### MessageChunk
 
-**Location**: `src/io/arena.rs`
+**Provided by**: `robocodec` crate
 
 ```rust
 pub struct MessageChunk<'arena> {
@@ -260,12 +262,12 @@ pub struct MessageChunk<'arena> {
 └─────────────────────────────────────────────────────┘
 ```
 
-### Memory Flow Through Pipeline
+## Memory Flow Through Pipeline
 
 ```
 Reader Stage:
 ┌──────────────┐
-│  Alloc new   │ → MessageChunk with fresh arena
+│  Alloc new   │ → MessageChunk with fresh arena (from robocodec)
 │   arena      │
 └──────────────┘
       ↓
@@ -281,13 +283,13 @@ Compression Stage:
 │   arena      │
 └──────────────┘
 ┌──────────────┐
-│  Use buffer  │ → Reused compression buffer
+│  Use buffer  │ → Reused compression buffer (from robocodec)
 │    pool      │
 └──────────────┘
       ↓
 Writer Stage:
 ┌──────────────┐
-│  Return to   │ → Arena returned to pool
+│  Return to   │ → Arena returned to pool (robocodec)
 │  arena pool  │
 └──────────────┘
 ```
@@ -298,7 +300,7 @@ Writer Stage:
 
 | Component | Size | Notes |
 |-----------|------|-------|
-| Arena blocks | 64MB × N | N = 1-4 blocks |
+| Arena blocks | 64MB × N | N = 1-4 blocks (from robocodec) |
 | Messages | ~16MB | Configurable chunk size |
 | Metadata | ~1KB | Per ~1000 messages |
 | **Total per chunk** | ~80MB | Varies by config |
@@ -307,8 +309,8 @@ Writer Stage:
 
 | Component | Size | Formula |
 |-----------|------|---------|
-| Arena pool | ~200MB | `num_cpus × 2 × 64MB` |
-| Buffer pool | ~50MB | `num_workers × 2 × 16MB` |
+| Arena pool | ~200MB | `num_cpus × 2 × 64MB` (robocodec) |
+| Buffer pool | ~50MB | `num_workers × 2 × 16MB` (robocodec) |
 | In-flight data | ~256MB | `channel_capacity × chunk_size` |
 | File buffers | ~100MB | OS page cache |
 | **Total** | ~600MB | Typical 8-core system |
@@ -358,15 +360,22 @@ Arena allocation improves cache locality:
 - Variable buffer sizes
 - Very small buffers (<4KB)
 
-## Future Improvements
+## Architecture Note
 
-1. **SIMD-optimized allocation**: Faster alignment handling
-2. **Huge pages**: For very large datasets
-3. **GPU memory**: CUDA arena for GPU compression
-4. **Adaptive sizing**: Auto-tune block size based on workload
+The arena allocation and buffer pool implementations are provided by the **`robocodec`** library. Roboflow uses these types through:
 
-## References
+```rust
+use robocodec::types::arena::{MessageArena, PooledArena, ArenaSlice};
+use robocodec::types::chunk::MessageChunk;
+use robocodec::types::buffer_pool::{BufferPool, PooledBuffer};
+```
 
-- `src/io/arena.rs` - Arena implementation and chunk design
-- `src/pipeline/compression/` - Buffer pool for compression
-- `src/pipeline/stages/` - Pipeline stages that use arena allocation
+This separation of concerns allows:
+- **Robocodec**: Focus on low-level memory management and format handling
+- **Roboflow**: Focus on pipeline orchestration and processing logic
+
+## See Also
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) - High-level system architecture
+- [PIPELINE.md](PIPELINE.md) - Pipeline architecture
+- [robocodec repository](https://github.com/archebase/robocodec) - Arena implementation details

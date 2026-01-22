@@ -7,12 +7,12 @@
 //! Usage:
 //!   cargo test -p roboflow --test bag_round_trip_tests -- --nocapture
 
+use robocodec::bag::BagFormat;
 use robocodec::io::traits::FormatReader;
+use robocodec::mcap::ParallelMcapWriter;
 use robocodec::rewriter::bag::BagRewriter as BagBagRewriter;
 use robocodec::transform::MultiTransform;
 use robocodec::transform::TransformBuilder;
-use robocodec::BagFormat;
-use robocodec::ParallelMcapWriter;
 use robocodec::RewriteOptions;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
@@ -1312,7 +1312,7 @@ fn mcap_to_bag_conversion(
     pipeline: &MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::BagWriter;
+    use robocodec::bag::BagWriter;
     use robocodec::{mcap::McapReader, rewriter::engine::McapRewriteEngine};
 
     let mcap_reader = McapReader::open(input)?;
@@ -1374,7 +1374,7 @@ fn mcap_to_bag_conversion(
             None => continue,
         };
 
-        let bag_msg = robocodec::BagMessage::from_raw(out_conn_id, msg.publish_time, msg.data);
+        let bag_msg = robocodec::bag::BagMessage::from_raw(out_conn_id, msg.publish_time, msg.data);
         writer.write_message(&bag_msg)?;
         msg_count += 1;
     }

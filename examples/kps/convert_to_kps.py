@@ -26,10 +26,7 @@ import numpy as np
 
 
 def convert_mcap_to_kps_spec(
-    mcap_path: str,
-    output_dir: str,
-    config_path: str,
-    task_info_path: str = None
+    mcap_path: str, output_dir: str, config_path: str, task_info_path: str = None
 ):
     """
     Convert MCAP file to Kps dataset format with full spec compliance.
@@ -81,24 +78,25 @@ def _load_toml_config(config_path: str) -> Dict[str, Any]:
     """Load TOML configuration file."""
     try:
         import tomli
-        with open(config_path, 'rb') as f:
+
+        with open(config_path, "rb") as f:
             return tomli.load(f)
     except ImportError:
         # Fallback to tomllib (Python 3.11+)
         import tomllib
-        with open(config_path, 'rb') as f:
+
+        with open(config_path, "rb") as f:
             return tomllib.load(f)
 
 
 def _load_task_info(task_info_path: str) -> List[Dict[str, Any]]:
     """Load task_info JSON file."""
-    with open(task_info_path, 'r') as f:
+    with open(task_info_path, "r") as f:
         return json.load(f)
 
 
 def _create_directory_structure(
-    output_path: Path,
-    task_info: List[Dict[str, Any]] = None
+    output_path: Path, task_info: List[Dict[str, Any]] = None
 ) -> Path:
     """
     Create the Kps directory structure.
@@ -108,18 +106,22 @@ def _create_directory_structure(
     """
     if task_info and len(task_info) > 0:
         episode = task_info[0]
-        scene_name = episode.get('scene_name', 'UnknownScene')
-        sub_scene_name = episode.get('sub_scene_name', 'UnknownSubScene')
-        task_name = episode.get('english_task_name', 'UnknownTask').replace(' ', '_')
-        episode_id = episode.get('episode_id', '000000')
+        scene_name = episode.get("scene_name", "UnknownScene")
+        sub_scene_name = episode.get("sub_scene_name", "UnknownSubScene")
+        task_name = episode.get("english_task_name", "UnknownTask").replace(" ", "_")
+        episode_id = episode.get("episode_id", "000000")
 
         # For simplicity, create a basic structure
         # In production, calculate actual size, count, duration
         task_dir_name = f"{task_name}_approx_100counts_5min"
-        series_dir = output_path / scene_name / sub_scene_name / task_dir_name / episode_id
+        series_dir = (
+            output_path / scene_name / sub_scene_name / task_dir_name / episode_id
+        )
     else:
         # Default structure
-        series_dir = output_path / "DefaultScene" / "DefaultSubScene" / "default_task" / "000000"
+        series_dir = (
+            output_path / "DefaultScene" / "DefaultSubScene" / "default_task" / "000000"
+        )
 
     series_dir.mkdir(parents=True, exist_ok=True)
 
@@ -134,9 +136,7 @@ def _create_directory_structure(
 
 
 def _collect_messages(
-    reader: Any,
-    config: Dict[str, Any],
-    task_info: List[Dict[str, Any]] = None
+    reader: Any, config: Dict[str, Any], task_info: List[Dict[str, Any]] = None
 ) -> Dict[str, List[Any]]:
     """
     Collect messages from MCAP, organized by topic.
@@ -157,18 +157,18 @@ def _collect_messages(
     frame_range: Optional[Tuple[int, int]] = None
     if task_info and len(task_info) > 0:
         episode = task_info[0]
-        action_config = episode.get('label_info', {}).get('action_config', [])
+        action_config = episode.get("label_info", {}).get("action_config", [])
         if action_config:
             # Get the overall range from all action segments
-            min_start = min(seg.get('start_frame', 0) for seg in action_config)
-            max_end = max(seg.get('end_frame', float('inf')) for seg in action_config)
+            min_start = min(seg.get("start_frame", 0) for seg in action_config)
+            max_end = max(seg.get("end_frame", float("inf")) for seg in action_config)
             frame_range = (min_start, max_end)
             print(f"Filtering to frame range: {min_start} to {max_end}")
 
     print("Processing messages...")
     frame_count = 0
     for i, (msg_dict, channel_info) in enumerate(reader.iter_messages()):
-        topic = channel_info['topic']
+        topic = channel_info["topic"]
 
         # Apply frame range filtering if task_info specifies action_config
         if frame_range is not None:
@@ -185,10 +185,14 @@ def _collect_messages(
             data_by_topic[topic] = []
 
         # Store message with timestamp
-        data_by_topic[topic].append({
-            'message': msg_dict,
-            'timestamp_ns': msg_dict.get('timestamp', 0)  # or use channel timestamp
-        })
+        data_by_topic[topic].append(
+            {
+                "message": msg_dict,
+                "timestamp_ns": msg_dict.get(
+                    "timestamp", 0
+                ),  # or use channel timestamp
+            }
+        )
 
         if i % 1000 == 0:
             print(f"  Processed {i} messages...")
@@ -204,7 +208,7 @@ def _write_proprio_stats_hdf5(
     output_path: Path,
     data_by_topic: Dict[str, List[Any]],
     config: Dict[str, Any],
-    task_info: List[Dict[str, Any]] = None
+    task_info: List[Dict[str, Any]] = None,
 ):
     """
     Write proprio_stats.hdf5 with the full Kps spec structure.
@@ -222,44 +226,43 @@ def _write_proprio_stats_hdf5(
     """
     print(f"Writing HDF5 file: {output_path}")
 
-    with h5py.File(output_path, 'w') as f:
+    with h5py.File(output_path, "w") as f:
         # Determine alignment size from shortest topic
-        min_length = min(len(msgs) for msgs in data_by_topic.values()) if data_by_topic else 0
+        min_length = (
+            min(len(msgs) for msgs in data_by_topic.values()) if data_by_topic else 0
+        )
 
         # Write root timestamps (aligned)
         f.create_dataset(
-            'timestamps',
-            data=np.arange(min_length, dtype=np.int64),
-            dtype=np.int64
+            "timestamps", data=np.arange(min_length, dtype=np.int64), dtype=np.int64
         )
 
         # Create /action group
-        action_group = f.create_group('action')
+        action_group = f.create_group("action")
 
         # Create /state group
-        state_group = f.create_group('state')
+        state_group = f.create_group("state")
 
         # Process mappings and write data
-        for mapping in config.get('mappings', []):
-            topic = mapping['topic']
-            feature = mapping['feature']
-            data_type = mapping.get('type', 'state')
+        for mapping in config.get("mappings", []):
+            topic = mapping["topic"]
+            feature = mapping["feature"]
 
             if topic not in data_by_topic or not data_by_topic[topic]:
                 continue
 
             # Parse feature path (e.g., "observation.joint.position" -> category="observation", subgroup="joint", field="position")
-            parts = feature.split('.')
+            parts = feature.split(".")
             if len(parts) < 2:
                 continue
 
             category = parts[0]  # "observation" or "action"
-            feature_name = '.'.join(parts[1:])
+            feature_name = ".".join(parts[1:])
 
             # Select target group
-            if category == 'action':
+            if category == "action":
                 target_group = action_group
-            elif category == 'observation':
+            elif category == "observation":
                 target_group = state_group  # In Kps, observations are in /state
             else:
                 continue
@@ -268,14 +271,13 @@ def _write_proprio_stats_hdf5(
             # Features can have formats like:
             # - "joint.position" -> subgroup="joint", field="position"
             # - "joint_name" -> subgroup=None, field="joint_name"
-            feature_parts = feature_name.split('.', 1)
+            feature_parts = feature_name.split(".", 1)
             if len(feature_parts) == 2:
                 subgroup_name = feature_parts[0]
-                field_spec = feature_parts[1]
+                # field_spec = feature_parts[1]  # Unused, full feature_name is used instead
             else:
                 # No intermediate subgroup, use flat structure
                 subgroup_name = None
-                field_spec = feature_name
 
             # Create intermediate subgroup if specified
             if subgroup_name:
@@ -294,9 +296,7 @@ def _write_proprio_stats_hdf5(
 
 
 def _write_proprio_stats_original_hdf5(
-    output_path: Path,
-    data_by_topic: Dict[str, List[Any]],
-    config: Dict[str, Any]
+    output_path: Path, data_by_topic: Dict[str, List[Any]], config: Dict[str, Any]
 ):
     """
     Write proprio_stats_original.hdf5 with unaligned original data.
@@ -305,69 +305,63 @@ def _write_proprio_stats_original_hdf5(
     """
     print(f"Writing original HDF5 file: {output_path}")
 
-    with h5py.File(output_path, 'w') as f:
+    with h5py.File(output_path, "w") as f:
         # Write each topic's data at its original frequency
-        for mapping in config.get('mappings', []):
-            topic = mapping['topic']
-            feature = mapping['feature']
+        for mapping in config.get("mappings", []):
+            topic = mapping["topic"]
+            feature = mapping["feature"]
 
             if topic not in data_by_topic or not data_by_topic[topic]:
                 continue
 
             data = data_by_topic[topic]
-            feature_name = feature.split('.')[-1]
+            feature_name = feature.split(".")[-1]
 
             # Write timestamps for this topic
-            timestamps = np.array([msg['timestamp_ns'] for msg in data], dtype=np.int64)
+            timestamps = np.array([msg["timestamp_ns"] for msg in data], dtype=np.int64)
             timestamp_name = f"{feature_name}_timestamps"
             f.create_dataset(timestamp_name, data=timestamps, dtype=np.int64)
 
             # Write data
             arrays = _extract_arrays_from_messages(data, feature_name)
             for arr_name, arr_data in arrays.items():
-                if arr_name != 'names':  # Skip names for original file
+                if arr_name != "names":  # Skip names for original file
                     full_name = f"{feature_name}_{arr_name}"
                     _write_dataset(f, full_name, arr_data)
 
 
 def _extract_arrays_from_messages(
-    messages: List[Dict[str, Any]],
-    feature_name: str
+    messages: List[Dict[str, Any]], feature_name: str
 ) -> Dict[str, Any]:
     """
     Extract numeric arrays from a list of decoded messages.
 
     Returns dict with 'position', 'velocity', 'names', etc.
     """
-    result = {
-        'position': [],
-        'velocity': [],
-        'effort': [],
-        'names': []
-    }
+    result = {"position": [], "velocity": [], "effort": [], "names": []}
 
     for msg in messages:
-        data = msg['message']
+        data = msg["message"]
 
         # Try to extract common fields
-        for field in ['position', 'velocity', 'effort', 'names']:
+        for field in ["position", "velocity", "effort", "names"]:
             if field in data:
-                if field == 'names':
+                if field == "names":
                     # Names are constant, store once
-                    if not result['names'] and isinstance(data[field], list):
-                        result['names'] = data[field]
+                    if not result["names"] and isinstance(data[field], list):
+                        result["names"] = data[field]
                 elif isinstance(data[field], list):
                     result[field].append(data[field])
 
     # Convert to numpy arrays
-    for key in ['position', 'velocity', 'effort']:
+    for key in ["position", "velocity", "effort"]:
         if result[key]:
             result[key] = np.array(result[key], dtype=np.float32)
         else:
             del result[key]
 
-    if not result['names']:
-        del result['names']
+    if not result["names"]:
+        del result["names"]
 
     return result
 
@@ -379,7 +373,7 @@ def _write_dataset(group: h5py.Group, name: str, data: Any):
     elif isinstance(data, list):
         if data and isinstance(data[0], str):
             # String array
-            dt = h5py.string_dtype(encoding='utf-8')
+            dt = h5py.string_dtype(encoding="utf-8")
             group.create_dataset(name, data=data, dtype=dt)
         else:
             group.create_dataset(name, data=np.array(data, dtype=np.float32))
@@ -407,7 +401,7 @@ def _write_camera_parameters(series_dir: Path, data_by_topic: Dict[str, List[Any
         "k2": 0.0,
         "p1": 0.0,
         "p2": 0.0,
-        "k3": 0.0
+        "k3": 0.0,
     }
 
     example_extrinsic = {
@@ -416,38 +410,44 @@ def _write_camera_parameters(series_dir: Path, data_by_topic: Dict[str, List[Any
         "position": {
             "x": -0.001807534985204,
             "y": -0.0000127749221,
-            "z": 0.12698557287
+            "z": 0.12698557287,
         },
         "orientation": {
             "x": -0.061042519636452198,
             "y": -0.734867956625483362,
             "z": 0.0003818870463874191,
-            "w": 0.6795214914222156511
-        }
+            "w": 0.6795214914222156511,
+        },
     }
 
     # Write example parameters
-    for camera in ['hand_right', 'hand_left', 'head']:
+    for camera in ["hand_right", "hand_left", "head"]:
         intrinsic_path = params_dir / f"{camera}_intrinsic_params.json"
         extrinsic_path = params_dir / f"{camera}_extrinsic_params.json"
 
-        with open(intrinsic_path, 'w') as f:
+        with open(intrinsic_path, "w") as f:
             json.dump(example_intrinsic, f, indent=2)
-        with open(extrinsic_path, 'w') as f:
+        with open(extrinsic_path, "w") as f:
             json.dump(example_extrinsic, f, indent=2)
 
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python convert_to_kps.py <input.mcap> <output_dir> [config.toml] [task_info.json]")
+        print(
+            "Usage: python convert_to_kps.py <input.mcap> <output_dir> [config.toml] [task_info.json]"
+        )
         print("\nExample:")
-        print("  python convert_to_kps.py data.mcap ./output kps_config.toml task_info.json")
+        print(
+            "  python convert_to_kps.py data.mcap ./output kps_config.toml task_info.json"
+        )
         sys.exit(1)
 
     mcap_path = sys.argv[1]
     output_dir = sys.argv[2]
     config_path = sys.argv[3] if len(sys.argv) > 3 else "examples/kps/kps_config.toml"
-    task_info_path = sys.argv[4] if len(sys.argv) > 4 else "examples/kps/task_info_example.json"
+    task_info_path = (
+        sys.argv[4] if len(sys.argv) > 4 else "examples/kps/task_info_example.json"
+    )
 
     convert_mcap_to_kps_spec(mcap_path, output_dir, config_path, task_info_path)
 

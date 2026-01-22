@@ -113,7 +113,7 @@ fn show_info(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::BagFormat::open(file)?;
+            let reader = robocodec::bag::BagFormat::open(file)?;
             println!("Channels: {}", reader.channels().len());
             println!("Message count: {}", reader.message_count());
             if let (Some(start), Some(end)) = (reader.start_time(), reader.end_time()) {
@@ -148,7 +148,7 @@ fn show_info(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::BagFormat::open(file)?;
+                    let reader = robocodec::bag::BagFormat::open(file)?;
                     println!("Channels: {}", reader.channels().len());
                     println!("Message count: {}", reader.message_count());
                     if let (Some(start), Some(end)) = (reader.start_time(), reader.end_time()) {
@@ -198,7 +198,7 @@ fn show_topics(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::BagFormat::open(file)?;
+            let reader = robocodec::bag::BagFormat::open(file)?;
             for channel in reader.channels().values() {
                 println!("Topic: {}", channel.topic);
                 println!("  Type: {}", channel.message_type);
@@ -231,7 +231,7 @@ fn show_topics(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::BagFormat::open(file)?;
+                    let reader = robocodec::bag::BagFormat::open(file)?;
                     for channel in reader.channels().values() {
                         println!("Topic: {}", channel.topic);
                         println!("  Type: {}", channel.message_type);
@@ -277,7 +277,7 @@ fn show_channels(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::BagFormat::open(file)?;
+            let reader = robocodec::bag::BagFormat::open(file)?;
             for (&id, ch) in reader.channels() {
                 println!("Channel ID: {}", id);
                 println!("  Topic: {}", ch.topic);
@@ -313,7 +313,7 @@ fn show_channels(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::BagFormat::open(file)?;
+                    let reader = robocodec::bag::BagFormat::open(file)?;
                     for (&id, ch) in reader.channels() {
                         println!("Channel ID: {}", id);
                         println!("  Topic: {}", ch.topic);
@@ -365,7 +365,7 @@ fn show_schema(
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::BagFormat::open(file)?;
+            let reader = robocodec::bag::BagFormat::open(file)?;
             for ch in reader.channels().values() {
                 if let Some(filter) = topic_filter {
                     if !ch.topic.contains(filter) && !ch.message_type.contains(filter) {
@@ -414,7 +414,7 @@ fn show_schema(
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::BagFormat::open(file)?;
+                    let reader = robocodec::bag::BagFormat::open(file)?;
                     for ch in reader.channels().values() {
                         if let Some(filter) = topic_filter {
                             if !ch.topic.contains(filter) && !ch.message_type.contains(filter) {
@@ -472,7 +472,7 @@ fn show_messages(
             }
         }
         "bag" => {
-            let reader = robocodec::BagFormat::open(file)?;
+            let reader = robocodec::bag::BagFormat::open(file)?;
             let iter = reader.iter_raw()?;
             let mut counts: HashMap<u16, usize> = HashMap::new();
 
@@ -506,7 +506,7 @@ fn show_messages(
                     }
                 }
                 Err(_) => {
-                    let reader = robocodec::BagFormat::open(file)?;
+                    let reader = robocodec::bag::BagFormat::open(file)?;
                     let iter = reader.iter_raw()?;
                     for result in iter.take(sample_count) {
                         let (msg, channel_info) = result?;
@@ -566,7 +566,7 @@ fn show_hex_dump(
             }
         }
         "bag" => {
-            let reader = robocodec::BagFormat::open(file)?;
+            let reader = robocodec::bag::BagFormat::open(file)?;
             let iter = reader.iter_raw()?;
             let mut counts: HashMap<u16, usize> = HashMap::new();
 
@@ -621,7 +621,7 @@ fn show_hex_dump(
                     }
                 }
                 Err(_) => {
-                    let reader = robocodec::BagFormat::open(file)?;
+                    let reader = robocodec::bag::BagFormat::open(file)?;
                     let iter = reader.iter_raw()?;
                     for result in iter.take(sample_count) {
                         let (msg, channel_info) = result?;
@@ -653,7 +653,7 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
 
     match ext {
         "mcap" => {
-            use robocodec::io::formats::mcap::ParallelMcapReader;
+            use robocodec::mcap::ParallelMcapReader;
             let reader = ParallelMcapReader::open(file)?;
             let chunks = reader.chunk_indexes();
 
@@ -732,7 +732,7 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
             println!("  Recommended WindowLog: {}", window_log);
         }
         "bag" => {
-            use robocodec::io::formats::bag::ParallelBagReader;
+            use robocodec::bag::ParallelBagReader;
             let reader = ParallelBagReader::open(file)?;
             let chunks = reader.chunks();
 

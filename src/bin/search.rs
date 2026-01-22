@@ -278,7 +278,7 @@ fn search_topics(file: &str, pattern: &str) -> Result<(), Box<dyn std::error::Er
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::BagFormat::open(file)?;
+            let reader = robocodec::bag::BagFormat::open(file)?;
             println!("Searching for topics matching: {:?}", pattern);
             println!();
 
@@ -315,7 +315,7 @@ fn search_topics(file: &str, pattern: &str) -> Result<(), Box<dyn std::error::Er
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::BagFormat::open(file)?;
+                    let reader = robocodec::bag::BagFormat::open(file)?;
                     println!("Searching for topics matching: {:?}", pattern);
                     println!();
 
@@ -384,7 +384,7 @@ fn show_fields(file: &str, topic: &str) -> Result<(), Box<dyn std::error::Error>
             }
             "bag" => {
                 use robocodec::io::traits::FormatReader;
-                let reader = robocodec::BagFormat::open(file)?;
+                let reader = robocodec::bag::BagFormat::open(file)?;
 
                 let channel = reader
                     .channels()
@@ -441,7 +441,7 @@ fn show_fields(file: &str, topic: &str) -> Result<(), Box<dyn std::error::Error>
                     }
                     Err(_) => {
                         use robocodec::io::traits::FormatReader;
-                        let reader = robocodec::BagFormat::open(file)?;
+                        let reader = robocodec::bag::BagFormat::open(file)?;
 
                         let channel = reader
                             .channels()
@@ -695,7 +695,7 @@ fn show_stats(file: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::BagFormat::open(file)?;
+            let reader = robocodec::bag::BagFormat::open(file)?;
             println!("Channels: {}", reader.channels().len());
             println!("Messages: {}", reader.message_count());
 
@@ -753,7 +753,7 @@ fn show_stats(file: &str) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::BagFormat::open(file)?;
+                    let reader = robocodec::bag::BagFormat::open(file)?;
                     println!("Channels: {}", reader.channels().len());
                     println!("Messages: {}", reader.message_count());
 

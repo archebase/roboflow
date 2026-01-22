@@ -130,7 +130,7 @@ fn get_message_types(file: &str, ext: &str) -> Result<Vec<TypeInfo>, Box<dyn std
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::BagFormat::open(file)?;
+            let reader = robocodec::bag::BagFormat::open(file)?;
             for channel in reader.channels().values() {
                 type_map
                     .entry(channel.message_type.clone())
@@ -161,7 +161,7 @@ fn get_message_types(file: &str, ext: &str) -> Result<Vec<TypeInfo>, Box<dyn std
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::BagFormat::open(file)?;
+                    let reader = robocodec::bag::BagFormat::open(file)?;
                     for channel in reader.channels().values() {
                         type_map
                             .entry(channel.message_type.clone())
@@ -214,7 +214,7 @@ fn show_schema(file: &str, ext: &str, msg_type: &str) -> Result<(), Box<dyn std:
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::BagFormat::open(file)?;
+            let reader = robocodec::bag::BagFormat::open(file)?;
             for ch in reader.channels().values() {
                 if ch.message_type.contains(msg_type) {
                     found = true;
@@ -253,7 +253,7 @@ fn show_schema(file: &str, ext: &str, msg_type: &str) -> Result<(), Box<dyn std:
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::BagFormat::open(file)?;
+                    let reader = robocodec::bag::BagFormat::open(file)?;
                     for ch in reader.channels().values() {
                         if ch.message_type.contains(msg_type) {
                             found = true;
@@ -348,7 +348,7 @@ fn validate_schemas_mcap_direct(
 
 fn validate_schemas_bag(file: &str) -> Result<(usize, usize), Box<dyn std::error::Error>> {
     use robocodec::io::traits::FormatReader;
-    let reader = robocodec::BagFormat::open(file)?;
+    let reader = robocodec::bag::BagFormat::open(file)?;
 
     let mut ok = 0;
     let mut err = 0;
@@ -394,7 +394,7 @@ fn search_types(file: &str, ext: &str, pattern: &str) -> Result<(), Box<dyn std:
             search_types_mcap(&reader, &pattern_lower)?;
         }
         "bag" => {
-            let reader = robocodec::BagFormat::open(file)?;
+            let reader = robocodec::bag::BagFormat::open(file)?;
             search_types_bag(&reader, &pattern_lower)?;
         }
         _ => {
@@ -404,7 +404,7 @@ fn search_types(file: &str, ext: &str, pattern: &str) -> Result<(), Box<dyn std:
                     search_types_mcap(&reader, &pattern_lower)?;
                 }
                 Err(_) => {
-                    let reader = robocodec::BagFormat::open(file)?;
+                    let reader = robocodec::bag::BagFormat::open(file)?;
                     search_types_bag(&reader, &pattern_lower)?;
                 }
             }
@@ -514,7 +514,7 @@ fn show_common_types(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Er
         }
         "bag" => {
             use robocodec::io::traits::FormatReader;
-            let reader = robocodec::BagFormat::open(file)?;
+            let reader = robocodec::bag::BagFormat::open(file)?;
             for ch in reader.channels().values() {
                 let mut is_common = false;
                 for prefix in COMMON_PREFIXES {
@@ -553,7 +553,7 @@ fn show_common_types(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Er
                 }
                 Err(_) => {
                     use robocodec::io::traits::FormatReader;
-                    let reader = robocodec::BagFormat::open(file)?;
+                    let reader = robocodec::bag::BagFormat::open(file)?;
                     for ch in reader.channels().values() {
                         let mut is_common = false;
                         for prefix in COMMON_PREFIXES {
