@@ -581,7 +581,7 @@ fn bag_to_mcap_normalized(
     pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::io::formats::bag::BagFormat;
+    use robocodec::bag::BagFormat;
     use robocodec::io::traits::FormatReader;
 
     println!("Converting BAG to MCAP with transforms");
@@ -782,7 +782,7 @@ fn bag_to_bag(
     pipeline: &robocodec::transform::MultiTransform,
     output: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use robocodec::io::formats::bag::BagFormat;
+    use robocodec::bag::BagFormat;
     use robocodec::io::traits::FormatReader;
 
     println!("Converting BAG to BAG with transforms");
