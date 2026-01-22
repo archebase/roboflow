@@ -1,57 +1,121 @@
-# Contributing to Robocodec
+# Contributing to Roboflow
 
-Thank you for your interest in contributing to Robocodec! This document provides guidelines and instructions for contributing to the project.
+Thank you for your interest in contributing to Roboflow! This document provides guidelines and instructions for contributors.
 
 ## Code of Conduct
 
 Please be respectful and constructive in all interactions. See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for details.
 
-## How to Contribute
+## Development Setup
 
-### Reporting Bugs
+### Prerequisites
 
-Before creating bug reports, please check existing issues to avoid duplicates. When creating a bug report, include:
+- Rust 1.92 or later
+- Python 3.11+ (for Python bindings)
+- maturin (for building Python package)
 
-- **Clear title and description**: Summarize the issue
-- **Steps to reproduce**: Detailed steps to reproduce the bug
-- **Expected behavior**: What you expected to happen
-- **Actual behavior**: What actually happened
-- **Environment**: OS, Rust version, Python version (if applicable)
-- **Logs/error messages**: Any relevant error messages or stack traces
-- **Test files**: If applicable, provide sample data files that reproduce the issue
+### Building from Source
 
-### Suggesting Enhancements
-
-Enhancement suggestions are welcome! Provide:
-
-- **Clear description**: Describe the proposed feature
-- **Use case**: Explain the use case and why it would be useful
-- **Alternatives considered**: Any alternative solutions you've considered
-
-### Pull Requests
-
-#### Setup
-
-1. Fork the repository
-2. Clone your fork and add the upstream remote:
+1. Fork the repository and clone your fork:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/robocodec.git
-   cd robocodec
-   git remote add upstream https://github.com/archebase/robocodec.git
+   git clone https://github.com/YOUR_USERNAME/roboflow.git
+   cd roboflow
+   git remote add upstream https://github.com/archebase/roboflow.git
    ```
 
-3. Create a branch for your changes:
+2. Build the Rust library:
    ```bash
-   git checkout -b feature/your-feature-name
-   # or
-   git checkout -b fix/your-bug-fix
+   cargo build --release
    ```
 
-#### Making Changes
+3. Build and install the Python package:
+   ```bash
+   # Install maturin if not already installed
+   pip install maturin
+
+   # Build and install in development mode
+   maturin develop --features python
+
+   # Or build a release wheel
+   maturin build --release --features python
+   ```
+
+4. Run tests to verify your setup:
+   ```bash
+   # Rust tests
+   cargo test
+
+   # Python tests (requires extension built first)
+   pytest
+   ```
+
+### Project Structure
+
+Roboflow is organized as a Cargo workspace with two crates:
+
+```
+roboflow/                    # Workspace root
+├── roboflow/                # Main pipeline crate
+│   ├── src/
+│   │   ├── pipeline/         # Pipeline implementations
+│   │   │   ├── stages/       # Standard pipeline stages
+│   │   │   ├── hyper/        # 7-stage HyperPipeline
+│   │   │   ├── kps/          # KPS dataset conversion (experimental)
+│   │   │   ├── fluent/       # Builder API
+│   │   │   ├── gpu/          # GPU compression support
+│   │   │   └── auto_config.rs # Hardware-aware configuration
+│   │   ├── python/           # PyO3 bindings
+│   │   └── lib.rs
+│   └── bin/                  # CLI tools
+│
+└── robocodec/                # I/O format handling crate
+    ├── src/
+    │   ├── encoding/         # CDR, Protobuf, JSON codecs
+    │   ├── schema/           # ROS .msg, ROS2 IDL, OMG IDL parsers
+    │   ├── io/               # Unified I/O layer
+    │   │   ├── formats/      # MCAP, ROS bag readers/writers
+    │   │   └── kps/          # KPS dataset format (experimental)
+    │   ├── transform/        # Topic/type renaming, normalization
+    │   └── lib.rs
+    └── bin/                  # CLI tools: inspect, extract, schema, search
+```
+
+**Key separation**: `roboflow` depends on `robocodec`. All I/O operations and format handling go through `robocodec`, while `roboflow` provides pipeline orchestration and processing logic.
+
+### Optional Features
+
+| Feature | Description |
+|---------|-------------|
+| `python` | Python bindings via PyO3 |
+| `kps-hdf5` | KPS HDF5 dataset support |
+| `kps-parquet` | KPS Parquet dataset support |
+| `kps-depth` | KPS depth video support |
+| `kps-all` | All KPS features |
+| `jemalloc` | Use jemalloc allocator (Linux only) |
+| `cli` | CLI tools |
+| `profiling` | Profiling support |
+
+Enable features when building:
+```bash
+cargo build --features "python,kps-all"
+maturin develop --features python
+```
+
+## Development Workflow
+
+### Creating a Branch
+
+```bash
+git checkout -b feature/your-feature-name
+# or
+git checkout -b fix/your-bug-fix
+```
+
+### Making Changes
 
 1. **Follow the existing code style**: The project uses standard Rust formatting
 2. **Write tests**: Add tests for new functionality or bug fixes
-3. **Update documentation**: Update relevant documentation, comments, and README
+3. **Update documentation**: Update relevant documentation and comments
 4. **Commit messages**: Use clear, descriptive commit messages:
    ```
    feat: add support for XYZ format
@@ -59,79 +123,111 @@ Enhancement suggestions are welcome! Provide:
    docs: update installation instructions
    ```
 
-#### Testing
-
-Run the test suite before submitting:
+### Testing
 
 ```bash
-# Run Rust tests
-cargo test --all-features
+# Run Rust tests (without Python feature due to PyO3 linking)
+cargo test
 
-# Run Python tests (if applicable)
-maturin develop && pytest
+# Run Rust tests with KPS features (requires HDF5 installed)
+cargo test --features kps-all
 
-# Run clippy
-cargo clippy --all-features -- -D warnings
+# Run Python tests (build extension first)
+maturin develop --features python
+pytest python/
 
-# Check formatting
-cargo fmt -- --check
+# Run specific test
+cargo test test_name
+pytest python/tests/test_file.py
 ```
 
-#### Submitting
+### Code Quality
 
-1. Push your branch to your fork
-2. Create a pull request to the `main` branch
-3. Fill out the pull request template
-4. Wait for review and address any feedback
+```bash
+# Format all code
+cargo fmt
+ruff format python/
 
-## Development Workflow
+# Lint checks
+cargo clippy --all-targets -- -D warnings
+ruff check python/
 
-### Project Structure
-
-```
-robocodec/
-├── src/
-│   ├── bin/          # Command-line tools
-│   ├── codec/        # Codec implementations
-│   ├── core/         # Core types and errors
-│   ├── encoding/     # Encoding/decoding implementations
-│   ├── format/       # File format handlers
-│   ├── schema/       # Schema parsers
-│   └── python/       # Python bindings
-├── python/           # Python package
-├── tests/            # Integration tests
-└── examples/         # Example code
+# Type check Python
+mypy python/roboflow
 ```
 
-### Adding Features
+## Adding Features
 
-1. **New codec support**: Add to `src/codec/` and update `src/core/registry.rs`
-2. **New file format**: Add to `src/format/` with Reader/Writer implementations
-3. **New schema format**: Add parser to `src/schema/`
-4. **CLI tool**: Add binary to `src/bin/` and update Cargo.toml
+### New Codec Support
+
+1. Implement codec in `robocodec/src/encoding/`
+2. Register in `robocodec/src/core/registry.rs`
+3. Add schema parser if needed
+4. Add tests for encode/decode consistency
+
+### New File Format
+
+1. Implement `BagSource` for reading in `robocodec/src/io/formats/`
+2. Implement `BagWriter` for writing in `robocodec/src/io/writer/`
+3. Add format detection in `robocodec/src/io/detection.rs`
+4. Add integration tests
+
+### CLI Tool
+
+1. Add binary to `roboflow/bin/` or `robocodec/bin/`
+2. Update `Cargo.toml` with the binary name
+3. Add help documentation and examples
 
 ### Python Bindings
 
-Python bindings are managed via PyO3. When adding Rust APIs that should be exposed to Python:
+When adding Rust APIs that should be exposed to Python:
 
-1. Add `#[pyfunction]` or `#[pymethods]` attributes
-2. Register in `src/python/mod.rs`
-3. Add type stubs to `python/robocodec/` if needed
-4. Update Python documentation
+1. Add `#[pyfunction]` or `#[pymethods]` attributes in `roboflow/src/python/`
+2. Register in `roboflow/src/python/mod.rs`
+3. Add type stubs to `python/roboflow/` if needed
+4. Rebuild with `maturin develop --features python`
 
-### Testing Guidelines
+## Testing Guidelines
 
 - **Unit tests**: Test individual functions and modules
 - **Integration tests**: Test end-to-end functionality
 - **Round-trip tests**: Verify encode/decode consistency
 - **Cross-language tests**: Verify Rust and Python API parity
 
+## Architecture Deep Dives
+
+For detailed architecture information, see:
+
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - High-level system design
+- [PIPELINE.md](docs/PIPELINE.md) - Pipeline architecture details
+- [MEMORY.md](docs/MEMORY.md) - Memory management and arena allocation
+
+## Reporting Bugs
+
+Before creating bug reports, please check existing issues. When creating a bug report, include:
+
+- **Clear title and description**: Summarize the issue
+- **Steps to reproduce**: Detailed steps to reproduce the bug
+- **Expected behavior**: What you expected to happen
+- **Actual behavior**: What actually happened
+- **Environment**: OS, Rust version, Python version
+- **Logs/error messages**: Any relevant error messages or stack traces
+- **Test files**: Sample data files that reproduce the issue (if applicable)
+
+## Submitting Pull Requests
+
+1. Ensure all tests pass and code is formatted
+2. Push your branch to your fork
+3. Create a pull request to the `main` branch
+4. Fill out the pull request template
+5. Wait for review and address feedback
+
 ## Release Process
 
 Maintainers follow this process for releases:
 
 1. Update version in `Cargo.toml`
-2. Update CHANGELOG.md
+2. Update `CHANGELOG.md`
 3. Create git tag
 4. Publish to crates.io
 5. Build and publish Python package to PyPI
