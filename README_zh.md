@@ -127,7 +127,7 @@ robocodec-extract data.bag --topics /camera/image_raw --output extracted/
 
 | 格式 | 读取 | 写入 | 说明 |
 |--------|------|-------|-------|
-| MCAP | ✅ | ✅ | Mission Data Capture 格式 |
+| MCAP | ✅ | ✅ | 针对追加写入优化的通用数据格式 |
 | ROS1 Bag | ✅ | ✅ | ROS1 rosbag 格式 |
 | CDR | ✅ | ✅ | 通用数据表示（ROS1/ROS2） |
 | Protobuf | ✅ | ✅ | Protocol Buffers |
@@ -216,7 +216,7 @@ Robocodec 最初作为 [Strata](https://github.com/archebase/strata) 机器人�
 
 ## 相关项目
 
-- [MCAP](https://mcap.dev/) - Mission Data Capture 格式
+- [MCAP](https://mcap.dev/) - 机器人社区中针对追加写入优化的通用数据格式
 - [LeRobot](https://github.com/huggingface/lerobot) - 机器人学习数据集
 - [ROS](https://www.ros.org/) - 机器人操作系统
 

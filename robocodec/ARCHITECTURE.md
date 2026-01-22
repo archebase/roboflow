@@ -6,46 +6,6 @@ This document describes the architectural organization of the robocodec crate.
 
 Robofmt is organized as a **format-centric** library, where each robotics data format has its own module containing all related functionality (readers, writers, high-level APIs).
 
-## Module Organization
-
-```
-robocodec/src/
-├── core/              # Core types, errors, and common utilities
-├── schema/            # Schema parsing (ROS .msg, IDL formats)
-├── encoding/          # Codec implementations (CDR, Protobuf, JSON)
-├── transform/         # Channel/topic/type transformations
-├── types/             # Pipeline types (arena, chunk, buffer pool)
-├── io/                # Unified I/O layer (metadata, traits, strategies)
-│
-├── bag/               # ROS1 bag format implementation
-│   ├── mod.rs         # Module exports
-│   ├── parallel.rs    # Parallel chunk-based reader
-│   ├── sequential.rs  # Sequential reader
-│   ├── parser.rs      # Bag file parser
-│   ├── reader.rs      # Low-level reader
-│   └── writer.rs      # Low-level writer
-│
-├── mcap/              # MCAP format implementation
-│   ├── mod.rs         # Module exports
-│   ├── parallel.rs    # Parallel chunk-based reader
-│   ├── sequential.rs  # Sequential reader
-│   ├── reader_raw.rs  # Raw reader implementation
-│   ├── reader.rs      # Low-level reader
-│   ├── reader_api.rs  # High-level auto-decoding reader
-│   ├── writer.rs      # Low-level writer
-│   └── writer_api.rs  # High-level custom writer
-│
-├── rewriter/          # Unified rewriter facade
-│   ├── mod.rs         # Module exports
-│   ├── facade.rs      # Unified facade with auto-detection
-│   ├── engine.rs      # Shared rewrite engine logic
-│   ├── mcap.rs        # MCAP format rewriter
-│   └── bag.rs         # ROS1 bag format rewriter
-│
-└── surface/           # Deprecated: Backward compatibility layer
-    └── mod.rs         # Deprecated re-exports
-```
-
 ## Key Principles
 
 ### 1. Format-Centric Organization

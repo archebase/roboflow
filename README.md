@@ -1,7 +1,5 @@
 # Roboflow
 
-[![Crates.io](https://img.shields.io/crates/v/roboflow)](https://crates.io/crates/roboflow)
-[![PyPI](https://img.shields.io/pypi/v/roboflow)](https://pypi.org/project/roboflow/)
 [![License: MulanPSL-2.0](https://img.shields.io/badge/License-MulanPSL--2.0-blue.svg)](http://license.coscl.org.cn/MulanPSL2)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 
@@ -45,7 +43,7 @@ Roboflow is organized as a Cargo workspace with two crates:
 
 ### Prerequisites
 
-- Rust 1.70 or later
+- Rust 1.92 or later
 - Python 3.11+ (for Python bindings)
 - maturin (for building Python package)
 
@@ -214,7 +212,7 @@ image_format = "mp4"
 
 | Format | Read | Write | Notes |
 |--------|------|-------|-------|
-| MCAP | ✅ | ✅ | Mission Data Capture format |
+| MCAP | ✅ | ✅ | Common data format optimized for appending |
 | ROS1 Bag | ✅ | ✅ | ROS1 rosbag format |
 | CDR | ✅ | ✅ | Common Data Representation (ROS1/ROS2) |
 | Protobuf | ✅ | ✅ | Protocol Buffers |
@@ -310,8 +308,7 @@ Robocodec was originally developed as part of the [Strata](https://github.com/ar
 
 ## Related Projects
 
-- [MCAP](https://mcap.dev/) - Mission Data Capture format
-- [Kupas](https://github.com/unitaryrobotics/mit/) - Dataset format for robotics learning
+- [MCAP](https://mcap.dev/) - Common data format optimized for appending in robotics community
 - [ROS](https://www.ros.org/) - Robot Operating System
 
 ## Documentation
