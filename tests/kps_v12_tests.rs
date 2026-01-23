@@ -264,7 +264,6 @@ mod v12_task_info_tests {
                 "skill should be valid: {}",
                 segment.skill
             );
-
         }
     }
 
