@@ -265,11 +265,6 @@ mod v12_task_info_tests {
                 segment.skill
             );
 
-            // Validate booleans
-            assert!(
-                segment.is_mistake == true || segment.is_mistake == false,
-                "is_mistake should be boolean"
-            );
         }
     }
 
@@ -726,9 +721,8 @@ fn validate_task_naming(name: &str) -> bool {
 
     for (i, _) in name.char_indices() {
         let remaining = &name[i..];
-        if remaining.starts_with('-') {
+        if let Some(after_hyphen) = remaining.strip_prefix('-') {
             // Check if this is followed by {digits}p{digits}GB
-            let after_hyphen = &remaining[1..];
             if let Some(p_pos) = after_hyphen.find('p') {
                 let before_p = &after_hyphen[..p_pos];
                 let after_p = &after_hyphen[p_pos + 1..];
@@ -739,15 +733,15 @@ fn validate_task_naming(name: &str) -> bool {
                         && before_p.chars().all(|c| c.is_ascii_digit() || c == '.')
                         && !gb_value.is_empty()
                         && gb_value.chars().all(|c| c.is_ascii_digit() || c == '.')
+                        && f64::from_str(before_p).is_ok()
+                        && f64::from_str(gb_value).is_ok()
                     {
-                        if f64::from_str(before_p).is_ok() && f64::from_str(gb_value).is_ok() {
-                            // Found the size pattern: "-{size}p{GB}GB"
-                            let size_pattern_len = 1 + p_pos + 1 + gb_pos + 2; // "-" + before_p + "p" + gb_value + "GB"
-                            if i + size_pattern_len <= name.len() {
-                                after_size = &name[i + size_pattern_len..];
-                                found_pattern = true;
-                                break;
-                            }
+                        // Found the size pattern: "-{size}p{GB}GB"
+                        let size_pattern_len = 1 + p_pos + 1 + gb_pos + 2; // "-" + before_p + "p" + gb_value + "GB"
+                        if i + size_pattern_len <= name.len() {
+                            after_size = &name[i + size_pattern_len..];
+                            found_pattern = true;
+                            break;
                         }
                     }
                 }
@@ -887,10 +881,10 @@ fn create_valid_extrinsic_params() -> ExtrinsicParams {
         "test_camera_frame".to_string(),
         (-0.001807534985204, -0.0000127749221, 0.12698557287),
         (
-            -0.061042519636452198,
-            -0.734867956625483362,
-            0.0003818870463874191,
-            0.6795214914222156511,
+            -0.061_042_519_636_452_2,
+            -0.734_867_956_625_483_3,
+            0.000_381_887_046_387_419_1,
+            0.679_521_491_422_215_6,
         ),
     )
 }
