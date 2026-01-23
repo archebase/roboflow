@@ -41,11 +41,13 @@ pub mod camera_params;
 pub mod config;
 pub mod delivery;
 pub mod delivery_v12;
+pub mod hdf5_schema;
 pub mod hdf5_writer;
 pub mod info;
 pub mod parquet_writer;
 pub mod robot_calibration;
 pub mod schema_extractor;
+pub mod task_info;
 pub mod video_encoder;
 
 // New streaming writers
@@ -55,12 +57,15 @@ pub use camera_params::CameraParamCollector;
 pub use config::{DatasetConfig, KpsConfig, Mapping, MappingType, OutputConfig, OutputFormat};
 pub use delivery::{DeliveryBuilder, DeliveryConfig};
 pub use delivery_v12::{
-    SeriesDeliveryConfig, SeriesDeliveryConfigBuilder, StatisticsCollector, TaskInfo,
-    TaskStatistics, V12DeliveryBuilder,
+    SeriesDeliveryConfig, SeriesDeliveryConfigBuilder, StatisticsCollector, TaskStatistics,
+    V12DeliveryBuilder,
 };
+pub use hdf5_schema::{DataType, DatasetSpec, JointGroupConfig, KpsHdf5Schema};
 pub use hdf5_writer::Hdf5KpsWriter;
+pub use info::KpsInfo;
 pub use parquet_writer::ParquetKpsWriter;
 pub use robot_calibration::{JointCalibration, RobotCalibration, RobotCalibrationGenerator};
+pub use task_info::{ActionSegment, KeyFrame, LabelInfo, TaskInfo, TaskInfoBuilder};
 
 // Re-export streaming writer types
 pub use writers::{

@@ -304,7 +304,7 @@ impl KpsHdf5Schema {
                         path: "action/end/orientation".to_string(),
                         shape: vec![0, 2, 4],
                         dtype: DataType::Float32,
-                        description: "Left/right end effector orientations [x,y,z,w]".to_string(),
+                        description: "Left/right end effector orientations [x,y,z,w] quaternion (float32)".to_string(),
                     });
                 }
                 "head" => {
@@ -375,13 +375,13 @@ impl KpsHdf5Schema {
                         path: "action/robot/velocity".to_string(),
                         shape: vec![0, 2],
                         dtype: DataType::Float32,
-                        description: "Base velocity [linear, angular] in odom frame".to_string(),
+                        description: "Base velocity [linear, angular] in odom frame (float32)".to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "action/robot/orientation".to_string(),
                         shape: vec![0, 4],
                         dtype: DataType::Float32,
-                        description: "Base orientation [x,y,z,w] quaternion in odom frame".to_string(),
+                        description: "Base orientation [x,y,z,w] quaternion in odom frame (float32)".to_string(),
                     });
                 }
                 "waist" => {
@@ -448,7 +448,7 @@ impl KpsHdf5Schema {
                         path: "state/end/orientation".to_string(),
                         shape: vec![0, 2, 4],
                         dtype: DataType::Float32,
-                        description: "Left/right end effector orientations [x,y,z,w]".to_string(),
+                        description: "Left/right end effector orientations [x,y,z,w] quaternion (float32)".to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "state/end/position".to_string(),
@@ -466,7 +466,7 @@ impl KpsHdf5Schema {
                         path: "state/end/wrench".to_string(),
                         shape: vec![0, 2, 6],
                         dtype: DataType::Float32,
-                        description: "Left/right end effector wrench [fx,fy,fz,mx,my,mz]".to_string(),
+                        description: "Left/right end effector wrench [fx,fy,fz,mx,my,mz] (N, Nm, float32)".to_string(),
                     });
                 }
                 "head" => {
@@ -475,7 +475,7 @@ impl KpsHdf5Schema {
                         path: "state/head/effort".to_string(),
                         shape: vec![0, dim],
                         dtype: DataType::Float32,
-                        description: "Head joint effort (torque)".to_string(),
+                        description: "Head joint effort torque (Nm, float32)".to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "state/head/position".to_string(),
@@ -502,13 +502,13 @@ impl KpsHdf5Schema {
                         path: "state/joint/current_value".to_string(),
                         shape: vec![0, dim],
                         dtype: DataType::Float32,
-                        description: "Dual arm joint current values".to_string(),
+                        description: "Dual arm joint current values (float32)".to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "state/joint/effort".to_string(),
                         shape: vec![0, dim],
                         dtype: DataType::Float32,
-                        description: "Dual arm joint actual torque".to_string(),
+                        description: "Dual arm joint actual torque (Nm, float32)".to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "state/joint/position".to_string(),
@@ -555,25 +555,25 @@ impl KpsHdf5Schema {
                         path: "state/robot/orientation".to_string(),
                         shape: vec![0, 4],
                         dtype: DataType::Float32,
-                        description: "Base orientation [x,y,z,w] in odom frame".to_string(),
+                        description: "Base orientation [x,y,z,w] in odom frame (float32)".to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "state/robot/orientation_drift".to_string(),
                         shape: vec![0, 4],
                         dtype: DataType::Float32,
-                        description: "Odom to map drift quaternion".to_string(),
+                        description: "Odom to map drift quaternion (float32)".to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "state/robot/position".to_string(),
                         shape: vec![0, 3],
                         dtype: DataType::Float32,
-                        description: "Base position {x,y,z} in odom frame".to_string(),
+                        description: "Base position {x,y,z} in odom frame (m, float32)".to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "state/robot/position_drift".to_string(),
                         shape: vec![0, 3],
                         dtype: DataType::Float32,
-                        description: "Odom to map drift position".to_string(),
+                        description: "Odom to map drift position (m, float32)".to_string(),
                     });
                 }
                 "waist" => {
@@ -582,7 +582,7 @@ impl KpsHdf5Schema {
                         path: "state/waist/effort".to_string(),
                         shape: vec![0, dim],
                         dtype: DataType::Float32,
-                        description: "Waist joint actual torque".to_string(),
+                        description: "Waist joint actual torque (Nm, float32)".to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "state/waist/position".to_string(),
@@ -615,7 +615,7 @@ impl KpsHdf5Schema {
             path: "timestamps".to_string(),
             shape: vec![0],
             dtype: DataType::Int64,
-            description: "Aligned unified timestamps (nanoseconds, Unix time)".to_string(),
+            description: "Aligned unified timestamps (int64, nanoseconds, Unix time)".to_string(),
         });
 
         // Per-sensor timestamps (will be added dynamically based on available sensors)
@@ -630,7 +630,7 @@ impl KpsHdf5Schema {
                 path: ts_name.to_string(),
                 shape: vec![0],
                 dtype: DataType::Int64,
-                description: format!("Original timestamps for {}", ts_name),
+                description: format!("Original timestamps for {} (int64, nanoseconds)", ts_name),
             });
         }
     }

@@ -6,12 +6,12 @@
 //!
 //! Creates `task_info/<Scene>-<SubScene>-<Task>.json` files as per the v1.2 specification.
 
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use std::fs;
 use std::path::Path;
 
 /// Task info metadata for a single episode.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskInfo {
     /// Unique identifier matching the UUID directory name
     pub episode_id: String,
@@ -42,17 +42,17 @@ pub struct TaskInfo {
 }
 
 /// Label information containing action segments.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LabelInfo {
     /// Array of labeled action segments
     pub action_config: Vec<ActionSegment>,
     /// Key frame annotations (optional, to be implemented)
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub key_frame: Vec<KeyFrame>,
 }
 
 /// A single action segment annotation.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionSegment {
     /// Start frame index (inclusive)
     pub start_frame: u64,
@@ -71,7 +71,7 @@ pub struct ActionSegment {
 }
 
 /// Key frame annotation (future use).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyFrame {
     pub frame_number: u64,
     pub description: String,
