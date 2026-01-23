@@ -237,8 +237,9 @@ class KpsConverter:
             from .config import save_config
             save_config(self.config, temp_path)
             return temp_path
-        except ImportError:
-            # Can't save config, return default path
+        except (ImportError, Exception):
+            # Can't save config, clean up temp file and return default path
+            temp_path.unlink(missing_ok=True)
             return Path("kps_config.toml")
 
 
@@ -337,7 +338,7 @@ def convert_dataset(
                     with open(ann_file, "r") as f:
                         task_info = json.load(f)
                     break
-                except:
+                except (json.JSONDecodeError, OSError):
                     pass
 
         # Convert episode
