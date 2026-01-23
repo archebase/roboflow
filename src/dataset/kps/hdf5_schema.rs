@@ -247,11 +247,26 @@ impl KpsHdf5Schema {
     pub fn new() -> Self {
         let mut joint_groups = HashMap::new();
 
-        joint_groups.insert("joint".to_string(), JointGroupConfig::new(default_arm_joint_names()));
-        joint_groups.insert("leg".to_string(), JointGroupConfig::new(default_leg_joint_names()));
-        joint_groups.insert("head".to_string(), JointGroupConfig::new(default_head_joint_names()));
-        joint_groups.insert("waist".to_string(), JointGroupConfig::new(default_waist_joint_names()));
-        joint_groups.insert("effector".to_string(), JointGroupConfig::new(default_effector_names()));
+        joint_groups.insert(
+            "joint".to_string(),
+            JointGroupConfig::new(default_arm_joint_names()),
+        );
+        joint_groups.insert(
+            "leg".to_string(),
+            JointGroupConfig::new(default_leg_joint_names()),
+        );
+        joint_groups.insert(
+            "head".to_string(),
+            JointGroupConfig::new(default_head_joint_names()),
+        );
+        joint_groups.insert(
+            "waist".to_string(),
+            JointGroupConfig::new(default_waist_joint_names()),
+        );
+        joint_groups.insert(
+            "effector".to_string(),
+            JointGroupConfig::new(default_effector_names()),
+        );
 
         let mut schema = Self {
             joint_groups,
@@ -268,7 +283,8 @@ impl KpsHdf5Schema {
     /// Create schema with custom URDF joint names.
     pub fn with_urdf_joint_names(mut self, group: &str, names: Vec<String>) -> Self {
         let dimension = names.len();
-        self.joint_groups.insert(group.to_string(), JointGroupConfig { names, dimension });
+        self.joint_groups
+            .insert(group.to_string(), JointGroupConfig { names, dimension });
         self
     }
 
@@ -304,7 +320,9 @@ impl KpsHdf5Schema {
                         path: "action/end/orientation".to_string(),
                         shape: vec![0, 2, 4],
                         dtype: DataType::Float32,
-                        description: "Left/right end effector orientations [x,y,z,w] quaternion (float32)".to_string(),
+                        description:
+                            "Left/right end effector orientations [x,y,z,w] quaternion (float32)"
+                                .to_string(),
                     });
                 }
                 "head" => {
@@ -334,7 +352,8 @@ impl KpsHdf5Schema {
                         path: "action/joint/position".to_string(),
                         shape: vec![0, dim],
                         dtype: DataType::Float32,
-                        description: "Dual arm joint positions, left[:, :7], right[:, 7:] (rad)".to_string(),
+                        description: "Dual arm joint positions, left[:, :7], right[:, 7:] (rad)"
+                            .to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "action/joint/velocity".to_string(),
@@ -355,7 +374,8 @@ impl KpsHdf5Schema {
                         path: "action/leg/position".to_string(),
                         shape: vec![0, dim],
                         dtype: DataType::Float32,
-                        description: "Dual leg joint positions, left[:, :6], right[:, 6:] (rad)".to_string(),
+                        description: "Dual leg joint positions, left[:, :6], right[:, 6:] (rad)"
+                            .to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "action/leg/velocity".to_string(),
@@ -375,13 +395,16 @@ impl KpsHdf5Schema {
                         path: "action/robot/velocity".to_string(),
                         shape: vec![0, 2],
                         dtype: DataType::Float32,
-                        description: "Base velocity [linear, angular] in odom frame (float32)".to_string(),
+                        description: "Base velocity [linear, angular] in odom frame (float32)"
+                            .to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "action/robot/orientation".to_string(),
                         shape: vec![0, 4],
                         dtype: DataType::Float32,
-                        description: "Base orientation [x,y,z,w] quaternion in odom frame (float32)".to_string(),
+                        description:
+                            "Base orientation [x,y,z,w] quaternion in odom frame (float32)"
+                                .to_string(),
                     });
                 }
                 "waist" => {
@@ -442,13 +465,17 @@ impl KpsHdf5Schema {
                         path: "state/end/angular".to_string(),
                         shape: vec![0, 2, 3],
                         dtype: DataType::Float32,
-                        description: "Left/right end effector angular velocities [wx,wy,wz] (rad/s)".to_string(),
+                        description:
+                            "Left/right end effector angular velocities [wx,wy,wz] (rad/s)"
+                                .to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "state/end/orientation".to_string(),
                         shape: vec![0, 2, 4],
                         dtype: DataType::Float32,
-                        description: "Left/right end effector orientations [x,y,z,w] quaternion (float32)".to_string(),
+                        description:
+                            "Left/right end effector orientations [x,y,z,w] quaternion (float32)"
+                                .to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "state/end/position".to_string(),
@@ -460,13 +487,16 @@ impl KpsHdf5Schema {
                         path: "state/end/velocity".to_string(),
                         shape: vec![0, 2, 3],
                         dtype: DataType::Float32,
-                        description: "Left/right end effector spatial velocities [vx,vy,vz] (m/s)".to_string(),
+                        description: "Left/right end effector spatial velocities [vx,vy,vz] (m/s)"
+                            .to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "state/end/wrench".to_string(),
                         shape: vec![0, 2, 6],
                         dtype: DataType::Float32,
-                        description: "Left/right end effector wrench [fx,fy,fz,mx,my,mz] (N, Nm, float32)".to_string(),
+                        description:
+                            "Left/right end effector wrench [fx,fy,fz,mx,my,mz] (N, Nm, float32)"
+                                .to_string(),
                     });
                 }
                 "head" => {
@@ -555,7 +585,8 @@ impl KpsHdf5Schema {
                         path: "state/robot/orientation".to_string(),
                         shape: vec![0, 4],
                         dtype: DataType::Float32,
-                        description: "Base orientation [x,y,z,w] in odom frame (float32)".to_string(),
+                        description: "Base orientation [x,y,z,w] in odom frame (float32)"
+                            .to_string(),
                     });
                     self.datasets.push(DatasetSpec {
                         path: "state/robot/orientation_drift".to_string(),
@@ -686,12 +717,8 @@ mod tests {
 
     #[test]
     fn test_custom_joint_names() {
-        let custom_names = vec![
-            "custom_joint_0".to_string(),
-            "custom_joint_1".to_string(),
-        ];
-        let schema = KpsHdf5Schema::new()
-            .with_urdf_joint_names("joint", custom_names.clone());
+        let custom_names = vec!["custom_joint_0".to_string(), "custom_joint_1".to_string()];
+        let schema = KpsHdf5Schema::new().with_urdf_joint_names("joint", custom_names.clone());
 
         let names = schema.get_joint_names("joint").unwrap();
         assert_eq!(names, custom_names.as_slice());

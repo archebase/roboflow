@@ -13,7 +13,7 @@
 //! - `<camera_name>_intrinsic_params.json`: fx, fy, cx, cy, width, height, distortion
 //! - `<camera_name>_extrinsic_params.json`: frame_id, child_frame_id, position, orientation
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;

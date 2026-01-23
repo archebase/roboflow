@@ -7,7 +7,7 @@
 //! Parses URDF files to extract joint information and generates
 //! `robot_calibration.json` as required by Kps dataset format.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;

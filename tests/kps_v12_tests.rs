@@ -21,10 +21,7 @@ use std::str::FromStr;
 use roboflow::dataset::kps::{
     camera_params::{ExtrinsicParams, IntrinsicParams},
     delivery_v12::{SeriesDeliveryConfig, V12DeliveryBuilder},
-    hdf5_schema::{
-        DataType, KpsHdf5Schema,
-        default_arm_joint_names, default_leg_joint_names,
-    },
+    hdf5_schema::{default_arm_joint_names, default_leg_joint_names, DataType, KpsHdf5Schema},
     robot_calibration::{JointCalibration, RobotCalibration, RobotCalibrationGenerator},
     task_info::{ActionSegment, TaskInfo},
     KpsConfig,
@@ -32,9 +29,8 @@ use roboflow::dataset::kps::{
 
 /// Test output directory helper.
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
-    tempfile::tempdir_in("tests/output").unwrap_or_else(|_| {
-        tempfile::tempdir().expect("Failed to create temp dir")
-    })
+    tempfile::tempdir_in("tests/output")
+        .unwrap_or_else(|_| tempfile::tempdir().expect("Failed to create temp dir"))
 }
 
 /// Check if a file exists for testing.
@@ -69,11 +65,11 @@ mod v12_directory_structure_tests {
         }
 
         let invalid_names = vec![
-            "Housekeeper",  // Missing robot and end effector
-            "Robot-Housekeeper",  // Missing end effector
-            "Robot-Dexhand",  // Missing scene
-            "Robot-Dexhand-",  // Trailing dash
-            "-Dexhand-Housekeeper",  // Leading dash
+            "Housekeeper",          // Missing robot and end effector
+            "Robot-Housekeeper",    // Missing end effector
+            "Robot-Dexhand",        // Missing scene
+            "Robot-Dexhand-",       // Trailing dash
+            "-Dexhand-Housekeeper", // Leading dash
         ];
 
         for name in invalid_names {
@@ -144,7 +140,8 @@ mod v12_directory_structure_tests {
 
                 // Verify task directory (with stats)
                 // The task directory name includes scene-sub_scene-task_name prefix
-                let task_dirs: Vec<_> = sub_scene_dir.read_dir()
+                let task_dirs: Vec<_> = sub_scene_dir
+                    .read_dir()
                     .unwrap()
                     .filter_map(|e| e.ok())
                     .map(|e| e.file_name())
@@ -180,7 +177,11 @@ mod v12_directory_structure_tests {
 
         // Validate
         let result = validate_episode_subdirectories(&episode_dir);
-        assert!(result.is_ok(), "Subdirectories validation should pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Subdirectories validation should pass: {:?}",
+            result
+        );
     }
 
     /// Test that missing required subdirectories are detected.
@@ -216,11 +217,13 @@ mod v12_task_info_tests {
         assert!(!task_info.sn_name.is_empty());
 
         // Check sn_name format: "厂家-机器人型号-末端执行器"
-        assert!(task_info.sn_name.contains('-'),
-            "sn_name should contain dashes: {}", task_info.sn_name);
+        assert!(
+            task_info.sn_name.contains('-'),
+            "sn_name should contain dashes: {}",
+            task_info.sn_name
+        );
         let parts: Vec<&str> = task_info.sn_name.split('-').collect();
-        assert_eq!(parts.len(), 3,
-            "sn_name should have 3 parts: {:?}", parts);
+        assert_eq!(parts.len(), 3, "sn_name should have 3 parts: {:?}", parts);
     }
 
     /// Test action_config segment structure.
@@ -228,28 +231,45 @@ mod v12_task_info_tests {
     fn test_action_config_structure() {
         let task_info = create_valid_task_info();
 
-        assert!(!task_info.label_info.action_config.is_empty(),
-            "action_config should not be empty");
+        assert!(
+            !task_info.label_info.action_config.is_empty(),
+            "action_config should not be empty"
+        );
 
         for segment in &task_info.label_info.action_config {
             // Validate frame ranges
-            assert!(segment.end_frame > segment.start_frame,
+            assert!(
+                segment.end_frame > segment.start_frame,
                 "end_frame {} > start_frame {} for segment: {:?}",
-                segment.end_frame, segment.start_frame, segment);
+                segment.end_frame,
+                segment.start_frame,
+                segment
+            );
 
             // Validate timestamp format (ISO 8601)
-            assert!(segment.timestamp_utc.contains('T'),
-                "timestamp should be ISO 8601 format: {}", segment.timestamp_utc);
+            assert!(
+                segment.timestamp_utc.contains('T'),
+                "timestamp should be ISO 8601 format: {}",
+                segment.timestamp_utc
+            );
 
             // Validate skill
             let valid_skills = ["Pick", "Place", "Drop", "Move", "Grasp", "Release"];
-            assert!(valid_skills.contains(&segment.skill.as_str()) ||
-                segment.skill.chars().all(|c| c.is_uppercase() || c.is_ascii_digit()),
-                "skill should be valid: {}", segment.skill);
+            assert!(
+                valid_skills.contains(&segment.skill.as_str())
+                    || segment
+                        .skill
+                        .chars()
+                        .all(|c| c.is_uppercase() || c.is_ascii_digit()),
+                "skill should be valid: {}",
+                segment.skill
+            );
 
             // Validate booleans
-            assert!(segment.is_mistake == true || segment.is_mistake == false,
-                "is_mistake should be boolean");
+            assert!(
+                segment.is_mistake == true || segment.is_mistake == false,
+                "is_mistake should be boolean"
+            );
         }
     }
 
@@ -259,12 +279,11 @@ mod v12_task_info_tests {
         let task_info1 = create_valid_task_info();
 
         // Serialize
-        let json = serde_json::to_string(&task_info1)
-            .expect("Failed to serialize task_info");
+        let json = serde_json::to_string(&task_info1).expect("Failed to serialize task_info");
 
         // Deserialize
-        let task_info2: TaskInfo = serde_json::from_str(&json)
-            .expect("Failed to deserialize task_info");
+        let task_info2: TaskInfo =
+            serde_json::from_str(&json).expect("Failed to deserialize task_info");
 
         // Check equivalence
         assert_eq!(task_info1.episode_id, task_info2.episode_id);
@@ -303,12 +322,13 @@ mod v12_hdf5_schema_tests {
         ];
 
         for group in required_groups {
-            let group_specs: Vec<_> = specs.iter()
-                .filter(|s| s.path.starts_with(group))
-                .collect();
+            let group_specs: Vec<_> = specs.iter().filter(|s| s.path.starts_with(group)).collect();
 
-            assert!(!group_specs.is_empty(),
-                "Group {} should have specifications", group);
+            assert!(
+                !group_specs.is_empty(),
+                "Group {} should have specifications",
+                group
+            );
 
             // Check for required datasets in each group
             let dataset_names = match group {
@@ -322,13 +342,18 @@ mod v12_hdf5_schema_tests {
             };
 
             for dataset in dataset_names {
-                let dataset_specs: Vec<_> = group_specs.iter()
+                let dataset_specs: Vec<_> = group_specs
+                    .iter()
                     .filter(|s| s.path.ends_with(dataset))
                     .collect();
 
-                assert!(!dataset_specs.is_empty(),
+                assert!(
+                    !dataset_specs.is_empty(),
                     "Group {} should have {} dataset: {:?}",
-                    group, dataset, group_specs);
+                    group,
+                    dataset,
+                    group_specs
+                );
             }
         }
     }
@@ -341,26 +366,38 @@ mod v12_hdf5_schema_tests {
         for spec in schema.datasets() {
             match spec.dtype {
                 DataType::Float32 => {
-                    assert!(spec.description.contains("float32") ||
-                        spec.description.contains("rad") ||
-                        spec.description.contains("m") ||
-                        spec.description.contains("N"),
-                        "Float32 spec should mention float32: {}", spec.description);
+                    assert!(
+                        spec.description.contains("float32")
+                            || spec.description.contains("rad")
+                            || spec.description.contains("m")
+                            || spec.description.contains("N"),
+                        "Float32 spec should mention float32: {}",
+                        spec.description
+                    );
                 }
                 DataType::Int64 => {
-                    assert!(spec.description.contains("int64") || spec.description.contains("纳秒"),
-                        "Int64 spec should mention int64: {}", spec.description);
+                    assert!(
+                        spec.description.contains("int64") || spec.description.contains("纳秒"),
+                        "Int64 spec should mention int64: {}",
+                        spec.description
+                    );
                 }
                 DataType::String => {
-                    assert!(spec.description.contains("str") || spec.description.contains("name"),
-                        "String spec should mention str: {}", spec.description);
+                    assert!(
+                        spec.description.contains("str") || spec.description.contains("name"),
+                        "String spec should mention str: {}",
+                        spec.description
+                    );
                 }
                 _ => {}
             }
 
             // Check shape is not empty
-            assert!(!spec.shape.is_empty(),
-                "Spec should have shape: {}", spec.path);
+            assert!(
+                !spec.shape.is_empty(),
+                "Spec should have shape: {}",
+                spec.path
+            );
         }
     }
 
@@ -379,8 +416,11 @@ mod v12_hdf5_schema_tests {
         for name in &arm_names {
             assert!(!name.is_empty(), "Joint name should not be empty");
             assert!(!name.contains(' '), "Joint name should not contain spaces");
-            assert!(name.starts_with("l_") || name.starts_with("r_"),
-                "Arm joint name should start with l_ or r_: {}", name);
+            assert!(
+                name.starts_with("l_") || name.starts_with("r_"),
+                "Arm joint name should start with l_ or r_: {}",
+                name
+            );
         }
     }
 
@@ -391,33 +431,44 @@ mod v12_hdf5_schema_tests {
         let specs = schema.datasets();
 
         // All joint datasets should have a corresponding names dataset
-        let joint_datasets: Vec<_> = specs.iter()
-            .filter(|s| s.path.contains("joint") || s.path.contains("leg") ||
-                        s.path.contains("head") || s.path.contains("waist") ||
-                        s.path.contains("effector"))
+        let joint_datasets: Vec<_> = specs
+            .iter()
+            .filter(|s| {
+                s.path.contains("joint")
+                    || s.path.contains("leg")
+                    || s.path.contains("head")
+                    || s.path.contains("waist")
+                    || s.path.contains("effector")
+            })
             .filter(|s| s.path.contains("position") || s.path.contains("velocity"))
             .collect();
 
         for dataset_spec in joint_datasets {
-            let names_path = dataset_spec.path.replace("/position", "/names")
+            let names_path = dataset_spec
+                .path
+                .replace("/position", "/names")
                 .replace("/velocity", "/names")
                 .replace("/force", "/names")
                 .replace("/current_value", "/names")
                 .replace("/angular", "/names")
                 .replace("/wrench", "/names");
 
-            let names_exists: Vec<_> = specs.iter()
-                .filter(|s| s.path == names_path)
-                .collect();
+            let names_exists: Vec<_> = specs.iter().filter(|s| s.path == names_path).collect();
 
-            assert!(!names_exists.is_empty(),
+            assert!(
+                !names_exists.is_empty(),
                 "Joint dataset {} should have corresponding names dataset",
-                dataset_spec.path);
+                dataset_spec.path
+            );
 
             // Verify names dataset is string type
             for names_spec in names_exists {
-                assert_eq!(names_spec.dtype, DataType::String,
-                    "Names dataset should be string type: {}", names_spec.path);
+                assert_eq!(
+                    names_spec.dtype,
+                    DataType::String,
+                    "Names dataset should be string type: {}",
+                    names_spec.path
+                );
             }
         }
     }
@@ -466,13 +517,28 @@ mod v12_camera_params_tests {
         let extrinsic = create_valid_extrinsic_params();
 
         // Check required fields
-        assert!(!extrinsic.frame_id.is_empty(), "frame_id should not be empty");
-        assert!(!extrinsic.child_frame_id.is_empty(), "child_frame_id should not be empty");
+        assert!(
+            !extrinsic.frame_id.is_empty(),
+            "frame_id should not be empty"
+        );
+        assert!(
+            !extrinsic.child_frame_id.is_empty(),
+            "child_frame_id should not be empty"
+        );
 
         // Check position is valid
-        assert!(extrinsic.position.x.is_finite(), "position x should be finite");
-        assert!(extrinsic.position.y.is_finite(), "position y should be finite");
-        assert!(extrinsic.position.z.is_finite(), "position z should be finite");
+        assert!(
+            extrinsic.position.x.is_finite(),
+            "position x should be finite"
+        );
+        assert!(
+            extrinsic.position.y.is_finite(),
+            "position y should be finite"
+        );
+        assert!(
+            extrinsic.position.z.is_finite(),
+            "position z should be finite"
+        );
 
         // Check orientation is valid quaternion
         let quat = (
@@ -482,8 +548,11 @@ mod v12_camera_params_tests {
             extrinsic.orientation.w,
         );
         let quat_norm_sq = quat.0 * quat.0 + quat.1 * quat.1 + quat.2 * quat.2 + quat.3 * quat.3;
-        assert!((quat_norm_sq - 1.0).abs() < 0.01,
-            "Quaternion should be normalized: {}", quat_norm_sq);
+        assert!(
+            (quat_norm_sq - 1.0).abs() < 0.01,
+            "Quaternion should be normalized: {}",
+            quat_norm_sq
+        );
 
         // Test serialization
         let json = serde_json::to_string(&extrinsic).unwrap();
@@ -504,19 +573,29 @@ mod v12_robot_calibration_tests {
         let calibration = create_valid_robot_calibration();
 
         // Check joints exist
-        assert!(!calibration.joints.is_empty(), "Should have at least one joint");
+        assert!(
+            !calibration.joints.is_empty(),
+            "Should have at least one joint"
+        );
 
         for (joint_name, joint_cal) in &calibration.joints {
             // Check required fields
             assert!(joint_cal.id <= 1000, "Joint ID should be reasonable");
-            assert!(joint_cal.range_min < joint_cal.range_max,
+            assert!(
+                joint_cal.range_min < joint_cal.range_max,
                 "Range min should be less than max for {}: min={}, max={}",
-                joint_name, joint_cal.range_min, joint_cal.range_max);
+                joint_name,
+                joint_cal.range_min,
+                joint_cal.range_max
+            );
 
             // Test homing offset is reasonable (within +/- 2*PI)
-            assert!(joint_cal.homing_offset.abs() <= 2.0 * std::f64::consts::PI,
+            assert!(
+                joint_cal.homing_offset.abs() <= 2.0 * std::f64::consts::PI,
                 "Homing offset should be reasonable for {}: {}",
-                joint_name, joint_cal.homing_offset);
+                joint_name,
+                joint_cal.homing_offset
+            );
         }
 
         // Test serialization
@@ -532,14 +611,20 @@ mod v12_robot_calibration_tests {
         let joint_names = default_arm_joint_names();
         let calibration = RobotCalibrationGenerator::from_joint_names(&joint_names);
 
-        assert_eq!(calibration.joints.len(), joint_names.len(),
-            "Should have calibration for each joint");
+        assert_eq!(
+            calibration.joints.len(),
+            joint_names.len(),
+            "Should have calibration for each joint"
+        );
 
         for (name, cal) in &calibration.joints {
             assert_eq!(cal.id, calibration.joints[name].id, "ID mismatch");
-            assert!((cal.range_min..cal.range_max).contains(&cal.homing_offset)
-                || (cal.homing_offset == 0.0 && cal.range_min < 0.0 && cal.range_max > 0.0),
-                "Homing offset should be within range for {}", name);
+            assert!(
+                (cal.range_min..cal.range_max).contains(&cal.homing_offset)
+                    || (cal.homing_offset == 0.0 && cal.range_min < 0.0 && cal.range_max > 0.0),
+                "Homing offset should be within range for {}",
+                name
+            );
         }
     }
 }
@@ -590,7 +675,10 @@ mod v12_end_to_end_tests {
 
         // Run conversion (would require actual converter implementation)
         // This is a placeholder for the actual test
-        println!("End-to-end test would convert {} to KPS format", fixture_path.display());
+        println!(
+            "End-to-end test would convert {} to KPS format",
+            fixture_path.display()
+        );
     }
 }
 
@@ -615,7 +703,12 @@ fn validate_series_naming(name: &str) -> bool {
 
     // Last part (scene) should start with uppercase letter
     let scene_part = parts.last().unwrap();
-    if !scene_part.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+    if !scene_part
+        .chars()
+        .next()
+        .map(|c| c.is_uppercase())
+        .unwrap_or(false)
+    {
         return false;
     }
 
@@ -670,7 +763,10 @@ fn validate_task_naming(name: &str) -> bool {
     // The string starts with '_', so when we split, we get an empty first element
     let remaining_parts: Vec<&str> = after_size.split('_').collect();
     // Remove any empty strings from the split result
-    let remaining_parts: Vec<&str> = remaining_parts.into_iter().filter(|s| !s.is_empty()).collect();
+    let remaining_parts: Vec<&str> = remaining_parts
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect();
     if remaining_parts.len() != 2 {
         return false;
     }
@@ -707,12 +803,12 @@ fn validate_task_naming(name: &str) -> bool {
 
 fn validate_episode_subdirectories(episode_dir: &Path) -> Result<(), String> {
     let required = vec![
-            "camera/video",
-            "camera/depth",
-            "parameters",
-            "proprio_stats",
-            "audio",
-        ];
+        "camera/video",
+        "camera/depth",
+        "parameters",
+        "proprio_stats",
+        "audio",
+    ];
 
     for subdir in required {
         let path = episode_dir.join(subdir);
@@ -790,7 +886,12 @@ fn create_valid_extrinsic_params() -> ExtrinsicParams {
         "test_link".to_string(),
         "test_camera_frame".to_string(),
         (-0.001807534985204, -0.0000127749221, 0.12698557287),
-        (-0.061042519636452198, -0.734867956625483362, 0.0003818870463874191, 0.6795214914222156511),
+        (
+            -0.061042519636452198,
+            -0.734867956625483362,
+            0.0003818870463874191,
+            0.6795214914222156511,
+        ),
     )
 }
 
