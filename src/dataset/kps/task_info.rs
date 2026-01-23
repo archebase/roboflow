@@ -6,12 +6,12 @@
 //!
 //! Creates `task_info/<Scene>-<SubScene>-<Task>.json` files as per the v1.2 specification.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
 /// Task info metadata for a single episode.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskInfo {
     /// Unique identifier matching the UUID directory name
     pub episode_id: String,
@@ -42,17 +42,17 @@ pub struct TaskInfo {
 }
 
 /// Label information containing action segments.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LabelInfo {
     /// Array of labeled action segments
     pub action_config: Vec<ActionSegment>,
     /// Key frame annotations (optional, to be implemented)
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub key_frame: Vec<KeyFrame>,
 }
 
 /// A single action segment annotation.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionSegment {
     /// Start frame index (inclusive)
     pub start_frame: u64,
@@ -71,7 +71,7 @@ pub struct ActionSegment {
 }
 
 /// Key frame annotation (future use).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyFrame {
     pub frame_number: u64,
     pub description: String,
@@ -201,7 +201,10 @@ impl TaskInfoBuilder {
     }
 
     /// Add multiple action segments.
-    pub fn add_action_segments(mut self, segments: impl IntoIterator<Item = ActionSegment>) -> Self {
+    pub fn add_action_segments(
+        mut self,
+        segments: impl IntoIterator<Item = ActionSegment>,
+    ) -> Self {
         self.action_segments.extend(segments);
         self
     }
@@ -213,13 +216,20 @@ impl TaskInfoBuilder {
             scene_name: self.scene_name.ok_or("scene_name is required")?,
             sub_scene_name: self.sub_scene_name.ok_or("sub_scene_name is required")?,
             init_scene_text: self.init_scene_text.ok_or("init_scene_text is required")?,
-            english_init_scene_text: self.english_init_scene_text
+            english_init_scene_text: self
+                .english_init_scene_text
                 .ok_or("english_init_scene_text is required")?,
             task_name: self.task_name.ok_or("task_name is required")?,
-            english_task_name: self.english_task_name.ok_or("english_task_name is required")?,
+            english_task_name: self
+                .english_task_name
+                .ok_or("english_task_name is required")?,
             data_type: self.data_type.unwrap_or_else(|| "常规".to_string()),
-            episode_status: self.episode_status.unwrap_or_else(|| "approved".to_string()),
-            data_gen_mode: self.data_gen_mode.unwrap_or_else(|| "real_machine".to_string()),
+            episode_status: self
+                .episode_status
+                .unwrap_or_else(|| "approved".to_string()),
+            data_gen_mode: self
+                .data_gen_mode
+                .unwrap_or_else(|| "real_machine".to_string()),
             sn_code: self.sn_code.ok_or("sn_code is required")?,
             sn_name: self.sn_name.ok_or("sn_name is required")?,
             label_info: LabelInfo {
@@ -296,7 +306,8 @@ impl ActionSegmentBuilder {
             action_text: self.action_text.ok_or("action_text is required")?,
             skill: self.skill,
             is_mistake: self.is_mistake,
-            english_action_text: self.english_action_text
+            english_action_text: self
+                .english_action_text
                 .ok_or("english_action_text is required")?,
         })
     }
@@ -322,9 +333,7 @@ pub fn write_task_info(
     let task_name_safe = task_info.english_task_name.replace(' ', "_");
     let filename = format!(
         "{}-{}-{}.json",
-        task_info.scene_name,
-        task_info.sub_scene_name,
-        task_name_safe
+        task_info.scene_name, task_info.sub_scene_name, task_name_safe
     );
 
     let filepath = task_info_dir.join(filename);
@@ -411,17 +420,15 @@ mod tests {
             sn_code: "A2D0001AB00029".to_string(),
             sn_name: "宇树-H1-Dexhand".to_string(),
             label_info: LabelInfo {
-                action_config: vec![
-                    ActionSegment {
-                        start_frame: 0,
-                        end_frame: 100,
-                        timestamp_utc: "2025-06-16T02:22:48.391668+00:00".to_string(),
-                        action_text: "拿起".to_string(),
-                        skill: "Pick".to_string(),
-                        is_mistake: false,
-                        english_action_text: "Pick up".to_string(),
-                    }
-                ],
+                action_config: vec![ActionSegment {
+                    start_frame: 0,
+                    end_frame: 100,
+                    timestamp_utc: "2025-06-16T02:22:48.391668+00:00".to_string(),
+                    action_text: "拿起".to_string(),
+                    skill: "Pick".to_string(),
+                    is_mistake: false,
+                    english_action_text: "Pick up".to_string(),
+                }],
                 key_frame: vec![],
             },
         };

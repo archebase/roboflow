@@ -7,13 +7,13 @@
 //! Parses URDF files to extract joint information and generates
 //! `robot_calibration.json` as required by Kps dataset format.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 /// Robot calibration data for a single joint.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JointCalibration {
     /// Joint index/ID
     pub id: usize,
@@ -32,7 +32,7 @@ pub struct JointCalibration {
 }
 
 /// Robot calibration JSON structure.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RobotCalibration {
     /// Map of joint name to calibration data
     #[serde(flatten)]

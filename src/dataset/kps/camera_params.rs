@@ -13,7 +13,7 @@
 //! - `<camera_name>_intrinsic_params.json`: fx, fy, cx, cy, width, height, distortion
 //! - `<camera_name>_extrinsic_params.json`: frame_id, child_frame_id, position, orientation
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -21,7 +21,7 @@ use std::path::Path;
 use robocodec::CodecValue;
 
 /// Camera intrinsic parameters.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntrinsicParams {
     /// Focal length x (pixels)
     pub fx: f64,
@@ -36,7 +36,7 @@ pub struct IntrinsicParams {
     /// Image height (pixels)
     pub height: u32,
     /// Distortion coefficients [k1, k2, k3, p1, p2]
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub distortion: Vec<f64>,
 }
 
@@ -84,7 +84,7 @@ impl IntrinsicParams {
 }
 
 /// Camera extrinsic parameters (pose).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtrinsicParams {
     /// Parent frame ID
     pub frame_id: String,
@@ -97,7 +97,7 @@ pub struct ExtrinsicParams {
 }
 
 /// 3D position.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Position {
     pub x: f64,
     pub y: f64,
@@ -111,7 +111,7 @@ impl Position {
 }
 
 /// Quaternion orientation.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Orientation {
     pub x: f64,
     pub y: f64,

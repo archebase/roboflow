@@ -1,6 +1,6 @@
-# Robocodec Kps Examples
+# Rust Examples
 
-This directory contains examples demonstrating how to use robocodec to convert robotics data to the Kps dataset format as specified in the data format documentation (v1.2).
+Rust examples demonstrating KPS dataset conversion using robocodec.
 
 ## Files
 
@@ -8,35 +8,20 @@ This directory contains examples demonstrating how to use robocodec to convert r
 |------|-------------|
 | `kps_config.toml` | Example configuration for MCAP → Kps conversion |
 | `task_info_example.json` | Example task_info metadata file |
-| `convert_to_kps.py` | Python example using robocodec Python API |
 | `convert_to_kps.rs` | Rust example using robocodec Rust API |
+| `task_info_example_kps.rs` | Rust task info example |
 | `GAPS.md` | Document identifying gaps between spec and implementation |
 
 ## Quick Start
-
-### Using the Python API
-
-```bash
-# Install robocodec with Python bindings
-cd /path/to/robocodec
-pip install -e .
-
-# Run the example
-python examples/kps/convert_to_kps.py \
-    input.mcap \
-    ./output \
-    examples/kps/kps_config.toml \
-    examples/kps/task_info_example.json
-```
 
 ### Using the Rust API
 
 ```bash
 # Run with HDF5 support
-cargo run --example kps_convert --features kps-hdf5 -- \
+cargo run --example convert_to_kps --features kps-hdf5 -- \
     input.mcap \
     ./output \
-    examples/kps/kps_config.toml
+    examples/rust/kps_config.toml
 ```
 
 ### Using the Binary (Recommended for production)
@@ -44,7 +29,7 @@ cargo run --example kps_convert --features kps-hdf5 -- \
 ```bash
 # Convert MCAP to Kps format
 cargo run --bin convert --features kps-hdf5 -- \
-    to-kps input.mcap ./output examples/kps/kps_config.toml
+    to-kps input.mcap ./output examples/rust/kps_config.toml
 ```
 
 ## Configuration
@@ -140,8 +125,13 @@ To add support for missing features:
 
 1. Review the specification in the main data format document
 2. Check `GAPS.md` for implementation priorities
-3. Modify `src/format/kps/` modules
+3. Modify `robocodec/src/io/kps/` modules
 4. Add tests in `tests/`
+
+## See Also
+
+- [Python Examples](../python/) - Python implementation for KPS conversion
+- [CLAUDE.md](../../CLAUDE.md) - Project documentation
 
 ## References
 

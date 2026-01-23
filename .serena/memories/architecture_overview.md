@@ -1,40 +1,40 @@
-# Robocodec Architecture Overview
+# Roboflow Architecture Overview
 
-This document provides a high-level overview of the Robocodec architecture and component organization.
+High-level overview of the Roboflow architecture and component organization.
 
 ## System Overview
 
-Robocodec is a universal, schema-driven runtime decoding engine for robotics data. It provides high-performance conversion between different robotics message formats (CDR, Protobuf, JSON) and storage formats (MCAP, ROS1 bag).
+Roboflow is a universal, schema-driven runtime decoding engine for robotics data. It provides high-performance conversion between different robotics message formats (CDR, Protobuf, JSON) and storage formats (MCAP, ROS1 bag).
 
 ## Workspace Architecture
 
-### Two-Crate Design
+### Single-Crate Design
 
-The project is organized as a Cargo workspace with two crates:
+The project is a Cargo workspace with one main crate and an external dependency:
 
 ```
 roboflow (workspace root)
-├── roboflow/          # Top-level pipeline crate
-│   └── depends on → robocodec
-└── robocodec/            # Bottom-level format library crate
+└── roboflow (main crate)
+    └── depends on → robocodec (external: github.com/archebase/robocodec)
 ```
 
 ### Dependency Direction
 
 ```
 ┌─────────────────────────────────────┐
-│      roboflow (pipeline)           │
+│           roboflow                      │
 │  ┌──────────────────────────────┐   │
 │  │ • Pipeline orchestration     │   │
 │  │ • Fluent API                │   │
 │  │ • Python bindings           │   │
+│  │ • KPS dataset conversion   │   │
 │  │ • CLI tools                 │   │
 │  └──────────┬───────────────────┘   │
 └─────────────┼───────────────────────┘
-              │ depends on
+              │ depends on (git)
               ↓
 ┌─────────────────────────────────────┐
-│       robocodec (I/O layer)           │
+│       robocodec (external crate)      │
 │  ┌──────────────────────────────┐   │
 │  │ • Format readers/writers     │   │
 │  │ • Message codecs             │   │
@@ -45,74 +45,56 @@ roboflow (workspace root)
 └─────────────────────────────────────┘
 ```
 
-**Key Principle:** `roboflow` depends on `robocodec`, not vice versa. This separation allows:
+**Key Principle:** `roboflow` depends on external `robocodec` for all I/O operations. This separation allows:
 - Reuse of `robocodec` as a standalone library
 - Clear separation of concerns (I/O vs. orchestration)
-- Independent testing and evolution
+- Independent development and versioning
 
 ## Component Organization
 
-### robocodec Crate (Bottom Layer)
-
-Located at `robocodec/src/`:
-
-```
-robocodec/src/
-├── encoding/          # Message codec implementations
-│   ├── protobuf/      # Protobuf codec
-│   ├── json/          # JSON codec
-│   └── registry.rs    # Codec registry
-├── schema/            # Schema parsing
-│   └── parser/        # PEG-based parsers
-│       ├── msg_parser/       # ROS .msg
-│       ├── idl_parser/       # ROS2 IDL
-│       └── unified.rs        # Unified parser
-├── io/                # Unified I/O layer
-│   ├── formats/
-│   │   ├── mcap/       # MCAP format
-│   │   └── bag/        # ROS bag format
-│   └── kps/           # KPS dataset format
-├── transform/         # Data transformations
-│   ├── topic_rename.rs
-│   ├── type_rename.rs
-│   └── normalization.rs
-├── types/             # Core memory management
-│   ├── arena.rs       # Arena allocation
-│   ├── arena_pool.rs  # Arena pooling
-│   ├── buffer_pool.rs # Compression buffers
-│   └── chunk.rs       # Message chunks
-├── core/              # Core types and errors
-└── surface/           # High-level surface API
-```
-
-### roboflow Crate (Top Layer)
+### roboflow Crate (Main Layer)
 
 Located at `src/`:
 
 ```
 src/
-├── pipeline/          # Pipeline implementations
-│   ├── stages/        # Standard pipeline stages
-│   │   ├── reader.rs
-│   │   ├── transform.rs
-│   │   ├── compression.rs
-│   │   └── writer.rs
-│   ├── hyper/         # 7-stage HyperPipeline
-│   │   ├── stages/
-│   │   ├── orchestrator.rs
-│   │   └── config.rs
-│   └── fluent/        # Builder API
-│       └── builder.rs
-├── python/            # PyO3 bindings
 ├── bin/               # CLI tools
-│   ├── convert.rs
-│   ├── inspect.rs
-│   ├── extract.rs
-│   ├── schema.rs
-│   └── search.rs
-├── dataset/           # KPS dataset support
-├── core/              # Core configuration
-└── config.rs          # Type normalization config
+│   ├── convert.rs    # Unified convert CLI
+│   ├── extract.rs     # Extract messages from files
+│   ├── inspect.rs     # Inspect MCAP/bag files
+│   ├── schema.rs      # Display ROS message schemas
+│   └── search.rs      # Search topics in files
+├── core/              # Core types and registry
+├── dataset/           # Dataset conversion
+│   └── kps/          # KPS dataset format implementation
+│       ├── config.rs
+│       ├── delivery_v12.rs
+│       ├── task_info.rs
+│       ├── hdf5_schema.rs
+│       ├── camera_params.rs
+│       ├── robot_calibration.rs
+│       └── writers/
+├── pipeline/          # Pipeline implementations
+│   ├── stages/       # Standard pipeline stages
+│   ├── hyper/        # 7-stage HyperPipeline
+│   └── fluent/       # Builder API
+├── python/           # PyO3 bindings
+└── config.rs         # Global configuration
+```
+
+### robocodec Crate (External)
+
+Located at https://github.com/archebase/robocodec:
+
+```
+robocodec/src/
+├── encoding/          # Message codec implementations
+├── schema/            # Schema parsing (ROS msg, IDL)
+├── io/                # Unified I/O layer
+│   ├── formats/       # MCAP, ROS bag readers/writers
+│   └── kps/           # KPS I/O utilities
+├── transform/         # Data transformations
+└── types/             # Core memory management (arenas)
 ```
 
 ## Pipeline Architecture
@@ -123,17 +105,9 @@ src/
 Input File → [Reader] → [Transform] → [Compress] → [Writer] → Output File
 ```
 
-Stages:
-1. **Reader**: Reads and parses input format (bag/MCAP)
-2. **Transform**: Applies transformations (topic/type rename)
-3. **Compress**: Compresses message data
-4. **Writer**: Writes output format
-
 Performance: ~200 MB/s
 
 ### HyperPipeline (7-stage)
-
-For maximum throughput, the pipeline is split into 7 stages:
 
 ```
 Input → [Prefetch] → [Parse] → [Slice] → [Transform] → [Compress] → [Packetize] → [Write] → Output
@@ -147,93 +121,23 @@ Additional optimizations:
 
 Performance: ~1800 MB/s
 
-## Data Flow
+### KPS Dataset Pipeline
 
-### Format Conversion Flow
+Located in `src/dataset/kps/`:
 
-```
-┌──────────────┐
-│  Input File  │ (bag/MCAP)
-└──────┬───────┘
-       │
-       ↓
-┌─────────────────────────────┐
-│  Format Detection            │
-│  (BagSource trait)           │
-└──────┬──────────────────────┘
-       │
-       ↓
-┌─────────────────────────────┐
-│  Schema Parsing              │
-│  (msg/IDL parsers)           │
-└──────┬──────────────────────┘
-       │
-       ↓
-┌─────────────────────────────┐
-│  Message Decoding            │
-│  (CDR/Protobuf/JSON codecs)  │
-└──────┬──────────────────────┘
-       │
-       ↓
-┌─────────────────────────────┐
-│  Transform (optional)        │
-│  (topic/type rename)         │
-└──────┬──────────────────────┘
-       │
-       ↓
-┌─────────────────────────────┐
-│  Compression (optional)      │
-│  (Zstd/LZ4/Bzip2)            │
-└──────┬──────────────────────┘
-       │
-       ↓
-┌─────────────────────────────┐
-│  Message Encoding            │
-│  (CDR/Protobuf/JSON codecs)  │
-└──────┬──────────────────────┘
-       │
-       ↓
-┌──────────────┐
-│ Output File  │ (bag/MCAP)
-└──────────────┘
-```
-
-### Memory Flow
-
-```
-┌──────────────────────────────────────────────┐
-│  File I/O                                    │
-└────────┬─────────────────────────────────────┘
-         │
-         ↓
-┌──────────────────────────────────────────────┐
-│  Arena Allocation (zero-copy)                │
-│  • Message data in arena                     │
-│  • Schema metadata in arena                  │
-└────────┬─────────────────────────────────────┘
-         │
-         ↓
-┌──────────────────────────────────────────────┐
-│  Buffer Pools                                │
-│  • Compression buffers (reused)              │
-│  • Arena pools (reused)                      │
-└────────┬─────────────────────────────────────┘
-         │
-         ↓
-┌──────────────────────────────────────────────┐
-│  File Output                                 │
-└──────────────────────────────────────────────┘
-```
+- **HDF5 format**: Legacy HDF5-based datasets
+- **Parquet format**: Parquet + MP4 video format
+- **v1.2 specification**: Latest KPS specification with series delivery structure
 
 ## Key Design Principles
 
 ### 1. Schema-Driven Decoding
+- Runtime schema parsing using Pest (external robocodec)
 - No code generation required
-- Runtime schema parsing using Pest PEG parser
 - Supports ROS .msg, ROS2 IDL, OMG IDL formats
 
 ### 2. Zero-Copy Design
-- Arena allocation for message data
+- Arena allocation for message data (external robocodec)
 - Borrowing instead of copying where possible
 - Reduces CPU overhead by ~22%
 
@@ -247,35 +151,34 @@ Performance: ~1800 MB/s
 - Hardware-specific compression presets
 - OS-specific optimizations (io_uring on Linux)
 
-### 5. Type Safety
-- Rust's type system for memory safety
-- Compile-time schema validation
-- Strong typing across FFI boundary (PyO3)
-
 ## Extension Points
 
-### Adding a New Codec
-1. Implement codec trait in `robocodec/src/encoding/`
-2. Register in `robocodec/src/core/registry.rs`
-3. Add schema parser if needed
-
-### Adding a New Format
-1. Implement `BagSource` for reading
-2. Implement `BagWriter` for writing
-3. Add format detection logic
-
-### Adding a New Transform
-1. Implement in `robocodec/src/transform/`
-2. Integrate with `TransformBuilder`
-3. Add tests for edge cases
-
 ### Adding Python Bindings
-1. Add `#[pyfunction]` or `#[pymodule]` in `roboflow/src/python/`
+1. Add `#[pyfunction]` or `#[pymethods]` in `src/python/`
 2. Rebuild with `maturin develop --features python`
 3. Export from `python/roboflow/__init__.py`
 
+### Adding KPS Features
+1. Implement in `src/dataset/kps/`
+2. Add feature flag to `Cargo.toml` if needed
+3. Add tests in `tests/kps_v12_tests.rs` for v1.2 compliance
+
+### Running Tools
+
+```bash
+# Convert files
+cargo run --bin convert -- input.bag output.mcap
+
+# Inspect file
+cargo run --bin inspect -- data.mcap
+
+# Extract topics
+cargo run --bin extract -- data.bag --topics /camera --output out/
+```
+
 ## Related Documentation
 
-- `PIPELINE.md` - Detailed pipeline architecture
-- `MEMORY.md` - Memory management details
-- `ARCHITECTURE.md` - High-level system design
+- `CLAUDE.md` - Project overview for Claude Code
+- `docs/PIPELINE.md` - Detailed pipeline architecture
+- `docs/MEMORY.md` - Memory management details
+- `docs/ARCHITECTURE.md` - High-level system design
