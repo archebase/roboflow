@@ -210,10 +210,6 @@ cargo run --bin inspect -- data.mcap
 
 本项目采用 MulanPSL v2 许可证 - 详见 [LICENSE](LICENSE) 文件。
 
-## 致谢
-
-Robocodec 最初作为 [Strata](https://github.com/archebase/strata) 机器人平台的一部分开发。
-
 ## 相关项目
 
 - [MCAP](https://mcap.dev/) - 机器人社区中针对追加写入优化的通用数据格式
