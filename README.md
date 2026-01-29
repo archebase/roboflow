@@ -169,10 +169,6 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for development
 
 This project is licensed under the MulanPSL v2 - see the [LICENSE](LICENSE) file for details.
 
-## Acknowledgments
-
-Robocodec was originally developed as part of the [Strata](https://github.com/archebase/strata) robotics platform.
-
 ## Related Projects
 
 - [MCAP](https://mcap.dev/) - Common data format optimized for appending in robotics community
