@@ -56,3 +56,6 @@ profiles/
 # robot data
 *.bag
 *.mcap
+
+# claude
+.claude/
