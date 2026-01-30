@@ -77,7 +77,7 @@ pub use compression::ParallelCompressor;
 pub use config::{CompressionConfig, CompressionTarget};
 pub use dataset_converter::{DatasetConverter, DatasetConverterStats};
 pub use fluent::{BatchReport, CompressionPreset, PipelineMode, ReadOptions, Robocodec};
-pub use hardware::{detect_cpu_count, HardwareInfo};
+pub use hardware::{HardwareInfo, detect_cpu_count};
 pub use orchestrator::{AsyncPipeline, PipelineBuilder, PipelineReport};
 pub use stages::{TransformStage, TransformStageConfig};
 pub use types::{ArenaMessage, CompressedChunk, MessageArena, MessageChunk};

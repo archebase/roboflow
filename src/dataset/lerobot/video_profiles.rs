@@ -274,45 +274,45 @@ impl ResolvedConfig {
         let hardware = HardwareConfig::auto_detect();
 
         // Check if profile is specified
-        if let Some(profile) = &video_config.profile {
-            if let Some(p) = Profile::parse(profile) {
-                let profile_config = p.to_encoding_profile();
+        if let Some(profile) = &video_config.profile
+            && let Some(p) = Profile::parse(profile)
+        {
+            let profile_config = p.to_encoding_profile();
 
-                // If codec is explicitly set (not default), use it instead of profile's codec
-                let codec = if !video_config.codec.is_empty() && video_config.codec != "libx264" {
-                    video_config.codec.clone()
-                } else if profile_config.hardware_accel {
-                    hardware.codec().to_string()
-                } else {
-                    "libx264".to_string()
-                };
+            // If codec is explicitly set (not default), use it instead of profile's codec
+            let codec = if !video_config.codec.is_empty() && video_config.codec != "libx264" {
+                video_config.codec.clone()
+            } else if profile_config.hardware_accel {
+                hardware.codec().to_string()
+            } else {
+                "libx264".to_string()
+            };
 
-                // For CRF: use profile default if crf is at the default value (18)
-                // This allows users to override by setting a different crf
-                let use_profile_crf = video_config.crf == 18; // 18 is the default in config
-                let crf = if use_profile_crf {
-                    profile_config.crf
-                } else {
-                    video_config.crf
-                };
+            // For CRF: use profile default if crf is at the default value (18)
+            // This allows users to override by setting a different crf
+            let use_profile_crf = video_config.crf == 18; // 18 is the default in config
+            let crf = if use_profile_crf {
+                profile_config.crf
+            } else {
+                video_config.crf
+            };
 
-                // For preset: use profile default if preset is at default "fast"
-                let use_profile_preset = video_config.preset == "fast";
-                let preset = if use_profile_preset {
-                    profile_config.preset.as_ffmpeg_preset().to_string()
-                } else {
-                    video_config.preset.clone()
-                };
+            // For preset: use profile default if preset is at default "fast"
+            let use_profile_preset = video_config.preset == "fast";
+            let preset = if use_profile_preset {
+                profile_config.preset.as_ffmpeg_preset().to_string()
+            } else {
+                video_config.preset.clone()
+            };
 
-                return Self {
-                    codec,
-                    crf,
-                    preset,
-                    pixel_format: hardware.pixel_format().to_string(),
-                    hardware_accelerated: hardware.is_hardware_accelerated(),
-                    parallel_jobs: profile_config.parallel_jobs,
-                };
-            }
+            return Self {
+                codec,
+                crf,
+                preset,
+                pixel_format: hardware.pixel_format().to_string(),
+                hardware_accelerated: hardware.is_hardware_accelerated(),
+                parallel_jobs: profile_config.parallel_jobs,
+            };
         }
 
         // No profile or invalid profile - use explicit settings

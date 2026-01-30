@@ -26,7 +26,7 @@ pub use base::{
 };
 
 // Re-export parquet utilities
-pub use parquet_base::{calculate_stats, FeatureStats, ParquetWriterBase};
+pub use parquet_base::{FeatureStats, ParquetWriterBase, calculate_stats};
 
 // Re-export progress utilities
 pub use progress::{ProgressReceiver, ProgressSender, ProgressUpdate};

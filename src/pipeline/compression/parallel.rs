@@ -9,8 +9,8 @@
 
 use rayon::prelude::*;
 use std::io::Write;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::core::{Result, RoboflowError};
 use crate::pipeline::types::chunk::{CompressedChunk, MessageChunk};

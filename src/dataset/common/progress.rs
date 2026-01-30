@@ -254,7 +254,9 @@ impl ProgressSender {
 
             if !sent {
                 // Channel receiver may be dead or blocked - log but don't hang indefinitely
-                eprintln!("CRITICAL: Progress channel receiver unresponsive - critical update may be lost");
+                eprintln!(
+                    "CRITICAL: Progress channel receiver unresponsive - critical update may be lost"
+                );
                 eprintln!("  Update type: {:?}", update.variant_type());
                 // Don't block - the conversion should continue even if Python receiver is dead
                 // The final stats will still be written to disk

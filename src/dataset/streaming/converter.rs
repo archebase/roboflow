@@ -10,13 +10,13 @@ use std::time::Instant;
 
 use tracing::{info, instrument, warn};
 
+use crate::RoboReader;
 use crate::core::Result;
+use crate::dataset::DatasetFormat;
 use crate::dataset::common::DatasetWriter;
 use crate::dataset::streaming::{
     BackpressureHandler, FrameAlignmentBuffer, StreamingConfig, StreamingStats,
 };
-use crate::dataset::DatasetFormat;
-use crate::RoboReader;
 
 /// Streaming dataset converter.
 ///

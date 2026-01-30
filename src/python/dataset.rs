@@ -628,7 +628,7 @@ impl PyDatasetConfig {
                 return Err(PyValueError::new_err(format!(
                     "Invalid format '{}'. Must be 'lerobot' or 'kps'",
                     format
-                )))
+                )));
             }
         };
 
@@ -653,7 +653,7 @@ impl PyDatasetConfig {
                 return Err(PyValueError::new_err(format!(
                     "Invalid format '{}'. Must be 'lerobot' or 'kps'",
                     format
-                )))
+                )));
             }
         };
 
@@ -680,7 +680,7 @@ impl PyDatasetConfig {
                 return Err(PyValueError::new_err(format!(
                     "Invalid format '{}'. Must be 'lerobot' or 'kps'",
                     format
-                )))
+                )));
             }
         };
 

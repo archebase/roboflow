@@ -326,7 +326,11 @@ impl ImageData {
     /// # Errors
     ///
     /// Returns an error if the data size doesn't match width * height * 3.
-    pub fn new_rgb(width: u32, height: u32, data: Vec<u8>) -> std::result::Result<Self, ImageDataError> {
+    pub fn new_rgb(
+        width: u32,
+        height: u32,
+        data: Vec<u8>,
+    ) -> std::result::Result<Self, ImageDataError> {
         let expected_size = (width as usize) * (height as usize) * 3;
         if data.len() != expected_size {
             return Err(ImageDataError::SizeMismatch {

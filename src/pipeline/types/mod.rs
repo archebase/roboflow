@@ -12,7 +12,7 @@ pub mod chunk;
 
 // Re-export arena types from robocodec
 pub use robocodec::types::arena::{ArenaSlice, MessageArena};
-pub use robocodec::types::arena_pool::{global_pool, ArenaPool, PooledArena};
+pub use robocodec::types::arena_pool::{ArenaPool, PooledArena, global_pool};
 
 pub use buffer_pool::BufferPool;
 pub use chunk::{ArenaMessage, CompressedChunk, MessageChunk};

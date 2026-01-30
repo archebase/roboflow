@@ -365,15 +365,16 @@ impl Robocodec<WithOutput> {
             let resolved_output = resolve_single_output(input_path, &output_path)?;
 
             // Create parent directory if needed
-            if let Some(parent) = resolved_output.parent() {
-                if !parent.as_os_str().is_empty() && !parent.exists() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        RoboflowError::encode(
-                            "Robocodec::run",
-                            format!("Failed to create output directory: {e}"),
-                        )
-                    })?;
-                }
+            if let Some(parent) = resolved_output.parent()
+                && !parent.as_os_str().is_empty()
+                && !parent.exists()
+            {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    RoboflowError::encode(
+                        "Robocodec::run",
+                        format!("Failed to create output directory: {e}"),
+                    )
+                })?;
             }
 
             if use_hyper {
@@ -848,9 +849,11 @@ mod tests {
         // Second call with same stem should error (duplicate output)
         let result2 = generate_output_path(output_dir, input2, &mut used);
         assert!(result2.is_err());
-        assert!(result2
-            .unwrap_err()
-            .to_string()
-            .contains("Duplicate output path"));
+        assert!(
+            result2
+                .unwrap_err()
+                .to_string()
+                .contains("Duplicate output path")
+        );
     }
 }

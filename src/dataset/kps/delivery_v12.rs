@@ -162,10 +162,10 @@ impl TaskStatistics {
                     let sub_path = sub_entry.path();
 
                     // Check for HDF5 files in proprio_stats
-                    if sub_path.extension().and_then(|s| s.to_str()) == Some("hdf5") {
-                        if let Ok(frames) = Self::extract_frame_count_from_hdf5(&sub_path) {
-                            total_frames = total_frames.max(frames);
-                        }
+                    if sub_path.extension().and_then(|s| s.to_str()) == Some("hdf5")
+                        && let Ok(frames) = Self::extract_frame_count_from_hdf5(&sub_path)
+                    {
+                        total_frames = total_frames.max(frames);
                     }
                 }
             } else if path.is_file() {
@@ -770,15 +770,15 @@ impl V12DeliveryBuilder {
             let entry = entry?;
             let path = entry.path();
 
-            if let Some(ext) = path.extension() {
-                if matches!(
+            if let Some(ext) = path.extension()
+                && matches!(
                     ext.to_str(),
                     Some("wav") | Some("mp3") | Some("ogg") | Some("flac")
-                ) {
-                    let target = audio_dir.join(path.file_name().unwrap());
-                    fs::copy(&path, &target)?;
-                    println!("Copied: {} -> {}", path.display(), target.display());
-                }
+                )
+            {
+                let target = audio_dir.join(path.file_name().unwrap());
+                fs::copy(&path, &target)?;
+                println!("Copied: {} -> {}", path.display(), target.display());
             }
         }
 

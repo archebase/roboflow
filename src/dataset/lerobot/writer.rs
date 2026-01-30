@@ -97,41 +97,45 @@ pub struct LerobotFrame {
 
 impl LerobotWriter {
     /// Create a new LeRobot writer.
+    #[allow(unused_variables)]
     pub fn create(output_dir: impl AsRef<Path>, config: LerobotConfig) -> Result<Self> {
         #[cfg(not(feature = "kps-parquet"))]
         {
-            return Err(crate::RoboflowError::unsupported(
+            Err(crate::RoboflowError::unsupported(
                 "LeRobot writer requires the 'kps-parquet' feature to be enabled. \
                  Add --features kps-parquet to your build command.",
-            ));
+            ))
         }
 
-        let output_dir = output_dir.as_ref();
+        #[cfg(feature = "kps-parquet")]
+        {
+            let output_dir = output_dir.as_ref();
 
-        // Create LeRobot v2.1 directory structure
-        let data_dir = output_dir.join("data/chunk-000");
-        let videos_dir = output_dir.join("videos/chunk-000");
-        let meta_dir = output_dir.join("meta");
+            // Create LeRobot v2.1 directory structure
+            let data_dir = output_dir.join("data/chunk-000");
+            let videos_dir = output_dir.join("videos/chunk-000");
+            let meta_dir = output_dir.join("meta");
 
-        fs::create_dir_all(&data_dir)?;
-        fs::create_dir_all(&videos_dir)?;
-        fs::create_dir_all(&meta_dir)?;
+            fs::create_dir_all(&data_dir)?;
+            fs::create_dir_all(&videos_dir)?;
+            fs::create_dir_all(&meta_dir)?;
 
-        Ok(Self {
-            output_dir: output_dir.to_path_buf(),
-            config,
-            episode_index: 0,
-            frame_data: Vec::new(),
-            image_buffers: HashMap::new(),
-            metadata: MetadataCollector::new(),
-            total_frames: 0,
-            images_encoded: 0,
-            skipped_frames: 0,
-            initialized: false,
-            start_time: None,
-            output_bytes: 0,
-            failed_encodings: 0,
-        })
+            Ok(Self {
+                output_dir: output_dir.to_path_buf(),
+                config,
+                episode_index: 0,
+                frame_data: Vec::new(),
+                image_buffers: HashMap::new(),
+                metadata: MetadataCollector::new(),
+                total_frames: 0,
+                images_encoded: 0,
+                skipped_frames: 0,
+                initialized: false,
+                start_time: None,
+                output_bytes: 0,
+                failed_encodings: 0,
+            })
+        }
     }
 
     /// Add a frame to the current episode.
@@ -503,7 +507,7 @@ impl LerobotWriter {
                         );
                         self.failed_encodings += 1;
                         return Err(crate::RoboflowError::unsupported(
-                            "Video encoding requires ffmpeg. Install ffmpeg and ensure it's in your PATH."
+                            "Video encoding requires ffmpeg. Install ffmpeg and ensure it's in your PATH.",
                         ));
                     }
                     Err(e) => {
@@ -666,7 +670,9 @@ impl LerobotWriter {
     ///
     /// Returns (buffer, skipped_frame_count) where skipped frames are those
     /// that had dimension mismatches.
-    fn build_frame_buffer_static(images: &[ImageData]) -> crate::core::Result<(VideoFrameBuffer, usize)> {
+    fn build_frame_buffer_static(
+        images: &[ImageData],
+    ) -> crate::core::Result<(VideoFrameBuffer, usize)> {
         let mut buffer = VideoFrameBuffer::new();
         let mut skipped = 0usize;
 

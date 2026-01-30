@@ -8,7 +8,7 @@ robocodec = { git = "https://github.com/archebase/robocodec", rev = "5a8e11b" }
 [package]
 name = "roboflow"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["Strata Contributors"]
 license = "MulanPSL-2.0"
 repository = "https://github.com/archebase/roboflow"

@@ -228,8 +228,7 @@ impl FrameAlignmentBuffer {
         // Round to nearest: (timestamp + interval/2) / interval * interval
         // Add 1 to handle the midpoint correctly (round half up)
         let half_interval = interval.saturating_add(1) / 2;
-        let aligned = timestamp.saturating_add(half_interval) / interval * interval;
-        aligned
+        timestamp.saturating_add(half_interval) / interval * interval
     }
 
     /// Check for completed frames and remove them from the buffer.

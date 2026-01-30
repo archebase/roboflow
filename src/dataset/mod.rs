@@ -304,8 +304,8 @@ pub fn create_dataset_writer(
 ) -> Result<Box<dyn DatasetWriter>> {
     match format {
         DatasetFormat::Kps => {
-            use crate::dataset::kps::writers::create_kps_writer;
             use crate::dataset::kps::KpsConfig;
+            use crate::dataset::kps::writers::create_kps_writer;
 
             let kps_config = config.downcast_ref::<KpsConfig>().ok_or_else(|| {
                 crate::RoboflowError::parse("DatasetWriter", "Expected KpsConfig for KPS format")

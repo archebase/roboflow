@@ -268,14 +268,13 @@ impl CameraParamCollector {
             // Check if this is a camera_info topic
             if let Some(camera_name) =
                 self.find_camera_for_topic(&channel_info.topic, &camera_topics)
+                && let Some(intrinsics) = self.extract_camera_info(&msg, &camera_name)
             {
-                if let Some(intrinsics) = self.extract_camera_info(&msg, &camera_name) {
-                    self.update_intrinsics(&camera_name, intrinsics);
+                self.update_intrinsics(&camera_name, intrinsics);
 
-                    // Try to extract the frame_id from camera_info header
-                    if let Some(frame_id) = self.get_nested_string(&msg, &["header", "frame_id"]) {
-                        camera_frames.insert(camera_name.clone(), frame_id);
-                    }
+                // Try to extract the frame_id from camera_info header
+                if let Some(frame_id) = self.get_nested_string(&msg, &["header", "frame_id"]) {
+                    camera_frames.insert(camera_name.clone(), frame_id);
                 }
             }
 

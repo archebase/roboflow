@@ -111,8 +111,8 @@ impl BackpressureHandler {
 
             // Detect clock going backwards or very large jumps
             // If cooldown is short (<1s) but elapsed is >60s, assume clock skew
-            let is_clock_skew = self.backpressure_cooldown.as_millis() < 1000
-                && elapsed.as_secs() > 60;
+            let is_clock_skew =
+                self.backpressure_cooldown.as_millis() < 1000 && elapsed.as_secs() > 60;
 
             if is_clock_skew {
                 tracing::warn!(

@@ -13,8 +13,8 @@ use crate::core::Result;
 use crate::dataset::common::{AlignedFrame, ImageData, WriterStats};
 use crate::dataset::kps::camera_params::CameraParamCollector;
 use crate::dataset::kps::config::KpsConfig;
-use robocodec::io::metadata::ChannelInfo;
 use robocodec::CodecValue;
+use robocodec::io::metadata::ChannelInfo;
 
 /// Error type for Kps writer operations.
 #[derive(Debug, thiserror::Error)]

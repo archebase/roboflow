@@ -21,6 +21,7 @@ use std::path::Path;
 
 use tracing::{info, instrument};
 
+use crate::RoboReader;
 use crate::core::Result;
 use crate::dataset::common::{AlignedFrame, ImageData};
 use crate::dataset::kps::config::{
@@ -29,8 +30,7 @@ use crate::dataset::kps::config::{
 use crate::dataset::lerobot::config::{
     LerobotConfig, Mapping as LerobotMapping, MappingType as LerobotMappingType,
 };
-use crate::dataset::{create_dataset_writer, DatasetFormat};
-use crate::RoboReader;
+use crate::dataset::{DatasetFormat, create_dataset_writer};
 use robocodec::CodecValue;
 
 /// Direct dataset converter.
@@ -180,11 +180,11 @@ impl DatasetConverter {
             });
 
             // Check max frames after potentially adding a new frame
-            if let Some(max) = self.max_frames {
-                if frame_count > max {
-                    info!("Reached max frames limit: {}", max);
-                    break;
-                }
+            if let Some(max) = self.max_frames
+                && frame_count > max
+            {
+                info!("Reached max frames limit: {}", max);
+                break;
             }
 
             // Extract and add data based on mapping type
@@ -223,15 +223,15 @@ impl DatasetConverter {
         frames.sort_by_key(|f| f.timestamp);
 
         // Truncate to max_frames if specified
-        if let Some(max) = self.max_frames {
-            if frames.len() > max {
-                tracing::info!(
-                    original_count = frames.len(),
-                    max,
-                    "Truncating frames to max_frames limit"
-                );
-                frames.truncate(max);
-            }
+        if let Some(max) = self.max_frames
+            && frames.len() > max
+        {
+            tracing::info!(
+                original_count = frames.len(),
+                max,
+                "Truncating frames to max_frames limit"
+            );
+            frames.truncate(max);
         }
 
         // Update frame indices after sorting
@@ -326,11 +326,11 @@ impl DatasetConverter {
             });
 
             // Check max frames after potentially adding a new frame
-            if let Some(max) = self.max_frames {
-                if frame_count > max {
-                    info!("Reached max frames limit: {}", max);
-                    break;
-                }
+            if let Some(max) = self.max_frames
+                && frame_count > max
+            {
+                info!("Reached max frames limit: {}", max);
+                break;
             }
 
             // Extract and add data based on mapping type
@@ -368,15 +368,15 @@ impl DatasetConverter {
         frames.sort_by_key(|f| f.timestamp);
 
         // Truncate to max_frames if specified
-        if let Some(max) = self.max_frames {
-            if frames.len() > max {
-                tracing::info!(
-                    original_count = frames.len(),
-                    max,
-                    "Truncating frames to max_frames limit"
-                );
-                frames.truncate(max);
-            }
+        if let Some(max) = self.max_frames
+            && frames.len() > max
+        {
+            tracing::info!(
+                original_count = frames.len(),
+                max,
+                "Truncating frames to max_frames limit"
+            );
+            frames.truncate(max);
         }
 
         // Update frame indices after sorting

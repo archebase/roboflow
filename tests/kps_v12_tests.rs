@@ -19,12 +19,12 @@ use std::path::Path;
 use std::str::FromStr;
 
 use roboflow::dataset::kps::{
+    KpsConfig,
     camera_params::{ExtrinsicParams, IntrinsicParams},
     delivery_v12::{SeriesDeliveryConfig, V12DeliveryBuilder},
-    hdf5_schema::{default_arm_joint_names, default_leg_joint_names, DataType, KpsHdf5Schema},
+    hdf5_schema::{DataType, KpsHdf5Schema, default_arm_joint_names, default_leg_joint_names},
     robot_calibration::{JointCalibration, RobotCalibration, RobotCalibrationGenerator},
     task_info::{ActionSegment, TaskInfo},
-    KpsConfig,
 };
 
 /// Test output directory helper.

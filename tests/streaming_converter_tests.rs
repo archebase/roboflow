@@ -17,6 +17,8 @@ use std::path::Path;
 
 use roboflow::dataset::lerobot::{DatasetConfig, LerobotConfig, Mapping, MappingType, VideoConfig};
 use roboflow::dataset::streaming::{FeatureRequirement, FrameCompletionCriteria, StreamingConfig};
+#[cfg(feature = "kps-all")]
+use roboflow::dataset::streaming::StreamingDatasetConverter;
 
 /// Create a test output directory.
 #[allow(dead_code)]
@@ -66,10 +68,10 @@ fn find_fixture(pattern: &str) -> Option<String> {
     let entries = fs::read_dir(fixtures_dir).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.contains(pattern) {
-                return path.to_str().map(|s| s.to_string());
-            }
+        if let Some(name) = path.file_name().and_then(|n| n.to_str())
+            && name.contains(pattern)
+        {
+            return path.to_str().map(|s| s.to_string());
         }
     }
     None

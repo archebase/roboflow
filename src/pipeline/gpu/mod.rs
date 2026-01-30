@@ -139,10 +139,10 @@ pub mod nvcomp {
     //! This stub allows compilation on other platforms for development purposes.
 
     use super::{
+        GpuCompressionError,
         backend::{
             ChunkToCompress, CompressedChunk, CompressorBackend, CompressorType, CpuCompressor,
         },
-        GpuCompressionError,
     };
 
     /// Stub compressor that falls back to CPU compression.
@@ -211,10 +211,10 @@ pub mod apple {
     //! Apple libcompression backend for hardware-accelerated compression on macOS.
 
     use super::{
+        GpuCompressionError,
         backend::{
             ChunkToCompress, CompressedChunk, CompressorBackend, CompressorType, CpuCompressor,
         },
-        GpuCompressionError,
     };
 
     /// Compression algorithm for Apple libcompression.
@@ -294,10 +294,10 @@ pub mod apple {
     //! Stub apple module for non-macOS platforms.
 
     use super::{
+        GpuCompressionError,
         backend::{
             ChunkToCompress, CompressedChunk, CompressorBackend, CompressorType, CpuCompressor,
         },
-        GpuCompressionError,
     };
 
     /// Compression algorithm placeholder.

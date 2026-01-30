@@ -70,11 +70,11 @@ import types
 
 # Create the dataset submodule
 _dataset_module = types.ModuleType("roboflow.dataset", "Dataset submodule")
-_dataset_module.DatasetConverter = DatasetConverter
-_dataset_module.DatasetConfig = DatasetConfig
-_dataset_module.ConversionJob = ConversionJob
-_dataset_module.DatasetStats = DatasetStats
-_dataset_module.ProgressUpdate = ProgressUpdate
+_dataset_module.DatasetConverter = DatasetConverter  # type: ignore[attr-defined]
+_dataset_module.DatasetConfig = DatasetConfig  # type: ignore[attr-defined]
+_dataset_module.ConversionJob = ConversionJob  # type: ignore[attr-defined]
+_dataset_module.DatasetStats = DatasetStats  # type: ignore[attr-defined]
+_dataset_module.ProgressUpdate = ProgressUpdate  # type: ignore[attr-defined]
 
 # Register in sys.modules so 'from roboflow.dataset import X' works
 sys.modules["roboflow.dataset"] = _dataset_module

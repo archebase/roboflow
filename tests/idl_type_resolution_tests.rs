@@ -10,7 +10,7 @@
 //! - `/msg/` separator (ROS2 convention): `pkg/msg/TypeName`
 //! - Short form: `pkg/TypeName`
 
-use robocodec::schema::{parse_schema, FieldType};
+use robocodec::schema::{FieldType, parse_schema};
 
 /// Test that type lookup works with the `/msg/` separator (ROS2 convention).
 ///
@@ -118,13 +118,17 @@ float64 w
     let schema = parse_schema("test/Container", schema_str).expect("parse nested schema");
 
     // Verify all types are registered
-    assert!(schema
-        .get_type_variants("geometry_msgs/Transform")
-        .is_some());
+    assert!(
+        schema
+            .get_type_variants("geometry_msgs/Transform")
+            .is_some()
+    );
     assert!(schema.get_type_variants("geometry_msgs/Vector3").is_some());
-    assert!(schema
-        .get_type_variants("geometry_msgs/Quaternion")
-        .is_some());
+    assert!(
+        schema
+            .get_type_variants("geometry_msgs/Quaternion")
+            .is_some()
+    );
 
     // Get the Transform type
     let transform = schema

@@ -11,8 +11,8 @@
 //! - Batches messages into chunks for compression
 
 use std::io::Cursor;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Instant;
 
@@ -300,13 +300,13 @@ impl ParserSlicerStage {
         }
 
         // Send any remaining chunk
-        if let Some(chunk) = current_chunk.take() {
-            if chunk.message_count() > 0 {
-                sender
-                    .send(chunk)
-                    .map_err(|_| RoboflowError::encode("ParserSlicer", "Channel closed"))?;
-                stats.chunks_produced.fetch_add(1, Ordering::Relaxed);
-            }
+        if let Some(chunk) = current_chunk.take()
+            && chunk.message_count() > 0
+        {
+            sender
+                .send(chunk)
+                .map_err(|_| RoboflowError::encode("ParserSlicer", "Channel closed"))?;
+            stats.chunks_produced.fetch_add(1, Ordering::Relaxed);
         }
 
         debug!(worker_id, "Parser worker finished");
