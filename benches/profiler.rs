@@ -595,9 +595,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "Parallel"
                 }
             );
-            if hyper
-                && let Some(m) = mode
-            {
+            if hyper && let Some(m) = mode {
                 println!("  mode: {:?}", m);
             }
             println!("  window_log: auto-detected from CPU cache");
