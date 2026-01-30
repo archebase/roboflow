@@ -237,8 +237,8 @@ pub struct CachedStorage {
     local: Arc<LocalStorage>,
     /// Cache configuration.
     config: CacheConfig,
-    /// Cache entries metadata (protected by mutex).
-    entries: Mutex<HashMap<PathBuf, CacheEntry>>,
+    /// Cache entries metadata (protected by mutex, Arc-shared with workers).
+    entries: Arc<Mutex<HashMap<PathBuf, CacheEntry>>>,
     /// Total current cache size in bytes.
     cache_size: AtomicU64,
     /// Upload task sender.
@@ -274,7 +274,7 @@ impl CachedStorage {
             remote,
             local,
             config,
-            entries: Mutex::new(HashMap::new()),
+            entries: Arc::new(Mutex::new(HashMap::new())),
             cache_size: AtomicU64::new(0),
             upload_sender,
             upload_receiver,
@@ -304,6 +304,7 @@ impl CachedStorage {
             let cache_dir = self.config.cache_directory.clone();
             let stats = Arc::clone(&self.stats);
             let shutdown = Arc::clone(&self.shutdown);
+            let entries = Arc::clone(&self.entries);
 
             let handle = thread::Builder::new()
                 .name(format!("cached-upload-{}", worker_id))
@@ -317,6 +318,7 @@ impl CachedStorage {
                         cache_dir,
                         stats,
                         shutdown,
+                        entries,
                     )
                 })
                 .map_err(|e| {
@@ -339,6 +341,7 @@ impl CachedStorage {
         cache_dir: PathBuf,
         stats: Arc<Mutex<CacheStats>>,
         shutdown: Arc<AtomicUsize>,
+        entries: Arc<Mutex<HashMap<PathBuf, CacheEntry>>>,
     ) {
         tracing::info!("Upload worker {} started", worker_id);
 
@@ -362,6 +365,14 @@ impl CachedStorage {
 
                     let result =
                         Self::upload_file(&local, &remote, &task, delete_after_upload, &cache_dir);
+
+                    // Clear pending_upload flag after upload attempt (success or failure)
+                    // This allows eviction to proceed even if upload failed
+                    if let Ok(mut entries) = entries.lock() {
+                        if let Some(entry) = entries.get_mut(&task.remote_path) {
+                            entry.pending_upload = false;
+                        }
+                    }
 
                     // Update stats
                     if let Ok(mut s) = stats.lock() {
@@ -460,7 +471,9 @@ impl CachedStorage {
     fn add_to_cache(&self, path: &Path, size: u64) {
         let cache_path = self.cache_path(path);
 
-        let mut entries = self.entries.lock().unwrap();
+        // Note: Mutex poisoning here indicates a serious bug (panic in another thread)
+        // We unwrap to surface the error rather than silently continuing
+        let mut entries = self.entries.lock().expect("entries mutex poisoned");
         entries.insert(path.to_path_buf(), CacheEntry::new(cache_path, size));
 
         let old_size = self.cache_size.fetch_add(size, Ordering::Relaxed);
@@ -483,10 +496,11 @@ impl CachedStorage {
 
     /// Update cache entry access time.
     fn record_access(&self, path: &Path) {
-        let mut entries = self.entries.lock().unwrap();
-        if let Some(entry) = entries.get_mut(path) {
-            entry.last_accessed = SystemTime::now();
-            entry.record_access();
+        if let Ok(mut entries) = self.entries.lock() {
+            if let Some(entry) = entries.get_mut(path) {
+                entry.last_accessed = SystemTime::now();
+                entry.record_access();
+            }
         }
     }
 
@@ -501,7 +515,9 @@ impl CachedStorage {
             }
 
             let (to_evict, freed_space) = {
-                let mut entries = self.entries.lock().unwrap();
+                let mut entries = self.entries.lock().map_err(|e| {
+                    StorageError::Other(format!("Failed to acquire entries lock: {}", e))
+                })?;
                 if entries.is_empty() {
                     break;
                 }
@@ -530,7 +546,10 @@ impl CachedStorage {
                     break;
                 };
 
-                let entry = entries.remove(&path).unwrap();
+                let Some(entry) = entries.remove(&path) else {
+                    // Entry was removed by another thread, try again
+                    continue;
+                };
                 let freed = entry.size;
                 (path, freed)
             };
@@ -538,7 +557,13 @@ impl CachedStorage {
             // Delete the cached file
             let cache_path = self.cache_path(&to_evict);
             if cache_path.exists() {
-                let _ = fs::remove_file(&cache_path);
+                if let Err(e) = fs::remove_file(&cache_path) {
+                    tracing::warn!(
+                        "Failed to delete cached file during eviction {}: {}. Cache tracking may be inconsistent.",
+                        cache_path.display(),
+                        e
+                    );
+                }
             }
 
             // Update size
@@ -563,8 +588,7 @@ impl CachedStorage {
     /// Queue a file for background upload.
     fn queue_upload(&self, local_path: PathBuf, remote_path: PathBuf, size: u64) -> Result<()> {
         // Mark as pending upload
-        {
-            let mut entries = self.entries.lock().unwrap();
+        if let Ok(mut entries) = self.entries.lock() {
             if let Some(entry) = entries.get_mut(&remote_path) {
                 entry.pending_upload = true;
             }
@@ -590,7 +614,12 @@ impl CachedStorage {
 
     /// Get cache statistics.
     pub fn stats(&self) -> CacheStats {
-        self.stats.lock().unwrap().clone()
+        if let Ok(stats) = self.stats.lock() {
+            stats.clone()
+        } else {
+            tracing::error!("Failed to acquire stats lock (mutex poisoned), returning default stats");
+            CacheStats::default()
+        }
     }
 
     /// Flush all pending uploads and wait for completion.
@@ -604,10 +633,7 @@ impl CachedStorage {
         tracing::info!("Starting cache flush...");
 
         loop {
-            let pending = {
-                let stats = self.stats.lock().unwrap();
-                stats.pending_uploads
-            };
+            let pending = self.stats().pending_uploads;
 
             if pending == 0 {
                 tracing::info!("Cache flush complete");
@@ -776,15 +802,22 @@ impl Storage for CachedStorage {
 
         // Remove from cache metadata
         {
-            let mut entries = self.entries.lock().unwrap();
-            if let Some(entry) = entries.remove(path) {
-                self.cache_size.fetch_sub(entry.size, Ordering::Relaxed);
+            if let Ok(mut entries) = self.entries.lock() {
+                if let Some(entry) = entries.remove(path) {
+                    self.cache_size.fetch_sub(entry.size, Ordering::Relaxed);
+                }
             }
         }
 
         // Delete cached file if exists
         if cache_path.exists() {
-            let _ = fs::remove_file(&cache_path);
+            if let Err(e) = fs::remove_file(&cache_path) {
+                tracing::warn!(
+                    "Failed to delete cached file during delete operation {}: {}. Remote delete will proceed.",
+                    cache_path.display(),
+                    e
+                );
+            }
         }
 
         // Delete from remote
@@ -1270,6 +1303,104 @@ mod tests {
         let stats = cached.stats();
         // We wrote 3 files, so uploads_completed + pending should be 3
         assert_eq!(stats.uploads_completed + stats.pending_uploads, 3);
+
+        // Cleanup
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_lru_eviction_when_cache_exceeds_limit() {
+        let temp_dir = std::env::temp_dir().join("eviction_test");
+        let _ = fs::create_dir_all(&temp_dir);
+
+        let remote_dir = temp_dir.join("remote");
+        let remote = Arc::new(LocalStorage::new(&remote_dir));
+
+        let cache_dir = temp_dir.join("cache");
+        // Set a small cache size (200 bytes) to trigger eviction
+        let config = CacheConfig::new(&cache_dir)
+            .with_max_cache_size(200)
+            .with_upload_concurrency(1)
+            .with_eviction_policy(EvictionPolicy::Lru);
+        let cached = CachedStorage::new(remote, config).unwrap();
+
+        // Write file A (50 bytes)
+        let data_a = b"A".repeat(50);
+        let mut writer = cached.writer(Path::new("file_a.txt")).unwrap();
+        writer.write_all(&data_a).unwrap();
+        drop(writer);
+        thread::sleep(Duration::from_millis(50));
+
+        // Write file B (50 bytes)
+        let data_b = b"B".repeat(50);
+        let mut writer = cached.writer(Path::new("file_b.txt")).unwrap();
+        writer.write_all(&data_b).unwrap();
+        drop(writer);
+        thread::sleep(Duration::from_millis(50));
+
+        // Write file C (50 bytes) - should evict file A (LRU)
+        let data_c = b"C".repeat(50);
+        let mut writer = cached.writer(Path::new("file_c.txt")).unwrap();
+        writer.write_all(&data_c).unwrap();
+        drop(writer);
+        thread::sleep(Duration::from_millis(50));
+
+        // Access file B to make it more recently used than C
+        let _ = cached.reader(Path::new("file_b.txt"));
+
+        // Write file D (50 bytes) - should evict file C (oldest)
+        let data_d = b"D".repeat(50);
+        let mut writer = cached.writer(Path::new("file_d.txt")).unwrap();
+        writer.write_all(&data_d).unwrap();
+        drop(writer);
+        thread::sleep(Duration::from_millis(50));
+
+        // Verify cache size is approximately at limit
+        let stats = cached.stats();
+        assert!(
+            stats.total_cached_bytes <= 250,
+            "Cache size {} exceeds limit",
+            stats.total_cached_bytes
+        );
+
+        // Cleanup
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_fifo_eviction_policy() {
+        let temp_dir = std::env::temp_dir().join("fifo_eviction_test");
+        let _ = fs::create_dir_all(&temp_dir);
+
+        let remote_dir = temp_dir.join("remote");
+        let remote = Arc::new(LocalStorage::new(&remote_dir));
+
+        let cache_dir = temp_dir.join("cache");
+        // Set cache size to hold 3 files of 50 bytes each
+        let config = CacheConfig::new(&cache_dir)
+            .with_max_cache_size(150)
+            .with_upload_concurrency(1)
+            .with_eviction_policy(EvictionPolicy::Fifo);
+        let cached = CachedStorage::new(remote, config).unwrap();
+
+        // Write files in order: A, B, C, D
+        // D should evict A (oldest) in FIFO
+        for i in 0..4 {
+            let path = format!("file_{}.txt", i);
+            let data = format!("data{}", i);
+            let mut writer = cached.writer(Path::new(&path)).unwrap();
+            writer.write_all(data.as_bytes()).unwrap();
+            drop(writer);
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        // Verify cache doesn't exceed limit significantly
+        let stats = cached.stats();
+        assert!(
+            stats.total_cached_bytes <= 200,
+            "Cache size {} exceeds limit",
+            stats.total_cached_bytes
+        );
 
         // Cleanup
         let _ = fs::remove_dir_all(temp_dir);
