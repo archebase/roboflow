@@ -162,10 +162,10 @@ impl TaskStatistics {
                     let sub_path = sub_entry.path();
 
                     // Check for HDF5 files in proprio_stats
-                    if sub_path.extension().and_then(|s| s.to_str()) == Some("hdf5") {
-                        if let Ok(frames) = Self::extract_frame_count_from_hdf5(&sub_path) {
-                            total_frames = total_frames.max(frames);
-                        }
+                    if sub_path.extension().and_then(|s| s.to_str()) == Some("hdf5")
+                        && let Ok(frames) = Self::extract_frame_count_from_hdf5(&sub_path)
+                    {
+                        total_frames = total_frames.max(frames);
                     }
                 }
             } else if path.is_file() {
@@ -215,17 +215,17 @@ impl TaskStatistics {
     ///
     /// Reads the frame_count attribute or infers from dataset shapes.
     fn extract_frame_count_from_hdf5(path: &Path) -> Result<usize, Box<dyn std::error::Error>> {
-        #[cfg(feature = "kps-hdf5")]
+        #[cfg(feature = "dataset-hdf5")]
         {
             use hdf5::File;
 
             let file = File::open(path)?;
 
             // Try to read frame_count attribute
-            if let Ok(frame_count) = file.attr("frame_count") {
-                if let Ok(count) = frame_count.read_scalar::<usize>() {
-                    return Ok(count);
-                }
+            if let Ok(frame_count) = file.attr("frame_count")
+                && let Ok(count) = frame_count.read_scalar::<usize>()
+            {
+                return Ok(count);
             }
 
             // Try to infer from dataset shapes
@@ -242,18 +242,18 @@ impl TaskStatistics {
             ];
 
             for dataset_path in &common_paths {
-                if let Ok(dataset) = file.dataset(dataset_path) {
-                    if let Ok(dspace) = dataset.space() {
-                        let shape = dspace.shape();
-                        if !shape.is_empty() {
-                            return Ok(shape[0]);
-                        }
+                if let Ok(dataset) = file.dataset(dataset_path)
+                    && let Ok(dspace) = dataset.space()
+                {
+                    let shape = dspace.shape();
+                    if !shape.is_empty() {
+                        return Ok(shape[0]);
                     }
                 }
             }
         }
 
-        #[cfg(not(feature = "kps-hdf5"))]
+        #[cfg(not(feature = "dataset-hdf5"))]
         {
             let _ = path;
         }
@@ -770,15 +770,15 @@ impl V12DeliveryBuilder {
             let entry = entry?;
             let path = entry.path();
 
-            if let Some(ext) = path.extension() {
-                if matches!(
+            if let Some(ext) = path.extension()
+                && matches!(
                     ext.to_str(),
                     Some("wav") | Some("mp3") | Some("ogg") | Some("flac")
-                ) {
-                    let target = audio_dir.join(path.file_name().unwrap());
-                    fs::copy(&path, &target)?;
-                    println!("Copied: {} -> {}", path.display(), target.display());
-                }
+                )
+            {
+                let target = audio_dir.join(path.file_name().unwrap());
+                fs::copy(&path, &target)?;
+                println!("Copied: {} -> {}", path.display(), target.display());
             }
         }
 

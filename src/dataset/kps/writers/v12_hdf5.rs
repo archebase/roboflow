@@ -44,8 +44,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::core::Result;
+use crate::dataset::common::{AlignedFrame, WriterStats};
 use crate::dataset::kps::config::KpsConfig;
-use crate::dataset::kps::writers::base::{AlignedFrame, KpsWriter, KpsWriterError, WriterStats};
+use crate::dataset::kps::writers::base::{KpsWriter, KpsWriterError};
 use robocodec::io::metadata::ChannelInfo;
 
 /// Dataset specification for v1.2 HDF5 structure.
@@ -240,15 +241,15 @@ pub struct V12Hdf5Writer {
     state_records: usize,
 
     /// HDF5 file handle.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     hdf5_file: Option<hdf5::File>,
 
     /// HDF5 datasets by full path.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     datasets: HashMap<String, hdf5::Dataset>,
 
     /// HDF5 groups for quick access.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     groups: HashMap<String, hdf5::Group>,
 
     /// Schema for this file.
@@ -267,15 +268,15 @@ pub struct V12Hdf5Writer {
     start_time: Option<std::time::Instant>,
 
     /// Buffered state data by dataset path.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     state_buffers: HashMap<String, Vec<Vec<f32>>>,
 
     /// Buffered timestamp data.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     timestamp_buffer: Vec<i64>,
 
     /// Buffered frame index data.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     frame_index_buffer: Vec<i32>,
 }
 
@@ -305,28 +306,28 @@ impl V12Hdf5Writer {
             frame_count: 0,
             images_encoded: 0,
             state_records: 0,
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             hdf5_file: None,
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             datasets: HashMap::new(),
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             groups: HashMap::new(),
             schema,
             initialized: false,
             frame_dimensions: HashMap::new(),
             channels: channel_map,
             start_time: None,
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             state_buffers: HashMap::new(),
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             timestamp_buffer: Vec::new(),
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             frame_index_buffer: Vec::new(),
         })
     }
 
     /// Create the v1.2 HDF5 group structure.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn create_v12_structure(&mut self, file: &hdf5::File) -> Result<()> {
         // Create top-level groups
         let action_group = file
@@ -360,7 +361,7 @@ impl V12Hdf5Writer {
     }
 
     /// Create a dataset from a specification.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn create_dataset_from_spec(&mut self, file: &hdf5::File, spec: &DatasetSpec) -> Result<()> {
         // Ensure parent groups exist
         let path_parts: Vec<&str> = spec.path.split('/').collect();
@@ -495,7 +496,7 @@ impl V12Hdf5Writer {
     /// Write data to a v1.2 dataset.
     ///
     /// Data is buffered and written at finalization.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn write_to_dataset(&mut self, path: &str, data: &[f32]) -> Result<()> {
         self.state_buffers
             .entry(path.to_string())
@@ -505,7 +506,7 @@ impl V12Hdf5Writer {
     }
 
     /// Write all buffered data to HDF5 datasets.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn write_buffered_data(&mut self) -> Result<()> {
         // Write state buffers
         for (path, states) in &self.state_buffers {
@@ -534,27 +535,27 @@ impl V12Hdf5Writer {
         }
 
         // Write timestamp buffer
-        if !self.timestamp_buffer.is_empty() {
-            if let Some(dataset) = self.datasets.get("metadata/timestamps") {
-                dataset
-                    .resize([self.timestamp_buffer.len()])
-                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-                dataset
-                    .write(&self.timestamp_buffer)
-                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-            }
+        if !self.timestamp_buffer.is_empty()
+            && let Some(dataset) = self.datasets.get("metadata/timestamps")
+        {
+            dataset
+                .resize([self.timestamp_buffer.len()])
+                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+            dataset
+                .write(&self.timestamp_buffer)
+                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
         }
 
         // Write frame index buffer
-        if !self.frame_index_buffer.is_empty() {
-            if let Some(dataset) = self.datasets.get("metadata/frame_index") {
-                dataset
-                    .resize([self.frame_index_buffer.len()])
-                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-                dataset
-                    .write(&self.frame_index_buffer)
-                    .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
-            }
+        if !self.frame_index_buffer.is_empty()
+            && let Some(dataset) = self.datasets.get("metadata/frame_index")
+        {
+            dataset
+                .resize([self.frame_index_buffer.len()])
+                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
+            dataset
+                .write(&self.frame_index_buffer)
+                .map_err(|e| KpsWriterError::Hdf5(e.to_string()))?;
         }
 
         Ok(())
@@ -567,7 +568,7 @@ impl KpsWriter for V12Hdf5Writer {
         config: &KpsConfig,
         channels: &HashMap<u16, ChannelInfo>,
     ) -> Result<()> {
-        #[cfg(feature = "kps-hdf5")]
+        #[cfg(feature = "dataset-hdf5")]
         {
             use hdf5::File;
 
@@ -604,7 +605,7 @@ impl KpsWriter for V12Hdf5Writer {
             Ok(())
         }
 
-        #[cfg(not(feature = "kps-hdf5"))]
+        #[cfg(not(feature = "dataset-hdf5"))]
         {
             let _ = (config, channels);
             Err(crate::core::RoboflowError::ParseError {
@@ -615,7 +616,7 @@ impl KpsWriter for V12Hdf5Writer {
     }
 
     fn write_frame(&mut self, frame: &AlignedFrame) -> Result<()> {
-        #[cfg(feature = "kps-hdf5")]
+        #[cfg(feature = "dataset-hdf5")]
         {
             if !self.initialized {
                 return Err(
@@ -654,7 +655,7 @@ impl KpsWriter for V12Hdf5Writer {
             Ok(())
         }
 
-        #[cfg(not(feature = "kps-hdf5"))]
+        #[cfg(not(feature = "dataset-hdf5"))]
         {
             let _ = frame;
             Err(crate::core::RoboflowError::ParseError {
@@ -669,7 +670,7 @@ impl KpsWriter for V12Hdf5Writer {
         _config: &KpsConfig,
         _camera_params: Option<&crate::dataset::kps::camera_params::CameraParamCollector>,
     ) -> Result<WriterStats> {
-        #[cfg(feature = "kps-hdf5")]
+        #[cfg(feature = "dataset-hdf5")]
         {
             // Write all buffered data to HDF5
             self.write_buffered_data()?;
@@ -697,7 +698,7 @@ impl KpsWriter for V12Hdf5Writer {
             })
         }
 
-        #[cfg(not(feature = "kps-hdf5"))]
+        #[cfg(not(feature = "dataset-hdf5"))]
         {
             let _ = (_config, _camera_params);
             Err(crate::core::RoboflowError::ParseError {

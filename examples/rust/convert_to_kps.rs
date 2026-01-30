@@ -11,11 +11,11 @@
 //!
 //! ```bash
 //! # Parquet + MP4 format (v3.0)
-//! cargo run --example convert_to_kps --features kps-parquet -- \
+//! cargo run --example convert_to_kps --features dataset-parquet -- \
 //!     input.mcap output_dir kps_config.toml
 //!
 //! # HDF5 format (legacy v1.2)
-//! cargo run --example convert_to_kps --features kps-hdf5 -- \
+//! cargo run --example convert_to_kps --features dataset-hdf5 -- \
 //!     input.mcap output_dir kps_config.toml
 //! ```
 //!

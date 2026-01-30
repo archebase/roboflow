@@ -7,13 +7,13 @@
 //! Usage:
 //!   cargo test -p roboflow --test bag_round_trip_tests -- --nocapture
 
+use robocodec::RewriteOptions;
 use robocodec::bag::BagFormat;
 use robocodec::io::traits::FormatReader;
 use robocodec::mcap::ParallelMcapWriter;
 use robocodec::rewriter::bag::BagRewriter as BagBagRewriter;
 use robocodec::transform::MultiTransform;
 use robocodec::transform::TransformBuilder;
-use robocodec::RewriteOptions;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::BufWriter;

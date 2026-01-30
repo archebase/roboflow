@@ -7,10 +7,10 @@
 //! Usage:
 //!   cargo test -p roboflow --test mcap_rename_wildcard -- --nocapture
 
+use robocodec::RewriteOptions;
 use robocodec::mcap::McapReader;
 use robocodec::rewriter::McapRewriter;
 use robocodec::transform::TransformBuilder;
-use robocodec::RewriteOptions;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 

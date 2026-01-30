@@ -201,10 +201,10 @@ fn extract_mcap_messages(
     let mut written = 0;
 
     for result in stream {
-        if let Some(limit) = count {
-            if written >= limit {
-                break;
-            }
+        if let Some(limit) = count
+            && written >= limit
+        {
+            break;
         }
 
         let (msg, _channel) = result?;
@@ -260,10 +260,10 @@ fn extract_bag_messages(
     let mut written = 0;
 
     for result in iter {
-        if let Some(limit) = count {
-            if written >= limit {
-                break;
-            }
+        if let Some(limit) = count
+            && written >= limit
+        {
+            break;
         }
 
         let (msg, _channel) = result?;

@@ -80,7 +80,7 @@ pub struct nvcompDecompressor_t(c_void);
 // be generated using bindgen or manually maintained to match the
 // nvCOMP C API.
 
-extern "C" {
+unsafe extern "C" {
     /// Create a new compressor.
     ///
     /// # Arguments

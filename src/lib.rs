@@ -73,26 +73,26 @@ pub mod dataset;
 pub use core::{CodecError, CodecValue, DecodedMessage, PrimitiveType, Result, RoboflowError};
 
 // Schema parsing (re-exported from robocodec)
-pub use robocodec::schema::{parse_schema, FieldType, MessageSchema};
+pub use robocodec::schema::{FieldType, MessageSchema, parse_schema};
 
 // I/O types (re-exported from robocodec)
 pub use robocodec::io::{
+    ChannelInfo,
     metadata::RawMessage,
     reader::{ReaderBuilder, RoboReader},
     traits::{FormatReader, FormatWriter},
     writer::RoboWriter,
-    ChannelInfo,
 };
 pub use robocodec::transform::TransformBuilder;
 
 // KPS dataset format
 pub use dataset::kps::{
+    Hdf5KpsWriter, ParquetKpsWriter,
     config::{KpsConfig, Mapping, MappingType, OutputFormat},
     delivery_v12::{
         SeriesDeliveryConfig, SeriesDeliveryConfigBuilder, StatisticsCollector, TaskInfo,
         TaskStatistics, V12DeliveryBuilder,
     },
-    Hdf5KpsWriter, ParquetKpsWriter,
 };
 
 // Configuration

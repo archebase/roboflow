@@ -36,7 +36,7 @@ use std::thread;
 use std::time::Instant;
 
 use crossbeam_channel::Sender;
-use io_uring::{opcode, types, IoUring};
+use io_uring::{IoUring, opcode, types};
 use tracing::{debug, info, instrument};
 
 use crate::core::{Result, RoboflowError};

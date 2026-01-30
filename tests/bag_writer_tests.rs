@@ -204,15 +204,21 @@ fn test_add_multiple_connections() {
 
     let mut writer = BagWriter::create(&path).unwrap();
 
-    assert!(writer
-        .add_connection(0, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF)
-        .is_ok());
-    assert!(writer
-        .add_connection(1, "/numbers", "std_msgs/Int32", STD_MSGS_INT32_DEF)
-        .is_ok());
-    assert!(writer
-        .add_connection(2, "/camera", "sensor_msgs/Image", SENSOR_MSGS_IMAGE_DEF)
-        .is_ok());
+    assert!(
+        writer
+            .add_connection(0, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF)
+            .is_ok()
+    );
+    assert!(
+        writer
+            .add_connection(1, "/numbers", "std_msgs/Int32", STD_MSGS_INT32_DEF)
+            .is_ok()
+    );
+    assert!(
+        writer
+            .add_connection(2, "/camera", "sensor_msgs/Image", SENSOR_MSGS_IMAGE_DEF)
+            .is_ok()
+    );
 
     writer.finish().unwrap();
 }
@@ -243,12 +249,16 @@ fn test_add_duplicate_topic_is_idempotent() {
     let mut writer = BagWriter::create(&path).unwrap();
 
     // Add the same topic twice
-    assert!(writer
-        .add_connection(0, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF)
-        .is_ok());
-    assert!(writer
-        .add_connection(0, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF)
-        .is_ok());
+    assert!(
+        writer
+            .add_connection(0, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF)
+            .is_ok()
+    );
+    assert!(
+        writer
+            .add_connection(0, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF)
+            .is_ok()
+    );
 
     // Should not create duplicate connections
     writer.finish().unwrap();
@@ -721,15 +731,19 @@ fn test_add_multiple_connections_before_finish() {
     // Add multiple connections
     for i in 0..3 {
         let topic = format!("/topic{}", i);
-        assert!(writer
-            .add_connection(i, &topic, "std_msgs/String", STD_MSGS_STRING_DEF)
-            .is_ok());
+        assert!(
+            writer
+                .add_connection(i, &topic, "std_msgs/String", STD_MSGS_STRING_DEF)
+                .is_ok()
+        );
     }
 
     // Write messages and finish
-    assert!(writer
-        .write_message(&BagMessage::new(0, 1_000_000_000, vec![1]))
-        .is_ok());
+    assert!(
+        writer
+            .write_message(&BagMessage::new(0, 1_000_000_000, vec![1]))
+            .is_ok()
+    );
     assert!(writer.finish().is_ok());
 }
 
@@ -893,30 +907,36 @@ fn test_topic_with_special_characters() {
     let mut writer = BagWriter::create(&path).unwrap();
 
     // Topics with underscores, numbers, and nested paths
-    assert!(writer
-        .add_connection(
-            0,
-            "/camera_front_raw",
-            "sensor_msgs/Image",
-            SENSOR_MSGS_IMAGE_DEF
-        )
-        .is_ok());
-    assert!(writer
-        .add_connection(
-            1,
-            "/robot/joint_states",
-            "sensor_msgs/JointState",
-            "int32[] data"
-        )
-        .is_ok());
-    assert!(writer
-        .add_connection(
-            2,
-            "/ns1/ns2/ns3/topic",
-            "std_msgs/String",
-            STD_MSGS_STRING_DEF
-        )
-        .is_ok());
+    assert!(
+        writer
+            .add_connection(
+                0,
+                "/camera_front_raw",
+                "sensor_msgs/Image",
+                SENSOR_MSGS_IMAGE_DEF
+            )
+            .is_ok()
+    );
+    assert!(
+        writer
+            .add_connection(
+                1,
+                "/robot/joint_states",
+                "sensor_msgs/JointState",
+                "int32[] data"
+            )
+            .is_ok()
+    );
+    assert!(
+        writer
+            .add_connection(
+                2,
+                "/ns1/ns2/ns3/topic",
+                "std_msgs/String",
+                STD_MSGS_STRING_DEF
+            )
+            .is_ok()
+    );
 
     writer.finish().unwrap();
 

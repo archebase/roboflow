@@ -45,7 +45,9 @@ jobs:
           if [ "$RUNNER_OS" == "Linux" ]; then
             sudo apt-get update && sudo apt-get install -y libhdf5-dev
           elif [ "$RUNNER_OS" == "macOS" ]; then
-            brew install hdf5
+            # Use HDF5 1.10 as hdf5-sys doesn't support HDF5 2.x yet
+            brew install hdf5@1.10
+            echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
           fi
         shell: bash
 
@@ -70,7 +72,9 @@ jobs:
           if [ "$RUNNER_OS" == "Linux" ]; then
             sudo apt-get update && sudo apt-get install -y libhdf5-dev
           elif [ "$RUNNER_OS" == "macOS" ]; then
-            brew install hdf5
+            # Use HDF5 1.10 as hdf5-sys doesn't support HDF5 2.x yet
+            brew install hdf5@1.10
+            echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
           fi
         shell: bash
 
@@ -78,7 +82,7 @@ jobs:
       # PyO3's extension-module feature prevents linking in standalone test binaries.
       # Python bindings are tested separately via maturin in the python job.
       - name: Run tests
-        run: cargo test --features kps-all
+        run: cargo test --features dataset-all
 
   python:
     name: Python Tests
@@ -206,7 +210,7 @@ jobs:
       # Note: Do NOT use --all-features here - PyO3's extension-module prevents linking.
       # Rust coverage excludes python feature; Python coverage is generated separately below.
       - name: Generate Rust coverage
-        run: cargo llvm-cov --features kps-all --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov --features dataset-all --workspace --lcov --output-path lcov.info
 
       - name: Generate Python coverage
         run: |

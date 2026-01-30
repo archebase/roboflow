@@ -188,10 +188,10 @@ fn show_topics(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
                 }
 
                 // Check for ROS1 header that needs special handling
-                if let Some(schema) = &channel.schema {
-                    if schema.trim().starts_with("Header header") {
-                        println!("  Note: Schema has ROS1 Header (will be handled for ROS1)");
-                    }
+                if let Some(schema) = &channel.schema
+                    && schema.trim().starts_with("Header header")
+                {
+                    println!("  Note: Schema has ROS1 Header (will be handled for ROS1)");
                 }
                 println!();
             }
@@ -209,10 +209,10 @@ fn show_topics(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
                     println!("  Schema encoding: {}", encoding);
                 }
 
-                if let Some(schema) = &channel.schema {
-                    if schema.trim().starts_with("Header header") {
-                        println!("  Note: Schema has ROS1 Header (will be handled for ROS1)");
-                    }
+                if let Some(schema) = &channel.schema
+                    && schema.trim().starts_with("Header header")
+                {
+                    println!("  Note: Schema has ROS1 Header (will be handled for ROS1)");
                 }
                 println!();
             }
@@ -341,10 +341,11 @@ fn show_schema(
         "mcap" => {
             let reader = robocodec::mcap::McapReader::open(file)?;
             for ch in reader.channels().values() {
-                if let Some(filter) = topic_filter {
-                    if !ch.topic.contains(filter) && !ch.message_type.contains(filter) {
-                        continue;
-                    }
+                if let Some(filter) = topic_filter
+                    && !ch.topic.contains(filter)
+                    && !ch.message_type.contains(filter)
+                {
+                    continue;
                 }
 
                 println!("=== {} ===", ch.topic);
@@ -367,10 +368,11 @@ fn show_schema(
             use robocodec::io::traits::FormatReader;
             let reader = robocodec::bag::BagFormat::open(file)?;
             for ch in reader.channels().values() {
-                if let Some(filter) = topic_filter {
-                    if !ch.topic.contains(filter) && !ch.message_type.contains(filter) {
-                        continue;
-                    }
+                if let Some(filter) = topic_filter
+                    && !ch.topic.contains(filter)
+                    && !ch.message_type.contains(filter)
+                {
+                    continue;
                 }
 
                 println!("=== {} ===", ch.topic);
@@ -394,10 +396,11 @@ fn show_schema(
             match robocodec::mcap::McapReader::open(file) {
                 Ok(reader) => {
                     for ch in reader.channels().values() {
-                        if let Some(filter) = topic_filter {
-                            if !ch.topic.contains(filter) && !ch.message_type.contains(filter) {
-                                continue;
-                            }
+                        if let Some(filter) = topic_filter
+                            && !ch.topic.contains(filter)
+                            && !ch.message_type.contains(filter)
+                        {
+                            continue;
                         }
 
                         println!("=== {} ===", ch.topic);
@@ -416,10 +419,11 @@ fn show_schema(
                     use robocodec::io::traits::FormatReader;
                     let reader = robocodec::bag::BagFormat::open(file)?;
                     for ch in reader.channels().values() {
-                        if let Some(filter) = topic_filter {
-                            if !ch.topic.contains(filter) && !ch.message_type.contains(filter) {
-                                continue;
-                            }
+                        if let Some(filter) = topic_filter
+                            && !ch.topic.contains(filter)
+                            && !ch.message_type.contains(filter)
+                        {
+                            continue;
                         }
 
                         println!("=== {} ===", ch.topic);
@@ -798,10 +802,10 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
                     }
                 }
                 Err(_) => {
-                    if let Ok(reader) = robocodec::bag::ParallelBagReader::open(file) {
-                        if !reader.chunks().is_empty() {
-                            return show_chunks(file, "bag");
-                        }
+                    if let Ok(reader) = robocodec::bag::ParallelBagReader::open(file)
+                        && !reader.chunks().is_empty()
+                    {
+                        return show_chunks(file, "bag");
                     }
                 }
             }

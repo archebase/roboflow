@@ -415,7 +415,7 @@ impl From<robocodec::CodecError> for RoboflowError {
 }
 
 // Forward KPS writer errors to codec errors
-#[cfg(feature = "kps-hdf5")]
+#[cfg(feature = "dataset-hdf5")]
 impl From<crate::dataset::kps::writers::KpsWriterError> for RoboflowError {
     fn from(err: crate::dataset::kps::writers::KpsWriterError) -> Self {
         RoboflowError::EncodeError {
@@ -425,7 +425,7 @@ impl From<crate::dataset::kps::writers::KpsWriterError> for RoboflowError {
     }
 }
 
-#[cfg(all(feature = "kps-parquet", not(feature = "kps-hdf5")))]
+#[cfg(all(feature = "dataset-parquet", not(feature = "dataset-hdf5")))]
 impl From<crate::dataset::kps::writers::KpsWriterError> for RoboflowError {
     fn from(err: crate::dataset::kps::writers::KpsWriterError) -> Self {
         RoboflowError::EncodeError {

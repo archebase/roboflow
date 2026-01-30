@@ -69,12 +69,12 @@ pub use task_info::{ActionSegment, KeyFrame, LabelInfo, TaskInfo, TaskInfoBuilde
 
 // Re-export streaming writer types
 pub use writers::{
-    create_writer, AlignedFrame, AudioData, ImageData, KpsWriter, KpsWriterError, MessageExtractor,
-    WriterStats,
+    AlignedFrame, AudioData, DatasetWriter, ImageData, KpsWriterError, MessageExtractor,
+    WriterStats, create_kps_writer,
 };
 
-#[cfg(feature = "kps-hdf5")]
+#[cfg(feature = "dataset-hdf5")]
 pub use writers::StreamingHdf5Writer;
 
-#[cfg(feature = "kps-parquet")]
+#[cfg(feature = "dataset-parquet")]
 pub use writers::StreamingParquetWriter;

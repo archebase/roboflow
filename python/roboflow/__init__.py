@@ -6,6 +6,7 @@
 Roboflow - High-performance robotics data conversion.
 
 Fluent API for converting between MCAP and ROS bag formats.
+Dataset API for creating ML training datasets (KPS, LeRobot).
 
 Example:
     >>> import roboflow
@@ -16,20 +17,16 @@ Example:
     ... )
     >>> print(result)
 
-    # With transforms:
-    >>> builder = roboflow.TransformBuilder()
-    >>> builder = builder.with_topic_rename("/old", "/new")
-    >>> transform_id = builder.build()
-    >>> result = (
-    ...     roboflow.Roboflow.open(["input.bag"])
-    ...     .transform(transform_id)
-    ...     .write_to("output.mcap")
-    ...     .run()
-    ... )
+    # Dataset conversion:
+    >>> config = roboflow.DatasetConfig.from_file("config.toml", format="kps")
+    >>> converter = roboflow.DatasetConverter.create("/output", config)
+    >>> stats = converter.convert("input.mcap")
+    >>> print(f"Converted {stats.frames_written} frames")
 """
 
 from roboflow._roboflow import (
     __version__,
+    # Main API
     Roboflow,
     TransformBuilder,
     CompressionPreset,
@@ -37,10 +34,18 @@ from roboflow._roboflow import (
     HyperPipelineReport,
     FileResult,
     BatchReport,
+    # Dataset API
+    DatasetConverter,
+    DatasetConfig,
+    ConversionJob,
+    DatasetStats,
+    ProgressUpdate,
+    convert,
 )
 
 __all__ = [
     "__version__",
+    # Main API
     "Roboflow",
     "TransformBuilder",
     "CompressionPreset",
@@ -48,4 +53,31 @@ __all__ = [
     "HyperPipelineReport",
     "FileResult",
     "BatchReport",
+    # Dataset API
+    "DatasetConverter",
+    "DatasetConfig",
+    "ConversionJob",
+    "DatasetStats",
+    "ProgressUpdate",
+    "convert",
+    # Dataset submodule
+    "dataset",
 ]
+
+# Dataset submodule alias for convenience
+import sys
+import types
+
+# Create the dataset submodule
+_dataset_module = types.ModuleType("roboflow.dataset", "Dataset submodule")
+_dataset_module.DatasetConverter = DatasetConverter  # type: ignore[attr-defined]
+_dataset_module.DatasetConfig = DatasetConfig  # type: ignore[attr-defined]
+_dataset_module.ConversionJob = ConversionJob  # type: ignore[attr-defined]
+_dataset_module.DatasetStats = DatasetStats  # type: ignore[attr-defined]
+_dataset_module.ProgressUpdate = ProgressUpdate  # type: ignore[attr-defined]
+
+# Register in sys.modules so 'from roboflow.dataset import X' works
+sys.modules["roboflow.dataset"] = _dataset_module
+
+# Also expose as attribute so 'roboflow.dataset' works
+dataset = _dataset_module

@@ -4,7 +4,7 @@
 # to the Kps dataset format with the full HDF5 hierarchical structure.
 #
 # Usage:
-#   cargo run --bin convert --features kps-hdf5 -- to-kps input.mcap ./output kps_config.toml
+#   cargo run --bin convert --features dataset-hdf5 -- to-kps input.mcap ./output kps_config.toml
 
 [dataset]
 # Dataset name (e.g., "Kuavo4Pro-Dexhand-Housekeeper1")

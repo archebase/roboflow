@@ -53,86 +53,82 @@ fn test_robocodec_test_2_fixture() {
         );
 
         // Handle CDR encoding - parse schema and decode with CdrDecoder
-        if encoding.contains("cdr") {
-            if let Some(schema_text) = &channel.schema {
-                let definition = schema_text;
+        if encoding.contains("cdr")
+            && let Some(schema_text) = &channel.schema
+        {
+            let definition = schema_text;
 
-                // Debug: Print first problematic schema
-                if channel_id == 2 || channel_id == 10 {
-                    println!("\n=== Schema definition for channel {channel_id} ===");
-                    println!("{definition}");
-                    println!("=== End schema ===\n");
-                }
+            // Debug: Print first problematic schema
+            if channel_id == 2 || channel_id == 10 {
+                println!("\n=== Schema definition for channel {channel_id} ===");
+                println!("{definition}");
+                println!("=== End schema ===\n");
+            }
 
-                // Use schema encoding for parsing
-                let schema_encoding = channel.schema_encoding.as_deref().unwrap_or("ros1msg");
+            // Use schema encoding for parsing
+            let schema_encoding = channel.schema_encoding.as_deref().unwrap_or("ros1msg");
 
-                match robocodec::schema::parser::parse_schema_with_encoding_str(
-                    &schema_name,
-                    definition,
-                    schema_encoding,
-                ) {
-                    Ok(schema) => {
-                        println!("    Schema parsed: {} types", schema.types.len());
+            match robocodec::schema::parser::parse_schema_with_encoding_str(
+                &schema_name,
+                definition,
+                schema_encoding,
+            ) {
+                Ok(schema) => {
+                    println!("    Schema parsed: {} types", schema.types.len());
 
-                        // Debug: Print parsed types for failing channels
-                        if channel_id == 2 || channel_id == 10 {
-                            println!("    Parsed types:");
-                            for (name, msg_type) in &schema.types {
-                                println!("      {}: {} fields", name, msg_type.fields.len());
-                                for field in &msg_type.fields {
-                                    println!("        - {}: {:?}", field.name, field.type_name);
-                                }
+                    // Debug: Print parsed types for failing channels
+                    if channel_id == 2 || channel_id == 10 {
+                        println!("    Parsed types:");
+                        for (name, msg_type) in &schema.types {
+                            println!("      {}: {} fields", name, msg_type.fields.len());
+                            for field in &msg_type.fields {
+                                println!("        - {}: {:?}", field.name, field.type_name);
                             }
                         }
+                    }
 
-                        // Read and decode the first message
-                        let decoder = CdrDecoder::new();
-                        let mut messages_tested = 0;
+                    // Read and decode the first message
+                    let decoder = CdrDecoder::new();
+                    let mut messages_tested = 0;
 
-                        if let Ok(raw_iter) = reader.iter_raw() {
-                            if let Ok(stream) = raw_iter.stream() {
-                                for (msg, _ch) in stream.flatten() {
-                                    if msg.channel_id == channel_id {
-                                        match decoder.decode(&schema, &msg.data, None) {
-                                            Ok(_) => {
-                                                messages_tested += 1;
+                    if let Ok(raw_iter) = reader.iter_raw()
+                        && let Ok(stream) = raw_iter.stream()
+                    {
+                        for (msg, _ch) in stream.flatten() {
+                            if msg.channel_id == channel_id {
+                                match decoder.decode(&schema, &msg.data, None) {
+                                    Ok(_) => {
+                                        messages_tested += 1;
+                                    }
+                                    Err(e) => {
+                                        let err_msg =
+                                            format!("Decode error on channel [{channel_id}]: {e}");
+                                        eprintln!("    {err_msg}");
+                                        // Print hex dump of the message data for debugging
+                                        eprintln!("    Message data ({} bytes):", msg.data.len());
+                                        for (i, chunk) in msg.data.chunks(16).enumerate() {
+                                            eprint!("      {:04x}: ", i * 16);
+                                            for byte in chunk {
+                                                eprint!("{byte:02x} ");
                                             }
-                                            Err(e) => {
-                                                let err_msg = format!(
-                                                    "Decode error on channel [{channel_id}]: {e}"
-                                                );
-                                                eprintln!("    {err_msg}");
-                                                // Print hex dump of the message data for debugging
-                                                eprintln!(
-                                                    "    Message data ({} bytes):",
-                                                    msg.data.len()
-                                                );
-                                                for (i, chunk) in msg.data.chunks(16).enumerate() {
-                                                    eprint!("      {:04x}: ", i * 16);
-                                                    for byte in chunk {
-                                                        eprint!("{byte:02x} ");
-                                                    }
-                                                    eprintln!();
-                                                }
-                                                decode_errors.push(err_msg);
-                                            }
+                                            eprintln!();
                                         }
-
-                                        if messages_tested >= 1 {
-                                            break;
-                                        }
+                                        decode_errors.push(err_msg);
                                     }
                                 }
+
+                                if messages_tested >= 1 {
+                                    break;
+                                }
                             }
                         }
-                        total_messages += messages_tested;
                     }
-                    Err(e) => {
-                        let err_msg = format!("Schema parse error on channel [{channel_id}]: {e}");
-                        eprintln!("    {err_msg}");
-                        decode_errors.push(err_msg);
-                    }
+                    total_messages += messages_tested;
+                }
+                Err(e) => {
+                    let err_msg = format!("Schema parse error on channel [{channel_id}]: {e}");
+                    eprintln!("    {err_msg}");
+                    decode_errors.push(err_msg);
                 }
             }
         }

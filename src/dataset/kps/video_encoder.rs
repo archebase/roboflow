@@ -619,7 +619,7 @@ impl DepthMkvEncoder {
     }
 
     /// Save depth frames as 16-bit PNG files.
-    #[cfg(feature = "kps-depth")]
+    #[cfg(feature = "dataset-depth")]
     fn save_as_png(
         &self,
         buffer: &DepthFrameBuffer,
@@ -673,14 +673,14 @@ impl DepthMkvEncoder {
         Ok(paths)
     }
 
-    #[cfg(not(feature = "kps-depth"))]
+    #[cfg(not(feature = "dataset-depth"))]
     fn save_as_png(
         &self,
         _buffer: &DepthFrameBuffer,
         _output_dir: &Path,
         _camera_name: &str,
     ) -> Result<Vec<PathBuf>, VideoEncoderError> {
-        tracing::warn!("PNG fallback not available (enable 'kps-depth' feature)");
+        tracing::warn!("PNG fallback not available (enable 'dataset-depth' feature)");
         Ok(Vec::new())
     }
 }

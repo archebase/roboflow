@@ -1,0 +1,61 @@
+# LeRobot v2.1 dataset conversion configuration
+#
+# This configuration maps ROS bag topics to LeRobot dataset features
+# for converting robotics data to LeRobot v2.1 format.
+
+[dataset]
+# Dataset name (used in metadata)
+name = "rubbish_sorting"
+# Frames per second for the dataset
+fps = 30
+# Robot type (optional, can be inferred from annotations)
+robot_type = "kuavo_p4"
+# Environment type (optional)
+# env_type = "table_top"
+
+# Topic to LeRobot feature mapping
+# Each mapping specifies a ROS topic and its corresponding LeRobot feature
+
+# High camera (overview)
+[[mappings]]
+topic = "/cam_h/color/image_raw/compressed"
+feature = "observation.images.cam_high"
+mapping_type = "image"
+
+# Left camera (wrist view)
+[[mappings]]
+topic = "/cam_l/color/image_raw/compressed"
+feature = "observation.images.cam_left"
+mapping_type = "image"
+
+# Right camera (wrist view)
+[[mappings]]
+topic = "/cam_r/color/image_raw/compressed"
+feature = "observation.images.cam_right"
+mapping_type = "image"
+
+# Robot arm trajectory (joint positions for observation)
+[[mappings]]
+topic = "/kuavo_arm_traj"
+feature = "observation.state"
+mapping_type = "state"
+
+# Joint commands (target positions for action)
+[[mappings]]
+topic = "/joint_cmd"
+feature = "action"
+mapping_type = "action"
+
+# Optional: Gripper state
+# [[mappings]]
+# topic = "/leju_claw_state"
+# feature = "observation.gripper_state"
+# mapping_type = "state"
+
+[video]
+# Video codec (libx264 = H.264)
+codec = "libx264"
+# CRF quality (lower = better, 0-51, 18 = visually lossless)
+crf = 18
+# Encoder preset (ultrafast, superfast, veryfast, faster, fast, medium, slow)
+preset = "fast"

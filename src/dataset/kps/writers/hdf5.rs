@@ -11,10 +11,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::core::Result;
+use crate::dataset::common::{AlignedFrame, DatasetWriter, ImageData, WriterStats};
 use crate::dataset::kps::config::KpsConfig;
-use crate::dataset::kps::writers::base::{
-    AlignedFrame, ImageData, KpsWriter, KpsWriterError, WriterStats,
-};
+use crate::dataset::kps::writers::base::{KpsWriter, KpsWriterError};
 use robocodec::io::metadata::ChannelInfo;
 
 /// Buffered image data for HDF5 writing.
@@ -49,31 +48,31 @@ pub struct StreamingHdf5Writer {
     state_records: usize,
 
     /// HDF5 file handle (when feature is enabled).
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     hdf5_file: Option<hdf5::File>,
 
     /// HDF5 datasets for image data.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     image_datasets: HashMap<String, hdf5::Dataset>,
 
     /// HDF5 datasets for state data.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     state_datasets: HashMap<String, hdf5::Dataset>,
 
     /// HDF5 datasets for action data.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     action_datasets: HashMap<String, hdf5::Dataset>,
 
     /// HDF5 group for observations.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     obs_group: Option<hdf5::Group>,
 
     /// HDF5 group for actions.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     action_group: Option<hdf5::Group>,
 
     /// HDF5 group for metadata.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     metadata_group: Option<hdf5::Group>,
 
     /// Whether initialized.
@@ -120,19 +119,19 @@ impl StreamingHdf5Writer {
             frame_count: 0,
             images_encoded: 0,
             state_records: 0,
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             hdf5_file: None,
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             image_datasets: HashMap::new(),
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             state_datasets: HashMap::new(),
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             action_datasets: HashMap::new(),
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             obs_group: None,
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             action_group: None,
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             metadata_group: None,
             initialized: false,
             image_shapes: HashMap::new(),
@@ -147,7 +146,7 @@ impl StreamingHdf5Writer {
     }
 
     /// Create HDF5 datasets for a feature based on shape information.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn create_dataset_for_feature(
         &mut self,
         feature: &str,
@@ -200,7 +199,7 @@ impl StreamingHdf5Writer {
     }
 
     /// Write image data to an HDF5 dataset.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn write_image_to_dataset(
         &mut self,
         feature: &str,
@@ -219,7 +218,7 @@ impl StreamingHdf5Writer {
     }
 
     /// Write state data to an HDF5 dataset.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn write_state_to_dataset(
         &mut self,
         feature: &str,
@@ -234,7 +233,7 @@ impl StreamingHdf5Writer {
     }
 
     /// Write buffered data to HDF5 datasets.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn write_buffered_data(&mut self) -> Result<()> {
         use hdf5::types::VarLenArray;
 
@@ -361,7 +360,7 @@ impl KpsWriter for StreamingHdf5Writer {
         config: &KpsConfig,
         channels: &HashMap<u16, ChannelInfo>,
     ) -> Result<()> {
-        #[cfg(feature = "kps-hdf5")]
+        #[cfg(feature = "dataset-hdf5")]
         {
             // Store config and channels
             self.config = Some(config.clone());
@@ -427,7 +426,7 @@ impl KpsWriter for StreamingHdf5Writer {
             Ok(())
         }
 
-        #[cfg(not(feature = "kps-hdf5"))]
+        #[cfg(not(feature = "dataset-hdf5"))]
         {
             let _ = (config, channels);
             Err(crate::core::RoboflowError::ParseError {
@@ -438,7 +437,7 @@ impl KpsWriter for StreamingHdf5Writer {
     }
 
     fn write_frame(&mut self, frame: &AlignedFrame) -> Result<()> {
-        #[cfg(feature = "kps-hdf5")]
+        #[cfg(feature = "dataset-hdf5")]
         {
             if !self.initialized {
                 return Err(
@@ -491,7 +490,7 @@ impl KpsWriter for StreamingHdf5Writer {
             Ok(())
         }
 
-        #[cfg(not(feature = "kps-hdf5"))]
+        #[cfg(not(feature = "dataset-hdf5"))]
         {
             let _ = frame;
             Err(crate::core::RoboflowError::ParseError {
@@ -506,7 +505,7 @@ impl KpsWriter for StreamingHdf5Writer {
         config: &KpsConfig,
         _camera_params: Option<&crate::dataset::kps::camera_params::CameraParamCollector>,
     ) -> Result<WriterStats> {
-        #[cfg(feature = "kps-hdf5")]
+        #[cfg(feature = "dataset-hdf5")]
         {
             // Write all buffered data to HDF5 datasets
             self.write_buffered_data()?;
@@ -528,7 +527,7 @@ impl KpsWriter for StreamingHdf5Writer {
             })
         }
 
-        #[cfg(not(feature = "kps-hdf5"))]
+        #[cfg(not(feature = "dataset-hdf5"))]
         {
             let _ = (config, _camera_params);
             Err(crate::core::RoboflowError::ParseError {
@@ -544,6 +543,38 @@ impl KpsWriter for StreamingHdf5Writer {
 
     fn is_initialized(&self) -> bool {
         self.initialized
+    }
+}
+
+/// Implement DatasetWriter for StreamingHdf5Writer to enable generic trait usage.
+impl DatasetWriter for StreamingHdf5Writer {
+    fn initialize(&mut self, config: &dyn std::any::Any) -> Result<()> {
+        let kps_config = config.downcast_ref::<KpsConfig>().ok_or_else(|| {
+            crate::RoboflowError::parse("DatasetWriter", "Expected KpsConfig for HDF5 writer")
+        })?;
+
+        // Initialize with empty channels map since DatasetWriter doesn't provide channel info
+        KpsWriter::initialize(self, kps_config, &std::collections::HashMap::new())
+    }
+
+    fn write_frame(&mut self, frame: &AlignedFrame) -> Result<()> {
+        KpsWriter::write_frame(self, frame)
+    }
+
+    fn finalize(&mut self, config: &dyn std::any::Any) -> Result<WriterStats> {
+        let kps_config = config.downcast_ref::<KpsConfig>().ok_or_else(|| {
+            crate::RoboflowError::parse("DatasetWriter", "Expected KpsConfig for HDF5 writer")
+        })?;
+
+        KpsWriter::finalize(self, kps_config, None)
+    }
+
+    fn frame_count(&self) -> usize {
+        KpsWriter::frame_count(self)
+    }
+
+    fn is_initialized(&self) -> bool {
+        KpsWriter::is_initialized(self)
     }
 }
 
@@ -565,9 +596,9 @@ mod tests {
         };
 
         let result = StreamingHdf5Writer::create(&temp_dir, 0, &config);
-        #[cfg(feature = "kps-hdf5")]
+        #[cfg(feature = "dataset-hdf5")]
         assert!(result.is_ok());
-        #[cfg(not(feature = "kps-hdf5"))]
+        #[cfg(not(feature = "dataset-hdf5"))]
         assert!(result.is_err());
     }
 }

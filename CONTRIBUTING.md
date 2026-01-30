@@ -87,17 +87,17 @@ roboflow/                    # Workspace root
 | Feature | Description |
 |---------|-------------|
 | `python` | Python bindings via PyO3 |
-| `kps-hdf5` | KPS HDF5 dataset support |
-| `kps-parquet` | KPS Parquet dataset support |
-| `kps-depth` | KPS depth video support |
-| `kps-all` | All KPS features |
+| `dataset-hdf5` | KPS HDF5 dataset support |
+| `dataset-parquet` | KPS Parquet dataset support |
+| `dataset-depth` | KPS depth video support |
+| `dataset-all` | All KPS features |
 | `jemalloc` | Use jemalloc allocator (Linux only) |
 | `cli` | CLI tools |
 | `profiling` | Profiling support |
 
 Enable features when building:
 ```bash
-cargo build --features "python,kps-all"
+cargo build --features "python,dataset-all"
 maturin develop --features python
 ```
 
@@ -130,7 +130,7 @@ git checkout -b fix/your-bug-fix
 cargo test
 
 # Run Rust tests with KPS features (requires HDF5 installed)
-cargo test --features kps-all
+cargo test --features dataset-all
 
 # Run Python tests (build extension first)
 maturin develop --features python

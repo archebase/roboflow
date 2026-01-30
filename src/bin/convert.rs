@@ -5,13 +5,16 @@
 //! Unified format conversion tool for robotics data files.
 //!
 //! Supports bidirectional conversion between MCAP and BAG formats,
-//! as well as conversion from MCAP to LeRobot datasets.
+//! as well as streaming conversion from MCAP/BAG to LeRobot datasets.
 //!
 //! Usage:
-//!   convert bag-to-mcap <input.bag> <output.mcap>    - Convert BAG to MCAP
-//!   convert mcap-to-bag <input.mcap> <output.bag>    - Convert MCAP to BAG
-//!   convert normalize <input> <output> <config>      - Normalize using config
-//!   convert to-lerobot <input.mcap> <output_dir> <config> - Convert MCAP to LeRobot
+//!   convert bag-to-mcap <input.bag> <output.mcap>         - Convert BAG to MCAP
+//!   convert mcap-to-bag <input.mcap> <output.bag>         - Convert MCAP to BAG
+//!   convert normalize <input> <output> <config>          - Normalize using config
+//!   convert to-lerobot <input.mcap> <output_dir> <config> - Convert MCAP to LeRobot (streaming)
+//!   convert bag-to-lerobot <input.bag> <output_dir> <config> - Convert BAG to LeRobot (streaming)
+//!
+//! The streaming converters use bounded memory regardless of input file size.
 
 use std::collections::HashMap;
 use std::env;
@@ -80,7 +83,7 @@ fn normalize<'a>(input: &'a str, output: &'a str) -> NormalizeBuilder<'a> {
 ///     .run()
 ///     .unwrap();
 /// ```
-#[cfg(feature = "kps-all")]
+#[cfg(feature = "dataset-all")]
 fn to_lerobot<'a>(input: &'a str, output_dir: &'a str) -> LeRobotBuilder<'a> {
     LeRobotBuilder::new(input, output_dir)
 }
@@ -129,14 +132,14 @@ impl<'a> NormalizeBuilder<'a> {
 }
 
 /// Builder for LeRobot conversions.
-#[cfg(feature = "kps-all")]
+#[cfg(feature = "dataset-all")]
 struct LeRobotBuilder<'a> {
     input: &'a str,
     output_dir: &'a str,
     config: Option<&'a str>,
 }
 
-#[cfg(feature = "kps-all")]
+#[cfg(feature = "dataset-all")]
 impl<'a> LeRobotBuilder<'a> {
     fn new(input: &'a str, output_dir: &'a str) -> Self {
         Self {
@@ -175,8 +178,14 @@ enum Command {
         output: String,
         config: String,
     },
-    #[cfg(feature = "kps-all")]
+    #[cfg(feature = "dataset-all")]
     ToLeRobot {
+        input: String,
+        output: String,
+        config: String,
+    },
+    #[cfg(feature = "dataset-all")]
+    BagToLeRobot {
         input: String,
         output: String,
         config: String,
@@ -188,10 +197,11 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
         return Err(format!(
             "Usage: {} <command> <input> <output> [options]\n\
              Commands:\n\
-               bag-to-mcap <input.bag> <output.mcap>     - Convert ROS1 BAG to MCAP\n\
-               mcap-to-bag <input.mcap> <output.bag>     - Convert MCAP to ROS1 BAG\n\
-               normalize <input> <output> <config>        - Normalize using config file\n\
-               to-lerobot <input.mcap> <output_dir> <config> - Convert MCAP to LeRobot",
+               bag-to-mcap <input.bag> <output.mcap>              - Convert ROS1 BAG to MCAP\n\
+               mcap-to-bag <input.mcap> <output.bag>              - Convert MCAP to ROS1 BAG\n\
+               normalize <input> <output> <config>                 - Normalize using config file\n\
+               to-lerobot <input.mcap> <output_dir> <config>      - Convert MCAP to LeRobot\n\
+               bag-to-lerobot <input.bag> <output_dir> <config>   - Convert BAG to LeRobot (direct)",
             args[0]
         ));
     }
@@ -214,13 +224,25 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                 config,
             }
         }
-        #[cfg(feature = "kps-all")]
+        #[cfg(feature = "dataset-all")]
         "to-lerobot" => {
             if args.len() < 5 {
                 return Err("to-lerobot command requires a config file argument".to_string());
             }
             let config = args[4].clone();
             Command::ToLeRobot {
+                input,
+                output,
+                config,
+            }
+        }
+        #[cfg(feature = "dataset-all")]
+        "bag-to-lerobot" => {
+            if args.len() < 5 {
+                return Err("bag-to-lerobot command requires a config file argument".to_string());
+            }
+            let config = args[4].clone();
+            Command::BagToLeRobot {
                 input,
                 output,
                 config,
@@ -239,12 +261,18 @@ fn run_convert(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
             output,
             config,
         } => normalize(&input, &output).config(&config).run(),
-        #[cfg(feature = "kps-all")]
+        #[cfg(feature = "dataset-all")]
         Command::ToLeRobot {
             input,
             output,
             config,
         } => to_lerobot(&input, &output).config(&config).run(),
+        #[cfg(feature = "dataset-all")]
+        Command::BagToLeRobot {
+            input,
+            output,
+            config,
+        } => convert_bag_to_lerobot(&input, &output, &config),
     }
 }
 
@@ -846,75 +874,97 @@ fn bag_to_bag(
     Ok(())
 }
 
-/// Convert MCAP to KPS dataset format.
-#[cfg(feature = "kps-all")]
+/// Convert MCAP to LeRobot dataset format using streaming converter.
+#[cfg(feature = "dataset-all")]
 fn convert_to_lerobot(
     input: &str,
     output_dir: &str,
     config_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use roboflow::dataset::kps::{KpsConfig, OutputFormat};
+    use roboflow::dataset::lerobot::LerobotConfig;
+    use roboflow::dataset::streaming::StreamingDatasetConverter;
 
-    println!("Converting MCAP to KPS dataset");
+    println!("Converting MCAP to LeRobot dataset (streaming)");
     println!("  Input: {}", input);
     println!("  Output: {}", output_dir);
     println!("  Config: {}", config_path);
 
-    // Load KPS config
-    let config_content = std::fs::read_to_string(config_path)?;
-    let config: KpsConfig = toml::from_str(&config_content)?;
+    // Load LeRobot config
+    let config = LerobotConfig::from_file(config_path)?;
 
     println!("  Dataset: {}", config.dataset.name);
     println!("  Robot type: {:?}", config.dataset.robot_type);
     println!("  FPS: {}", config.dataset.fps);
     println!("  Mappings: {}", config.mappings.len());
 
-    // Check which formats to generate
-    let formats = config.output.formats.clone();
-    let use_hdf5 = formats.is_empty() || formats.contains(&OutputFormat::Hdf5);
-    let use_parquet = formats.is_empty() || formats.contains(&OutputFormat::Parquet);
+    // Use StreamingDatasetConverter for bounded-memory streaming conversion
+    let converter = StreamingDatasetConverter::new_lerobot(output_dir, config)?
+        .with_completion_window(5) // 5 frames completion window
+        .with_max_buffered_frames(300); // Max 10 seconds at 30fps
 
-    // Convert to HDF5
-    if use_hdf5 {
-        #[cfg(feature = "kps-hdf5")]
-        {
-            use roboflow::dataset::kps::Hdf5KpsWriter;
+    let stats = converter.convert(input)?;
 
-            println!();
-            println!("Creating HDF5 format...");
-            let mut writer = Hdf5KpsWriter::create(output_dir, 0)?;
-            writer.write_from_mcap(input, &config)?;
-            writer.finish(&config)?;
-        }
-
-        #[cfg(not(feature = "kps-hdf5"))]
-        {
-            eprintln!("Warning: HDF5 format requested but 'kps-hdf5' feature is not enabled.");
-            eprintln!("  Run with: cargo run --bin convert --features kps-hdf5 -- to-kps ...");
-        }
+    println!();
+    println!("=== Conversion Complete ===");
+    println!("Frames written: {}", stats.frames_written);
+    println!("Messages processed: {}", stats.messages_processed);
+    if stats.force_completed_frames > 0 {
+        println!("Force-completed frames: {}", stats.force_completed_frames);
     }
+    println!("Avg buffer size: {:.1} frames", stats.avg_buffer_size);
+    println!("Peak memory: {:.1} MB", stats.peak_memory_mb);
+    println!("Duration: {:.2}s", stats.duration_sec);
+    println!("Throughput: {:.1} frames/s", stats.throughput_fps());
 
-    // Convert to Parquet+MP4
-    if use_parquet {
-        #[cfg(feature = "kps-parquet")]
-        {
-            use roboflow::dataset::kps::ParquetKpsWriter;
+    Ok(())
+}
 
-            println!();
-            println!("Creating Parquet+MP4 format...");
-            let mut writer = ParquetKpsWriter::create(output_dir, 0)?;
-            writer.write_from_mcap(input, &config)?;
-            writer.finish(&config)?;
-        }
+/// Convert BAG file directly to LeRobot dataset format.
+///
+/// This function uses the StreamingDatasetConverter for true streaming conversion:
+/// BAG -> decoded messages -> AlignedFrames -> LeRobot dataset
+///
+/// No intermediate MCAP file is created, and memory usage is bounded.
+#[cfg(feature = "dataset-all")]
+fn convert_bag_to_lerobot(
+    input: &str,
+    output_dir: &str,
+    config_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use roboflow::dataset::lerobot::LerobotConfig;
+    use roboflow::dataset::streaming::StreamingDatasetConverter;
 
-        #[cfg(not(feature = "kps-parquet"))]
-        {
-            eprintln!(
-                "Warning: Parquet format requested but 'kps-parquet' feature is not enabled."
-            );
-            eprintln!("  Run with: cargo run --bin convert --features kps-parquet -- to-kps ...");
-        }
+    println!("Converting BAG to LeRobot dataset (streaming)");
+    println!("  Input: {}", input);
+    println!("  Output: {}", output_dir);
+    println!("  Config: {}", config_path);
+
+    // Load LeRobot config
+    let config = LerobotConfig::from_file(config_path)?;
+
+    println!("  Dataset: {}", config.dataset.name);
+    println!("  Robot type: {:?}", config.dataset.robot_type);
+    println!("  FPS: {}", config.dataset.fps);
+    println!("  Mappings: {}", config.mappings.len());
+
+    // Use StreamingDatasetConverter for bounded-memory streaming conversion
+    let converter = StreamingDatasetConverter::new_lerobot(output_dir, config)?
+        .with_completion_window(5) // 5 frames completion window
+        .with_max_buffered_frames(300); // Max 10 seconds at 30fps
+
+    let stats = converter.convert(input)?;
+
+    println!();
+    println!("=== Conversion Complete ===");
+    println!("Frames written: {}", stats.frames_written);
+    println!("Messages processed: {}", stats.messages_processed);
+    if stats.force_completed_frames > 0 {
+        println!("Force-completed frames: {}", stats.force_completed_frames);
     }
+    println!("Avg buffer size: {:.1} frames", stats.avg_buffer_size);
+    println!("Peak memory: {:.1} MB", stats.peak_memory_mb);
+    println!("Duration: {:.2}s", stats.duration_sec);
+    println!("Throughput: {:.1} frames/s", stats.throughput_fps());
 
     Ok(())
 }

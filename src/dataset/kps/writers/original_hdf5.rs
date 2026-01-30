@@ -111,15 +111,15 @@ pub struct OriginalHdf5Writer {
     output_dir: std::path::PathBuf,
 
     /// HDF5 file handle.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     hdf5_file: Option<hdf5::File>,
 
     /// HDF5 datasets by path.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     datasets: HashMap<String, hdf5::Dataset>,
 
     /// HDF5 groups for quick access.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     groups: HashMap<String, hdf5::Group>,
 
     /// Per-topic buffers for accumulating data.
@@ -145,11 +145,11 @@ impl OriginalHdf5Writer {
         Ok(Self {
             episode_id: episode_id.to_string(),
             output_dir: output_dir.to_path_buf(),
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             hdf5_file: None,
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             datasets: HashMap::new(),
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             groups: HashMap::new(),
             topic_buffers: HashMap::new(),
             topic_dimensions: HashMap::new(),
@@ -163,7 +163,7 @@ impl OriginalHdf5Writer {
         &mut self,
         channels: &HashMap<u16, ChannelInfo>,
     ) -> Result<(), KpsWriterError> {
-        #[cfg(feature = "kps-hdf5")]
+        #[cfg(feature = "dataset-hdf5")]
         {
             // Create HDF5 file
             let hdf5_path = self.output_dir.join("proprio_stats_original.hdf5");
@@ -213,7 +213,7 @@ impl OriginalHdf5Writer {
             Ok(())
         }
 
-        #[cfg(not(feature = "kps-hdf5"))]
+        #[cfg(not(feature = "dataset-hdf5"))]
         {
             let _ = channels;
             Err(KpsWriterError::Encoding(
@@ -223,7 +223,7 @@ impl OriginalHdf5Writer {
     }
 
     /// Create metadata datasets.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn create_metadata_datasets(&mut self, file: &hdf5::File) -> Result<(), KpsWriterError> {
         // Create original_timestamps dataset
         let _ts_dataset = file
@@ -301,7 +301,7 @@ impl OriginalHdf5Writer {
     }
 
     /// Write all buffered data to HDF5.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn write_buffered_data(&mut self) -> Result<(), KpsWriterError> {
         // Clone the file to avoid borrow checker issues
         let file = self.hdf5_file.as_ref().unwrap().clone();
@@ -383,7 +383,7 @@ impl OriginalHdf5Writer {
 
     /// Finalize and write all data.
     pub fn finalize(&mut self) -> Result<usize, KpsWriterError> {
-        #[cfg(feature = "kps-hdf5")]
+        #[cfg(feature = "dataset-hdf5")]
         {
             if !self.initialized {
                 return Err(KpsWriterError::InvalidData(
@@ -406,7 +406,7 @@ impl OriginalHdf5Writer {
             Ok(self.message_count)
         }
 
-        #[cfg(not(feature = "kps-hdf5"))]
+        #[cfg(not(feature = "dataset-hdf5"))]
         {
             Err(KpsWriterError::Encoding(
                 "HDF5 support not enabled".to_string(),
@@ -467,11 +467,11 @@ mod tests {
         let writer = OriginalHdf5Writer {
             episode_id: "test".to_string(),
             output_dir: std::path::PathBuf::from("/tmp"),
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             hdf5_file: None,
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             datasets: HashMap::new(),
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             groups: HashMap::new(),
             topic_buffers: HashMap::new(),
             topic_dimensions: HashMap::new(),
@@ -502,11 +502,11 @@ mod tests {
         let mut writer = OriginalHdf5Writer {
             episode_id: "test".to_string(),
             output_dir: std::path::PathBuf::from("/tmp"),
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             hdf5_file: None,
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             datasets: HashMap::new(),
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             groups: HashMap::new(),
             topic_buffers: HashMap::new(),
             topic_dimensions: HashMap::new(),

@@ -238,10 +238,10 @@ Roboflow.open(["input.bag"]).write_to("output.mcap").run()
 | Flag | Description |
 |------|-------------|
 | `python` | Python bindings via PyO3 |
-| `kps-hdf5` | HDF5 dataset support |
-| `kps-parquet` | Parquet dataset support |
-| `kps-depth` | Depth video support |
-| `kps-all` | All KPS features |
+| `dataset-hdf5` | HDF5 dataset support |
+| `dataset-parquet` | Parquet dataset support |
+| `dataset-depth` | Depth video support |
+| `dataset-all` | All KPS features |
 | `cli` | CLI tools |
 | `jemalloc` | Use jemalloc allocator (Linux) |
 | `gpu` | GPU compression support |

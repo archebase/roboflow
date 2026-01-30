@@ -7,9 +7,9 @@
 //! Provides automatic backend selection and GPU initialization with fallback.
 
 use super::{
+    BackendType, GpuResult,
     backend::{CompressorBackend, CpuCompressor},
     config::GpuCompressionConfig,
-    BackendType, GpuResult,
 };
 
 #[cfg(all(feature = "gpu", target_os = "macos"))]
@@ -95,7 +95,9 @@ impl GpuCompressorFactory {
                 #[cfg(not(target_os = "macos"))]
                 {
                     if config.auto_fallback {
-                        eprintln!("Apple compression not available on this platform. Falling back to CPU.");
+                        eprintln!(
+                            "Apple compression not available on this platform. Falling back to CPU."
+                        );
                         Ok(Box::new(CpuCompressor::new(
                             config.compression_level,
                             config.cpu_threads,

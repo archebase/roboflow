@@ -13,10 +13,10 @@ use std::path::Path;
 
 use super::config::KpsConfig;
 
-#[cfg(feature = "kps-parquet")]
+#[cfg(feature = "dataset-parquet")]
 use super::config::Mapping;
 
-#[cfg(feature = "kps-parquet")]
+#[cfg(feature = "dataset-parquet")]
 use std::io::Write;
 
 // Row structures for Parquet data
@@ -50,7 +50,7 @@ struct ImageFrame {
 /// Creates Kps datasets compatible with v3.0 format:
 /// - `data/` directory with Parquet shards
 /// - `videos/` directory with MP4 shards
-#[allow(dead_code)] // Fields are used when kps-parquet feature is enabled
+#[allow(dead_code)] // Fields are used when dataset-parquet feature is enabled
 pub struct ParquetKpsWriter {
     episode_id: usize,
     output_dir: std::path::PathBuf,
@@ -97,22 +97,22 @@ impl ParquetKpsWriter {
         mcap_path: impl AsRef<Path>,
         config: &KpsConfig,
     ) -> Result<usize, Box<dyn std::error::Error>> {
-        #[cfg(feature = "kps-parquet")]
+        #[cfg(feature = "dataset-parquet")]
         {
             self.write_from_mcap_impl(mcap_path, config)
         }
-        #[cfg(not(feature = "kps-parquet"))]
+        #[cfg(not(feature = "dataset-parquet"))]
         {
             // Note: parameters are unused when feature is disabled
             let _ = (mcap_path, config);
             Err(anyhow::anyhow!(
-                "Parquet support not enabled. Add feature 'kps-parquet' to Cargo.toml"
+                "Parquet support not enabled. Add feature 'dataset-parquet' to Cargo.toml"
             )
             .into())
         }
     }
 
-    #[cfg(feature = "kps-parquet")]
+    #[cfg(feature = "dataset-parquet")]
     fn write_from_mcap_impl(
         &mut self,
         mcap_path: impl AsRef<Path>,
@@ -180,11 +180,11 @@ impl ParquetKpsWriter {
             }
 
             // Check frame limit if configured
-            if let Some(limit) = max_frames {
-                if frame_index >= limit {
-                    println!("  Stopping at configured limit of {} frames", limit);
-                    break;
-                }
+            if let Some(limit) = max_frames
+                && frame_index >= limit
+            {
+                println!("  Stopping at configured limit of {} frames", limit);
+                break;
             }
         }
 
@@ -210,7 +210,7 @@ impl ParquetKpsWriter {
         Ok(self.frame_count)
     }
 
-    #[cfg(feature = "kps-parquet")]
+    #[cfg(feature = "dataset-parquet")]
     fn process_image(
         &mut self,
         msg: &robocodec::DecodedMessage,
@@ -260,7 +260,7 @@ impl ParquetKpsWriter {
         Ok(())
     }
 
-    #[cfg(feature = "kps-parquet")]
+    #[cfg(feature = "dataset-parquet")]
     fn process_state(
         &mut self,
         _msg: &robocodec::DecodedMessage,
@@ -272,7 +272,7 @@ impl ParquetKpsWriter {
         self.observation_data.push(ObservationRow { timestamp });
     }
 
-    #[cfg(feature = "kps-parquet")]
+    #[cfg(feature = "dataset-parquet")]
     fn process_action(
         &mut self,
         _msg: &robocodec::DecodedMessage,
@@ -283,7 +283,7 @@ impl ParquetKpsWriter {
         self.action_data.push(ActionRow { timestamp });
     }
 
-    #[cfg(feature = "kps-parquet")]
+    #[cfg(feature = "dataset-parquet")]
     fn write_parquet(&self) -> Result<(), Box<dyn std::error::Error>> {
         use polars::prelude::*;
 
@@ -304,7 +304,7 @@ impl ParquetKpsWriter {
         Ok(())
     }
 
-    #[cfg(feature = "kps-parquet")]
+    #[cfg(feature = "dataset-parquet")]
     fn write_videos(
         &self,
         image_buffers: &HashMap<String, Vec<ImageFrame>>,
@@ -314,7 +314,7 @@ impl ParquetKpsWriter {
         self.write_videos_images(image_buffers)
     }
 
-    #[cfg(feature = "kps-parquet")]
+    #[cfg(feature = "dataset-parquet")]
     #[allow(dead_code)]
     fn write_videos_ffmpeg(
         &self,
@@ -339,7 +339,7 @@ impl ParquetKpsWriter {
         Ok(())
     }
 
-    #[cfg(feature = "kps-parquet")]
+    #[cfg(feature = "dataset-parquet")]
     fn write_videos_images(
         &self,
         image_buffers: &HashMap<String, Vec<ImageFrame>>,

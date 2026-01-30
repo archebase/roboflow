@@ -9,8 +9,8 @@
 //! and the 10% deallocation overhead from dropping Vec<u8>.
 
 use crossbeam_queue::ArrayQueue;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Default buffer capacity (4MB)
 const DEFAULT_BUFFER_CAPACITY: usize = 4 * 1024 * 1024;
