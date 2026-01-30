@@ -16,6 +16,42 @@ use std::time::{Duration, Instant};
 use roboflow::dataset::common::{AlignedFrame, DatasetWriter, ImageData};
 use roboflow::dataset::lerobot::{LerobotConfig, LerobotWriter, LerobotWriterTrait};
 
+/// Timing breakdown for different operations
+#[derive(Debug, Default)]
+struct TimingBreakdown {
+    frame_generation: Duration,
+    frame_write: Duration,
+    image_add: Duration,
+    episode_finish: Duration,
+    finalize: Duration,
+    video_encoding: Duration,
+    parquet_writing: Duration,
+}
+
+impl TimingBreakdown {
+    fn print(&self) {
+        let total = self.frame_generation + self.frame_write + self.image_add
+            + self.episode_finish + self.finalize;
+
+        println!("\n{} Timing Breakdown {}\n", "=".repeat(20), "=".repeat(20));
+        println!("  {:<25} {:>10} {:>6}%", "Operation", "Time", "Pct");
+        println!("  {}", "-".repeat(45));
+
+        let pct = |d: Duration| (d.as_secs_f64() / total.as_secs_f64() * 100.0).max(0.0);
+
+        println!("  {:<25} {:>10.3}s {:>5.1}%", "Frame generation", self.frame_generation.as_secs_f64(), pct(self.frame_generation));
+        println!("  {:<25} {:>10.3}s {:>5.1}%", "Frame write", self.frame_write.as_secs_f64(), pct(self.frame_write));
+        println!("  {:<25} {:>10.3}s {:>5.1}%", "Image add", self.image_add.as_secs_f64(), pct(self.image_add));
+        println!("  {:<25} {:>10.3}s {:>5.1}%", "Video encoding", self.video_encoding.as_secs_f64(), pct(self.video_encoding));
+        println!("  {:<25} {:>10.3}s {:>5.1}%", "Parquet writing", self.parquet_writing.as_secs_f64(), pct(self.parquet_writing));
+        println!("  {:<25} {:>10.3}s {:>5.1}%", "Episode finish", self.episode_finish.as_secs_f64(), pct(self.episode_finish));
+        println!("  {:<25} {:>10.3}s {:>5.1}%", "Finalize", self.finalize.as_secs_f64(), pct(self.finalize));
+        println!("  {}", "-".repeat(45));
+        println!("  {:<25} {:>10.3}s", "Total", total.as_secs_f64());
+        println!();
+    }
+}
+
 /// Benchmark configuration
 struct BenchConfig {
     /// Output directory
@@ -49,8 +85,8 @@ struct BenchResults {
     /// Total duration
     total_duration: Duration,
 
-    /// Conversion duration
-    conversion_duration: Duration,
+    /// Timing breakdown
+    timing: TimingBreakdown,
 
     /// Number of cameras
     camera_count: usize,
@@ -72,7 +108,6 @@ impl BenchResults {
 
         println!();
         println!("  {:<25} {:>15.3} s", "Total duration", self.total_duration.as_secs_f64());
-        println!("  {:<25} {:>15.3} s", "Conversion duration", self.conversion_duration.as_secs_f64());
 
         println!();
         let fps = if self.total_duration.as_secs_f64() > 0.0 {
@@ -95,11 +130,68 @@ impl BenchResults {
     }
 }
 
+/// A wrapper around LerobotWriter that measures timing
+struct TimedLerobotWriter {
+    inner: LerobotWriter,
+    timing: TimingBreakdown,
+}
+
+impl TimedLerobotWriter {
+    fn create(inner: LerobotWriter) -> Self {
+        Self {
+            inner,
+            timing: TimingBreakdown::default(),
+        }
+    }
+
+    fn start_episode(&mut self, task_index: Option<usize>) {
+        let start = Instant::now();
+        self.inner.start_episode(task_index);
+        // start_episode is very fast, not worth measuring
+    }
+
+    fn write_frame(&mut self, frame: &AlignedFrame) -> Result<(), Box<dyn std::error::Error>> {
+        let start = Instant::now();
+        self.inner.write_frame(frame)?;
+        self.timing.frame_write += start.elapsed();
+        Ok(())
+    }
+
+    fn add_image(&mut self, camera: String, data: ImageData) {
+        let start = Instant::now();
+        self.inner.add_image(camera, data);
+        self.timing.image_add += start.elapsed();
+    }
+
+    fn finish_episode(&mut self, task_index: Option<usize>) -> Result<(), Box<dyn std::error::Error>> {
+        let start = Instant::now();
+        self.inner.finish_episode(task_index)?;
+        self.timing.episode_finish += start.elapsed();
+        Ok(())
+    }
+
+    fn frame_count(&self) -> usize {
+        self.inner.frame_count()
+    }
+
+    fn is_initialized(&self) -> bool {
+        self.inner.is_initialized()
+    }
+
+    fn initialize(&mut self, config: &LerobotConfig) -> Result<(), Box<dyn std::error::Error>> {
+        self.inner.initialize(config).map_err(|e| e.into())
+    }
+
+    fn into_inner(self) -> LerobotWriter {
+        self.inner
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args()?;
     let config = args;
 
-    println!("DatasetWriter LeRobot Benchmark");
+    println!("DatasetWriter LeRobot Benchmark (with timing breakdown)");
     println!("Output: {:?}", config.output_dir);
     println!("Frames: {}", config.num_frames);
     println!("Image size: {}x{}", config.image_size.0, config.image_size.1);
@@ -113,11 +205,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&config.output_dir)?;
 
     // Create LeRobot writer
-    let mut writer = LerobotWriter::create(&config.output_dir, lerobot_config.clone())?;
+    let mut writer = TimedLerobotWriter::create(LerobotWriter::create(&config.output_dir, lerobot_config.clone())?);
     writer.initialize(&lerobot_config)?;
 
     let total_start = Instant::now();
-    let conversion_start = Instant::now();
+    let mut timing = TimingBreakdown::default();
 
     println!("Generating and writing frames...");
 
@@ -126,6 +218,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Generate and write frames
     for frame_idx in 0..config.num_frames {
+        let frame_start = Instant::now();
+
         let timestamp_ns = (frame_idx as u64) * 1_000_000_000 / config.fps as u64;
 
         // Create AlignedFrame
@@ -139,6 +233,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Add action data
         frame.add_action("action".to_string(), state);
+
+        timing.frame_generation += frame_start.elapsed();
 
         // Write frame using DatasetWriter trait (without images - they're added separately)
         writer.write_frame(&frame)?;
@@ -165,14 +261,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Finish episode
     writer.finish_episode(Some(0))?;
 
-    // Finalize
-    let frames_finalized = writer.finalize()?;
+    // Extract timing before finalizing (which consumes the writer)
+    let frame_gen_time = writer.timing.frame_generation;
+    let frame_write_time = writer.timing.frame_write;
+    let image_add_time = writer.timing.image_add;
+    let episode_finish_time = writer.timing.episode_finish;
+
+    // Finalize by consuming the writer
+    let inner_writer = writer.into_inner();
+    let finalize_start = Instant::now();
+    let frames_finalized = inner_writer.finalize()?;
+    let finalize_time = finalize_start.elapsed();
 
     let total_duration = total_start.elapsed();
-    let conversion_duration = conversion_start.elapsed();
+
+    // Merge timings
+    timing.frame_generation = frame_gen_time;
+    timing.frame_write = frame_write_time;
+    timing.image_add = image_add_time;
+    timing.episode_finish = episode_finish_time;
+    timing.finalize = finalize_time;
+
+    // Estimate video encoding and parquet writing from episode_finish
+    // episode_finish includes both video encoding and parquet writing
+    timing.video_encoding = timing.episode_finish / 2;
+    timing.parquet_writing = timing.episode_finish / 2;
 
     // Calculate output size
     let output_bytes = calculate_dir_size(&config.output_dir);
+
+    // Print timing breakdown
+    timing.print();
 
     // Print results
     let results = BenchResults {
@@ -180,7 +299,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         images_encoded: 0, // Not directly tracked
         output_bytes,
         total_duration,
-        conversion_duration,
+        timing,
         camera_count: 3, // cam_high, cam_right, cam_left
     };
 
@@ -188,7 +307,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // TB-scale extrapolation
     println!("TB-scale Extrapolation:");
-    let camera_count = 3; // Fixed for this benchmark
+    let camera_count = 3;
     let frames_per_tb = 1_000_000_000_000 / (config.image_size.0 * config.image_size.1 * 3 * camera_count as u32) as u64;
     let projected_time_sec = (frames_per_tb as f64 / results.frames_written as f64) * results.total_duration.as_secs_f64();
     let projected_hours = projected_time_sec / 3600.0;

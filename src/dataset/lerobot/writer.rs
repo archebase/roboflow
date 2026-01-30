@@ -164,11 +164,21 @@ impl LerobotWriter {
 
         let tasks = task_index.map(|t| vec![t]).unwrap_or_default();
 
+        let start = std::time::Instant::now();
         // Write Parquet file
         self.write_episode_parquet()?;
+        let parquet_time = start.elapsed();
 
+        let start = std::time::Instant::now();
         // Encode videos
         self.encode_videos()?;
+        let video_time = start.elapsed();
+
+        eprintln!(
+            "[TIMING] finish_episode: parquet={:.1}ms, video={:.1}ms",
+            parquet_time.as_secs_f64() * 1000.0,
+            video_time.as_secs_f64() * 1000.0,
+        );
 
         // Calculate and store episode stats
         self.calculate_episode_stats()?;
@@ -360,6 +370,10 @@ impl LerobotWriter {
             return Ok(());
         }
 
+        let total_start = std::time::Instant::now();
+        let mut encode_time = std::time::Duration::ZERO;
+        let mut buffer_time = std::time::Duration::ZERO;
+
         let videos_dir = self.output_dir.join("videos/chunk-000");
         let encoder_config = VideoEncoderConfig {
             codec: self.config.video.codec.clone(),
@@ -376,6 +390,7 @@ impl LerobotWriter {
                 continue;
             }
 
+            let buffer_start = std::time::Instant::now();
             let mut buffer = VideoFrameBuffer::new();
 
             for img in images {
@@ -404,6 +419,7 @@ impl LerobotWriter {
                     }
                 }
             }
+            buffer_time += buffer_start.elapsed();
 
             if !buffer.is_empty() {
                 let feature_name = format!("observation.images.{}", camera);
@@ -412,6 +428,7 @@ impl LerobotWriter {
 
                 let video_path = camera_dir.join(format!("episode_{:06}.mp4", self.episode_index));
 
+                let encode_start = std::time::Instant::now();
                 match encoder.encode_buffer(&buffer, &video_path) {
                     Ok(()) => {
                         self.images_encoded += buffer.len();
@@ -446,6 +463,7 @@ impl LerobotWriter {
                         ));
                     }
                 }
+                encode_time += encode_start.elapsed();
 
                 // Track output bytes for video file
                 if let Ok(metadata) = std::fs::metadata(&video_path) {
@@ -453,6 +471,13 @@ impl LerobotWriter {
                 }
             }
         }
+
+        eprintln!(
+            "[TIMING] encode_videos: total={:.1}ms, buffer={:.1}ms, encode={:.1}ms",
+            total_start.elapsed().as_secs_f64() * 1000.0,
+            buffer_time.as_secs_f64() * 1000.0,
+            encode_time.as_secs_f64() * 1000.0,
+        );
 
         Ok(())
     }
