@@ -11,9 +11,11 @@ pub mod annotations;
 pub mod config;
 pub mod metadata;
 pub mod trait_impl;
+pub mod video_profiles;
 pub mod writer;
 
 pub use annotations::{AnnotationData, SkillMark};
 pub use config::{DatasetConfig, LerobotConfig, Mapping, MappingType, VideoConfig};
 pub use trait_impl::{FromAlignedFrame, LerobotWriterTrait};
+pub use video_profiles::{QualityTier, SpeedPreset, VideoEncodingProfile};
 pub use writer::{LerobotFrame, LerobotWriter};
