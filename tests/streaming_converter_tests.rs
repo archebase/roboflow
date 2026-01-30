@@ -16,9 +16,9 @@ use std::fs;
 use std::path::Path;
 
 use roboflow::dataset::lerobot::{DatasetConfig, LerobotConfig, Mapping, MappingType, VideoConfig};
-use roboflow::dataset::streaming::{FeatureRequirement, FrameCompletionCriteria, StreamingConfig};
 #[cfg(feature = "kps-all")]
 use roboflow::dataset::streaming::StreamingDatasetConverter;
+use roboflow::dataset::streaming::{FeatureRequirement, FrameCompletionCriteria, StreamingConfig};
 
 /// Create a test output directory.
 #[allow(dead_code)]
