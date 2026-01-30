@@ -4,12 +4,13 @@ Guidance for Claude Code working on the roboflow repository.
 
 ## Project
 
-Roboflow: Schema-driven robotics data codec (CDR, Protobuf, JSON) converting between MCAP and ROS1 bag formats.
+Roboflow: Distributed data transformation pipeline converting robotics bag/MCAP files to trainingable datasets (LeRobot format).
 
 **Key characteristics:**
-- Single-crate workspace
-- External `robocodec` crate handles all I/O formats and codecs
-- Zero-copy arena allocation critical for performance
+- Horizontal scaling for large dataset processing
+- Schema-driven message translation (CDR, Protobuf, JSON)
+- Zero-copy arena allocation for memory efficiency
+- Cloud storage support (OSS, S3) for distributed workloads
 - Python bindings via PyO3 (must use `extension-module` mode)
 
 ## Build & Test
