@@ -217,8 +217,8 @@ impl LerobotWriter {
         let mut frame_index: Vec<i64> = Vec::new();
         let mut index: Vec<i64> = Vec::new();
         let mut timestamp: Vec<f64> = Vec::new();
-        let mut observation_state: Vec<Vec<f32>> = vec![vec![0.0; state_dim]; self.frame_data.len()];
-        let mut action: Vec<Vec<f32>> = vec![vec![0.0; state_dim]; self.frame_data.len()];
+        let mut observation_state: Vec<Vec<f32>> = Vec::new();
+        let mut action: Vec<Vec<f32>> = Vec::new();
         let mut task_index: Vec<i64> = Vec::new();
 
         // Collect camera names from image_frames
