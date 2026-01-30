@@ -8,9 +8,8 @@
 //! This backend is always available and serves as the reference implementation.
 
 use std::fs::{self, File};
-use std::io::{BufReader, BufWriter, Read, Write, Seek};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use super::{ObjectMetadata, Result, SeekRead, SeekableStorage, Storage, StorageError};
 
@@ -53,11 +52,11 @@ impl LocalStorage {
 
     /// Ensure parent directories exist for a path.
     fn ensure_parent(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(self.full_path(parent))
-                    .map_err(|e| StorageError::Other(format!("failed to create parent directories: {e}")))?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(self.full_path(parent))
+                .map_err(|e| StorageError::Other(format!("failed to create parent directories: {e}")))?;
         }
         Ok(())
     }
@@ -82,7 +81,7 @@ impl Storage for LocalStorage {
         self.ensure_parent(&full_path)?;
         File::create(&full_path)
             .map(|f| Box::new(BufWriter::new(f)) as Box<dyn Write + Send>)
-            .map_err(|e| StorageError::Io(e))
+            .map_err(StorageError::Io)
     }
 
     fn exists(&self, path: &Path) -> bool {
@@ -141,11 +140,11 @@ impl Storage for LocalStorage {
             return Ok(results);
         }
 
-        let entries = fs::read_dir(&full_path).map_err(|e| StorageError::Io(e))?;
+        let entries = fs::read_dir(&full_path).map_err(StorageError::Io)?;
         for entry in entries {
-            let entry = entry.map_err(|e| StorageError::Io(e))?;
+            let entry = entry.map_err(StorageError::Io)?;
             let path = entry.path();
-            let meta = entry.metadata().map_err(|e| StorageError::Io(e))?;
+            let meta = entry.metadata().map_err(StorageError::Io)?;
             results.push(ObjectMetadata {
                 path: path.display().to_string(),
                 size: meta.len(),
@@ -185,12 +184,12 @@ impl Storage for LocalStorage {
 
     fn create_dir(&self, path: &Path) -> Result<()> {
         let full_path = self.full_path(path);
-        fs::create_dir(&full_path).map_err(|e| StorageError::Io(e))
+        fs::create_dir(&full_path).map_err(StorageError::Io)
     }
 
     fn create_dir_all(&self, path: &Path) -> Result<()> {
         let full_path = self.full_path(path);
-        fs::create_dir_all(&full_path).map_err(|e| StorageError::Io(e))
+        fs::create_dir_all(&full_path).map_err(StorageError::Io)
     }
 }
 

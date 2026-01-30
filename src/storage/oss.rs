@@ -31,6 +31,7 @@ use super::{Result, Storage, StorageError};
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields will be used when OSS implementation is complete
 pub struct OssStorage {
     /// Bucket name
     bucket: String,

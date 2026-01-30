@@ -15,7 +15,7 @@ use super::{
 /// Configuration for storage backend instantiation.
 ///
 /// This struct holds credentials and settings for cloud storage backends.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StorageConfig {
     /// OSS access key ID.
     pub oss_access_key_id: Option<String>,
@@ -31,20 +31,6 @@ pub struct StorageConfig {
     pub aws_region: Option<String>,
     /// Local buffer directory for cloud operations.
     pub local_buffer_dir: Option<String>,
-}
-
-impl Default for StorageConfig {
-    fn default() -> Self {
-        Self {
-            oss_access_key_id: None,
-            oss_access_key_secret: None,
-            oss_endpoint: None,
-            aws_access_key_id: None,
-            aws_secret_access_key: None,
-            aws_region: None,
-            local_buffer_dir: None,
-        }
-    }
 }
 
 impl StorageConfig {
@@ -228,7 +214,7 @@ impl StorageFactory {
                 };
                 Ok(Arc::new(LocalStorage::new(root)))
             }
-            StorageUrl::S3 { bucket, endpoint, region, .. } => {
+            StorageUrl::S3 { bucket, endpoint: _, region: _, .. } => {
                 #[cfg(feature = "cloud-storage")]
                 {
                     // S3 is not yet fully implemented - return an error
