@@ -1,85 +1,67 @@
 # CLAUDE.md
 
-Guidance for Claude Code (claude.ai/claude-code) when working with this repository.
+Guidance for Claude Code working on the roboflow repository.
 
-## Project Overview
+## Project
 
-Roboflow: Schema-driven robotics data codec (CDR, Protobuf, JSON) converting between MCAP and ROS1 bag formats. Rust with Python bindings.
+Roboflow: Distributed data transformation pipeline converting robotics bag/MCAP files to trainingable datasets (LeRobot format).
 
-**Key:** Single-crate workspace, external `robocodec` for I/O, zero-copy arena allocation.
+**Key characteristics:**
+- Horizontal scaling for large dataset processing
+- Schema-driven message translation (CDR, Protobuf, JSON)
+- Zero-copy arena allocation for memory efficiency
+- Cloud storage support (OSS, S3) for distributed workloads
+- Python bindings via PyO3 (must use `extension-module` mode)
 
 ## Build & Test
 
 ```bash
-# Build
-cargo build
-cargo build --release
-
-# Python bindings (requires maturin develop before tests)
-maturin develop --features python
-
-# Tests (Rust only - Python uses separate pytest)
-cargo test                              # All Rust tests
-cargo test --features dataset-all          # With KPS features
-cargo test --test kps_v12_tests       # KPS v1.2 spec tests
+cargo build                              # Standard build
+cargo test --features cloud-storage    # With storage layer
+cargo test --test kps_v12_tests         # KPS v1.2 spec tests
 ```
+
+**Important:** Run Python tests separately via pytest (PyO3 extension-module conflict).
 
 ## Code Quality
 
 ```bash
 cargo fmt
 cargo clippy --all-targets -- -D warnings
-ruff format python/ && ruff check python/
 ```
-
-## Structure
-
-```
-roboflow/
-├── src/
-│   ├── bin/              # CLI: convert, extract, inspect, schema, search
-│   ├── core/             # Core types, registry
-│   ├── dataset/kps/      # KPS dataset format (HDF5, Parquet, v1.2)
-│   ├── pipeline/         # Standard (4-stage), Hyper (7-stage)
-│   ├── python/           # PyO3 bindings
-│   └── config.rs
-├── tests/                # Integration tests, fixtures/
-├── examples/
-│   ├── python/           # Python examples + KPS package
-│   └── rust/             # Rust examples + KPS templates
-└── docs/                 # ARCHITECTURE.md, PIPELINE.md, MEMORY.md
-```
-
-**External:** `robocodec` (https://github.com/archebase/robocodec) handles all I/O formats and codecs.
-
-## Key Modules
-
-- `src/pipeline/`: Standard pipeline, HyperPipeline, fluent builder API
-- `src/dataset/kps/`: KPS dataset conversion with v1.2 spec support
-  - `config.rs`: TOML-based topic mapping configuration
-  - `delivery_v12.rs`: v1.2 series delivery structure
-  - `task_info.rs`: Task metadata JSON generation
-  - `hdf5_schema.rs`: HDF5 dataset specifications
-  - `writers/`: Streaming HDF5/Parquet writers
 
 ## Feature Flags
 
-| Flag | Description |
-|------|-------------|
+| Flag | Purpose |
+|------|---------|
 | `python` | PyO3 bindings |
 | `dataset-all` | All KPS features (HDF5, Parquet, depth) |
-| `gpu` | GPU compression (Linux) |
-| `jemalloc` | jemalloc allocator (Linux) |
-| `cli` / `profiling` | CLI tools |
+| `cloud-storage` | Storage abstraction (OSS/S3, object_store) |
+| `gpu` | GPU compression (Linux only) |
+| `jemalloc` | jemalloc allocator (Linux only) |
 
-## Important Notes
+## Key Conventions
 
-- **Testing:** Rust and Python tests must run separately (PyO3 `extension-module` conflicts)
-- **Memory:** Use arena allocation for message data (~22% overhead otherwise)
-- **KPS v1.2:** Comprehensive spec tests in `tests/kps_v12_tests.rs`
+### Storage Layer (`cloud-storage` feature)
+- `Storage` trait uses `&Path` (not `impl AsRef<Path>`) for dyn-compatibility
+- `LocalStorage` implements `SeekableStorage` for seekable reads
+- `StorageFactory` creates backends from URL schemes (file://, s3://, oss://)
+- Environment variables for OSS: `OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, `OSS_ENDPOINT`
 
-## Common Tasks
+### KPS Dataset
+- TOML config at `src/dataset/kps/config.rs` for topic mappings
+- v1.2 spec tests in `tests/kps_v12_tests.rs` are authoritative
+- Writers in `src/dataset/kps/writers/` use streaming patterns
 
-**Add Python bindings:** `#[pymethods]` in `src/python/` → `maturin develop`
+### Memory
+- **Always use arena allocation** for message data (~22% overhead if skipped)
+- Arena types are in `robocodec`, imported via `use robocodec::arena::Arena`
 
-**Add KPS features:** Implement in `src/dataset/kps/` → add to `Cargo.toml` → test in `tests/kps_v12_tests.rs`
+### Python Bindings
+- Use `#[pymethods]` on structs in `src/python/`
+- Must rebuild with `maturin develop` after changes
+- Cannot run Rust and Python tests in same invocation
+
+## External Dependencies
+
+- `robocodec`: https://github.com/archebase/robocodec (I/O, codecs, arena)
