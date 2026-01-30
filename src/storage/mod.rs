@@ -31,6 +31,7 @@
 
 pub mod factory;
 pub mod local;
+pub mod multipart;
 pub mod retry;
 pub mod url;
 
@@ -39,6 +40,9 @@ pub mod oss;
 
 pub use factory::{StorageConfig, StorageFactory};
 pub use local::LocalStorage;
+pub use multipart::{
+    MultipartConfig, MultipartStats, MultipartUploader, ProgressCallback, upload_multipart,
+};
 pub use retry::{RetryConfig, RetryingStorage, retry_with_backoff};
 pub use url::StorageUrl;
 

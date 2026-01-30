@@ -103,8 +103,7 @@ impl RetryConfig {
 
     /// Calculate the backoff duration for a given attempt.
     fn backoff_duration(&self, attempt: u32) -> Duration {
-        let base_ms = self.initial_backoff_ms as f64
-            * self.backoff_multiplier.powi(attempt as i32);
+        let base_ms = self.initial_backoff_ms as f64 * self.backoff_multiplier.powi(attempt as i32);
         let clamped_ms = base_ms.clamp(0.0, self.max_backoff_ms as f64) as u64;
 
         if self.jitter_enabled {
@@ -147,11 +146,7 @@ where
         match f() {
             Ok(result) => {
                 if attempt > 0 {
-                    tracing::info!(
-                        "{} succeeded after {} retries",
-                        operation_name,
-                        attempt
-                    );
+                    tracing::info!("{} succeeded after {} retries", operation_name, attempt);
                 }
                 return Ok(result);
             }
@@ -160,7 +155,11 @@ where
 
                 // Don't retry if the error is not retryable
                 if !last_error.as_ref().unwrap().is_retryable() {
-                    tracing::debug!("{} failed with non-retryable error: {}", operation_name, last_error.as_ref().unwrap());
+                    tracing::debug!(
+                        "{} failed with non-retryable error: {}",
+                        operation_name,
+                        last_error.as_ref().unwrap()
+                    );
                     return Err(last_error.unwrap());
                 }
 
@@ -181,7 +180,11 @@ where
         }
     }
 
-    tracing::error!("{} failed after {} attempts", operation_name, config.max_retries + 1);
+    tracing::error!(
+        "{} failed after {} attempts",
+        operation_name,
+        config.max_retries + 1
+    );
     Err(last_error.unwrap())
 }
 
@@ -234,9 +237,7 @@ impl Storage for RetryingStorage {
         let path = path.to_owned();
         let inner = self.inner.clone();
 
-        retry_with_backoff(&self.config, "reader", || {
-            inner.reader(&path)
-        })
+        retry_with_backoff(&self.config, "reader", || inner.reader(&path))
     }
 
     fn writer(&self, path: &Path) -> Result<Box<dyn Write + Send + 'static>> {
@@ -255,36 +256,28 @@ impl Storage for RetryingStorage {
         let path = path.to_owned();
         let inner = self.inner.clone();
 
-        retry_with_backoff(&self.config, "size", || {
-            inner.size(&path)
-        })
+        retry_with_backoff(&self.config, "size", || inner.size(&path))
     }
 
     fn metadata(&self, path: &Path) -> Result<ObjectMetadata> {
         let path = path.to_owned();
         let inner = self.inner.clone();
 
-        retry_with_backoff(&self.config, "metadata", || {
-            inner.metadata(&path)
-        })
+        retry_with_backoff(&self.config, "metadata", || inner.metadata(&path))
     }
 
     fn list(&self, prefix: &Path) -> Result<Vec<ObjectMetadata>> {
         let prefix = prefix.to_owned();
         let inner = self.inner.clone();
 
-        retry_with_backoff(&self.config, "list", || {
-            inner.list(&prefix)
-        })
+        retry_with_backoff(&self.config, "list", || inner.list(&prefix))
     }
 
     fn delete(&self, path: &Path) -> Result<()> {
         let path = path.to_owned();
         let inner = self.inner.clone();
 
-        retry_with_backoff(&self.config, "delete", || {
-            inner.delete(&path)
-        })
+        retry_with_backoff(&self.config, "delete", || inner.delete(&path))
     }
 
     fn copy(&self, from: &Path, to: &Path) -> Result<()> {
@@ -292,18 +285,14 @@ impl Storage for RetryingStorage {
         let to = to.to_owned();
         let inner = self.inner.clone();
 
-        retry_with_backoff(&self.config, "copy", || {
-            inner.copy(&from, &to)
-        })
+        retry_with_backoff(&self.config, "copy", || inner.copy(&from, &to))
     }
 
     fn create_dir(&self, path: &Path) -> Result<()> {
         let path = path.to_owned();
         let inner = self.inner.clone();
 
-        retry_with_backoff(&self.config, "create_dir", || {
-            inner.create_dir(&path)
-        })
+        retry_with_backoff(&self.config, "create_dir", || inner.create_dir(&path))
     }
 
     fn create_dir_all(&self, path: &Path) -> Result<()> {
@@ -361,8 +350,7 @@ mod tests {
 
     #[test]
     fn test_retry_config_with_jitter_factor() {
-        let config = RetryConfig::new()
-            .with_jitter_factor(0.25);
+        let config = RetryConfig::new().with_jitter_factor(0.25);
 
         assert_eq!(config.jitter_factor, 0.25);
     }
@@ -370,22 +358,19 @@ mod tests {
     #[test]
     fn test_retry_config_jitter_factor_clamping() {
         // Too high should be clamped to 1.0
-        let config = RetryConfig::new()
-            .with_jitter_factor(1.5);
+        let config = RetryConfig::new().with_jitter_factor(1.5);
 
         assert_eq!(config.jitter_factor, 1.0);
 
         // Negative should be clamped to 0.0
-        let config = RetryConfig::new()
-            .with_jitter_factor(-0.5);
+        let config = RetryConfig::new().with_jitter_factor(-0.5);
 
         assert_eq!(config.jitter_factor, 0.0);
     }
 
     #[test]
     fn test_backoff_duration_exponential() {
-        let config = RetryConfig::new()
-            .with_jitter(false);
+        let config = RetryConfig::new().with_jitter(false);
 
         let d0 = config.backoff_duration(0);
         let d1 = config.backoff_duration(1);
@@ -409,9 +394,7 @@ mod tests {
 
     #[test]
     fn test_backoff_duration_with_jitter() {
-        let config = RetryConfig::new()
-            .with_jitter(true)
-            .with_jitter_factor(0.5);
+        let config = RetryConfig::new().with_jitter(true).with_jitter_factor(0.5);
 
         let d0 = config.backoff_duration(0);
         // With 50% jitter, should be between 50ms and 150ms
