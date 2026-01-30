@@ -16,7 +16,7 @@ use std::fs;
 use std::path::Path;
 
 use roboflow::dataset::lerobot::{DatasetConfig, LerobotConfig, Mapping, MappingType, VideoConfig};
-#[cfg(feature = "kps-all")]
+#[cfg(feature = "dataset-all")]
 use roboflow::dataset::streaming::StreamingDatasetConverter;
 use roboflow::dataset::streaming::{FeatureRequirement, FrameCompletionCriteria, StreamingConfig};
 
@@ -164,7 +164,7 @@ fn test_completion_criteria_is_complete() {
 // Integration tests (require fixtures)
 // =============================================================================
 
-#[cfg(feature = "kps-all")]
+#[cfg(feature = "dataset-all")]
 #[test]
 fn test_streaming_converter_creation() {
     let output_dir = test_output_dir("test_streaming_creation");
@@ -177,7 +177,7 @@ fn test_streaming_converter_creation() {
     );
 }
 
-#[cfg(feature = "kps-all")]
+#[cfg(feature = "dataset-all")]
 #[test]
 fn test_streaming_converter_builder() {
     let output_dir = test_output_dir("test_streaming_builder");
@@ -198,7 +198,7 @@ fn test_streaming_converter_builder() {
 // Test with actual fixture files (if available)
 // =============================================================================
 
-#[cfg(feature = "kps-all")]
+#[cfg(feature = "dataset-all")]
 #[test]
 fn test_streaming_converter_with_bag() {
     // Try to find a test BAG file
@@ -234,7 +234,7 @@ fn test_streaming_converter_with_bag() {
     }
 }
 
-#[cfg(feature = "kps-all")]
+#[cfg(feature = "dataset-all")]
 #[test]
 fn test_streaming_converter_with_mcap() {
     // Try to find a test MCAP file
@@ -280,7 +280,7 @@ fn test_streaming_config_memory_limits() {
     assert_eq!(config.max_buffered_memory_mb, 512);
 }
 
-#[cfg(feature = "kps-all")]
+#[cfg(feature = "dataset-all")]
 #[test]
 fn test_streaming_converter_empty_directory() {
     // Test that converter handles directories gracefully

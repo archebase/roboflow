@@ -466,29 +466,28 @@ impl PyConversionJob {
                 .as_ref()
                 .map(|t| t.is_finished())
                 .unwrap_or(true)
+                && let Some(thread) = self.thread.take()
             {
-                if let Some(thread) = self.thread.take() {
-                    let result = py.allow_threads(|| {
-                        thread
-                            .join()
-                            .map_err(|e| {
-                                if let Some(msg) = e.downcast_ref::<String>() {
-                                    PyRuntimeError::new_err(format!("Thread panic: {}", msg))
-                                } else if let Some(msg) = e.downcast_ref::<&str>() {
-                                    PyRuntimeError::new_err(format!("Thread panic: {}", msg))
-                                } else {
-                                    PyRuntimeError::new_err(format!("Thread panic: {:?}", e))
-                                }
-                            })?
-                            .map_err(dataset_error_to_py)
-                    })?;
-                    self.stats = Some(result.clone());
-                    return Ok(Some(PyDatasetStats {
-                        stats: result,
-                        warning_count: self.warning_count,
-                        error_count: self.error_count,
-                    }));
-                }
+                let result = py.allow_threads(|| {
+                    thread
+                        .join()
+                        .map_err(|e| {
+                            if let Some(msg) = e.downcast_ref::<String>() {
+                                PyRuntimeError::new_err(format!("Thread panic: {}", msg))
+                            } else if let Some(msg) = e.downcast_ref::<&str>() {
+                                PyRuntimeError::new_err(format!("Thread panic: {}", msg))
+                            } else {
+                                PyRuntimeError::new_err(format!("Thread panic: {:?}", e))
+                            }
+                        })?
+                        .map_err(dataset_error_to_py)
+                })?;
+                self.stats = Some(result.clone());
+                return Ok(Some(PyDatasetStats {
+                    stats: result,
+                    warning_count: self.warning_count,
+                    error_count: self.error_count,
+                }));
             }
 
             // Timeout expired
@@ -542,21 +541,18 @@ impl PyConversionJob {
                         break;
                     }
                     // Print progress to stderr
-                    match &update {
-                        ProgressUpdate::FrameProgress { eta, .. } => {
-                            if let Some(pct) = update.percent_complete() {
-                                let secs = eta.as_secs();
-                                let eta_str = if secs > 3600 {
-                                    format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
-                                } else if secs > 60 {
-                                    format!("{}m {}s", secs / 60, secs % 60)
-                                } else {
-                                    format!("{}s", secs)
-                                };
-                                eprintln!("Progress: {:.1}% - ETA: {}", pct, eta_str);
-                            }
-                        }
-                        _ => {}
+                    if let ProgressUpdate::FrameProgress { eta, .. } = &update
+                        && let Some(pct) = update.percent_complete()
+                    {
+                        let secs = eta.as_secs();
+                        let eta_str = if secs > 3600 {
+                            format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+                        } else if secs > 60 {
+                            format!("{}m {}s", secs / 60, secs % 60)
+                        } else {
+                            format!("{}s", secs)
+                        };
+                        eprintln!("Progress: {:.1}% - ETA: {}", pct, eta_str);
                     }
                 }
 

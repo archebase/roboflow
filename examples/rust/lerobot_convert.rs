@@ -18,7 +18,7 @@
 
 use std::path::PathBuf;
 
-use roboflow::dataset::lerobot::{AnnotationData, LerobotConfig, LerobotFrame, LerobotWriter};
+use roboflow::dataset::lerobot::{AnnotationData, LerobotConfig, LerobotWriter};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse arguments
@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let annotations = args
         .annotation
         .as_ref()
-        .map(|p| AnnotationData::from_file(p))
+        .map(AnnotationData::from_file)
         .transpose()?;
 
     // Create output directory

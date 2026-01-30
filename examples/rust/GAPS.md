@@ -163,7 +163,7 @@ F盘/
 - **✅ Implemented** (2025-01) - Depth MKV via `DepthMkvEncoder` in `src/io/kps/video_encoder.rs`
 - Uses FFV1 codec with 16-bit grayscale input
 - Per-camera MKV files (depth_camera_0.mkv, etc.)
-- PNG fallback when `kps-depth` feature enabled
+- PNG fallback when `dataset-depth` feature enabled
 
 ---
 

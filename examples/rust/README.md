@@ -18,7 +18,7 @@ Rust examples demonstrating KPS dataset conversion using robocodec.
 
 ```bash
 # Run with HDF5 support
-cargo run --example convert_to_kps --features kps-hdf5 -- \
+cargo run --example convert_to_kps --features dataset-hdf5 -- \
     input.mcap \
     ./output \
     examples/rust/kps_config.toml
@@ -28,7 +28,7 @@ cargo run --example convert_to_kps --features kps-hdf5 -- \
 
 ```bash
 # Convert MCAP to Kps format
-cargo run --bin convert --features kps-hdf5 -- \
+cargo run --bin convert --features dataset-hdf5 -- \
     to-kps input.mcap ./output examples/rust/kps_config.toml
 ```
 

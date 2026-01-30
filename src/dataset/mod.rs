@@ -261,7 +261,7 @@ impl DatasetConfig {
 /// # Errors
 ///
 /// Returns an error if:
-/// - The required feature is not enabled (e.g., `kps-parquet` for KPS)
+/// - The required feature is not enabled (e.g., `dataset-parquet` for KPS)
 /// - The output directory cannot be created
 /// - The configuration is invalid
 pub fn create_writer(

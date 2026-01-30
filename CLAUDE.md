@@ -20,7 +20,7 @@ maturin develop --features python
 
 # Tests (Rust only - Python uses separate pytest)
 cargo test                              # All Rust tests
-cargo test --features kps-all          # With KPS features
+cargo test --features dataset-all          # With KPS features
 cargo test --test kps_v12_tests       # KPS v1.2 spec tests
 ```
 
@@ -67,7 +67,7 @@ roboflow/
 | Flag | Description |
 |------|-------------|
 | `python` | PyO3 bindings |
-| `kps-all` | All KPS features (HDF5, Parquet, depth) |
+| `dataset-all` | All KPS features (HDF5, Parquet, depth) |
 | `gpu` | GPU compression (Linux) |
 | `jemalloc` | jemalloc allocator (Linux) |
 | `cli` / `profiling` | CLI tools |

@@ -535,14 +535,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 durations.push(metrics.duration_secs);
 
                 // Delete temp files from intermediate runs
-                if i < runs - 1 {
-                    if let Err(e) = std::fs::remove_file(&run_output) {
-                        eprintln!(
-                            "Warning: Failed to remove temp file {}: {}",
-                            run_output.display(),
-                            e
-                        );
-                    }
+                if i < runs - 1
+                    && let Err(e) = std::fs::remove_file(&run_output)
+                {
+                    eprintln!(
+                        "Warning: Failed to remove temp file {}: {}",
+                        run_output.display(),
+                        e
+                    );
                 }
 
                 if verbose {
@@ -595,10 +595,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "Parallel"
                 }
             );
-            if hyper {
-                if let Some(m) = mode {
-                    println!("  mode: {:?}", m);
-                }
+            if hyper
+                && let Some(m) = mode
+            {
+                println!("  mode: {:?}", m);
             }
             println!("  window_log: auto-detected from CPU cache");
             println!();

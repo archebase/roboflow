@@ -73,8 +73,8 @@ pub use writers::{
     WriterStats, create_kps_writer,
 };
 
-#[cfg(feature = "kps-hdf5")]
+#[cfg(feature = "dataset-hdf5")]
 pub use writers::StreamingHdf5Writer;
 
-#[cfg(feature = "kps-parquet")]
+#[cfg(feature = "dataset-parquet")]
 pub use writers::StreamingParquetWriter;

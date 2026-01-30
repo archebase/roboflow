@@ -17,31 +17,31 @@ pub use base::{KpsWriterError, MessageExtractor};
 pub use crate::dataset::common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats};
 
 // HDF5 writer
-#[cfg(feature = "kps-hdf5")]
+#[cfg(feature = "dataset-hdf5")]
 pub mod hdf5;
 
-#[cfg(feature = "kps-hdf5")]
+#[cfg(feature = "dataset-hdf5")]
 pub use hdf5::StreamingHdf5Writer;
 
 // v1.2 compliant HDF5 writer
-#[cfg(feature = "kps-hdf5")]
+#[cfg(feature = "dataset-hdf5")]
 pub mod v12_hdf5;
 
-#[cfg(feature = "kps-hdf5")]
+#[cfg(feature = "dataset-hdf5")]
 pub use v12_hdf5::{V12Hdf5Schema, V12Hdf5Writer};
 
 // Parquet writer
-#[cfg(feature = "kps-parquet")]
+#[cfg(feature = "dataset-parquet")]
 pub mod parquet;
 
-#[cfg(feature = "kps-parquet")]
+#[cfg(feature = "dataset-parquet")]
 pub use parquet::StreamingParquetWriter;
 
 // Original data HDF5 writer
-#[cfg(feature = "kps-hdf5")]
+#[cfg(feature = "dataset-hdf5")]
 pub mod original_hdf5;
 
-#[cfg(feature = "kps-hdf5")]
+#[cfg(feature = "dataset-hdf5")]
 pub use original_hdf5::OriginalHdf5Writer;
 
 // Audio writer
@@ -66,33 +66,33 @@ pub fn create_kps_writer(
     let formats = &config.output.formats;
 
     if formats.is_empty() || formats.contains(&OutputFormat::Parquet) {
-        #[cfg(feature = "kps-parquet")]
+        #[cfg(feature = "dataset-parquet")]
         {
             return Ok(Box::new(StreamingParquetWriter::create(
                 output_dir, episode_id, config,
             )?));
         }
-        #[cfg(not(feature = "kps-parquet"))]
+        #[cfg(not(feature = "dataset-parquet"))]
         {
             return Err(crate::RoboflowError::parse(
                 "DatasetWriter",
-                "Parquet support not enabled. Add feature 'kps-parquet' to Cargo.toml",
+                "Parquet support not enabled. Add feature 'dataset-parquet' to Cargo.toml",
             ));
         }
     }
 
     if formats.contains(&OutputFormat::Hdf5) {
-        #[cfg(feature = "kps-hdf5")]
+        #[cfg(feature = "dataset-hdf5")]
         {
             return Ok(Box::new(StreamingHdf5Writer::create(
                 output_dir, episode_id, config,
             )?));
         }
-        #[cfg(not(feature = "kps-hdf5"))]
+        #[cfg(not(feature = "dataset-hdf5"))]
         {
             return Err(crate::RoboflowError::parse(
                 "DatasetWriter",
-                "HDF5 support not enabled. Add feature 'kps-hdf5' to Cargo.toml",
+                "HDF5 support not enabled. Add feature 'dataset-hdf5' to Cargo.toml",
             ));
         }
     }
@@ -104,7 +104,7 @@ pub fn create_kps_writer(
 }
 
 #[cfg(test)]
-#[cfg(not(any(feature = "kps-parquet", feature = "kps-hdf5")))]
+#[cfg(not(any(feature = "dataset-parquet", feature = "dataset-hdf5")))]
 mod tests {
     use super::*;
 

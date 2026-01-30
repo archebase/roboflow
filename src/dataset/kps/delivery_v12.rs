@@ -215,17 +215,17 @@ impl TaskStatistics {
     ///
     /// Reads the frame_count attribute or infers from dataset shapes.
     fn extract_frame_count_from_hdf5(path: &Path) -> Result<usize, Box<dyn std::error::Error>> {
-        #[cfg(feature = "kps-hdf5")]
+        #[cfg(feature = "dataset-hdf5")]
         {
             use hdf5::File;
 
             let file = File::open(path)?;
 
             // Try to read frame_count attribute
-            if let Ok(frame_count) = file.attr("frame_count") {
-                if let Ok(count) = frame_count.read_scalar::<usize>() {
-                    return Ok(count);
-                }
+            if let Ok(frame_count) = file.attr("frame_count")
+                && let Ok(count) = frame_count.read_scalar::<usize>()
+            {
+                return Ok(count);
             }
 
             // Try to infer from dataset shapes
@@ -242,18 +242,18 @@ impl TaskStatistics {
             ];
 
             for dataset_path in &common_paths {
-                if let Ok(dataset) = file.dataset(dataset_path) {
-                    if let Ok(dspace) = dataset.space() {
-                        let shape = dspace.shape();
-                        if !shape.is_empty() {
-                            return Ok(shape[0]);
-                        }
+                if let Ok(dataset) = file.dataset(dataset_path)
+                    && let Ok(dspace) = dataset.space()
+                {
+                    let shape = dspace.shape();
+                    if !shape.is_empty() {
+                        return Ok(shape[0]);
                     }
                 }
             }
         }
 
-        #[cfg(not(feature = "kps-hdf5"))]
+        #[cfg(not(feature = "dataset-hdf5"))]
         {
             let _ = path;
         }

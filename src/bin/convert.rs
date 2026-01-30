@@ -83,7 +83,7 @@ fn normalize<'a>(input: &'a str, output: &'a str) -> NormalizeBuilder<'a> {
 ///     .run()
 ///     .unwrap();
 /// ```
-#[cfg(feature = "kps-all")]
+#[cfg(feature = "dataset-all")]
 fn to_lerobot<'a>(input: &'a str, output_dir: &'a str) -> LeRobotBuilder<'a> {
     LeRobotBuilder::new(input, output_dir)
 }
@@ -132,14 +132,14 @@ impl<'a> NormalizeBuilder<'a> {
 }
 
 /// Builder for LeRobot conversions.
-#[cfg(feature = "kps-all")]
+#[cfg(feature = "dataset-all")]
 struct LeRobotBuilder<'a> {
     input: &'a str,
     output_dir: &'a str,
     config: Option<&'a str>,
 }
 
-#[cfg(feature = "kps-all")]
+#[cfg(feature = "dataset-all")]
 impl<'a> LeRobotBuilder<'a> {
     fn new(input: &'a str, output_dir: &'a str) -> Self {
         Self {
@@ -178,13 +178,13 @@ enum Command {
         output: String,
         config: String,
     },
-    #[cfg(feature = "kps-all")]
+    #[cfg(feature = "dataset-all")]
     ToLeRobot {
         input: String,
         output: String,
         config: String,
     },
-    #[cfg(feature = "kps-all")]
+    #[cfg(feature = "dataset-all")]
     BagToLeRobot {
         input: String,
         output: String,
@@ -224,7 +224,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                 config,
             }
         }
-        #[cfg(feature = "kps-all")]
+        #[cfg(feature = "dataset-all")]
         "to-lerobot" => {
             if args.len() < 5 {
                 return Err("to-lerobot command requires a config file argument".to_string());
@@ -236,7 +236,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                 config,
             }
         }
-        #[cfg(feature = "kps-all")]
+        #[cfg(feature = "dataset-all")]
         "bag-to-lerobot" => {
             if args.len() < 5 {
                 return Err("bag-to-lerobot command requires a config file argument".to_string());
@@ -261,13 +261,13 @@ fn run_convert(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
             output,
             config,
         } => normalize(&input, &output).config(&config).run(),
-        #[cfg(feature = "kps-all")]
+        #[cfg(feature = "dataset-all")]
         Command::ToLeRobot {
             input,
             output,
             config,
         } => to_lerobot(&input, &output).config(&config).run(),
-        #[cfg(feature = "kps-all")]
+        #[cfg(feature = "dataset-all")]
         Command::BagToLeRobot {
             input,
             output,
@@ -875,7 +875,7 @@ fn bag_to_bag(
 }
 
 /// Convert MCAP to LeRobot dataset format using streaming converter.
-#[cfg(feature = "kps-all")]
+#[cfg(feature = "dataset-all")]
 fn convert_to_lerobot(
     input: &str,
     output_dir: &str,
@@ -925,7 +925,7 @@ fn convert_to_lerobot(
 /// BAG -> decoded messages -> AlignedFrames -> LeRobot dataset
 ///
 /// No intermediate MCAP file is created, and memory usage is bounded.
-#[cfg(feature = "kps-all")]
+#[cfg(feature = "dataset-all")]
 fn convert_bag_to_lerobot(
     input: &str,
     output_dir: &str,

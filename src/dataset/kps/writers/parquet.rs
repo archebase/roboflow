@@ -109,7 +109,7 @@ impl StreamingParquetWriter {
     }
 
     /// Write a Parquet file from buffered data.
-    #[cfg(feature = "kps-parquet")]
+    #[cfg(feature = "dataset-parquet")]
     fn write_parquet_shard(&mut self) -> crate::core::Result<()> {
         use polars::prelude::*;
 
@@ -134,7 +134,7 @@ impl StreamingParquetWriter {
 
         if !series_vec.is_empty() {
             let df = DataFrame::new(series_vec).map_err(|e| {
-                crate::RoboflowError::parse("Parquet", &format!("Failed to create DataFrame: {e}"))
+                crate::RoboflowError::parse("Parquet", format!("Failed to create DataFrame: {e}"))
             })?;
 
             // Write to Parquet file
@@ -149,7 +149,7 @@ impl StreamingParquetWriter {
                 .map_err(|e| {
                     crate::RoboflowError::parse(
                         "Parquet",
-                        &format!("Failed to write Parquet file: {e}"),
+                        format!("Failed to write Parquet file: {e}"),
                     )
                 })?;
 
@@ -178,7 +178,7 @@ impl StreamingParquetWriter {
             &self.image_shapes,
             &self.state_dims,
         )
-        .map_err(|e| crate::RoboflowError::parse("Parquet", &e.to_string()))?;
+        .map_err(|e| crate::RoboflowError::parse("Parquet", e.to_string()))?;
 
         // Write episode.jsonl
         info::write_episode_json(
@@ -188,7 +188,7 @@ impl StreamingParquetWriter {
             self.frame_count as u64 * 1_000_000_000 / config.dataset.fps as u64,
             self.frame_count,
         )
-        .map_err(|e| crate::RoboflowError::parse("Parquet", &e.to_string()))?;
+        .map_err(|e| crate::RoboflowError::parse("Parquet", e.to_string()))?;
 
         Ok(())
     }
@@ -372,7 +372,7 @@ impl DatasetWriter for StreamingParquetWriter {
 
         // Check if we should write a shard
         if self.frame_count.is_multiple_of(self.frames_per_shard) {
-            #[cfg(feature = "kps-parquet")]
+            #[cfg(feature = "dataset-parquet")]
             {
                 self.write_parquet_shard()?;
             }
@@ -388,7 +388,7 @@ impl DatasetWriter for StreamingParquetWriter {
         })?;
 
         // Write final shard
-        #[cfg(feature = "kps-parquet")]
+        #[cfg(feature = "dataset-parquet")]
         {
             if !self.observation_buffer.is_empty() || !self.action_buffer.is_empty() {
                 self.write_parquet_shard()?;
@@ -442,9 +442,9 @@ mod tests {
         };
 
         let result = StreamingParquetWriter::create(&temp_dir, 0, &config);
-        #[cfg(feature = "kps-parquet")]
+        #[cfg(feature = "dataset-parquet")]
         assert!(result.is_ok());
-        #[cfg(not(feature = "kps-parquet"))]
+        #[cfg(not(feature = "dataset-parquet"))]
         assert!(result.is_err());
     }
 }

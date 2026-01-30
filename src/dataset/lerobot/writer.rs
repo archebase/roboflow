@@ -99,15 +99,15 @@ impl LerobotWriter {
     /// Create a new LeRobot writer.
     #[allow(unused_variables)]
     pub fn create(output_dir: impl AsRef<Path>, config: LerobotConfig) -> Result<Self> {
-        #[cfg(not(feature = "kps-parquet"))]
+        #[cfg(not(feature = "dataset-parquet"))]
         {
             Err(crate::RoboflowError::unsupported(
-                "LeRobot writer requires the 'kps-parquet' feature to be enabled. \
-                 Add --features kps-parquet to your build command.",
+                "LeRobot writer requires the 'dataset-parquet' feature to be enabled. \
+                 Add --features dataset-parquet to your build command.",
             ))
         }
 
-        #[cfg(feature = "kps-parquet")]
+        #[cfg(feature = "dataset-parquet")]
         {
             let output_dir = output_dir.as_ref();
 
@@ -220,7 +220,7 @@ impl LerobotWriter {
     }
 
     /// Write current episode to Parquet file.
-    #[cfg(feature = "kps-parquet")]
+    #[cfg(feature = "dataset-parquet")]
     fn write_episode_parquet(&mut self) -> Result<()> {
         use polars::prelude::*;
         use std::fs::File;
@@ -357,7 +357,7 @@ impl LerobotWriter {
 
         // Create DataFrame and write
         let df = DataFrame::new(series_vec).map_err(|e| {
-            crate::RoboflowError::parse("Parquet", &format!("DataFrame error: {}", e))
+            crate::RoboflowError::parse("Parquet", format!("DataFrame error: {}", e))
         })?;
 
         let parquet_path = self.output_dir.join(format!(
@@ -370,7 +370,7 @@ impl LerobotWriter {
 
         ParquetWriter::new(&mut writer)
             .finish(&mut df.clone())
-            .map_err(|e| crate::RoboflowError::parse("Parquet", &format!("Write error: {}", e)))?;
+            .map_err(|e| crate::RoboflowError::parse("Parquet", format!("Write error: {}", e)))?;
 
         // Track output bytes
         if let Ok(metadata) = std::fs::metadata(&parquet_path) {
@@ -390,12 +390,12 @@ impl LerobotWriter {
     ///
     /// Note: This should never be called because `create()` validates the feature
     /// at construction time. This is a compile-time fallback.
-    #[cfg(not(feature = "kps-parquet"))]
+    #[cfg(not(feature = "dataset-parquet"))]
     fn write_episode_parquet(&mut self) -> Result<()> {
         // This should be unreachable due to early validation in create()
         Err(crate::RoboflowError::encode(
             "LerobotWriter",
-            "Parquet writing called without 'kps-parquet' feature (should have been caught at construction)",
+            "Parquet writing called without 'dataset-parquet' feature (should have been caught at construction)",
         ))
     }
 

@@ -18,9 +18,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use roboflow::dataset::common::{AlignedFrame, DatasetWriter, ImageData};
+use roboflow::dataset::common::{DatasetWriter, ImageData};
 use roboflow::dataset::lerobot::{LerobotConfig, LerobotWriter};
-use roboflow::io::ReaderFactory;
+use roboflow::ReaderBuilder;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args()?;
@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let decode_start = Instant::now();
 
     // Open the input file
-    let reader = ReaderFactory::open(&args.input)?;
+    let reader = ReaderBuilder::new().path(&args.input).build()?;
 
     // Get file info
     let input_size = std::fs::metadata(&args.input)?.len();

@@ -14,7 +14,7 @@ use super::config::KpsConfig;
 
 /// Buffered image data for HDF5 writing.
 #[derive(Debug, Clone)]
-#[cfg(feature = "kps-hdf5")]
+#[cfg(feature = "dataset-hdf5")]
 struct BufferedImageData {
     data: Vec<u8>,
 }
@@ -28,12 +28,12 @@ pub struct Hdf5KpsWriter {
     frame_count: usize,
     image_shapes: HashMap<String, (usize, usize)>,
     state_shapes: HashMap<String, usize>,
-    /// Buffers for data collection (only used with kps-hdf5 feature)
-    #[cfg(feature = "kps-hdf5")]
+    /// Buffers for data collection (only used with dataset-hdf5 feature)
+    #[cfg(feature = "dataset-hdf5")]
     image_buffers: HashMap<String, Vec<BufferedImageData>>,
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     state_buffers: HashMap<String, Vec<Vec<f32>>>,
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     action_buffers: HashMap<String, Vec<Vec<f32>>>,
 }
 
@@ -48,7 +48,7 @@ impl Hdf5KpsWriter {
         let output_dir = output_dir.as_ref();
         std::fs::create_dir_all(output_dir)?;
 
-        #[cfg(feature = "kps-hdf5")]
+        #[cfg(feature = "dataset-hdf5")]
         let (image_buffers, state_buffers, action_buffers) =
             (HashMap::new(), HashMap::new(), HashMap::new());
 
@@ -58,11 +58,11 @@ impl Hdf5KpsWriter {
             frame_count: 0,
             image_shapes: HashMap::new(),
             state_shapes: HashMap::new(),
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             image_buffers,
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             state_buffers,
-            #[cfg(feature = "kps-hdf5")]
+            #[cfg(feature = "dataset-hdf5")]
             action_buffers,
         })
     }
@@ -86,19 +86,19 @@ impl Hdf5KpsWriter {
         mcap_path: impl AsRef<Path>,
         config: &KpsConfig,
     ) -> Result<usize, Box<dyn std::error::Error>> {
-        #[cfg(feature = "kps-hdf5")]
+        #[cfg(feature = "dataset-hdf5")]
         {
             self.write_from_mcap_impl(mcap_path, config)
         }
-        #[cfg(not(feature = "kps-hdf5"))]
+        #[cfg(not(feature = "dataset-hdf5"))]
         {
             // Note: parameters are unused when feature is disabled
             let _ = (mcap_path, config);
-            Err("HDF5 support not enabled. Add feature 'kps-hdf5' to Cargo.toml".into())
+            Err("HDF5 support not enabled. Add feature 'dataset-hdf5' to Cargo.toml".into())
         }
     }
 
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn write_from_mcap_impl(
         &mut self,
         mcap_path: impl AsRef<Path>,
@@ -185,7 +185,7 @@ impl Hdf5KpsWriter {
     }
 
     /// Buffer image data for later writing.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn buffer_image_data(
         &mut self,
         mapping: &crate::dataset::kps::config::Mapping,
@@ -238,7 +238,7 @@ impl Hdf5KpsWriter {
     }
 
     /// Buffer state data for later writing.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn buffer_state_data(
         &mut self,
         mapping: &crate::dataset::kps::config::Mapping,
@@ -292,7 +292,7 @@ impl Hdf5KpsWriter {
     }
 
     /// Write buffered image data to HDF5.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn write_buffered_images(
         &mut self,
         group: &hdf5::Group,
@@ -326,7 +326,7 @@ impl Hdf5KpsWriter {
     }
 
     /// Write buffered state data to HDF5.
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn write_buffered_states(
         &mut self,
         group: &hdf5::Group,
@@ -366,7 +366,7 @@ impl Hdf5KpsWriter {
         Ok(())
     }
 
-    #[cfg(feature = "kps-hdf5")]
+    #[cfg(feature = "dataset-hdf5")]
     fn write_metadata(
         &self,
         group: &hdf5::Group,
