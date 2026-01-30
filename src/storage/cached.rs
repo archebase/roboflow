@@ -249,8 +249,8 @@ pub struct CachedStorage {
     stats: Arc<Mutex<CacheStats>>,
     /// Upload worker thread handles.
     upload_workers: Mutex<Vec<thread::JoinHandle<()>>>,
-    /// Shutdown signal.
-    shutdown: AtomicUsize,
+    /// Shutdown signal (Arc-shared with workers).
+    shutdown: Arc<AtomicUsize>,
 }
 
 impl CachedStorage {
@@ -280,7 +280,7 @@ impl CachedStorage {
             upload_receiver,
             stats: Arc::new(Mutex::new(CacheStats::default())),
             upload_workers: Mutex::new(Vec::new()),
-            shutdown: AtomicUsize::new(0),
+            shutdown: Arc::new(AtomicUsize::new(0)),
         };
 
         // Spawn upload worker threads
@@ -302,7 +302,8 @@ impl CachedStorage {
             let local = self.local.clone();
             let delete_after_upload = self.config.delete_after_upload;
             let cache_dir = self.config.cache_directory.clone();
-            let stats = Arc::clone(&self.stats); // Clone Arc
+            let stats = Arc::clone(&self.stats);
+            let shutdown = Arc::clone(&self.shutdown);
 
             let handle = thread::Builder::new()
                 .name(format!("cached-upload-{}", worker_id))
@@ -315,6 +316,7 @@ impl CachedStorage {
                         delete_after_upload,
                         cache_dir,
                         stats,
+                        shutdown,
                     )
                 })
                 .map_err(|e| {
@@ -336,43 +338,63 @@ impl CachedStorage {
         delete_after_upload: bool,
         cache_dir: PathBuf,
         stats: Arc<Mutex<CacheStats>>,
+        shutdown: Arc<AtomicUsize>,
     ) {
         tracing::info!("Upload worker {} started", worker_id);
 
-        while let Ok(task) = receiver.recv() {
-            // Check for shutdown signal
-            if receiver.is_empty() && thread::panicking() {
-                break;
-            }
+        loop {
+            // Check for shutdown signal with timeout
+            match receiver.recv_timeout(Duration::from_millis(100)) {
+                Ok(task) => {
+                    // Double-check shutdown before processing
+                    if shutdown.load(Ordering::Acquire) != 0 {
+                        // Shutdown requested, don't process this task
+                        // Task will remain in cache for upload on next restart
+                        break;
+                    }
 
-            tracing::debug!(
-                "Worker {} uploading {} ({} bytes)",
-                worker_id,
-                task.local_path.display(),
-                task.size
-            );
+                    tracing::debug!(
+                        "Worker {} uploading {} ({} bytes)",
+                        worker_id,
+                        task.local_path.display(),
+                        task.size
+                    );
 
-            let result = Self::upload_file(&local, &remote, &task, delete_after_upload, &cache_dir);
+                    let result =
+                        Self::upload_file(&local, &remote, &task, delete_after_upload, &cache_dir);
 
-            // Update stats
-            if let Ok(mut s) = stats.lock() {
-                if result.is_ok() {
-                    s.uploads_completed += 1;
-                    s.bytes_uploaded += task.size;
-                    s.pending_uploads = s.pending_uploads.saturating_sub(1);
-                } else {
-                    s.uploads_failed += 1;
-                    s.pending_uploads = s.pending_uploads.saturating_sub(1);
+                    // Update stats
+                    if let Ok(mut s) = stats.lock() {
+                        if result.is_ok() {
+                            s.uploads_completed += 1;
+                            s.bytes_uploaded += task.size;
+                            s.pending_uploads = s.pending_uploads.saturating_sub(1);
+                        } else {
+                            s.uploads_failed += 1;
+                            s.pending_uploads = s.pending_uploads.saturating_sub(1);
+                        }
+                    }
+
+                    if let Err(e) = result {
+                        tracing::error!(
+                            "Worker {} failed to upload {}: {}",
+                            worker_id,
+                            task.local_path.display(),
+                            e
+                        );
+                    }
                 }
-            }
-
-            if let Err(e) = result {
-                tracing::error!(
-                    "Worker {} failed to upload {}: {}",
-                    worker_id,
-                    task.local_path.display(),
-                    e
-                );
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    // Check shutdown signal on timeout
+                    if shutdown.load(Ordering::Acquire) != 0 {
+                        break;
+                    }
+                    // Continue loop to check for shutdown again
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    // Channel closed, exit
+                    break;
+                }
             }
         }
 
@@ -399,7 +421,7 @@ impl CachedStorage {
         file.read_to_end(&mut buffer)
             .map_err(|e| StorageError::Other(format!("Failed to read cached file: {}", e)))?;
 
-        // Upload to remote using retry logic
+        // Upload to remote storage
         let mut remote_writer = remote.writer(remote_path)?;
         remote_writer.write_all(&buffer)?;
         remote_writer.flush()?;
@@ -622,14 +644,16 @@ impl CachedStorage {
 
 impl Drop for CachedStorage {
     fn drop(&mut self) {
-        // Signal shutdown
+        // Signal shutdown first
         self.shutdown.store(1, Ordering::Release);
 
-        // Try to flush pending uploads
-        let _ = self.flush();
-
-        // Drop the sender to close the channel
-        drop(self.upload_sender.clone());
+        // Try to flush pending uploads with error logging
+        if let Err(e) = self.flush() {
+            tracing::error!(
+                "Failed to flush cached storage on drop: {}. Pending uploads may not complete.",
+                e
+            );
+        }
     }
 }
 
@@ -779,6 +803,9 @@ impl Storage for CachedStorage {
 
             // Update cache metadata
             let size = fs::metadata(&to_cache).map(|m| m.len()).unwrap_or(0);
+
+            // Add to cache entries so queue_upload can find it
+            self.add_to_cache(to, size);
 
             // Also queue for upload to remote
             self.queue_upload(to_cache, to.to_path_buf(), size)?;
@@ -946,11 +973,22 @@ impl Drop for CachedWriter {
     fn drop(&mut self) {
         // Ensure data is written and upload is queued
         if !self.flushed {
-            let _ = self.flush();
+            if let Err(e) = self.flush() {
+                tracing::error!(
+                    "Failed to flush cached writer on drop: {}. Data may not be fully written.",
+                    e
+                );
+            }
         }
 
         if !self.uploaded {
-            let _ = self.queue_upload();
+            if let Err(_e) = self.queue_upload() {
+                tracing::error!(
+                    "Failed to queue upload for {}: Upload will not occur. Data exists locally at {}",
+                    self.remote_path.display(),
+                    self.local_path.display()
+                );
+            }
         }
     }
 }
@@ -1218,14 +1256,20 @@ mod tests {
 
         // Flush should complete successfully
         let result = cached.flush();
-        assert!(result.is_ok() || result.is_err()); // Either is fine
+        match result {
+            Ok(()) => {}
+            Err(StorageError::Timeout(_)) => {
+                // Timeout is acceptable - uploads may still be pending
+            }
+            Err(e) => panic!("Unexpected flush error: {:?}", e),
+        }
 
         // Check that uploads completed
         thread::sleep(Duration::from_millis(200));
 
         let stats = cached.stats();
-        // Uploads should be complete or pending
-        assert!(stats.uploads_completed >= 0 || stats.pending_uploads >= 0);
+        // We wrote 3 files, so uploads_completed + pending should be 3
+        assert_eq!(stats.uploads_completed + stats.pending_uploads, 3);
 
         // Cleanup
         let _ = fs::remove_dir_all(temp_dir);
