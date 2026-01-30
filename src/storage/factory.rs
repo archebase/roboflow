@@ -9,7 +9,8 @@
 use std::sync::Arc;
 
 use super::{
-    LocalStorage, OssStorage, Result, SeekableStorage, Storage, StorageError, url::StorageUrl,
+    LocalStorage, OssConfig, OssStorage, Result, SeekableStorage, Storage, StorageError,
+    url::StorageUrl,
 };
 
 /// Configuration for storage backend instantiation.
@@ -236,7 +237,10 @@ impl StorageFactory {
                 }
             }
             StorageUrl::Oss {
-                bucket, endpoint, ..
+                bucket,
+                key: _,
+                endpoint,
+                internal: _,
             } => {
                 #[cfg(feature = "cloud-storage")]
                 {
@@ -269,7 +273,13 @@ impl StorageFactory {
                             )
                         })?;
 
-                    Ok(Arc::new(OssStorage::new(bucket, ep, key_id, key_secret)?))
+                    let mut oss_config = OssConfig::new(bucket, ep, key_id, key_secret);
+
+                    if let Some(reg) = self.config.aws_region.clone() {
+                        oss_config = oss_config.with_region(reg);
+                    }
+
+                    Ok(Arc::new(OssStorage::with_config(oss_config)?))
                 }
                 #[cfg(not(feature = "cloud-storage"))]
                 {

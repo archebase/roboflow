@@ -41,7 +41,7 @@ pub use local::LocalStorage;
 pub use url::StorageUrl;
 
 #[cfg(feature = "cloud-storage")]
-pub use oss::OssStorage;
+pub use oss::{OssConfig, OssStorage};
 
 use std::io::{Read, Write};
 use std::path::Path;
