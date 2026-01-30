@@ -31,6 +31,7 @@
 
 pub mod factory;
 pub mod local;
+pub mod retry;
 pub mod url;
 
 #[cfg(feature = "cloud-storage")]
@@ -38,6 +39,7 @@ pub mod oss;
 
 pub use factory::{StorageConfig, StorageFactory};
 pub use local::LocalStorage;
+pub use retry::{RetryConfig, RetryingStorage, retry_with_backoff};
 pub use url::StorageUrl;
 
 #[cfg(feature = "cloud-storage")]
