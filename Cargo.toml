@@ -67,6 +67,12 @@ chrono = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Cloud storage support (optional, gated by "cloud-storage" feature)
+object_store = { version = "0.11", optional = true, features = ["aws"] }
+tokio = { version = "1.40", optional = true, features = ["rt-multi-thread", "sync"] }
+url = { version = "2.5", optional = true }
+bytes = { version = "1.7", optional = true }
+
 # KPS support (optional dependencies)
 hdf5 = { git = "https://github.com/archebase/hdf5-rs", optional = true }
 polars = { version = "0.41", features = ["parquet"], optional = true }
@@ -96,6 +102,8 @@ dataset-hdf5 = ["dep:hdf5"]
 dataset-parquet = ["dep:polars"]
 dataset-depth = ["dep:png"]
 dataset-all = ["dataset-hdf5", "dataset-parquet", "dataset-depth"]
+# Cloud storage support for Alibaba OSS and S3-compatible backends
+cloud-storage = ["dep:object_store", "dep:tokio", "dep:url", "dep:bytes"]
 # Python bindings via PyO3 (extension-module mode to prevent libpython linking)
 python = ["pyo3", "robocodec/python"]
 # Python extension module (alias for python, since extension-module is now default)
