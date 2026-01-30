@@ -88,7 +88,7 @@ impl OssStorage {
 }
 
 impl Storage for OssStorage {
-    fn reader(&self, path: impl AsRef<Path>) -> Result<Box<dyn Read + Send + 'static>> {
+    fn reader(&self, path: &Path) -> Result<Box<dyn Read + Send + 'static>> {
         let _key = self.full_key(path.as_ref());
         // TODO: Implement using object_store
         // For now, return an error
@@ -97,7 +97,7 @@ impl Storage for OssStorage {
         ))
     }
 
-    fn writer(&self, path: impl AsRef<Path>) -> Result<Box<dyn Write + Send + 'static>> {
+    fn writer(&self, path: &Path) -> Result<Box<dyn Write + Send + 'static>> {
         let _key = self.full_key(path.as_ref());
         // TODO: Implement using object_store
         // For now, return an error
@@ -106,13 +106,13 @@ impl Storage for OssStorage {
         ))
     }
 
-    fn exists(&self, path: impl AsRef<Path>) -> bool {
+    fn exists(&self, path: &Path) -> bool {
         let _key = self.full_key(path.as_ref());
         // TODO: Implement using object_store
         false
     }
 
-    fn size(&self, path: impl AsRef<Path>) -> Result<u64> {
+    fn size(&self, path: &Path) -> Result<u64> {
         let _key = self.full_key(path.as_ref());
         // TODO: Implement using object_store
         Err(StorageError::Other(
@@ -120,7 +120,7 @@ impl Storage for OssStorage {
         ))
     }
 
-    fn metadata(&self, path: impl AsRef<Path>) -> Result<super::ObjectMetadata> {
+    fn metadata(&self, path: &Path) -> Result<super::ObjectMetadata> {
         let _key = self.full_key(path.as_ref());
         // TODO: Implement using object_store
         Err(StorageError::Other(
@@ -128,35 +128,35 @@ impl Storage for OssStorage {
         ))
     }
 
-    fn list(&self, prefix: impl AsRef<Path>) -> Result<Vec<super::ObjectMetadata>> {
-        let _key = self.full_key(prefix.as_ref());
+    fn list(&self, prefix: &Path) -> Result<Vec<super::ObjectMetadata>> {
+        let _key = self.full_key(prefix);
         // TODO: Implement using object_store
         Ok(Vec::new())
     }
 
-    fn delete(&self, path: impl AsRef<Path>) -> Result<()> {
-        let _key = self.full_key(path.as_ref());
+    fn delete(&self, path: &Path) -> Result<()> {
+        let _key = self.full_key(path);
         // TODO: Implement using object_store
         Err(StorageError::Other(
             "OSS storage not yet implemented".to_string(),
         ))
     }
 
-    fn copy(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<()> {
-        let _from_key = self.full_key(from.as_ref());
-        let _to_key = self.full_key(to.as_ref());
+    fn copy(&self, from: &Path, to: &Path) -> Result<()> {
+        let _from_key = self.full_key(from);
+        let _to_key = self.full_key(to);
         // TODO: Implement using object_store
         Err(StorageError::Other(
             "OSS storage not yet implemented".to_string(),
         ))
     }
 
-    fn create_dir(&self, _path: impl AsRef<Path>) -> Result<()> {
+    fn create_dir(&self, _path: &Path) -> Result<()> {
         // OSS doesn't have directories - this is a no-op
         Ok(())
     }
 
-    fn create_dir_all(&self, _path: impl AsRef<Path>) -> Result<()> {
+    fn create_dir_all(&self, _path: &Path) -> Result<()> {
         // OSS doesn't have directories - this is a no-op
         Ok(())
     }

@@ -29,12 +29,16 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+pub mod factory;
 pub mod local;
+pub mod url;
 
 #[cfg(feature = "cloud-storage")]
 pub mod oss;
 
+pub use factory::{StorageConfig, StorageFactory};
 pub use local::LocalStorage;
+pub use url::StorageUrl;
 
 #[cfg(feature = "cloud-storage")]
 pub use oss::OssStorage;
@@ -215,6 +219,8 @@ impl ObjectMetadata {
 ///   where supported.
 /// - **No seeking**: The base trait doesn't support seeking. Use `SeekableStorage`
 ///   extension trait for backends that support it.
+/// - **Dyn-compatible**: Uses `&Path` instead of `impl AsRef<Path>` to allow
+///   trait objects (`Arc<dyn Storage>`).
 pub trait Storage: Send + Sync {
     /// Open a reader for the given path.
     ///
@@ -223,7 +229,7 @@ pub trait Storage: Send + Sync {
     /// # Errors
     ///
     /// Returns `StorageError::NotFound` if the object doesn't exist.
-    fn reader(&self, path: impl AsRef<Path>) -> Result<Box<dyn Read + Send + 'static>>;
+    fn reader(&self, path: &Path) -> Result<Box<dyn Read + Send + 'static>>;
 
     /// Open a writer for the given path.
     ///
@@ -233,26 +239,26 @@ pub trait Storage: Send + Sync {
     /// # Errors
     ///
     /// Returns `StorageError::PermissionDenied` if the location isn't writable.
-    fn writer(&self, path: impl AsRef<Path>) -> Result<Box<dyn Write + Send + 'static>>;
+    fn writer(&self, path: &Path) -> Result<Box<dyn Write + Send + 'static>>;
 
     /// Check if an object exists at the given path.
     ///
     /// Returns `true` if the object exists, `false` otherwise.
-    fn exists(&self, path: impl AsRef<Path>) -> bool;
+    fn exists(&self, path: &Path) -> bool;
 
     /// Get the size of an object in bytes.
     ///
     /// # Errors
     ///
     /// Returns `StorageError::NotFound` if the object doesn't exist.
-    fn size(&self, path: impl AsRef<Path>) -> Result<u64>;
+    fn size(&self, path: &Path) -> Result<u64>;
 
     /// Get full metadata for an object.
     ///
     /// # Errors
     ///
     /// Returns `StorageError::NotFound` if the object doesn't exist.
-    fn metadata(&self, path: impl AsRef<Path>) -> Result<ObjectMetadata>;
+    fn metadata(&self, path: &Path) -> Result<ObjectMetadata>;
 
     /// List objects with the given prefix.
     ///
@@ -263,14 +269,14 @@ pub trait Storage: Send + Sync {
     /// # Errors
     ///
     /// Returns `StorageError::InvalidPath` if the prefix is invalid.
-    fn list(&self, prefix: impl AsRef<Path>) -> Result<Vec<ObjectMetadata>>;
+    fn list(&self, prefix: &Path) -> Result<Vec<ObjectMetadata>>;
 
     /// Delete an object at the given path.
     ///
     /// # Errors
     ///
     /// Returns `StorageError::NotFound` if the object doesn't exist.
-    fn delete(&self, path: impl AsRef<Path>) -> Result<()>;
+    fn delete(&self, path: &Path) -> Result<()>;
 
     /// Copy an object from one path to another.
     ///
@@ -279,7 +285,7 @@ pub trait Storage: Send + Sync {
     /// # Errors
     ///
     /// Returns `StorageError::NotFound` if the source doesn't exist.
-    fn copy(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<()>;
+    fn copy(&self, from: &Path, to: &Path) -> Result<()>;
 
     /// Create a directory (for backends that support directories).
     ///
@@ -288,12 +294,12 @@ pub trait Storage: Send + Sync {
     /// # Errors
     ///
     /// Returns `StorageError::PermissionDenied` if creation fails.
-    fn create_dir(&self, path: impl AsRef<Path>) -> Result<()>;
+    fn create_dir(&self, path: &Path) -> Result<()>;
 
     /// Create a directory and all parent directories.
     ///
     /// Similar to `std::fs::create_dir_all`.
-    fn create_dir_all(&self, path: impl AsRef<Path>) -> Result<()>;
+    fn create_dir_all(&self, path: &Path) -> Result<()>;
 }
 
 // =============================================================================
@@ -314,19 +320,13 @@ pub trait SeekableStorage: Storage {
     /// Open a seekable reader for the given path.
     ///
     /// Unlike `reader()`, this returns a type that implements `std::io::Seek`.
-    fn seekable_reader(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<Box<dyn SeekRead + Send + 'static>>;
+    fn seekable_reader(&self, path: &Path) -> Result<Box<dyn SeekRead + Send + 'static>>;
 
     /// Open a reader that can be either seekable or streaming.
     ///
     /// Returns a seekable reader if supported, otherwise falls back to
     /// a streaming reader.
-    fn reader_seekable(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<Box<dyn Read + Send + 'static>> {
+    fn reader_seekable(&self, path: &Path) -> Result<Box<dyn Read + Send + 'static>> {
         // Default implementation returns the non-seekable reader
         self.reader(path)
     }
