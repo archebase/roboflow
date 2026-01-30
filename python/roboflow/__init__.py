@@ -18,9 +18,9 @@ Example:
     >>> print(result)
 
     # Dataset conversion:
-    >>> config = roboflow.dataset.LerobotConfig.from_file("config.toml")
-    >>> converter = roboflow.dataset.DatasetConverter.create("/output", config)
-    >>> stats = converter.convert("input.bag")
+    >>> config = roboflow.DatasetConfig.from_file("config.toml", format="kps")
+    >>> converter = roboflow.DatasetConverter.create("/output", config)
+    >>> stats = converter.convert("input.mcap")
     >>> print(f"Converted {stats.frames_written} frames")
 """
 
@@ -36,8 +36,6 @@ from roboflow._roboflow import (
     BatchReport,
     # Dataset API
     DatasetConverter,
-    LerobotConfig,
-    KpsConfig,
     DatasetConfig,
     ConversionJob,
     DatasetStats,
@@ -57,36 +55,29 @@ __all__ = [
     "BatchReport",
     # Dataset API
     "DatasetConverter",
-    "LerobotConfig",
-    "KpsConfig",
     "DatasetConfig",
     "ConversionJob",
     "DatasetStats",
     "ProgressUpdate",
     "convert",
+    # Dataset submodule
+    "dataset",
 ]
 
 # Dataset submodule alias for convenience
-from roboflow._roboflow import (
-    DatasetConverter as _DatasetConverter,
-    LerobotConfig as _LerobotConfig,
-    KpsConfig as _KpsConfig,
-    DatasetConfig as _DatasetConfig,
-    ConversionJob as _ConversionJob,
-    DatasetStats as _DatasetStats,
-    ProgressUpdate as _ProgressUpdate,
-)
-
 import sys
-if sys.version_info >= (3, 9):
-    import types
+import types
 
-    _dataset_module = types.ModuleType("dataset", "Dataset submodule")
-    _dataset_module.DatasetConverter = _DatasetConverter
-    _dataset_module.LerobotConfig = _LerobotConfig
-    _dataset_module.KpsConfig = _KpsConfig
-    _dataset_module.DatasetConfig = _DatasetConfig
-    _dataset_module.ConversionJob = _ConversionJob
-    _dataset_module.DatasetStats = _DatasetStats
-    _dataset_module.ProgressUpdate = _ProgressUpdate
-    sys.modules["roboflow.dataset"] = _dataset_module
+# Create the dataset submodule
+_dataset_module = types.ModuleType("roboflow.dataset", "Dataset submodule")
+_dataset_module.DatasetConverter = DatasetConverter
+_dataset_module.DatasetConfig = DatasetConfig
+_dataset_module.ConversionJob = ConversionJob
+_dataset_module.DatasetStats = DatasetStats
+_dataset_module.ProgressUpdate = ProgressUpdate
+
+# Register in sys.modules so 'from roboflow.dataset import X' works
+sys.modules["roboflow.dataset"] = _dataset_module
+
+# Also expose as attribute so 'roboflow.dataset' works
+dataset = _dataset_module

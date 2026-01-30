@@ -10,7 +10,6 @@ mod fluent;
 mod dataset;
 
 use pyo3::prelude::*;
-use pyo3::exceptions::PyValueError;
 
 use fluent::{
     PyBatchReport, PyCompressionPreset, PyFileResult, PyHyperPipelineReport, PyPipelineReport,
@@ -18,8 +17,7 @@ use fluent::{
 };
 
 use dataset::{
-    PyConversionJob, PyDatasetConfig, PyDatasetConverter, PyDatasetStats, PyKpsConfig,
-    PyLerobotConfig, PyProgressUpdate,
+    PyConversionJob, PyDatasetConfig, PyDatasetConverter, PyDatasetStats, PyProgressUpdate,
 };
 
 /// Python module definition
@@ -40,8 +38,6 @@ fn _roboflow(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Dataset API classes
     m.add_class::<PyDatasetConverter>()?;
-    m.add_class::<PyLerobotConfig>()?;
-    m.add_class::<PyKpsConfig>()?;
     m.add_class::<PyDatasetConfig>()?;
     m.add_class::<PyConversionJob>()?;
     m.add_class::<PyDatasetStats>()?;
@@ -61,31 +57,6 @@ fn convert(
     output_dir: String,
     config: &PyDatasetConfig,
 ) -> PyResult<PyDatasetStats> {
-    let converter = match config.format.as_str() {
-        "kps" => {
-            let py_config = PyKpsConfig::new_rust(
-                config.name.clone(),
-                config.fps,
-                config.robot_type.clone(),
-            );
-            PyDatasetConverter::kps_rust(output_dir, &py_config)?
-        }
-        "lerobot" => {
-            let py_config = PyLerobotConfig::new_rust(
-                config.name.clone(),
-                config.fps,
-                config.robot_type.clone(),
-                None,
-            );
-            PyDatasetConverter::lerobot_rust(output_dir, &py_config)?
-        }
-        _ => {
-            return Err(PyValueError::new_err(format!(
-                "Unknown format: {}",
-                config.format
-            )));
-        }
-    };
-
-    converter.convert_rust(py, input_path)
+    let converter = PyDatasetConverter::create(output_dir, config)?;
+    converter.convert(py, input_path)
 }

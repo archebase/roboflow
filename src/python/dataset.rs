@@ -7,7 +7,7 @@
 //! Provides a Python API for converting robotics data (MCAP, ROS bags)
 //! to ML dataset formats (KPS, LeRobot).
 
-use pyo3::exceptions::{PyIOError, PyNotImplementedError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use std::path::{Path, PathBuf};
 use std::thread::{self, JoinHandle};
@@ -15,7 +15,8 @@ use std::time::Duration;
 
 use crate::core::Result;
 use crate::dataset::{
-    DatasetFormat, kps::config::KpsConfig, lerobot::config::LerobotConfig,
+    DatasetConfig as RustDatasetConfig,
+    DatasetFormat,
 };
 use crate::dataset::common::{
     ProgressReceiver, ProgressSender, ProgressUpdate, WriterStats,
@@ -185,6 +186,23 @@ pub struct PyProgressUpdate {
 
 #[pymethods]
 impl PyProgressUpdate {
+    /// The type of progress update variant.
+    ///
+    /// One of: "started", "frame_progress", "video_progress", "parquet_progress",
+    /// "warning", "error", "completed"
+    #[getter]
+    fn variant_type(&self) -> &'static str {
+        match &self.update {
+            ProgressUpdate::Started { .. } => "started",
+            ProgressUpdate::FrameProgress { .. } => "frame_progress",
+            ProgressUpdate::VideoProgress { .. } => "video_progress",
+            ProgressUpdate::ParquetProgress { .. } => "parquet_progress",
+            ProgressUpdate::Warning { .. } => "warning",
+            ProgressUpdate::Error { .. } => "error",
+            ProgressUpdate::Completed { .. } => "completed",
+        }
+    }
+
     /// Progress percentage (0-100), if available.
     #[getter]
     fn percent_complete(&self) -> Option<f64> {
@@ -352,10 +370,14 @@ impl PyConversionJob {
     /// Check if the conversion is complete.
     ///
     /// Returns true if the job finished successfully, failed, or was cancelled.
-    #[getter]
     fn is_complete(&self) -> bool {
         // Job is complete if we have cached stats OR thread is gone
         self.stats.is_some() || self.thread.is_none()
+    }
+
+    /// Check if the conversion is still running.
+    fn is_running(&self) -> bool {
+        !self.is_complete() && !self.cancelled
     }
 
     /// Check if the job was cancelled.
@@ -402,25 +424,84 @@ impl PyConversionJob {
     /// This sets a cancellation flag that the conversion thread should check.
     /// Note: The conversion may not stop immediately if it's in the middle
     /// of processing a frame.
-    fn cancel(&mut self) {
+    /// Returns True if cancellation was requested, False if already complete.
+    fn cancel(&mut self) -> bool {
+        if self.is_complete() {
+            return false;
+        }
         self.cancelled = true;
+        true
     }
 
     /// Wait for the conversion to complete.
     ///
     /// Blocks until the conversion finishes or fails.
+    /// If timeout is provided (in seconds), returns None if the timeout expires.
     /// Returns the final statistics.
-    fn wait(&mut self, py: Python<'_>) -> PyResult<PyDatasetStats> {
+    #[pyo3(signature = (timeout=None))]
+    fn wait(&mut self, py: Python<'_>, timeout: Option<f64>) -> PyResult<Option<PyDatasetStats>> {
         // If we already have stats, return them
         if let Some(stats) = &self.stats {
-            return Ok(PyDatasetStats {
+            return Ok(Some(PyDatasetStats {
                 stats: stats.clone(),
                 warning_count: self.warning_count,
                 error_count: self.error_count,
-            });
+            }));
         }
 
-        // Release GIL while waiting
+        // If timeout specified, poll until complete or timeout
+        if let Some(timeout_secs) = timeout {
+            let start = std::time::Instant::now();
+            let timeout_duration = Duration::from_secs_f64(timeout_secs);
+            
+            py.allow_threads(|| {
+                while start.elapsed() < timeout_duration {
+                    if self.stats.is_some() || self.thread.is_none() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(50));
+                }
+            });
+            
+            // Check if complete
+            if self.stats.is_some() {
+                return Ok(Some(PyDatasetStats {
+                    stats: self.stats.clone().unwrap(),
+                    warning_count: self.warning_count,
+                    error_count: self.error_count,
+                }));
+            }
+            
+            // If thread is done, get result
+            if self.thread.as_ref().map(|t| t.is_finished()).unwrap_or(true) {
+                if let Some(thread) = self.thread.take() {
+                    let result = py.allow_threads(|| {
+                        thread.join()
+                            .map_err(|e| {
+                                if let Some(msg) = e.downcast_ref::<String>() {
+                                    PyRuntimeError::new_err(format!("Thread panic: {}", msg))
+                                } else if let Some(msg) = e.downcast_ref::<&str>() {
+                                    PyRuntimeError::new_err(format!("Thread panic: {}", msg))
+                                } else {
+                                    PyRuntimeError::new_err(format!("Thread panic: {:?}", e))
+                                }
+                            })?
+                            .map_err(dataset_error_to_py)
+                    })?;
+                    self.stats = Some(result.clone());
+                    return Ok(Some(PyDatasetStats {
+                        stats: result,
+                        warning_count: self.warning_count,
+                        error_count: self.error_count,
+                    }));
+                }
+            }
+            
+            // Timeout expired
+            return Ok(None);
+        }
+
+        // No timeout - block until complete
         let thread = self
             .thread
             .take()
@@ -443,18 +524,18 @@ impl PyConversionJob {
         })
         .map(|stats| {
             self.stats = Some(stats.clone());
-            PyDatasetStats {
+            Some(PyDatasetStats {
                 stats,
                 warning_count: self.warning_count,
                 error_count: self.error_count,
-            }
+            })
         })
     }
 
     /// Wait for the conversion with progress updates.
     ///
     /// Polls for progress while waiting. Returns when complete.
-    fn wait_with_progress(&mut self, py: Python<'_>) -> PyResult<PyDatasetStats> {
+    fn wait_with_progress(&mut self, py: Python<'_>) -> PyResult<Option<PyDatasetStats>> {
         // Release GIL during polling loop
         py.allow_threads(|| {
             loop {
@@ -489,7 +570,7 @@ impl PyConversionJob {
             }
         });
 
-        self.wait(py)
+        self.wait(py, None)
     }
 
     fn __repr__(&self) -> String {
@@ -504,64 +585,160 @@ impl PyConversionJob {
 }
 
 // =============================================================================
-// Dataset Config (Python-friendly wrapper)
+// Dataset Config (Unified Python wrapper)
 // =============================================================================
 
-/// Base dataset configuration.
+/// Unified dataset configuration for converting MCAP/ROS bag to KPS or LeRobot format.
 ///
-/// This is a Python-friendly wrapper that can represent either KPS or LeRobot config.
+/// # Example
+///
+/// ```python
+/// import roboflow
+///
+/// # Create programmatically
+/// config = roboflow.DatasetConfig("kps", fps=30, name="my_dataset")
+///
+/// # Load from TOML file
+/// config = roboflow.DatasetConfig.from_file("config.toml", format="kps")
+///
+/// # Create converter and convert
+/// converter = roboflow.DatasetConverter.create("/output", config)
+/// stats = converter.convert("input.mcap")
+/// ```
 #[pyclass(name = "DatasetConfig")]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PyDatasetConfig {
-    /// Dataset name
-    pub(crate) name: String,
+    /// Internal unified Rust config
+    pub(crate) config: RustDatasetConfig,
 
-    /// Frames per second
-    pub(crate) fps: u32,
-
-    /// Robot type (optional)
-    pub(crate) robot_type: Option<String>,
-
-    /// Output format
-    pub(crate) format: String,
+    /// Maximum frames to process (None = unlimited)
+    pub(crate) max_frames: Option<usize>,
 }
 
 #[pymethods]
 impl PyDatasetConfig {
+    /// Create a new DatasetConfig.
+    ///
+    /// Args:
+    ///     format: Output format ("lerobot" or "kps")
+    ///     fps: Frames per second
+    ///     name: Dataset name
+    ///     robot_type: Robot type (optional)
     #[new]
+    #[pyo3(signature = (format, *, fps, name, robot_type=None))]
     fn new(
-        name: String,
+        format: String,
         fps: u32,
+        name: String,
         robot_type: Option<String>,
-    ) -> Self {
-        Self {
-            name,
-            fps,
-            robot_type,
-            format: "kps".to_string(),  // Default to KPS as it's the only supported format
-        }
+    ) -> PyResult<Self> {
+        let ds_format = match format.as_str() {
+            "kps" => DatasetFormat::Kps,
+            "lerobot" => DatasetFormat::Lerobot,
+            _ => return Err(PyValueError::new_err(format!(
+                "Invalid format '{}'. Must be 'lerobot' or 'kps'",
+                format
+            ))),
+        };
+
+        Ok(Self {
+            config: RustDatasetConfig::new(ds_format, name, fps, robot_type),
+            max_frames: None,
+        })
     }
 
-    /// Add a topic mapping.
+    /// Load configuration from a TOML file.
     ///
-    /// This method is not currently implemented. Use TOML config files instead.
-    fn add_mapping(&self, _topic: String, _feature: String, _mapping_type: String) -> PyResult<()> {
-        Err(PyNotImplementedError::new_err(
-            "Topic mapping configuration through Python is not yet implemented. \
-             Please use a TOML config file with LerobotConfig::from_file() or KpsConfig::from_file()."
-        ))
+    /// Args:
+    ///     path: Path to the TOML config file
+    ///     format: Output format ("lerobot" or "kps")
+    #[staticmethod]
+    #[pyo3(signature = (path, format="kps"))]
+    fn from_file(path: String, format: &str) -> PyResult<Self> {
+        let ds_format = match format {
+            "kps" => DatasetFormat::Kps,
+            "lerobot" => DatasetFormat::Lerobot,
+            _ => return Err(PyValueError::new_err(format!(
+                "Invalid format '{}'. Must be 'lerobot' or 'kps'",
+                format
+            ))),
+        };
+
+        RustDatasetConfig::from_file(&path, ds_format)
+            .map(|config| Self {
+                config,
+                max_frames: None,
+            })
+            .map_err(|e| PyIOError::new_err(format!("Failed to load config: {}", e)))
+    }
+
+    /// Load configuration from a TOML string.
+    ///
+    /// Args:
+    ///     toml_str: TOML configuration string
+    ///     format: Output format ("lerobot" or "kps")
+    #[staticmethod]
+    #[pyo3(signature = (toml_str, format="kps"))]
+    fn from_toml(toml_str: String, format: &str) -> PyResult<Self> {
+        let ds_format = match format {
+            "kps" => DatasetFormat::Kps,
+            "lerobot" => DatasetFormat::Lerobot,
+            _ => return Err(PyValueError::new_err(format!(
+                "Invalid format '{}'. Must be 'lerobot' or 'kps'",
+                format
+            ))),
+        };
+
+        RustDatasetConfig::from_toml(&toml_str, ds_format)
+            .map(|config| Self {
+                config,
+                max_frames: None,
+            })
+            .map_err(|e| PyValueError::new_err(format!("Failed to parse TOML: {}", e)))
+    }
+
+    /// Set the maximum frames to process.
+    fn with_max_frames(mut slf: PyRefMut<'_, Self>, max_frames: usize) -> PyResult<()> {
+        if max_frames == 0 {
+            return Err(PyValueError::new_err(
+                "max_frames must be greater than 0 (use None for unlimited)"
+            ));
+        }
+        slf.max_frames = Some(max_frames);
+        Ok(())
+    }
+
+    /// Get the dataset name.
+    #[getter]
+    fn name(&self) -> String {
+        self.config.name().to_string()
+    }
+
+    /// Get the FPS.
+    #[getter]
+    fn fps(&self) -> u32 {
+        self.config.fps()
+    }
+
+    /// Get the robot type.
+    #[getter]
+    fn robot_type(&self) -> Option<String> {
+        self.config.robot_type().map(|s| s.to_string())
     }
 
     /// Get the format.
     #[getter]
     fn format(&self) -> String {
-        self.format.clone()
+        match self.config.format() {
+            DatasetFormat::Kps => "kps".to_string(),
+            DatasetFormat::Lerobot => "lerobot".to_string(),
+        }
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "DatasetConfig(name={}, fps={}, format={})",
-            self.name, self.fps, self.format
+            "DatasetConfig(format={}, name={}, fps={})",
+            self.format(), self.name(), self.fps()
         )
     }
 }
@@ -579,23 +756,17 @@ impl PyDatasetConfig {
 /// ```python
 /// import roboflow
 ///
-/// config = roboflow.dataset.LerobotConfig.from_file("config.toml")
-/// converter = roboflow.dataset.DatasetConverter.create("/output", config)
-/// stats = converter.convert("input.bag")
+/// config = roboflow.DatasetConfig.from_file("config.toml", format="kps")
+/// converter = roboflow.DatasetConverter.create("/output", config)
+/// stats = converter.convert("input.mcap")
 /// ```
 #[pyclass(name = "DatasetConverter")]
 pub struct PyDatasetConverter {
     /// Output directory
     output_dir: PathBuf,
 
-    /// Dataset format
-    format: DatasetFormat,
-
-    /// Lerobot config (if LeRobot format)
-    lerobot_config: Option<LerobotConfig>,
-
-    /// KPS config (if KPS format)
-    kps_config: Option<KpsConfig>,
+    /// Unified dataset config
+    config: RustDatasetConfig,
 
     /// Maximum frames to process (None = unlimited)
     max_frames: Option<usize>,
@@ -603,32 +774,16 @@ pub struct PyDatasetConverter {
 
 #[pymethods]
 impl PyDatasetConverter {
-    /// Create a LeRobot dataset converter.
+    /// Create a dataset converter from a DatasetConfig.
+    ///
+    /// Args:
+    ///     output_dir: Directory to write output files
+    ///     config: DatasetConfig with format and settings
     #[staticmethod]
-    fn lerobot(
-        output_dir: String,
-        config: &PyLerobotConfig,
-    ) -> PyResult<Self> {
+    pub fn create(output_dir: String, config: &PyDatasetConfig) -> PyResult<Self> {
         Ok(Self {
             output_dir: PathBuf::from(output_dir),
-            format: DatasetFormat::Lerobot,
-            lerobot_config: Some(config.config.clone()),
-            kps_config: None,
-            max_frames: config.max_frames,
-        })
-    }
-
-    /// Create a KPS dataset converter.
-    #[staticmethod]
-    fn kps(
-        output_dir: String,
-        config: &PyKpsConfig,
-    ) -> PyResult<Self> {
-        Ok(Self {
-            output_dir: PathBuf::from(output_dir),
-            format: DatasetFormat::Kps,
-            lerobot_config: None,
-            kps_config: Some(config.config.clone()),
+            config: config.config.clone(),
             max_frames: config.max_frames,
         })
     }
@@ -643,7 +798,7 @@ impl PyDatasetConverter {
     ///
     /// This is a synchronous operation that blocks until complete.
     /// For progress monitoring during conversion, use `convert_async`.
-    fn convert(&self, py: Python<'_>, input_path: String) -> PyResult<PyDatasetStats> {
+    pub fn convert(&self, py: Python<'_>, input_path: String) -> PyResult<PyDatasetStats> {
         let input_path = PathBuf::from(&input_path);
         if !input_path.exists() {
             return Err(PyIOError::new_err(format!(
@@ -667,27 +822,21 @@ impl PyDatasetConverter {
     /// Start an async conversion job.
     ///
     /// Returns a ConversionJob that can be monitored for progress.
+    /// Note: File existence is not checked here - errors will be reported through
+    /// the progress channel so the job can be properly monitored.
     fn convert_async(
         &mut self,
         _py: Python<'_>,
         input_path: String,
     ) -> PyResult<PyConversionJob> {
         let input_path = PathBuf::from(&input_path);
-        if !input_path.exists() {
-            return Err(PyIOError::new_err(format!(
-                "Input file not found: {}",
-                input_path.display()
-            )));
-        }
 
         // Create progress channel with larger capacity for TB-scale conversions
         let (sender, receiver) = ProgressSender::new(1000);
 
         // Clone the data we need for the thread
         let output_dir = self.output_dir.clone();
-        let format = self.format;
-        let lerobot_config = self.lerobot_config.clone();
-        let kps_config = self.kps_config.clone();
+        let config = self.config.clone();
         let max_frames = self.max_frames;
 
         // Spawn conversion thread
@@ -695,9 +844,7 @@ impl PyDatasetConverter {
             Self::convert_with_progress(
                 input_path,
                 output_dir,
-                format,
-                lerobot_config,
-                kps_config,
+                config,
                 max_frames,
                 sender,
             )
@@ -710,126 +857,66 @@ impl PyDatasetConverter {
         format!(
             "DatasetConverter(output_dir={}, format={:?})",
             self.output_dir.display(),
-            self.format
+            self.config.format()
         )
     }
 }
 
 impl PyDatasetConverter {
-    /// Create a LeRobot dataset converter (Rust-side).
-    pub fn lerobot_rust(
-        output_dir: String,
-        config: &PyLerobotConfig,
-    ) -> PyResult<Self> {
-        Ok(Self {
-            output_dir: PathBuf::from(output_dir),
-            format: DatasetFormat::Lerobot,
-            lerobot_config: Some(config.config.clone()),
-            kps_config: None,
-            max_frames: config.max_frames,
-        })
-    }
-
-    /// Create a KPS dataset converter (Rust-side).
-    pub fn kps_rust(
-        output_dir: String,
-        config: &PyKpsConfig,
-    ) -> PyResult<Self> {
-        Ok(Self {
-            output_dir: PathBuf::from(output_dir),
-            format: DatasetFormat::Kps,
-            lerobot_config: None,
-            kps_config: Some(config.config.clone()),
-            max_frames: config.max_frames,
-        })
-    }
-
-    /// Convert a single input file (Rust-side).
-    pub fn convert_rust(&self, py: Python<'_>, input_path: String) -> PyResult<PyDatasetStats> {
-        let input_path = PathBuf::from(&input_path);
-        if !input_path.exists() {
-            return Err(PyIOError::new_err(format!(
-                "Input file not found: {}",
-                input_path.display()
-            )));
-        }
-
-        let stats = py.allow_threads(|| {
-            self.convert_internal(&input_path)
-                .map_err(dataset_error_to_py)
-        })?;
-
-        Ok(PyDatasetStats {
-            stats,
-            warning_count: 0,
-            error_count: 0,
-        })
-    }
-
     fn convert_internal(&self, input_path: &Path) -> Result<WriterStats> {
         // This is a simplified synchronous conversion
         // In production, this would use the progress-aware version
         use crate::pipeline::dataset_converter::DatasetConverter;
 
-        let converter = match (&self.kps_config, &self.lerobot_config) {
-            (Some(kps_config), None) => {
-                DatasetConverter::new_kps(&self.output_dir, kps_config.clone())
+        match &self.config {
+            RustDatasetConfig::Kps(kps_config) => {
+                let converter = DatasetConverter::new_kps(&self.output_dir, kps_config.clone());
+                converter.convert(input_path)
+                    .map(|s| s.into_writer_stats())
             }
-            (None, Some(lerobot_config)) => {
-                return Err(crate::RoboflowError::unsupported(
+            RustDatasetConfig::Lerobot(_) => {
+                Err(crate::RoboflowError::unsupported(
                     "LeRobot dataset conversion",
-                ));
+                ))
             }
-            _ => {
-                return Err(crate::RoboflowError::parse(
-                    "DatasetConverter",
-                    "Either KPS or LeRobot config must be set",
-                ));
-            }
-        };
-
-        converter.convert(input_path)
-            .map(|s| s.into_writer_stats())
+        }
     }
 
     fn convert_with_progress(
         input_path: PathBuf,
         output_dir: PathBuf,
-        format: DatasetFormat,
-        lerobot_config: Option<LerobotConfig>,
-        kps_config: Option<KpsConfig>,
+        config: RustDatasetConfig,
         max_frames: Option<usize>,
         progress: ProgressSender,
     ) -> Result<WriterStats> {
         // Send started notification
         progress.started(input_path.to_string_lossy().to_string(), None);
 
-        // For now, delegate to the internal conversion
-        // TODO: Integrate progress throughout the conversion pipeline
+        // Check if input file exists
+        if !input_path.exists() {
+            let msg = format!("Input file not found: {}", input_path.display());
+            progress.error(msg.clone(), true);
+            return Err(crate::RoboflowError::CodecError { message: msg });
+        }
 
-        let stats = match (format, kps_config, lerobot_config) {
-            (DatasetFormat::Kps, Some(kps_config), None) => {
+        // Convert based on format
+        let stats = match config {
+            RustDatasetConfig::Kps(kps_config) => {
                 use crate::pipeline::dataset_converter::DatasetConverter;
-                let mut converter = DatasetConverter::new_kps(&output_dir, kps_config.clone());
+                let mut converter = DatasetConverter::new_kps(&output_dir, kps_config);
                 if let Some(max) = max_frames {
                     converter = converter.with_max_frames(max);
                 }
                 converter.convert(&input_path)?
                     .into_writer_stats()
             }
-            (DatasetFormat::Lerobot, None, Some(_lerobot_config)) => {
+            RustDatasetConfig::Lerobot(_) => {
                 progress.error(
                     "LeRobot dataset conversion is not yet supported. Please use KPS format.".to_string(),
                     false,
                 );
                 return Err(crate::RoboflowError::unsupported(
                     "LeRobot dataset conversion",
-                ));
-            }
-            _ => {
-                return Err(crate::RoboflowError::parse(
-                    "DatasetConverter",
-                    "Invalid config combination",
                 ));
             }
         };
@@ -852,260 +939,6 @@ impl IntoWriterStats for crate::pipeline::dataset_converter::DatasetConverterSta
             state_records: 0, // Not tracked
             output_bytes: self.output_bytes,
             duration_sec: self.duration_sec,
-        }
-    }
-}
-
-impl PyLerobotConfig {
-    /// Create a new Lerobot config (Rust-side).
-    pub fn new_rust(
-        name: String,
-        fps: u32,
-        robot_type: Option<String>,
-        env_type: Option<String>,
-    ) -> Self {
-        use crate::dataset::lerobot::config::{DatasetConfig, LerobotConfig};
-
-        let config = LerobotConfig {
-            dataset: DatasetConfig {
-                name,
-                fps,
-                robot_type,
-                env_type,
-            },
-            mappings: Vec::new(),
-            video: Default::default(),
-            annotation_file: None,
-        };
-
-        Self {
-            config,
-            max_frames: None,
-        }
-    }
-}
-
-// =============================================================================
-// KPS Config Wrapper
-// =============================================================================
-
-/// LeRobot dataset configuration.
-///
-/// Load from TOML file or create programmatically.
-#[pyclass(name = "LerobotConfig")]
-#[derive(Debug, Clone)]
-pub struct PyLerobotConfig {
-    pub(crate) config: LerobotConfig,
-    /// Maximum frames to process (None = unlimited)
-    pub(crate) max_frames: Option<usize>,
-}
-
-#[pymethods]
-impl PyLerobotConfig {
-    /// Load configuration from a TOML file.
-    #[staticmethod]
-    fn from_file(path: String) -> PyResult<Self> {
-        LerobotConfig::from_file(&path)
-            .map(|config| Self {
-                config,
-                max_frames: None,
-            })
-            .map_err(|e| PyIOError::new_err(format!("Failed to load config: {}", e)))
-    }
-
-    /// Create a new Lerobot config.
-    #[new]
-    fn new(
-        name: String,
-        fps: u32,
-        robot_type: Option<String>,
-        env_type: Option<String>,
-    ) -> Self {
-        use crate::dataset::lerobot::config::{DatasetConfig, LerobotConfig};
-
-        let config = LerobotConfig {
-            dataset: DatasetConfig {
-                name,
-                fps,
-                robot_type,
-                env_type,
-            },
-            mappings: Vec::new(),
-            video: Default::default(),
-            annotation_file: None,
-        };
-
-        Self {
-            config,
-            max_frames: None,
-        }
-    }
-
-    /// Set the maximum frames to process.
-    ///
-    /// # Errors
-    ///
-    /// Returns PyValueError if max_frames is 0.
-    fn with_max_frames(mut slf: PyRefMut<'_, Self>, max_frames: usize) -> PyResult<()> {
-        if max_frames == 0 {
-            return Err(PyValueError::new_err(
-                "max_frames must be greater than 0 (use None for unlimited)"
-            ));
-        }
-        if max_frames > 1_000_000_000 {
-            tracing::warn!(
-                max_frames,
-                "Unusually large max_frames value - this may take a very long time"
-            );
-        }
-        slf.max_frames = Some(max_frames);
-        Ok(())
-    }
-
-    /// Get the dataset name.
-    #[getter]
-    fn name(&self) -> String {
-        self.config.dataset.name.clone()
-    }
-
-    /// Get the FPS.
-    #[getter]
-    fn fps(&self) -> u32 {
-        self.config.dataset.fps
-    }
-
-    /// Get the robot type.
-    #[getter]
-    fn robot_type(&self) -> Option<String> {
-        self.config.dataset.robot_type.clone()
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "LerobotConfig(name={}, fps={})",
-            self.config.dataset.name,
-            self.config.dataset.fps
-        )
-    }
-}
-
-// =============================================================================
-// KPS Config Wrapper
-// =============================================================================
-
-/// KPS dataset configuration.
-///
-/// Load from TOML file or create programmatically.
-#[pyclass(name = "KpsConfig")]
-#[derive(Debug, Clone)]
-pub struct PyKpsConfig {
-    pub(crate) config: KpsConfig,
-    /// Maximum frames to process (None = unlimited)
-    pub(crate) max_frames: Option<usize>,
-}
-
-#[pymethods]
-impl PyKpsConfig {
-    /// Load configuration from a TOML file.
-    #[staticmethod]
-    fn from_file(path: String) -> PyResult<Self> {
-        KpsConfig::from_file(&path)
-            .map(|config| Self {
-                config,
-                max_frames: None,
-            })
-            .map_err(|e| PyIOError::new_err(format!("Failed to load config: {}", e)))
-    }
-
-    /// Create a new KPS config.
-    #[new]
-    fn new(
-        name: String,
-        fps: u32,
-        robot_type: Option<String>,
-    ) -> Self {
-        use crate::dataset::kps::config::{DatasetConfig, KpsConfig, OutputConfig};
-
-        let config = KpsConfig {
-            dataset: DatasetConfig {
-                name,
-                fps,
-                robot_type,
-            },
-            mappings: Vec::new(),
-            output: OutputConfig::default(),
-        };
-
-        Self {
-            config,
-            max_frames: None,
-        }
-    }
-
-    /// Set the maximum frames to process.
-    ///
-    /// # Errors
-    ///
-    /// Returns PyValueError if max_frames is 0.
-    fn with_max_frames(mut slf: PyRefMut<'_, Self>, max_frames: usize) -> PyResult<()> {
-        if max_frames == 0 {
-            return Err(PyValueError::new_err(
-                "max_frames must be greater than 0 (use None for unlimited)"
-            ));
-        }
-        if max_frames > 1_000_000_000 {
-            tracing::warn!(
-                max_frames,
-                "Unusually large max_frames value - this may take a very long time"
-            );
-        }
-        slf.max_frames = Some(max_frames);
-        Ok(())
-    }
-
-    /// Get the dataset name.
-    #[getter]
-    fn name(&self) -> String {
-        self.config.dataset.name.clone()
-    }
-
-    /// Get the FPS.
-    #[getter]
-    fn fps(&self) -> u32 {
-        self.config.dataset.fps
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "KpsConfig(name={}, fps={})",
-            self.config.dataset.name,
-            self.config.dataset.fps
-        )
-    }
-}
-
-impl PyKpsConfig {
-    /// Create a new KPS config (Rust-side).
-    pub fn new_rust(
-        name: String,
-        fps: u32,
-        robot_type: Option<String>,
-    ) -> Self {
-        use crate::dataset::kps::config::{DatasetConfig, KpsConfig, OutputConfig};
-
-        let config = KpsConfig {
-            dataset: DatasetConfig {
-                name,
-                fps,
-                robot_type,
-            },
-            mappings: Vec::new(),
-            output: OutputConfig::default(),
-        };
-
-        Self {
-            config,
-            max_frames: None,
         }
     }
 }

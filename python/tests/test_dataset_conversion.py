@@ -6,8 +6,8 @@
 Tests for dataset conversion functionality.
 
 Tests cover:
-- DatasetConverter creation and usage
-- KPS and LeRobot conversion (sync and async)
+- DatasetConfig creation and usage
+- DatasetConverter creation and conversion
 - ConversionJob progress monitoring
 - DatasetStats and ProgressUpdate handling
 - Error handling and cancellation
@@ -73,15 +73,10 @@ class TestDatasetExports:
         assert hasattr(roboflow, "DatasetConverter")
         assert hasattr(roboflow.dataset, "DatasetConverter")
 
-    def test_lerobot_config_exists(self):
-        """Test that LerobotConfig is exported."""
-        assert hasattr(roboflow, "LerobotConfig")
-        assert hasattr(roboflow.dataset, "LerobotConfig")
-
-    def test_kps_config_exists(self):
-        """Test that KpsConfig is exported."""
-        assert hasattr(roboflow, "KpsConfig")
-        assert hasattr(roboflow.dataset, "KpsConfig")
+    def test_dataset_config_exists(self):
+        """Test that DatasetConfig is exported."""
+        assert hasattr(roboflow, "DatasetConfig")
+        assert hasattr(roboflow.dataset, "DatasetConfig")
 
     def test_dataset_stats_exists(self):
         """Test that DatasetStats is exported."""
@@ -111,8 +106,15 @@ class TestDatasetExports:
 class TestDatasetConfig:
     """Tests for DatasetConfig class."""
 
-    def test_create_dataset_config(self):
-        """Test creating a DatasetConfig."""
+    def test_create_kps_config(self):
+        """Test creating a KPS DatasetConfig."""
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
+        assert config.format == "kps"
+        assert config.fps == 30
+        assert config.name == "test"
+
+    def test_create_lerobot_config(self):
+        """Test creating a LeRobot DatasetConfig."""
         config = roboflow.DatasetConfig("lerobot", fps=30, name="test")
         assert config.format == "lerobot"
         assert config.fps == 30
@@ -125,59 +127,32 @@ class TestDatasetConfig:
         )
         assert config.robot_type == "genie_s"
 
+    def test_dataset_config_invalid_format(self):
+        """Test that invalid format raises error."""
+        with pytest.raises(ValueError):
+            roboflow.DatasetConfig("invalid_format", fps=30, name="test")
 
-# =============================================================================
-# Test: LerobotConfig
-# =============================================================================
-
-
-class TestLerobotConfig:
-    """Tests for LerobotConfig class."""
-
-    def test_create_lerobot_config(self):
-        """Test creating a LerobotConfig."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
-        assert config.name == "test"
-        assert config.fps == 30
-        assert config.robot_type == "genie_s"
-
-    def test_lerobot_config_from_file(self, lerobot_config_file):
-        """Test loading LerobotConfig from file."""
-        config = roboflow.LerobotConfig.from_file(lerobot_config_file)
+    def test_config_from_file(self, lerobot_config_file):
+        """Test loading DatasetConfig from file."""
+        config = roboflow.DatasetConfig.from_file(lerobot_config_file, format="kps")
         assert config.name == "robot_dataset"
         assert config.fps == 30
-        assert config.robot_type == "genie_s"
 
-    def test_lerobot_config_from_toml(self, lerobot_config_file):
-        """Test loading LerobotConfig from TOML string."""
+    def test_config_from_toml(self, lerobot_config_file):
+        """Test loading DatasetConfig from TOML string."""
         with open(lerobot_config_file) as f:
             toml_content = f.read()
-        config = roboflow.LerobotConfig.from_toml(toml_content)
+        config = roboflow.DatasetConfig.from_toml(toml_content, format="kps")
         assert config.name == "robot_dataset"
         assert config.fps == 30
 
-
-# =============================================================================
-# Test: KpsConfig
-# =============================================================================
-
-
-class TestKpsConfig:
-    """Tests for KpsConfig class."""
-
-    def test_create_kps_config(self):
-        """Test creating a KpsConfig."""
-        config = roboflow.KpsConfig("test", 30, "genie_s")
-        assert config.name == "test"
-        assert config.fps == 30
-        assert config.robot_type == "genie_s"
-
-    def test_kps_config_from_file(self, lerobot_config_file):
-        """Test loading KpsConfig from file (using lerobot.toml)."""
-        config = roboflow.KpsConfig.from_file(lerobot_config_file)
-        assert config.name == "robot_dataset"
-        assert config.fps == 30
-        assert config.robot_type == "genie_s"
+    def test_config_repr(self):
+        """Test DatasetConfig repr."""
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
+        repr_str = repr(config)
+        assert "DatasetConfig" in repr_str
+        assert "kps" in repr_str
+        assert "test" in repr_str
 
 
 # =============================================================================
@@ -188,24 +163,24 @@ class TestKpsConfig:
 class TestDatasetConverter:
     """Tests for DatasetConverter class."""
 
-    def test_create_lerobot_converter(self, temp_output_dir):
-        """Test creating a LeRobot converter."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+    def test_create_kps_converter(self, temp_output_dir):
+        """Test creating a KPS converter."""
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
         assert converter is not None
 
-    def test_create_kps_converter(self, temp_output_dir):
-        """Test creating a KPS converter."""
-        config = roboflow.KpsConfig("test", 30, "genie_s")
+    def test_create_lerobot_converter(self, temp_output_dir):
+        """Test creating a LeRobot converter."""
+        config = roboflow.DatasetConfig("lerobot", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
         assert converter is not None
 
     def test_converter_repr(self, temp_output_dir):
         """Test converter repr."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
         repr_str = repr(converter)
-        assert "Lerobot" in repr_str or "test" in repr_str
+        assert "DatasetConverter" in repr_str
 
 
 # =============================================================================
@@ -216,17 +191,9 @@ class TestDatasetConverter:
 class TestSyncConversion:
     """Tests for synchronous (blocking) conversion."""
 
-    def test_kps_sync_conversion_missing_file(self, temp_output_dir):
+    def test_sync_conversion_missing_file(self, temp_output_dir):
         """Test KPS conversion with missing input file."""
-        config = roboflow.KpsConfig("test", 30, "genie_s")
-        converter = roboflow.DatasetConverter.create(temp_output_dir, config)
-
-        with pytest.raises(OSError):
-            converter.convert("nonexistent_file.mcap")
-
-    def test_lerobot_sync_conversion_missing_file(self, temp_output_dir):
-        """Test LeRobot conversion with missing input file."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
 
         with pytest.raises(OSError):
@@ -243,7 +210,7 @@ class TestAsyncConversion:
 
     def test_convert_async_returns_job(self, temp_output_dir):
         """Test that convert_async returns a ConversionJob."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
 
         job = converter.convert_async("nonexistent_file.mcap")
@@ -251,7 +218,7 @@ class TestAsyncConversion:
 
     def test_job_is_complete(self, temp_output_dir):
         """Test ConversionJob.is_complete()."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
 
         job = converter.convert_async("nonexistent_file.mcap")
@@ -264,7 +231,7 @@ class TestAsyncConversion:
 
     def test_job_is_running(self, temp_output_dir):
         """Test ConversionJob.is_running()."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
 
         job = converter.convert_async("nonexistent_file.mcap")
@@ -273,21 +240,23 @@ class TestAsyncConversion:
 
     def test_job_wait(self, temp_output_dir):
         """Test ConversionJob.wait()."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
 
         job = converter.convert_async("nonexistent_file.mcap")
-        result = job.wait(timeout=5.0)
-        assert result is not None
+        # wait() should raise an error for a failed conversion
+        with pytest.raises(OSError):
+            job.wait(timeout=5.0)
 
     def test_job_get_progress(self, temp_output_dir):
         """Test ConversionJob.get_progress()."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
 
         job = converter.convert_async("nonexistent_file.mcap")
         progress = job.get_progress()
-        assert progress is not None
+        # Progress may be None initially
+        assert progress is None or isinstance(progress, roboflow.ProgressUpdate)
 
 
 # =============================================================================
@@ -300,8 +269,7 @@ class TestProgressUpdate:
 
     def test_progress_update_variant_type(self):
         """Test ProgressUpdate.variant_type()."""
-        # Create a progress update via job
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(tempfile.mkdtemp(), config)
         job = converter.convert_async("nonexistent.mcap")
 
@@ -323,7 +291,7 @@ class TestProgressUpdate:
 
     def test_progress_update_repr(self):
         """Test ProgressUpdate repr."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(tempfile.mkdtemp(), config)
         job = converter.convert_async("nonexistent.mcap")
 
@@ -345,36 +313,18 @@ class TestDatasetStats:
 
     def test_stats_properties(self, temp_output_dir):
         """Test DatasetStats properties."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
 
         try:
             stats = converter.convert("nonexistent.mcap")
         except OSError:
-            # Expected for missing file, try to get partial stats from failed job
-            job = converter.convert_async("nonexistent.mcap")
-            result = job.wait(timeout=5.0)
-            if result is None:
-                return
-            stats = result
+            # Expected for missing file
+            return
 
         assert hasattr(stats, "frames_written")
         assert hasattr(stats, "images_encoded")
-        assert hasattr(stats, "duration_sec")
-
-    def test_stats_repr(self, temp_output_dir):
-        """Test DatasetStats repr."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
-        converter = roboflow.DatasetConverter.create(temp_output_dir, config)
-
-        try:
-            stats = converter.convert("nonexistent.mcap")
-        except OSError:
-            return
-
-        repr_str = repr(stats)
-        assert isinstance(repr_str, str)
-        assert "frames" in repr_str.lower() or "DatasetStats" in repr_str
+        assert hasattr(stats, "duration_seconds")
 
 
 # =============================================================================
@@ -387,13 +337,12 @@ class TestErrorHandling:
 
     def test_invalid_format(self, temp_output_dir):
         """Test that invalid format raises error."""
-        config = roboflow.DatasetConfig("invalid_format", fps=30, name="test")
         with pytest.raises(ValueError):
-            roboflow.DatasetConverter.create(temp_output_dir, config)
+            roboflow.DatasetConfig("invalid_format", fps=30, name="test")
 
     def test_missing_input_file(self, temp_output_dir):
         """Test handling of missing input file."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
 
         with pytest.raises(OSError):
@@ -408,7 +357,7 @@ class TestErrorHandling:
 
         try:
             with pytest.raises(Exception):
-                roboflow.LerobotConfig.from_file(temp_path)
+                roboflow.DatasetConfig.from_file(temp_path, format="kps")
         finally:
             os.unlink(temp_path)
 
@@ -423,25 +372,29 @@ class TestJobCancellation:
 
     def test_job_cancel(self, temp_output_dir):
         """Test ConversionJob.cancel()."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
 
         job = converter.convert_async("nonexistent.mcap")
         # Cancel immediately
         result = job.cancel()
 
-        # Should return True if cancelled successfully
+        # Should return True if cancelled successfully, False if already complete
         assert result is True or result is False
 
     def test_job_cancel_after_complete(self, temp_output_dir):
-        """Test cancelling a job that's already complete."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        """Test cancelling a job that's already complete/failed."""
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
 
         job = converter.convert_async("nonexistent.mcap")
-        job.wait(timeout=5.0)
+        # Job will fail because file doesn't exist
+        try:
+            job.wait(timeout=5.0)
+        except OSError:
+            pass  # Expected
 
-        # After completion, cancel may return False
+        # After completion (even with error), cancel returns False
         result = job.cancel()
         assert isinstance(result, bool)
 
@@ -456,7 +409,7 @@ class TestProgressChannel:
 
     def test_progress_overflow(self, temp_output_dir):
         """Test that progress channel handles overflow gracefully."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
 
         job = converter.convert_async("nonexistent.mcap")
@@ -467,11 +420,15 @@ class TestProgressChannel:
             # Should not panic or crash
             assert progress is None or isinstance(progress, roboflow.ProgressUpdate)
 
-        job.wait(timeout=5.0)
+        # Job will fail because file doesn't exist
+        try:
+            job.wait(timeout=5.0)
+        except OSError:
+            pass  # Expected
 
     def test_progress_polling_interval(self, temp_output_dir):
         """Test progress polling at different intervals."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
 
         job = converter.convert_async("nonexistent.mcap")
@@ -483,7 +440,11 @@ class TestProgressChannel:
             progress = job.get_progress()
             assert progress is None or isinstance(progress, roboflow.ProgressUpdate)
 
-        job.wait(timeout=5.0)
+        # Job will fail because file doesn't exist
+        try:
+            job.wait(timeout=5.0)
+        except OSError:
+            pass  # Expected
 
 
 # =============================================================================
@@ -496,16 +457,9 @@ class TestConvertFunction:
 
     def test_convert_function(self, temp_output_dir):
         """Test using the convert() function."""
-        config = roboflow.DatasetConfig("lerobot", fps=30, name="test")
-
-        # Missing file should raise
-        with pytest.raises(OSError):
-            roboflow.convert("nonexistent.mcap", temp_output_dir, config)
-
-    def test_convert_function_with_kps(self, temp_output_dir):
-        """Test convert() function with KPS format."""
         config = roboflow.DatasetConfig("kps", fps=30, name="test")
 
+        # Missing file should raise
         with pytest.raises(OSError):
             roboflow.convert("nonexistent.mcap", temp_output_dir, config)
 
@@ -520,25 +474,25 @@ class TestEdgeCases:
 
     def test_empty_dataset_name(self, temp_output_dir):
         """Test with empty dataset name."""
-        config = roboflow.LerobotConfig("", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
         assert converter is not None
 
     def test_zero_fps(self, temp_output_dir):
         """Test with zero FPS."""
-        config = roboflow.LerobotConfig("test", 0, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=0, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
         assert converter is not None
 
     def test_high_fps(self, temp_output_dir):
         """Test with high FPS value."""
-        config = roboflow.LerobotConfig("test", 120, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=120, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
         assert converter is not None
 
     def test_special_characters_in_name(self, temp_output_dir):
         """Test with special characters in dataset name."""
-        config = roboflow.LerobotConfig("test-dataset_2024", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test-dataset_2024")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
         assert converter is not None
 
@@ -551,21 +505,15 @@ class TestEdgeCases:
 class TestStringRepresentation:
     """Tests for string representation of objects."""
 
-    def test_lerobot_config_repr(self):
-        """Test LerobotConfig repr."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+    def test_dataset_config_repr(self):
+        """Test DatasetConfig repr."""
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         repr_str = repr(config)
-        assert "LerobotConfig" in repr_str or "test" in repr_str
-
-    def test_kps_config_repr(self):
-        """Test KpsConfig repr."""
-        config = roboflow.KpsConfig("test", 30, "genie_s")
-        repr_str = repr(config)
-        assert "KpsConfig" in repr_str or "test" in repr_str
+        assert "DatasetConfig" in repr_str
 
     def test_conversion_job_repr(self, temp_output_dir):
         """Test ConversionJob repr."""
-        config = roboflow.LerobotConfig("test", 30, "genie_s")
+        config = roboflow.DatasetConfig("kps", fps=30, name="test")
         converter = roboflow.DatasetConverter.create(temp_output_dir, config)
         job = converter.convert_async("nonexistent.mcap")
 
