@@ -101,9 +101,29 @@ impl BackpressureHandler {
     }
 
     /// Check if backpressure is currently in cooldown.
+    ///
+    /// Includes protection against clock skew (e.g., NTP adjustments).
+    /// If the elapsed time is implausibly large (>60s) for a short cooldown,
+    /// we assume the clock went backward and exit cooldown.
     pub fn is_in_cooldown(&self) -> bool {
         if let Some(last) = self.last_backpressure {
-            last.elapsed() < self.backpressure_cooldown
+            let elapsed = last.elapsed();
+
+            // Detect clock going backwards or very large jumps
+            // If cooldown is short (<1s) but elapsed is >60s, assume clock skew
+            let is_clock_skew = self.backpressure_cooldown.as_millis() < 1000
+                && elapsed.as_secs() > 60;
+
+            if is_clock_skew {
+                tracing::warn!(
+                    elapsed_ms = elapsed.as_millis(),
+                    cooldown_ms = self.backpressure_cooldown.as_millis(),
+                    "Detected possible clock skew in backpressure cooldown - exiting cooldown"
+                );
+                return false;
+            }
+
+            elapsed < self.backpressure_cooldown
         } else {
             false
         }

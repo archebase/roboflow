@@ -140,8 +140,12 @@ impl FrameAlignmentBuffer {
         // Get or create partial frame
         let entry = self.active_frames.entry(aligned_ts).or_insert_with(|| {
             let idx = self.next_frame_index;
-            self.next_frame_index += 1;
-            let eligible = aligned_ts + self.config.completion_window_ns();
+            // Use checked arithmetic to detect overflow for very long recordings
+            self.next_frame_index = self.next_frame_index.checked_add(1).unwrap_or_else(|| {
+                tracing::error!("Frame index overflow - recording exceeds usize capacity");
+                usize::MAX // Saturate at maximum value
+            });
+            let eligible = aligned_ts.saturating_add(self.config.completion_window_ns());
             PartialFrame::new(idx, aligned_ts, eligible)
         });
 
@@ -211,10 +215,21 @@ impl FrameAlignmentBuffer {
     }
 
     /// Align a timestamp to the nearest frame boundary.
+    ///
+    /// Uses round-half-up for consistent behavior. For example:
+    /// - At 30 FPS (33,333,333 ns interval):
+    ///   - 0-16,666,666 ns → frame 0
+    ///   - 16,666,667-49,999,999 ns → frame 1 (rounds up at midpoint)
+    ///   - 50,000,000+ ns → frame 1 (approaching next boundary)
+    ///
+    /// Uses saturating arithmetic to prevent overflow for very large timestamps.
     fn align_to_frame_boundary(&self, timestamp: u64) -> u64 {
         let interval = self.config.frame_interval_ns();
-        let half_interval = interval / 2 + 1; // +1 to round up at midpoint
-        ((timestamp + half_interval) / interval) * interval
+        // Round to nearest: (timestamp + interval/2) / interval * interval
+        // Add 1 to handle the midpoint correctly (round half up)
+        let half_interval = interval.saturating_add(1) / 2;
+        let aligned = timestamp.saturating_add(half_interval) / interval * interval;
+        aligned
     }
 
     /// Check for completed frames and remove them from the buffer.

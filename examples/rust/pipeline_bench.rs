@@ -18,9 +18,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use roboflow::io::ReaderFactory;
-use roboflow::dataset::lerobot::{LerobotConfig, LerobotWriter};
 use roboflow::dataset::common::{AlignedFrame, DatasetWriter, ImageData};
+use roboflow::dataset::lerobot::{LerobotConfig, LerobotWriter};
+use roboflow::io::ReaderFactory;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args()?;
@@ -68,9 +68,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Channel mappings (for the LeJu robot dataset)
     let camera_channels = [
-        ("/cam_h/color/image_raw/compressed", "observation.images.cam_high"),
-        ("/cam_r/color/image_raw/compressed", "observation.images.cam_right"),
-        ("/cam_l/color/image_raw/compressed", "observation.images.cam_left"),
+        (
+            "/cam_h/color/image_raw/compressed",
+            "observation.images.cam_high",
+        ),
+        (
+            "/cam_r/color/image_raw/compressed",
+            "observation.images.cam_right",
+        ),
+        (
+            "/cam_l/color/image_raw/compressed",
+            "observation.images.cam_left",
+        ),
     ];
     let state_channel = "/kuavo_arm_traj";
     let action_channel = "/joint_cmd";
@@ -93,7 +102,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let channel_name = channel.name.as_str();
 
         // Check if this is an image channel
-        if let Some((_, feature_name)) = camera_channels.iter().find(|(name, _)| *name == channel_name) {
+        if let Some((_, feature_name)) = camera_channels
+            .iter()
+            .find(|(name, _)| *name == channel_name)
+        {
             // This is a camera image - decode and store for video encoding
             if let Some(img_data) = msg.message_as_compressed_image()? {
                 let image_data = ImageData::encoded(img_data.width, img_data.height, img_data.data);
@@ -121,8 +133,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let elapsed = total_start.elapsed().as_secs_f64();
             let throughput = (processed_messages as f64) / elapsed;
             let read_mb = (processed_messages as f64 * 500.0) / (1024.0 * 1024.0); // rough estimate
-            print!("\r  Messages: {}, throughput: {:.0} msg/s, read: {:.1} MB    ",
-                processed_messages, throughput, read_mb);
+            print!(
+                "\r  Messages: {}, throughput: {:.0} msg/s, read: {:.1} MB    ",
+                processed_messages, throughput, read_mb
+            );
             use std::io::Write;
             std::io::stdout().flush().ok();
             last_progress = Instant::now();
@@ -158,14 +172,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("==========================================");
     println!("Input size: {:.2} MB", input_size_mb);
     println!("Output size: {:.2} MB", output_size_mb);
-    println!("Compression ratio: {:.1}%", (output_size_mb / input_size_mb) * 100.0);
+    println!(
+        "Compression ratio: {:.1}%",
+        (output_size_mb / input_size_mb) * 100.0
+    );
     println!();
     println!("Messages processed: {}", processed_messages);
     println!("Images encoded: {}", total_images);
     println!("Frames written: {}", frames_written);
     println!();
     println!("Timing breakdown:");
-    println!("  Message decoding: {:.2}s", decode_start.elapsed().as_secs_f64());
+    println!(
+        "  Message decoding: {:.2}s",
+        decode_start.elapsed().as_secs_f64()
+    );
     println!("  Episode finish: {:.2}s", episode_time.as_secs_f64());
     println!("  Finalize: {:.2}s", finalize_time.as_secs_f64());
     println!("  Total: {:.2}s", total_duration.as_secs_f64());
@@ -185,10 +205,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Extrapolate to full file
     if total_messages < args.max_messages {
         let total_in_file = 487882; // from bag info
-        let estimated_time = total_duration.as_secs_f64() * (total_in_file as f64 / processed_messages as f64);
+        let estimated_time =
+            total_duration.as_secs_f64() * (total_in_file as f64 / processed_messages as f64);
         println!("Full file extrapolation:");
         println!("  Total messages in file: {}", total_in_file);
-        println!("  Estimated total time: {:.1} s ({:.2} min)", estimated_time, estimated_time / 60.0);
+        println!(
+            "  Estimated total time: {:.1} s ({:.2} min)",
+            estimated_time,
+            estimated_time / 60.0
+        );
     }
 
     Ok(())
@@ -230,12 +255,12 @@ fn parse_args() -> Result<BenchConfig, Box<dyn std::error::Error>> {
     }
 
     let input = input.unwrap_or_else(|| {
-        PathBuf::from("/Users/zhexuany/Downloads/leju_bag/Rubbish_sorting_P4-278_20250830101814.bag")
+        PathBuf::from(
+            "/Users/zhexuany/Downloads/leju_bag/Rubbish_sorting_P4-278_20250830101814.bag",
+        )
     });
 
-    let output_dir = output_dir.unwrap_or_else(|| {
-        PathBuf::from("./pipeline_bench_output")
-    });
+    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("./pipeline_bench_output"));
 
     Ok(BenchConfig {
         input,
@@ -245,14 +270,17 @@ fn parse_args() -> Result<BenchConfig, Box<dyn std::error::Error>> {
     })
 }
 
-fn create_lerobot_config(config: &BenchConfig) -> Result<LerobotConfig, Box<dyn std::error::Error>> {
+fn create_lerobot_config(
+    config: &BenchConfig,
+) -> Result<LerobotConfig, Box<dyn std::error::Error>> {
     let profile_line = if let Some(profile) = &config.profile {
         format!("profile = \"{}\"", profile)
     } else {
         "".to_string()
     };
 
-    let toml = format!(r#"
+    let toml = format!(
+        r#"
 [dataset]
 name = "leju_rubbish_sorting"
 fps = 30
@@ -287,7 +315,9 @@ mapping_type = "action"
 codec = "libx264"
 crf = 18
 preset = "fast"
-"#, profile_line);
+"#,
+        profile_line
+    );
 
     Ok(toml::from_str(&toml)?)
 }

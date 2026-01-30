@@ -33,7 +33,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Load annotation file for episode segmentation
-    let annotations = args.annotation.as_ref()
+    let annotations = args
+        .annotation
+        .as_ref()
         .map(|p| AnnotationData::from_file(p))
         .transpose()?;
 
@@ -50,7 +52,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // For now, this is a skeleton showing the structure
 
     if let Some(ann) = annotations {
-        println!("Loaded {} episode segments from annotations", ann.marks.len());
+        println!(
+            "Loaded {} episode segments from annotations",
+            ann.marks.len()
+        );
 
         // Register tasks from annotations
         for mark in &ann.marks {
@@ -60,8 +65,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Process each episode segment
         for (i, mark) in ann.marks.iter().enumerate() {
-            println!("Processing episode {}: {} ({})",
-                i, mark.skill_atomic, mark.en_skill_detail);
+            println!(
+                "Processing episode {}: {} ({})",
+                i, mark.skill_atomic, mark.en_skill_detail
+            );
 
             // TODO: Extract data from bag for this segment
             // The segment boundaries are given by mark.start_position and mark.end_position
@@ -117,20 +124,16 @@ fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
     while let Some(arg) = args_iter.next() {
         match arg.as_str() {
             "--bag" | "-b" => {
-                bag = Some(args_iter.next().ok_or("Missing --bag value")?
-                    .into());
+                bag = Some(args_iter.next().ok_or("Missing --bag value")?.into());
             }
             "--annotation" | "-a" => {
-                annotation = Some(args_iter.next().ok_or("Missing --annotation value")?
-                    .into());
+                annotation = Some(args_iter.next().ok_or("Missing --annotation value")?.into());
             }
             "--output" | "-o" => {
-                output = Some(args_iter.next().ok_or("Missing --output value")?
-                    .into());
+                output = Some(args_iter.next().ok_or("Missing --output value")?.into());
             }
             "--config" | "-c" => {
-                config = Some(args_iter.next().ok_or("Missing --config value")?
-                    .into());
+                config = Some(args_iter.next().ok_or("Missing --config value")?.into());
             }
             _ => {
                 return Err(format!("Unknown argument: {}", arg).into());

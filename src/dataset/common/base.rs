@@ -283,6 +283,18 @@ impl WriterStats {
     }
 }
 
+/// Error type for image data operations.
+#[derive(Debug, thiserror::Error)]
+pub enum ImageDataError {
+    #[error("Size mismatch: {width}x{height} expects {expected_size} bytes, got {actual_size}")]
+    SizeMismatch {
+        width: u32,
+        height: u32,
+        expected_size: usize,
+        actual_size: usize,
+    },
+}
+
 /// Image data with metadata.
 ///
 /// This is a shared type used across different dataset formats.
@@ -306,10 +318,40 @@ pub struct ImageData {
 }
 
 impl ImageData {
+    /// Create new RGB image data with validation.
+    ///
+    /// Returns an error if data size doesn't match expected RGB size (width * height * 3).
+    /// For encoded data (JPEG/PNG), use `encoded()` instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the data size doesn't match width * height * 3.
+    pub fn new_rgb(width: u32, height: u32, data: Vec<u8>) -> std::result::Result<Self, ImageDataError> {
+        let expected_size = (width as usize) * (height as usize) * 3;
+        if data.len() != expected_size {
+            return Err(ImageDataError::SizeMismatch {
+                width,
+                height,
+                expected_size,
+                actual_size: data.len(),
+            });
+        }
+        Ok(Self {
+            width,
+            height,
+            data,
+            original_timestamp: 0,
+            is_encoded: false,
+        })
+    }
+
     /// Create new image data.
     ///
     /// Validates that the data size matches expected RGB size (width * height * 3).
+    /// Logs a warning if size doesn't match, but continues anyway.
     /// For encoded data (JPEG/PNG), use `encoded()` instead.
+    ///
+    /// For production use, prefer `new_rgb()` which returns a Result.
     pub fn new(width: u32, height: u32, data: Vec<u8>) -> Self {
         let expected_size = (width as usize) * (height as usize) * 3;
         if data.len() != expected_size {

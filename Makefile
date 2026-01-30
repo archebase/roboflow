@@ -85,22 +85,44 @@ coverage-python: ## Run Python tests with coverage
 # Code quality
 # ============================================================================
 
-fmt: ## Format all code
-	@echo "Formatting code..."
-	cargo fmt
-	@if command -v black >/dev/null 2>&1; then black python/; else echo "⚠ black not found, skipping Python formatting"; fi
-	@if command -v ruff >/dev/null 2>&1; then ruff check python/ --fix; else echo "⚠ ruff not found, skipping Python linting"; fi
-	@echo "✓ Code formatted"
+fmt: fmt-rust fmt-python ## Format all code
+	@echo "✓ All code formatted"
 
-lint: ## Lint all code
-	@echo "Linting with all features..."
-	cargo clippy --all-targets --all-features -- -D warnings
-	@echo "✓ Linting passed"
+fmt-rust: ## Format Rust code
+	@echo "Formatting Rust code..."
+	cargo fmt
+	@echo "✓ Rust code formatted"
+
+fmt-python: ## Format Python code with ruff
+	@echo "Formatting Python code with ruff..."
+	ruff format python/
+	@echo "✓ Python code formatted"
+
+lint: lint-rust lint-python ## Lint all code
+	@echo "✓ All linting passed"
+
+lint-rust: ## Lint Rust code with clippy
+	@echo "Linting Rust code..."
+	cargo clippy --all-targets -- -D warnings
+	@echo "✓ Rust linting passed"
+
+lint-python: ## Lint Python code with ruff
+	@echo "Linting Python code with ruff..."
+	ruff check python/
+	@echo "✓ Python linting passed"
 
 lint-all: ## Lint with all features including HDF5 (requires compatible HDF5)
 	@echo "Linting with all features..."
 	cargo clippy --all-targets --all-features -- -D warnings
-	@echo "✓ Linting passed"
+	ruff check python/
+	@echo "✓ All linting passed"
+
+fix: ## Auto-fix linting issues
+	@echo "Auto-fixing issues..."
+	cargo fmt
+	ruff format python/
+	ruff check python/ --fix
+	@echo "✓ Issues fixed"
 
 check: fmt lint ## Run format check and lint
 

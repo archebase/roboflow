@@ -241,17 +241,23 @@ impl ProgressSender {
 
         if is_critical {
             use std::time::Duration;
-            // For critical updates, clone once and try with timeout
-            let update_clone = update.clone();
-            if self
-                .sender
-                .send_timeout(update, Duration::from_millis(100))
-                .is_err()
-            {
-                // Channel still full after 100ms - log and block until sent
-                eprintln!("CRITICAL: Progress channel full - blocking to send critical update");
-                // This will block until the receiver has space
-                let _ = self.sender.send(update_clone);
+            // For critical updates, try with increasing timeouts
+            let mut sent = false;
+
+            // Try multiple timeouts to avoid indefinite hanging
+            for timeout in [100, 500, 5000].map(Duration::from_millis) {
+                if self.sender.send_timeout(update.clone(), timeout).is_ok() {
+                    sent = true;
+                    break;
+                }
+            }
+
+            if !sent {
+                // Channel receiver may be dead or blocked - log but don't hang indefinitely
+                eprintln!("CRITICAL: Progress channel receiver unresponsive - critical update may be lost");
+                eprintln!("  Update type: {:?}", update.variant_type());
+                // Don't block - the conversion should continue even if Python receiver is dead
+                // The final stats will still be written to disk
             }
         } else {
             // Non-critical updates - drop if channel full

@@ -45,7 +45,41 @@ impl LerobotConfig {
         let config: LerobotConfig = toml::from_str(toml_str).map_err(|e| {
             crate::RoboflowError::parse("LerobotConfig", format!("TOML parse error: {}", e))
         })?;
+        config.validate()?;
         Ok(config)
+    }
+
+    /// Validate the configuration for semantic correctness.
+    fn validate(&self) -> Result<()> {
+        // Validate FPS > 0
+        if self.dataset.fps == 0 {
+            return Err(crate::RoboflowError::parse(
+                "LerobotConfig",
+                "dataset.fps must be greater than 0",
+            ));
+        }
+
+        // Validate CRF range (0-51 for H.264)
+        if self.video.crf > 51 {
+            return Err(crate::RoboflowError::parse(
+                "LerobotConfig",
+                format!("video.crf ({}) must be in range [0-51]", self.video.crf),
+            ));
+        }
+
+        // Check for duplicate topics
+        use std::collections::HashSet;
+        let mut topics = HashSet::new();
+        for mapping in &self.mappings {
+            if !topics.insert(&mapping.topic) {
+                return Err(crate::RoboflowError::parse(
+                    "LerobotConfig",
+                    format!("Duplicate topic found: {}", mapping.topic),
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     /// Get mappings by topic.

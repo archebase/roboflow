@@ -12,7 +12,8 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use crate::core::Result;
 use crate::dataset::common::parquet_base::calculate_stats;
@@ -97,6 +98,14 @@ pub struct LerobotFrame {
 impl LerobotWriter {
     /// Create a new LeRobot writer.
     pub fn create(output_dir: impl AsRef<Path>, config: LerobotConfig) -> Result<Self> {
+        #[cfg(not(feature = "kps-parquet"))]
+        {
+            return Err(crate::RoboflowError::unsupported(
+                "LeRobot writer requires the 'kps-parquet' feature to be enabled. \
+                 Add --features kps-parquet to your build command.",
+            ));
+        }
+
         let output_dir = output_dir.as_ref();
 
         // Create LeRobot v2.1 directory structure
@@ -374,12 +383,15 @@ impl LerobotWriter {
     }
 
     /// Write current episode to Parquet file (fallback when feature not enabled).
+    ///
+    /// Note: This should never be called because `create()` validates the feature
+    /// at construction time. This is a compile-time fallback.
     #[cfg(not(feature = "kps-parquet"))]
     fn write_episode_parquet(&mut self) -> Result<()> {
-        // Parquet support not enabled - return error instead of silently skipping
-        Err(crate::RoboflowError::unsupported(
-            "Parquet writing requires the 'kps-parquet' feature to be enabled. \
-             Add --features kps-parquet to your build command.",
+        // This should be unreachable due to early validation in create()
+        Err(crate::RoboflowError::encode(
+            "LerobotWriter",
+            "Parquet writing called without 'kps-parquet' feature (should have been caught at construction)",
         ))
     }
 
@@ -540,27 +552,45 @@ impl LerobotWriter {
             .build()
             .map_err(|e| crate::RoboflowError::encode("ThreadPool", e.to_string()))?;
 
-        // Shared counters for statistics
-        let images_encoded = Arc::new(Mutex::new(0usize));
-        let output_bytes = Arc::new(Mutex::new(0u64));
-        let skipped_frames = Arc::new(Mutex::new(0usize));
-        let failed_encodings = Arc::new(Mutex::new(0usize));
+        // Create all camera directories before parallel encoding to avoid race
+        for (camera, _) in &camera_data {
+            let feature_name = format!("observation.images.{}", camera);
+            let camera_dir = videos_dir.join(&feature_name);
+            fs::create_dir_all(&camera_dir).map_err(|e| {
+                crate::RoboflowError::encode(
+                    "VideoEncoder",
+                    format!("Failed to create camera directory '{}': {}", camera, e),
+                )
+            })?;
+        }
+
+        // Shared counters for statistics (using atomic types to avoid mutex poisoning)
+        let images_encoded = Arc::new(AtomicUsize::new(0usize));
+        let output_bytes = Arc::new(AtomicU64::new(0u64));
+        let skipped_frames = Arc::new(AtomicUsize::new(0usize));
+        let failed_encodings = Arc::new(AtomicUsize::new(0usize));
 
         let result: Result<Vec<()>> = pool.install(|| {
             camera_data.par_iter().map(|(camera, images)| {
                 let b_start = std::time::Instant::now();
-                let buffer = Self::build_frame_buffer_static(images)?;
+                let (buffer, skipped) = Self::build_frame_buffer_static(images)
+                    .map_err(|e| {
+                        // Include camera name in error for debugging
+                        crate::RoboflowError::encode(
+                            "VideoEncoder",
+                            format!("Failed to build frame buffer for camera '{}': {}", camera, e),
+                        )
+                    })?;
                 let _buffer_time = b_start.elapsed();
+
+                // Track skipped frames
+                if skipped > 0 {
+                    skipped_frames.fetch_add(skipped, Ordering::Relaxed);
+                }
 
                 if !buffer.is_empty() {
                     let feature_name = format!("observation.images.{}", camera);
                     let camera_dir = videos_dir.join(&feature_name);
-
-                    // Create directory (may race, but fs::create_dir_all is idempotent)
-                    if let Err(e) = fs::create_dir_all(&camera_dir) {
-                        tracing::warn!(camera = %camera, error = %e, "Failed to create camera directory");
-                    }
-
                     let video_path = camera_dir.join(format!("episode_{:06}.mp4", self.episode_index));
 
                     let encoder = Mp4Encoder::with_config(encoder_config.clone());
@@ -568,7 +598,7 @@ impl LerobotWriter {
 
                     match encoder.encode_buffer(&buffer, &video_path) {
                         Ok(()) => {
-                            *images_encoded.lock().unwrap() += buffer.len();
+                            images_encoded.fetch_add(buffer.len(), Ordering::Relaxed);
                             tracing::debug!(
                                 camera = %camera,
                                 frames = buffer.len(),
@@ -580,7 +610,7 @@ impl LerobotWriter {
                             tracing::error!(
                                 "ffmpeg not found. Please install ffmpeg to encode videos."
                             );
-                            *failed_encodings.lock().unwrap() += 1;
+                            failed_encodings.fetch_add(1, Ordering::Relaxed);
                             return Err(crate::RoboflowError::unsupported(
                                 "Video encoding requires ffmpeg. Install ffmpeg and ensure it's in your PATH."
                             ));
@@ -591,7 +621,7 @@ impl LerobotWriter {
                                 error = %e,
                                 "Failed to encode video"
                             );
-                            *failed_encodings.lock().unwrap() += 1;
+                            failed_encodings.fetch_add(1, Ordering::Relaxed);
                             return Err(crate::RoboflowError::encode(
                                 "VideoEncoder",
                                 format!("Failed to encode video for camera '{}': {}", camera, e)
@@ -601,7 +631,7 @@ impl LerobotWriter {
                     let _encode_time = e_start.elapsed();
 
                     if let Ok(metadata) = std::fs::metadata(&video_path) {
-                        *output_bytes.lock().unwrap() += metadata.len();
+                        output_bytes.fetch_add(metadata.len(), Ordering::Relaxed);
                     }
                 }
 
@@ -611,11 +641,11 @@ impl LerobotWriter {
 
         result?;
 
-        // Update counters
-        self.images_encoded += *images_encoded.lock().unwrap();
-        self.output_bytes += *output_bytes.lock().unwrap();
-        self.skipped_frames += *skipped_frames.lock().unwrap();
-        self.failed_encodings += *failed_encodings.lock().unwrap();
+        // Update counters using atomic loads
+        self.images_encoded += images_encoded.load(Ordering::Relaxed);
+        self.output_bytes += output_bytes.load(Ordering::Relaxed);
+        self.skipped_frames += skipped_frames.load(Ordering::Relaxed);
+        self.failed_encodings += failed_encodings.load(Ordering::Relaxed);
 
         eprintln!(
             "[TIMING] encode_videos (parallel, {} jobs): {} cameras encoded",
@@ -628,12 +658,17 @@ impl LerobotWriter {
 
     /// Build a frame buffer from image data.
     fn build_frame_buffer(&self, images: &[ImageData]) -> crate::core::Result<VideoFrameBuffer> {
-        Self::build_frame_buffer_static(images)
+        let (buffer, _) = Self::build_frame_buffer_static(images)?;
+        Ok(buffer)
     }
 
     /// Static version of build_frame_buffer for use in parallel context.
-    fn build_frame_buffer_static(images: &[ImageData]) -> crate::core::Result<VideoFrameBuffer> {
+    ///
+    /// Returns (buffer, skipped_frame_count) where skipped frames are those
+    /// that had dimension mismatches.
+    fn build_frame_buffer_static(images: &[ImageData]) -> crate::core::Result<(VideoFrameBuffer, usize)> {
         let mut buffer = VideoFrameBuffer::new();
+        let mut skipped = 0usize;
 
         for img in images {
             if img.width > 0 && img.height > 0 {
@@ -641,20 +676,32 @@ impl LerobotWriter {
 
                 let video_frame = VideoFrame::new(img.width, img.height, rgb_data);
                 if let Err(e) = buffer.add_frame(video_frame) {
+                    // Track dimension mismatches
+                    skipped += 1;
                     tracing::warn!(
                         expected_width = buffer.width.unwrap_or(0),
                         expected_height = buffer.height.unwrap_or(0),
                         actual_width = img.width,
                         actual_height = img.height,
                         error = %e,
-                        "Skipping frame with inconsistent dimensions"
+                        "Frame dimension mismatch - skipping frame"
                     );
-                    // Continue instead of failing
                 }
             }
         }
 
-        Ok(buffer)
+        // Fail if all frames were skipped - indicates serious data corruption
+        if !images.is_empty() && buffer.is_empty() {
+            return Err(crate::RoboflowError::encode(
+                "VideoEncoder",
+                format!(
+                    "All {} frames skipped due to dimension mismatches - dataset may be corrupted",
+                    images.len()
+                ),
+            ));
+        }
+
+        Ok((buffer, skipped))
     }
 
     /// Calculate episode statistics.

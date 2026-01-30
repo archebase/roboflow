@@ -236,7 +236,7 @@ impl MetadataCollector {
 
         let info_path = meta_dir.join("info.json");
         let info_json = serde_json::to_string_pretty(&info)
-            .map_err(|e| crate::RoboflowError::parse("Metadata", format!("JSON error: {}", e)))?;
+            .map_err(|e| crate::RoboflowError::parse("Metadata", format!("Failed to serialize info.json: {}", e)))?;
 
         fs::write(&info_path, info_json)?;
         tracing::info!(path = %info_path.display(), "Wrote LeRobot v2.1 info.json");
@@ -251,7 +251,7 @@ impl MetadataCollector {
 
         for episode in &self.episodes {
             let line = serde_json::to_string(episode).map_err(|e| {
-                crate::RoboflowError::parse("Metadata", format!("JSON error: {}", e))
+                crate::RoboflowError::parse("Metadata", format!("Failed to serialize episode for episodes.jsonl: {}", e))
             })?;
             writeln!(file, "{}", line)?;
         }
@@ -280,7 +280,7 @@ impl MetadataCollector {
                 task: task.clone(),
             };
             let line = serde_json::to_string(&task_info).map_err(|e| {
-                crate::RoboflowError::parse("Metadata", format!("JSON error: {}", e))
+                crate::RoboflowError::parse("Metadata", format!("Failed to serialize task for tasks.jsonl: {}", e))
             })?;
             writeln!(file, "{}", line)?;
         }
@@ -297,7 +297,7 @@ impl MetadataCollector {
 
         for stats in &self.episode_stats {
             let line = serde_json::to_string(stats).map_err(|e| {
-                crate::RoboflowError::parse("Metadata", format!("JSON error: {}", e))
+                crate::RoboflowError::parse("Metadata", format!("Failed to serialize episode stats for episodes_stats.jsonl: {}", e))
             })?;
             writeln!(file, "{}", line)?;
         }
