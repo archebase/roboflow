@@ -22,6 +22,7 @@ maturin develop --features python
 cargo test                              # All Rust tests
 cargo test --features dataset-all          # With KPS features
 cargo test --test kps_v12_tests       # KPS v1.2 spec tests
+cargo test --features cloud-storage     # With storage abstraction layer
 ```
 
 ## Code Quality
@@ -42,6 +43,7 @@ roboflow/
 │   ├── dataset/kps/      # KPS dataset format (HDF5, Parquet, v1.2)
 │   ├── pipeline/         # Standard (4-stage), Hyper (7-stage)
 │   ├── python/           # PyO3 bindings
+│   ├── storage/          # Storage abstraction layer (cloud-storage feature)
 │   └── config.rs
 ├── tests/                # Integration tests, fixtures/
 ├── examples/
@@ -55,6 +57,12 @@ roboflow/
 ## Key Modules
 
 - `src/pipeline/`: Standard pipeline, HyperPipeline, fluent builder API
+- `src/storage/`: Storage abstraction layer (requires `cloud-storage` feature)
+  - `mod.rs`: `Storage` trait, `StorageError`, `ObjectMetadata`
+  - `local.rs`: `LocalStorage` implementation with `SeekableStorage` support
+  - `url.rs`: `StorageUrl` parsing for `file://`, `s3://`, `oss://` schemes
+  - `factory.rs`: `StorageFactory` for backend creation, `StorageConfig` for credentials
+  - `oss.rs`: `OssStorage` stub (full implementation uses `object_store`)
 - `src/dataset/kps/`: KPS dataset conversion with v1.2 spec support
   - `config.rs`: TOML-based topic mapping configuration
   - `delivery_v12.rs`: v1.2 series delivery structure
@@ -68,6 +76,7 @@ roboflow/
 |------|-------------|
 | `python` | PyO3 bindings |
 | `dataset-all` | All KPS features (HDF5, Parquet, depth) |
+| `cloud-storage` | Storage abstraction layer (OSS, S3, object_store dependency) |
 | `gpu` | GPU compression (Linux) |
 | `jemalloc` | jemalloc allocator (Linux) |
 | `cli` / `profiling` | CLI tools |
