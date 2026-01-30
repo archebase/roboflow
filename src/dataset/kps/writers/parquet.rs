@@ -4,17 +4,15 @@
 
 //! Streaming Parquet writer for Kps datasets.
 //!
-//! This writer implements the [`KpsWriter`] trait for Parquet format,
+//! This writer implements the [`DatasetWriter`] trait for Parquet format,
 //! supporting frame-by-frame writing for pipeline integration.
 
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::core::Result;
+use crate::dataset::common::{AlignedFrame, DatasetWriter, ImageData, WriterStats};
 use crate::dataset::kps::config::KpsConfig;
-use crate::dataset::kps::writers::base::{
-    AlignedFrame, ImageData, KpsWriter, KpsWriterError, WriterStats,
-};
-use robocodec::io::metadata::ChannelInfo;
 
 /// Streaming Parquet writer for Kps datasets.
 ///
@@ -44,9 +42,6 @@ pub struct StreamingParquetWriter {
 
     /// State dimensions tracking.
     state_dims: HashMap<String, usize>,
-
-    /// Channel info by topic.
-    channels: HashMap<String, ChannelInfo>,
 
     /// Kps config.
     config: Option<KpsConfig>,
@@ -97,7 +92,6 @@ impl StreamingParquetWriter {
             initialized: false,
             image_shapes: HashMap::new(),
             state_dims: HashMap::new(),
-            channels: HashMap::new(),
             config: Some(config.clone()),
             start_time: None,
             observation_buffer: HashMap::new(),
@@ -280,20 +274,19 @@ impl StreamingParquetWriter {
     }
 }
 
-impl KpsWriter for StreamingParquetWriter {
-    fn initialize(
-        &mut self,
-        config: &KpsConfig,
-        channels: &HashMap<u16, ChannelInfo>,
-    ) -> crate::core::Result<()> {
-        // Store config and channels
-        self.config = Some(config.clone());
-        for ch in channels.values() {
-            self.channels.insert(ch.topic.clone(), ch.clone());
-        }
+impl DatasetWriter for StreamingParquetWriter {
+    fn initialize(&mut self, config: &dyn std::any::Any) -> crate::core::Result<()> {
+        let kps_config = config
+            .downcast_ref::<KpsConfig>()
+            .ok_or_else(|| {
+                crate::RoboflowError::parse("DatasetWriter", "Expected KpsConfig for KPS writer")
+            })?;
+
+        // Store config
+        self.config = Some(kps_config.clone());
 
         // Initialize buffers for each mapped feature
-        for mapping in &config.mappings {
+        for mapping in &kps_config.mappings {
             let feature_name = mapping
                 .feature
                 .strip_prefix("observation.")
@@ -323,7 +316,7 @@ impl KpsWriter for StreamingParquetWriter {
     fn write_frame(&mut self, frame: &AlignedFrame) -> crate::core::Result<()> {
         if !self.initialized {
             return Err(crate::RoboflowError::encode(
-                "KpsWriter",
+                "DatasetWriter",
                 "Writer not initialized",
             ));
         }
@@ -387,11 +380,13 @@ impl KpsWriter for StreamingParquetWriter {
         Ok(())
     }
 
-    fn finalize(
-        &mut self,
-        config: &KpsConfig,
-        _camera_params: Option<&crate::dataset::kps::camera_params::CameraParamCollector>,
-    ) -> crate::core::Result<WriterStats> {
+    fn finalize(&mut self, config: &dyn std::any::Any) -> crate::core::Result<WriterStats> {
+        let kps_config = config
+            .downcast_ref::<KpsConfig>()
+            .ok_or_else(|| {
+                crate::RoboflowError::parse("DatasetWriter", "Expected KpsConfig for KPS writer")
+            })?;
+
         // Write final shard
         #[cfg(feature = "kps-parquet")]
         {
@@ -404,7 +399,7 @@ impl KpsWriter for StreamingParquetWriter {
         self.process_images()?;
 
         // Write metadata files
-        self.write_metadata_files(config)?;
+        self.write_metadata_files(kps_config)?;
 
         let duration = self
             .start_time

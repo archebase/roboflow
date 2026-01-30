@@ -62,6 +62,7 @@ pub mod gpu;
 // Pipeline configuration and coordinator
 pub mod auto_config;
 pub mod config;
+pub mod dataset_converter;
 pub mod orchestrator;
 
 // 7-stage hyper-pipeline for maximum throughput
@@ -74,6 +75,7 @@ pub mod fluent;
 pub use auto_config::{PerformanceMode, PipelineAutoConfig};
 pub use compression::ParallelCompressor;
 pub use config::{CompressionConfig, CompressionTarget};
+pub use dataset_converter::{DatasetConverter, DatasetConverterStats};
 pub use fluent::{BatchReport, CompressionPreset, PipelineMode, ReadOptions, Robocodec};
 pub use hardware::{detect_cpu_count, HardwareInfo};
 pub use orchestrator::{AsyncPipeline, PipelineBuilder, PipelineReport};

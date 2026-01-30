@@ -69,8 +69,8 @@ pub use task_info::{ActionSegment, KeyFrame, LabelInfo, TaskInfo, TaskInfoBuilde
 
 // Re-export streaming writer types
 pub use writers::{
-    create_writer, AlignedFrame, AudioData, ImageData, KpsWriter, KpsWriterError, MessageExtractor,
-    WriterStats,
+    create_kps_writer, AlignedFrame, AudioData, DatasetWriter, ImageData, KpsWriterError,
+    MessageExtractor, WriterStats,
 };
 
 #[cfg(feature = "kps-hdf5")]

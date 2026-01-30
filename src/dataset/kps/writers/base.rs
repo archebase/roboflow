@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 
 use crate::core::Result;
+use crate::dataset::common::{AlignedFrame, ImageData, WriterStats};
 use crate::dataset::kps::camera_params::CameraParamCollector;
 use crate::dataset::kps::config::KpsConfig;
 use robocodec::io::metadata::ChannelInfo;
@@ -40,171 +41,17 @@ pub enum KpsWriterError {
     FeatureNotMapped(String),
 }
 
-/// Statistics from a Kps writer operation.
-#[derive(Debug, Clone, Default)]
-pub struct WriterStats {
-    /// Total number of frames written.
-    pub frames_written: usize,
-
-    /// Number of images encoded/written.
-    pub images_encoded: usize,
-
-    /// Number of state/action records written.
-    pub state_records: usize,
-
-    /// Size of output data in bytes.
-    pub output_bytes: u64,
-
-    /// Processing duration in seconds.
-    pub duration_sec: f64,
-}
-
-/// Image data with metadata.
-#[derive(Debug, Clone)]
-pub struct ImageData {
-    /// Image width in pixels.
-    pub width: u32,
-
-    /// Image height in pixels.
-    pub height: u32,
-
-    /// Raw image data (RGB8 or encoded).
-    pub data: Vec<u8>,
-
-    /// Original timestamp from the message.
-    pub original_timestamp: u64,
-
-    /// Whether data is already encoded (e.g., JPEG/PNG).
-    pub is_encoded: bool,
-}
-
-/// Audio data with metadata.
-#[derive(Debug, Clone)]
-pub struct AudioData {
-    /// Audio samples (interleaved if multi-channel).
-    pub samples: Vec<f32>,
-
-    /// Sample rate in Hz.
-    pub sample_rate: u32,
-
-    /// Number of channels (1 = mono, 2 = stereo).
-    pub channels: u8,
-
-    /// Original timestamp from the message.
-    pub original_timestamp: i64,
-}
-
-impl AudioData {
-    /// Create new audio data.
-    pub fn new(samples: Vec<f32>, sample_rate: u32, channels: u8, original_timestamp: i64) -> Self {
-        Self {
-            samples,
-            sample_rate,
-            channels,
-            original_timestamp,
-        }
-    }
-
-    /// Get duration in seconds.
-    pub fn duration(&self) -> f64 {
-        if self.sample_rate > 0 && self.channels > 0 {
-            self.samples.len() as f64 / (self.sample_rate as f64 * self.channels as f64)
-        } else {
-            0.0
-        }
-    }
-
-    /// Get number of frames (samples per channel).
-    pub fn frames(&self) -> usize {
-        if self.channels > 0 {
-            self.samples.len() / self.channels as usize
-        } else {
-            0
-        }
-    }
-}
-
-/// Aligned frame data ready for writing to Kps format.
-///
-/// This represents a single frame in the output dataset, with all
-/// observations and actions aligned to the target timestamp.
-#[derive(Debug, Clone)]
-pub struct AlignedFrame {
-    /// Frame index in the episode.
-    pub frame_index: usize,
-
-    /// Target timestamp for this frame.
-    pub timestamp: u64,
-
-    /// Image observations by feature name (e.g., "observation.camera_0").
-    pub images: HashMap<String, ImageData>,
-
-    /// State observations by feature name.
-    pub states: HashMap<String, Vec<f32>>,
-
-    /// Action data by feature name.
-    pub actions: HashMap<String, Vec<f32>>,
-
-    /// Additional timestamp data.
-    pub timestamps: HashMap<String, u64>,
-
-    /// Audio data by feature name.
-    pub audio: HashMap<String, AudioData>,
-}
-
-impl AlignedFrame {
-    /// Create a new aligned frame.
-    pub fn new(frame_index: usize, timestamp: u64) -> Self {
-        Self {
-            frame_index,
-            timestamp,
-            images: HashMap::new(),
-            states: HashMap::new(),
-            actions: HashMap::new(),
-            timestamps: HashMap::new(),
-            audio: HashMap::new(),
-        }
-    }
-
-    /// Add an image observation.
-    pub fn add_image(&mut self, feature: String, data: ImageData) {
-        self.images.insert(feature, data);
-    }
-
-    /// Add a state observation.
-    pub fn add_state(&mut self, feature: String, values: Vec<f32>) {
-        self.states.insert(feature, values);
-    }
-
-    /// Add action data.
-    pub fn add_action(&mut self, feature: String, values: Vec<f32>) {
-        self.actions.insert(feature, values);
-    }
-
-    /// Add timestamp data.
-    pub fn add_timestamp(&mut self, feature: String, timestamp: u64) {
-        self.timestamps.insert(feature, timestamp);
-    }
-
-    /// Add audio data.
-    pub fn add_audio(&mut self, feature: String, data: AudioData) {
-        self.audio.insert(feature, data);
-    }
-
-    /// Check if the frame has any data.
-    pub fn is_empty(&self) -> bool {
-        self.images.is_empty()
-            && self.states.is_empty()
-            && self.actions.is_empty()
-            && self.audio.is_empty()
-    }
-}
-
 /// Unified Kps writer trait.
 ///
 /// This trait defines the interface for writing Kps datasets in different
 /// formats (HDF5, Parquet). The pipeline uses this trait to write data
 /// without needing to know the specific format details.
+///
+/// # Relationship to DatasetWriter
+///
+/// `KpsWriter` is format-specific (uses `KpsConfig` and `ChannelInfo`) while
+/// [`crate::dataset::common::DatasetWriter`] is format-agnostic. Both traits
+/// use the same [`AlignedFrame`] data structure for passing frame data.
 pub trait KpsWriter: Send {
     /// Initialize the writer with channel information.
     ///

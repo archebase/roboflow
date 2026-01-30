@@ -11,7 +11,8 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::dataset::kps::writers::base::{AudioData, KpsWriterError};
+use crate::dataset::common::AudioData;
+use crate::dataset::kps::writers::base::KpsWriterError;
 
 /// Audio writer for Kps datasets.
 ///

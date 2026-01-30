@@ -151,6 +151,12 @@ path = "benches/profiler.rs"
 harness = false
 required-features = ["profiling"]
 
+# Examples
+[[example]]
+name = "lerobot_convert"
+path = "examples/rust/lerobot_convert.rs"
+required-features = ["kps-parquet"]
+
 
 [profile.release]
 debug = true
