@@ -11,10 +11,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::core::Result;
+use crate::dataset::common::{DatasetWriter, AlignedFrame, ImageData, WriterStats};
 use crate::dataset::kps::config::KpsConfig;
-use crate::dataset::kps::writers::base::{
-    AlignedFrame, ImageData, KpsWriter, KpsWriterError, WriterStats,
-};
+use crate::dataset::kps::writers::base::{KpsWriter, KpsWriterError};
 use robocodec::io::metadata::ChannelInfo;
 
 /// Buffered image data for HDF5 writing.
@@ -544,6 +543,42 @@ impl KpsWriter for StreamingHdf5Writer {
 
     fn is_initialized(&self) -> bool {
         self.initialized
+    }
+}
+
+/// Implement DatasetWriter for StreamingHdf5Writer to enable generic trait usage.
+impl DatasetWriter for StreamingHdf5Writer {
+    fn initialize(&mut self, config: &dyn std::any::Any) -> Result<()> {
+        let kps_config = config
+            .downcast_ref::<KpsConfig>()
+            .ok_or_else(|| {
+                crate::RoboflowError::parse("DatasetWriter", "Expected KpsConfig for HDF5 writer")
+            })?;
+
+        // Initialize with empty channels map since DatasetWriter doesn't provide channel info
+        KpsWriter::initialize(self, kps_config, &std::collections::HashMap::new())
+    }
+
+    fn write_frame(&mut self, frame: &AlignedFrame) -> Result<()> {
+        KpsWriter::write_frame(self, frame)
+    }
+
+    fn finalize(&mut self, config: &dyn std::any::Any) -> Result<WriterStats> {
+        let kps_config = config
+            .downcast_ref::<KpsConfig>()
+            .ok_or_else(|| {
+                crate::RoboflowError::parse("DatasetWriter", "Expected KpsConfig for HDF5 writer")
+            })?;
+
+        KpsWriter::finalize(self, kps_config, None)
+    }
+
+    fn frame_count(&self) -> usize {
+        KpsWriter::frame_count(self)
+    }
+
+    fn is_initialized(&self) -> bool {
+        KpsWriter::is_initialized(self)
     }
 }
 

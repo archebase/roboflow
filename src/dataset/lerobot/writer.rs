@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use crate::core::Result;
 use crate::dataset::common::{AlignedFrame, DatasetWriter, ImageData, WriterStats};
@@ -21,6 +22,7 @@ use crate::dataset::kps::video_encoder::VideoEncoderError;
 use crate::dataset::lerobot::config::LerobotConfig;
 use crate::dataset::lerobot::metadata::MetadataCollector;
 use crate::dataset::lerobot::trait_impl::{FromAlignedFrame, LerobotWriterTrait};
+use crate::dataset::lerobot::video_profiles::ResolvedConfig;
 
 /// LeRobot v2.1 dataset writer.
 pub struct LerobotWriter {
@@ -365,61 +367,90 @@ impl LerobotWriter {
     }
 
     /// Encode videos for all cameras.
+    ///
+    /// This function uses parallel encoding when multiple cameras are present.
+    /// The degree of parallelism is controlled by the video configuration.
     fn encode_videos(&mut self) -> Result<()> {
         if self.image_buffers.is_empty() {
             return Ok(());
         }
 
         let total_start = std::time::Instant::now();
-        let mut encode_time = std::time::Duration::ZERO;
-        let mut buffer_time = std::time::Duration::ZERO;
+
+        // Resolve the video configuration (profiles, hardware acceleration, etc.)
+        let resolved = ResolvedConfig::from_video_config(&self.config.video);
+        let encoder_config = resolved.to_encoder_config(self.config.dataset.fps);
+
+        tracing::info!(
+            codec = %resolved.codec,
+            crf = resolved.crf,
+            preset = %resolved.preset,
+            hardware_accelerated = resolved.hardware_accelerated,
+            parallel_jobs = resolved.parallel_jobs,
+            "Video encoding configuration"
+        );
 
         let videos_dir = self.output_dir.join("videos/chunk-000");
-        let encoder_config = VideoEncoderConfig {
-            codec: self.config.video.codec.clone(),
-            fps: self.config.dataset.fps,
-            crf: self.config.video.crf,
-            preset: self.config.video.preset.clone(),
-            ..Default::default()
-        };
 
-        let encoder = Mp4Encoder::with_config(encoder_config);
+        // Collect camera data for encoding
+        let camera_data: Vec<(String, Vec<ImageData>)> = self.image_buffers
+            .iter()
+            .filter(|(_, images)| !images.is_empty())
+            .map(|(camera, images)| (camera.clone(), images.clone()))
+            .collect();
 
-        for (camera, images) in self.image_buffers.iter() {
-            if images.is_empty() {
-                continue;
-            }
+        if camera_data.is_empty() {
+            return Ok(());
+        }
 
-            let buffer_start = std::time::Instant::now();
-            let mut buffer = VideoFrameBuffer::new();
+        // Use parallel encoding only when:
+        // 1. Hardware acceleration is enabled (reduces CPU contention)
+        // 2. We have multiple cameras
+        // 3. parallel_jobs > 1
+        let use_parallel = resolved.hardware_accelerated
+            && resolved.parallel_jobs > 1
+            && camera_data.len() > 1;
 
-            for img in images {
-                if img.width > 0 && img.height > 0 {
-                    let rgb_data = if img.is_encoded {
-                        // For now, assume we need to decode or use as-is
-                        // In production, use image crate to decode JPEG/PNG
-                        img.data.clone()
-                    } else {
-                        img.data.clone()
-                    };
+        if use_parallel {
+            // Limit concurrent encodings to avoid resource contention
+            let concurrent_jobs = resolved.parallel_jobs.min(camera_data.len());
+            self.encode_videos_parallel(
+                camera_data,
+                &videos_dir,
+                &encoder_config,
+                concurrent_jobs,
+            )?;
+        } else {
+            self.encode_videos_sequential(
+                camera_data,
+                &videos_dir,
+                &encoder_config,
+            )?;
+        }
 
-                    let video_frame = VideoFrame::new(img.width, img.height, rgb_data);
-                    if let Err(e) = buffer.add_frame(video_frame) {
-                        // Track skipped frames with better context
-                        tracing::warn!(
-                            camera = %camera,
-                            expected_width = buffer.width.unwrap_or(0),
-                            expected_height = buffer.height.unwrap_or(0),
-                            actual_width = img.width,
-                            actual_height = img.height,
-                            error = %e,
-                            "Skipping frame with inconsistent dimensions"
-                        );
-                        self.skipped_frames += 1;
-                    }
-                }
-            }
-            buffer_time += buffer_start.elapsed();
+        eprintln!(
+            "[TIMING] encode_videos: total={:.1}ms",
+            total_start.elapsed().as_secs_f64() * 1000.0,
+        );
+
+        Ok(())
+    }
+
+    /// Encode videos sequentially (original behavior).
+    fn encode_videos_sequential(
+        &mut self,
+        camera_data: Vec<(String, Vec<ImageData>)>,
+        videos_dir: &Path,
+        encoder_config: &VideoEncoderConfig,
+    ) -> Result<()> {
+        let encoder = Mp4Encoder::with_config(encoder_config.clone());
+        let mut buffer_time = std::time::Duration::ZERO;
+        let mut encode_time = std::time::Duration::ZERO;
+
+        for (camera, images) in camera_data {
+            let b_start = std::time::Instant::now();
+            let buffer = self.build_frame_buffer(&images)?;
+            buffer_time += b_start.elapsed();
 
             if !buffer.is_empty() {
                 let feature_name = format!("observation.images.{}", camera);
@@ -428,7 +459,7 @@ impl LerobotWriter {
 
                 let video_path = camera_dir.join(format!("episode_{:06}.mp4", self.episode_index));
 
-                let encode_start = std::time::Instant::now();
+                let e_start = std::time::Instant::now();
                 match encoder.encode_buffer(&buffer, &video_path) {
                     Ok(()) => {
                         self.images_encoded += buffer.len();
@@ -463,9 +494,8 @@ impl LerobotWriter {
                         ));
                     }
                 }
-                encode_time += encode_start.elapsed();
+                encode_time += e_start.elapsed();
 
-                // Track output bytes for video file
                 if let Ok(metadata) = std::fs::metadata(&video_path) {
                     self.output_bytes += metadata.len();
                 }
@@ -473,13 +503,149 @@ impl LerobotWriter {
         }
 
         eprintln!(
-            "[TIMING] encode_videos: total={:.1}ms, buffer={:.1}ms, encode={:.1}ms",
-            total_start.elapsed().as_secs_f64() * 1000.0,
+            "[TIMING] encode_videos (sequential): buffer={:.1}ms, encode={:.1}ms",
             buffer_time.as_secs_f64() * 1000.0,
             encode_time.as_secs_f64() * 1000.0,
         );
 
         Ok(())
+    }
+
+    /// Encode videos in parallel using rayon.
+    fn encode_videos_parallel(
+        &mut self,
+        camera_data: Vec<(String, Vec<ImageData>)>,
+        videos_dir: &Path,
+        encoder_config: &VideoEncoderConfig,
+        parallel_jobs: usize,
+    ) -> Result<()> {
+        use rayon::prelude::*;
+
+        // Configure rayon thread pool
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(parallel_jobs)
+            .build()
+            .map_err(|e| crate::RoboflowError::encode("ThreadPool", e.to_string()))?;
+
+        // Shared counters for statistics
+        let images_encoded = Arc::new(Mutex::new(0usize));
+        let output_bytes = Arc::new(Mutex::new(0u64));
+        let skipped_frames = Arc::new(Mutex::new(0usize));
+        let failed_encodings = Arc::new(Mutex::new(0usize));
+
+        let result: Result<Vec<()>> = pool.install(|| {
+            camera_data.par_iter().map(|(camera, images)| {
+                let b_start = std::time::Instant::now();
+                let buffer = Self::build_frame_buffer_static(images)?;
+                let _buffer_time = b_start.elapsed();
+
+                if !buffer.is_empty() {
+                    let feature_name = format!("observation.images.{}", camera);
+                    let camera_dir = videos_dir.join(&feature_name);
+
+                    // Create directory (may race, but fs::create_dir_all is idempotent)
+                    if let Err(e) = fs::create_dir_all(&camera_dir) {
+                        tracing::warn!(camera = %camera, error = %e, "Failed to create camera directory");
+                    }
+
+                    let video_path = camera_dir.join(format!("episode_{:06}.mp4", self.episode_index));
+
+                    let encoder = Mp4Encoder::with_config(encoder_config.clone());
+                    let e_start = std::time::Instant::now();
+
+                    match encoder.encode_buffer(&buffer, &video_path) {
+                        Ok(()) => {
+                            *images_encoded.lock().unwrap() += buffer.len();
+                            tracing::debug!(
+                                camera = %camera,
+                                frames = buffer.len(),
+                                path = %video_path.display(),
+                                "Encoded MP4 video"
+                            );
+                        }
+                        Err(VideoEncoderError::FfmpegNotFound) => {
+                            tracing::error!(
+                                "ffmpeg not found. Please install ffmpeg to encode videos."
+                            );
+                            *failed_encodings.lock().unwrap() += 1;
+                            return Err(crate::RoboflowError::unsupported(
+                                "Video encoding requires ffmpeg. Install ffmpeg and ensure it's in your PATH."
+                            ));
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                camera = %camera,
+                                error = %e,
+                                "Failed to encode video"
+                            );
+                            *failed_encodings.lock().unwrap() += 1;
+                            return Err(crate::RoboflowError::encode(
+                                "VideoEncoder",
+                                format!("Failed to encode video for camera '{}': {}", camera, e)
+                            ));
+                        }
+                    }
+                    let _encode_time = e_start.elapsed();
+
+                    if let Ok(metadata) = std::fs::metadata(&video_path) {
+                        *output_bytes.lock().unwrap() += metadata.len();
+                    }
+                }
+
+                Ok(())
+            }).collect()
+        });
+
+        result?;
+
+        // Update counters
+        self.images_encoded += *images_encoded.lock().unwrap();
+        self.output_bytes += *output_bytes.lock().unwrap();
+        self.skipped_frames += *skipped_frames.lock().unwrap();
+        self.failed_encodings += *failed_encodings.lock().unwrap();
+
+        eprintln!(
+            "[TIMING] encode_videos (parallel, {} jobs): {} cameras encoded",
+            parallel_jobs,
+            camera_data.len()
+        );
+
+        Ok(())
+    }
+
+    /// Build a frame buffer from image data.
+    fn build_frame_buffer(&self, images: &[ImageData]) -> crate::core::Result<VideoFrameBuffer> {
+        Self::build_frame_buffer_static(images)
+    }
+
+    /// Static version of build_frame_buffer for use in parallel context.
+    fn build_frame_buffer_static(images: &[ImageData]) -> crate::core::Result<VideoFrameBuffer> {
+        let mut buffer = VideoFrameBuffer::new();
+
+        for img in images {
+            if img.width > 0 && img.height > 0 {
+                let rgb_data = if img.is_encoded {
+                    img.data.clone()
+                } else {
+                    img.data.clone()
+                };
+
+                let video_frame = VideoFrame::new(img.width, img.height, rgb_data);
+                if let Err(e) = buffer.add_frame(video_frame) {
+                    tracing::warn!(
+                        expected_width = buffer.width.unwrap_or(0),
+                        expected_height = buffer.height.unwrap_or(0),
+                        actual_width = img.width,
+                        actual_height = img.height,
+                        error = %e,
+                        "Skipping frame with inconsistent dimensions"
+                    );
+                    // Continue instead of failing
+                }
+            }
+        }
+
+        Ok(buffer)
     }
 
     /// Calculate episode statistics.

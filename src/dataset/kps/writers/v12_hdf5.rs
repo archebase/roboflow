@@ -44,8 +44,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::core::Result;
+use crate::dataset::common::{AlignedFrame, WriterStats};
 use crate::dataset::kps::config::KpsConfig;
-use crate::dataset::kps::writers::base::{AlignedFrame, KpsWriter, KpsWriterError, WriterStats};
+use crate::dataset::kps::writers::base::{KpsWriter, KpsWriterError};
 use robocodec::io::metadata::ChannelInfo;
 
 /// Dataset specification for v1.2 HDF5 structure.

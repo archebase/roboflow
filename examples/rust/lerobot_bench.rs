@@ -8,7 +8,14 @@
 //! using the DatasetWriter trait with synthetic test data.
 //!
 //! Usage:
-//!   cargo run --release --example lerobot_bench -- --frames 1000
+//!   cargo run --release --example lerobot_bench -- --frames 1000 --profile speed
+//!
+//! Profiles:
+//!   - speed: Maximum encoding speed (lowest quality)
+//!   - quality: Best quality (slowest encoding)
+//!   - balanced: Balanced speed/quality (default)
+//!   - storage: Compressed for storage
+//!   - prototype: Fastest for prototyping
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -68,6 +75,9 @@ struct BenchConfig {
 
     /// Target FPS
     fps: u32,
+
+    /// Video profile (speed, quality, balanced, storage, prototype)
+    profile: Option<String>,
 }
 
 /// Benchmark results
@@ -196,6 +206,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Frames: {}", config.num_frames);
     println!("Image size: {}x{}", config.image_size.0, config.image_size.1);
     println!("State dim: {}", config.state_dim);
+    if let Some(profile) = &config.profile {
+        println!("Profile: {}", profile);
+    }
     println!();
 
     // Create LeRobot config
@@ -325,6 +338,7 @@ fn parse_args() -> Result<BenchConfig, Box<dyn std::error::Error>> {
     let mut image_size = (640, 480);
     let mut state_dim = 7;
     let mut fps = 30;
+    let mut profile = None;
 
     let mut args = std::env::args().skip(1);
 
@@ -349,6 +363,9 @@ fn parse_args() -> Result<BenchConfig, Box<dyn std::error::Error>> {
             "--fps" => {
                 fps = args.next().ok_or("Missing --fps value")?.parse()?;
             }
+            "--profile" | "-p" => {
+                profile = Some(args.next().ok_or("Missing --profile value")?);
+            }
             _ => {
                 return Err(format!("Unknown argument: {}", arg).into());
             }
@@ -361,11 +378,18 @@ fn parse_args() -> Result<BenchConfig, Box<dyn std::error::Error>> {
         image_size,
         state_dim,
         fps,
+        profile,
     })
 }
 
 /// Create LeRobot configuration for the benchmark
 fn create_lerobot_config(config: &BenchConfig) -> Result<LerobotConfig, Box<dyn std::error::Error>> {
+    let profile_line = if let Some(profile) = &config.profile {
+        format!("profile = \"{}\"", profile)
+    } else {
+        "".to_string()
+    };
+
     let toml = format!(r#"
 [dataset]
 name = "benchmark_dataset"
@@ -397,10 +421,11 @@ feature = "action"
 mapping_type = "action"
 
 [video]
+{}
 codec = "libx264"
 crf = 18
 preset = "fast"
-"#, config.fps);
+"#, config.fps, profile_line);
 
     Ok(toml::from_str(&toml)?)
 }

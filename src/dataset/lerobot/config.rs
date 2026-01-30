@@ -137,6 +137,13 @@ pub struct VideoConfig {
     /// Encoder preset (default: fast)
     #[serde(default = "default_preset")]
     pub preset: String,
+
+    /// Optional profile name (speed, quality, balanced, storage, prototype)
+    ///
+    /// When specified, overrides codec/crf/preset with profile defaults.
+    /// Explicit codec/crf/preset settings can override profile values.
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
 impl Default for VideoConfig {
@@ -145,6 +152,7 @@ impl Default for VideoConfig {
             codec: default_codec(),
             crf: default_crf(),
             preset: default_preset(),
+            profile: None,
         }
     }
 }

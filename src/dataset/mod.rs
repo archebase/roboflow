@@ -12,6 +12,7 @@
 //! - [`common`] - Shared types and traits used by all dataset formats
 //! - [`kps`] - KPS dataset format support (HDF5, Parquet, v1.2 spec)
 //! - [`lerobot`] - LeRobot v2.1 dataset format support
+//! - [`streaming`] - Streaming conversion with bounded memory footprint
 //!
 //! # Unified Writer Interface
 //!
@@ -43,6 +44,9 @@ pub mod common;
 
 // LeRobot dataset format
 pub mod lerobot;
+
+// Streaming conversion (bounded memory footprint)
+pub mod streaming;
 
 // Re-export common types for convenience
 pub use common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats};
