@@ -100,9 +100,7 @@ impl StorageUrl {
 
     /// Create a local storage URL from a path.
     pub fn local(path: impl Into<PathBuf>) -> Self {
-        Self::Local {
-            path: path.into(),
-        }
+        Self::Local { path: path.into() }
     }
 
     /// Create an S3 storage URL.
@@ -145,7 +143,7 @@ impl FromStr for StorageUrl {
                     // - file://localhost/tmp/file.txt → rest = localhost/tmp/file.txt (no leading /)
                     let path = if rest.starts_with("localhost/") {
                         // file://localhost/absolute/path - strip localhost/ and add leading /
-                        format!("/{}", &rest[9..])  // Skip "localhost/"
+                        format!("/{}", &rest[9..]) // Skip "localhost/"
                     } else if rest.starts_with('/') {
                         // file:///path - rest already has leading /
                         rest.to_string()
@@ -335,26 +333,46 @@ mod tests {
     #[test]
     fn test_parse_local_path() {
         let url = StorageUrl::from_str("/tmp/file.txt").unwrap();
-        assert_eq!(url, StorageUrl::Local { path: PathBuf::from("/tmp/file.txt") });
+        assert_eq!(
+            url,
+            StorageUrl::Local {
+                path: PathBuf::from("/tmp/file.txt")
+            }
+        );
         assert!(url.is_local());
     }
 
     #[test]
     fn test_parse_relative_path() {
         let url = StorageUrl::from_str("./file.txt").unwrap();
-        assert_eq!(url, StorageUrl::Local { path: PathBuf::from("./file.txt") });
+        assert_eq!(
+            url,
+            StorageUrl::Local {
+                path: PathBuf::from("./file.txt")
+            }
+        );
     }
 
     #[test]
     fn test_parse_file_url() {
         let url = StorageUrl::from_str("file:///tmp/file.txt").unwrap();
-        assert_eq!(url, StorageUrl::Local { path: PathBuf::from("/tmp/file.txt") });
+        assert_eq!(
+            url,
+            StorageUrl::Local {
+                path: PathBuf::from("/tmp/file.txt")
+            }
+        );
     }
 
     #[test]
     fn test_parse_file_url_localhost() {
         let url = StorageUrl::from_str("file://localhost/tmp/file.txt").unwrap();
-        assert_eq!(url, StorageUrl::Local { path: PathBuf::from("/tmp/file.txt") });
+        assert_eq!(
+            url,
+            StorageUrl::Local {
+                path: PathBuf::from("/tmp/file.txt")
+            }
+        );
     }
 
     #[test]
@@ -381,8 +399,12 @@ mod tests {
 
     #[test]
     fn test_parse_oss_url_with_endpoint() {
-        let url = StorageUrl::from_str("oss://bucket/file.txt?endpoint=oss-cn-hangzhou.aliyuncs.com").unwrap();
-        assert!(matches!(url, StorageUrl::Oss { endpoint: Some(ref ep), .. } if ep == "oss-cn-hangzhou.aliyuncs.com"));
+        let url =
+            StorageUrl::from_str("oss://bucket/file.txt?endpoint=oss-cn-hangzhou.aliyuncs.com")
+                .unwrap();
+        assert!(
+            matches!(url, StorageUrl::Oss { endpoint: Some(ref ep), .. } if ep == "oss-cn-hangzhou.aliyuncs.com")
+        );
     }
 
     #[test]

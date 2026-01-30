@@ -188,7 +188,10 @@ mod tests {
     fn test_full_key_without_prefix() {
         let storage = OssStorage::new("bucket", "endpoint", "key", "secret").unwrap();
         assert_eq!(storage.full_key(Path::new("test.txt")), "test.txt");
-        assert_eq!(storage.full_key(Path::new("data/test.txt")), "data/test.txt");
+        assert_eq!(
+            storage.full_key(Path::new("data/test.txt")),
+            "data/test.txt"
+        );
     }
 
     #[test]

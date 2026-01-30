@@ -55,8 +55,9 @@ impl LocalStorage {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
-            fs::create_dir_all(self.full_path(parent))
-                .map_err(|e| StorageError::Other(format!("failed to create parent directories: {e}")))?;
+            fs::create_dir_all(self.full_path(parent)).map_err(|e| {
+                StorageError::Other(format!("failed to create parent directories: {e}"))
+            })?;
         }
         Ok(())
     }
@@ -90,15 +91,13 @@ impl Storage for LocalStorage {
 
     fn size(&self, path: &Path) -> Result<u64> {
         let full_path = self.full_path(path);
-        fs::metadata(&full_path)
-            .map(|m| m.len())
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    StorageError::not_found(full_path.display().to_string())
-                } else {
-                    StorageError::Io(e)
-                }
-            })
+        fs::metadata(&full_path).map(|m| m.len()).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                StorageError::not_found(full_path.display().to_string())
+            } else {
+                StorageError::Io(e)
+            }
+        })
     }
 
     fn metadata(&self, path: &Path) -> Result<ObjectMetadata> {
@@ -171,15 +170,13 @@ impl Storage for LocalStorage {
         let from_path = self.full_path(from);
         let to_path = self.full_path(to);
         self.ensure_parent(&to_path)?;
-        fs::copy(&from_path, &to_path)
-            .map(|_| ())
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    StorageError::not_found(from_path.display().to_string())
-                } else {
-                    StorageError::Io(e)
-                }
-            })
+        fs::copy(&from_path, &to_path).map(|_| ()).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                StorageError::not_found(from_path.display().to_string())
+            } else {
+                StorageError::Io(e)
+            }
+        })
     }
 
     fn create_dir(&self, path: &Path) -> Result<()> {
@@ -194,10 +191,7 @@ impl Storage for LocalStorage {
 }
 
 impl SeekableStorage for LocalStorage {
-    fn seekable_reader(
-        &self,
-        path: &Path,
-    ) -> Result<Box<dyn SeekRead + Send + 'static>> {
+    fn seekable_reader(&self, path: &Path) -> Result<Box<dyn SeekRead + Send + 'static>> {
         let full_path = self.full_path(path);
         File::open(&full_path)
             .map(|f| Box::new(BufReader::new(f)) as Box<dyn SeekRead + Send>)
@@ -319,7 +313,10 @@ mod tests {
         writer.write_all(test_content).unwrap();
         writer.flush().unwrap();
 
-        assert_eq!(storage.size(Path::new(test_path)).unwrap(), test_content.len() as u64);
+        assert_eq!(
+            storage.size(Path::new(test_path)).unwrap(),
+            test_content.len() as u64
+        );
 
         // Cleanup
         storage.delete(Path::new(test_path)).unwrap();
@@ -374,10 +371,15 @@ mod tests {
         writer.write_all(test_content).unwrap();
         writer.flush().unwrap();
 
-        storage.copy(Path::new(src_path), Path::new(dst_path)).unwrap();
+        storage
+            .copy(Path::new(src_path), Path::new(dst_path))
+            .unwrap();
 
         assert!(storage.exists(Path::new(dst_path)));
-        assert_eq!(storage.size(Path::new(dst_path)).unwrap(), test_content.len() as u64);
+        assert_eq!(
+            storage.size(Path::new(dst_path)).unwrap(),
+            test_content.len() as u64
+        );
 
         // Cleanup
         storage.delete(Path::new(src_path)).unwrap();

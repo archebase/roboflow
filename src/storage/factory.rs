@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use super::{
-    url::StorageUrl, LocalStorage, OssStorage, Result, SeekableStorage, Storage, StorageError,
+    LocalStorage, OssStorage, Result, SeekableStorage, Storage, StorageError, url::StorageUrl,
 };
 
 /// Configuration for storage backend instantiation.
@@ -214,12 +214,18 @@ impl StorageFactory {
                 };
                 Ok(Arc::new(LocalStorage::new(root)))
             }
-            StorageUrl::S3 { bucket, endpoint: _, region: _, .. } => {
+            StorageUrl::S3 {
+                bucket,
+                endpoint: _,
+                region: _,
+                ..
+            } => {
                 #[cfg(feature = "cloud-storage")]
                 {
                     // S3 is not yet fully implemented - return an error
                     Err(StorageError::other(format!(
-                        "S3 storage not yet implemented (bucket: {})", bucket
+                        "S3 storage not yet implemented (bucket: {})",
+                        bucket
                     )))
                 }
                 #[cfg(not(feature = "cloud-storage"))]
@@ -229,7 +235,9 @@ impl StorageFactory {
                     ))
                 }
             }
-            StorageUrl::Oss { bucket, endpoint, .. } => {
+            StorageUrl::Oss {
+                bucket, endpoint, ..
+            } => {
                 #[cfg(feature = "cloud-storage")]
                 {
                     let key_id = self
@@ -322,14 +330,16 @@ mod tests {
 
         assert_eq!(config.oss_access_key_id.as_deref(), Some("key_id"));
         assert_eq!(config.oss_access_key_secret.as_deref(), Some("key_secret"));
-        assert_eq!(config.oss_endpoint.as_deref(), Some("oss-cn-hangzhou.aliyuncs.com"));
+        assert_eq!(
+            config.oss_endpoint.as_deref(),
+            Some("oss-cn-hangzhou.aliyuncs.com")
+        );
         assert_eq!(config.aws_region.as_deref(), Some("us-west-2"));
     }
 
     #[test]
     fn test_storage_config_aws_fallback() {
-        let config = StorageConfig::new()
-            .with_aws_credentials("aws_key", "aws_secret");
+        let config = StorageConfig::new().with_aws_credentials("aws_key", "aws_secret");
 
         assert_eq!(config.get_oss_key_id(), Some("aws_key"));
         assert_eq!(config.get_oss_key_secret(), Some("aws_secret"));
@@ -371,13 +381,11 @@ mod tests {
 
     #[test]
     fn test_storage_factory_oss_with_endpoint_in_url() {
-        let factory = StorageFactory::with_config(
-            StorageConfig::new().with_oss_credentials("key", "secret")
-        );
+        let factory =
+            StorageFactory::with_config(StorageConfig::new().with_oss_credentials("key", "secret"));
 
         // Endpoint in URL should work
-        let result =
-            factory.create("oss://bucket/file.txt?endpoint=oss-cn-hangzhou.aliyuncs.com");
+        let result = factory.create("oss://bucket/file.txt?endpoint=oss-cn-hangzhou.aliyuncs.com");
         assert!(result.is_ok());
     }
 
