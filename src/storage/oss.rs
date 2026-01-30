@@ -159,18 +159,15 @@ impl OssStorage {
             .with_access_key_id(&config.access_key_id)
             .with_secret_access_key(&config.access_key_secret)
             .with_endpoint(config.endpoint_url())
-            .with_region(
-                config
-                    .region
-                    .as_deref()
-                    .unwrap_or("default"),
-            )
+            .with_region(config.region.as_deref().unwrap_or("default"))
             // Allow HTTP for testing
             .with_allow_http(true);
 
         // Build the object_store client (synchronous)
         let store: Arc<dyn object_store::ObjectStore> = Arc::new(
-            builder.build().map_err(|e| StorageError::Cloud(format!("Failed to create OSS client: {}", e)))?,
+            builder
+                .build()
+                .map_err(|e| StorageError::Cloud(format!("Failed to create OSS client: {}", e)))?,
         );
 
         Ok(Self {
@@ -218,16 +215,14 @@ impl Storage for OssStorage {
         let store = self.store.clone();
 
         // Use runtime to get the object
-        let get_result = self
-            .runtime
-            .block_on(async {
-                store.get(&key).await.map_err(|e| match e {
-                    object_store::Error::NotFound { .. } => {
-                        StorageError::not_found(path.display().to_string())
-                    }
-                    _ => StorageError::Cloud(e.to_string()),
-                })
-            })?;
+        let get_result = self.runtime.block_on(async {
+            store.get(&key).await.map_err(|e| match e {
+                object_store::Error::NotFound { .. } => {
+                    StorageError::not_found(path.display().to_string())
+                }
+                _ => StorageError::Cloud(e.to_string()),
+            })
+        })?;
 
         // Get bytes from the result (this is async)
         let bytes = self
@@ -264,16 +259,14 @@ impl Storage for OssStorage {
         let key = self.path_to_key(path);
         let store = self.store.clone();
 
-        let meta = self
-            .runtime
-            .block_on(async {
-                store.head(&key).await.map_err(|e| match e {
-                    object_store::Error::NotFound { .. } => {
-                        StorageError::not_found(path.display().to_string())
-                    }
-                    _ => StorageError::Cloud(e.to_string()),
-                })
-            })?;
+        let meta = self.runtime.block_on(async {
+            store.head(&key).await.map_err(|e| match e {
+                object_store::Error::NotFound { .. } => {
+                    StorageError::not_found(path.display().to_string())
+                }
+                _ => StorageError::Cloud(e.to_string()),
+            })
+        })?;
 
         Ok(meta.size as u64)
     }
@@ -282,16 +275,14 @@ impl Storage for OssStorage {
         let key = self.path_to_key(path);
         let store = self.store.clone();
 
-        let meta = self
-            .runtime
-            .block_on(async {
-                store.head(&key).await.map_err(|e| match e {
-                    object_store::Error::NotFound { .. } => {
-                        StorageError::not_found(path.display().to_string())
-                    }
-                    _ => StorageError::Cloud(e.to_string()),
-                })
-            })?;
+        let meta = self.runtime.block_on(async {
+            store.head(&key).await.map_err(|e| match e {
+                object_store::Error::NotFound { .. } => {
+                    StorageError::not_found(path.display().to_string())
+                }
+                _ => StorageError::Cloud(e.to_string()),
+            })
+        })?;
 
         Ok(self.convert_metadata(&meta))
     }
@@ -302,9 +293,10 @@ impl Storage for OssStorage {
 
         // Use async list_with_delimiter which is simpler
         let result = self.runtime.block_on(async {
-            let list_result = store.list_with_delimiter(Some(&key)).await.map_err(|e| {
-                StorageError::Cloud(format!("Failed to list objects: {}", e))
-            })?;
+            let list_result = store
+                .list_with_delimiter(Some(&key))
+                .await
+                .map_err(|e| StorageError::Cloud(format!("Failed to list objects: {}", e)))?;
 
             let mut metas = Vec::new();
 
@@ -350,15 +342,14 @@ impl Storage for OssStorage {
         let key = self.path_to_key(path);
         let store = self.store.clone();
 
-        self.runtime
-            .block_on(async {
-                store.delete(&key).await.map_err(|e| match e {
-                    object_store::Error::NotFound { .. } => {
-                        StorageError::not_found(path.display().to_string())
-                    }
-                    _ => StorageError::Cloud(e.to_string()),
-                })
-            })?;
+        self.runtime.block_on(async {
+            store.delete(&key).await.map_err(|e| match e {
+                object_store::Error::NotFound { .. } => {
+                    StorageError::not_found(path.display().to_string())
+                }
+                _ => StorageError::Cloud(e.to_string()),
+            })
+        })?;
 
         Ok(())
     }
@@ -453,12 +444,12 @@ impl OssWriter {
         let key = self.key.clone();
         let store = self.store.clone();
 
-        self.runtime
-            .block_on(async {
-                store.put(&key, payload).await.map_err(|e| {
-                    StorageError::Cloud(format!("Failed to upload to OSS: {}", e))
-                })
-            })?;
+        self.runtime.block_on(async {
+            store
+                .put(&key, payload)
+                .await
+                .map_err(|e| StorageError::Cloud(format!("Failed to upload to OSS: {}", e)))
+        })?;
 
         self.uploaded = true;
         Ok(())
@@ -472,21 +463,26 @@ impl Write for OssWriter {
 
         // Auto-upload if buffer exceeds max size
         if self.buffer.len() > self.max_buffer_size {
-            self.upload().map_err(|e| std::io::Error::other(format!("Upload failed: {}", e)))?;
+            self.upload()
+                .map_err(|e| std::io::Error::other(format!("Upload failed: {}", e)))?;
         }
 
         Ok(written)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.upload().map_err(|e| std::io::Error::other(format!("Flush failed: {}", e)))
+        self.upload()
+            .map_err(|e| std::io::Error::other(format!("Flush failed: {}", e)))
     }
 }
 
 impl Drop for OssWriter {
     fn drop(&mut self) {
         // Try to upload on drop if not already uploaded
-        if !self.uploaded && !self.buffer.is_empty() && let Err(e) = self.upload() {
+        if !self.uploaded
+            && !self.buffer.is_empty()
+            && let Err(e) = self.upload()
+        {
             tracing::error!("Failed to upload OSS data on drop: {}", e);
         }
     }
@@ -525,16 +521,12 @@ mod tests {
     fn test_oss_config_full_key_without_prefix() {
         let config = OssConfig::new("bucket", "endpoint", "key", "secret");
         assert_eq!(config.full_key(Path::new("test.txt")), "test.txt");
-        assert_eq!(
-            config.full_key(Path::new("data/test.txt")),
-            "data/test.txt"
-        );
+        assert_eq!(config.full_key(Path::new("data/test.txt")), "data/test.txt");
     }
 
     #[test]
     fn test_oss_config_full_key_with_prefix() {
-        let config = OssConfig::new("bucket", "endpoint", "key", "secret")
-            .with_prefix("datasets");
+        let config = OssConfig::new("bucket", "endpoint", "key", "secret").with_prefix("datasets");
         assert_eq!(config.full_key(Path::new("test.txt")), "datasets/test.txt");
         assert_eq!(
             config.full_key(Path::new("data/test.txt")),
@@ -544,8 +536,7 @@ mod tests {
 
     #[test]
     fn test_oss_config_full_key_with_trailing_slash_prefix() {
-        let config = OssConfig::new("bucket", "endpoint", "key", "secret")
-            .with_prefix("datasets/");
+        let config = OssConfig::new("bucket", "endpoint", "key", "secret").with_prefix("datasets/");
         assert_eq!(config.full_key(Path::new("test.txt")), "datasets/test.txt");
     }
 
