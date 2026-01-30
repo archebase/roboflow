@@ -4,7 +4,7 @@
 
 """Type stubs for roboflow._roboflow native module."""
 
-from typing import Optional, List, Any
+from typing import Optional, List
 
 __version__: str
 
