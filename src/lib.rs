@@ -66,6 +66,18 @@ pub mod pipeline;
 pub mod dataset;
 
 // =============================================================================
+// Storage abstraction layer (cloud storage support)
+// =============================================================================
+#[cfg(feature = "cloud-storage")]
+pub mod storage;
+
+// Re-export storage types when feature is enabled
+#[cfg(feature = "cloud-storage")]
+pub use storage::{
+    LocalStorage, OssStorage, ObjectMetadata, SeekRead, SeekableStorage, Storage, StorageError,
+};
+
+// =============================================================================
 // Re-exports (minimal, focused on user-facing API)
 // =============================================================================
 
