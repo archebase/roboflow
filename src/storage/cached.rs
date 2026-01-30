@@ -51,20 +51,15 @@ use super::{
 };
 
 /// Eviction policy for cached files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvictionPolicy {
     /// Least Recently Used - evict files with oldest access time.
+    #[default]
     Lru,
     /// Least Frequently Used - evict files with lowest access count.
     Lfu,
     /// First In First Out - evict oldest cached files.
     Fifo,
-}
-
-impl Default for EvictionPolicy {
-    fn default() -> Self {
-        Self::Lru
-    }
 }
 
 /// Configuration for the cached storage backend.
@@ -332,6 +327,7 @@ impl CachedStorage {
     }
 
     /// Background upload worker function.
+    #[allow(clippy::too_many_arguments)]
     fn upload_worker(
         worker_id: usize,
         receiver: Receiver<UploadTask>,
@@ -368,10 +364,10 @@ impl CachedStorage {
 
                     // Clear pending_upload flag after upload attempt (success or failure)
                     // This allows eviction to proceed even if upload failed
-                    if let Ok(mut entries) = entries.lock() {
-                        if let Some(entry) = entries.get_mut(&task.remote_path) {
-                            entry.pending_upload = false;
-                        }
+                    if let Ok(mut entries) = entries.lock()
+                        && let Some(entry) = entries.get_mut(&task.remote_path)
+                    {
+                        entry.pending_upload = false;
                     }
 
                     // Update stats
@@ -496,11 +492,11 @@ impl CachedStorage {
 
     /// Update cache entry access time.
     fn record_access(&self, path: &Path) {
-        if let Ok(mut entries) = self.entries.lock() {
-            if let Some(entry) = entries.get_mut(path) {
-                entry.last_accessed = SystemTime::now();
-                entry.record_access();
-            }
+        if let Ok(mut entries) = self.entries.lock()
+            && let Some(entry) = entries.get_mut(path)
+        {
+            entry.last_accessed = SystemTime::now();
+            entry.record_access();
         }
     }
 
@@ -556,14 +552,14 @@ impl CachedStorage {
 
             // Delete the cached file
             let cache_path = self.cache_path(&to_evict);
-            if cache_path.exists() {
-                if let Err(e) = fs::remove_file(&cache_path) {
-                    tracing::warn!(
-                        "Failed to delete cached file during eviction {}: {}. Cache tracking may be inconsistent.",
-                        cache_path.display(),
-                        e
-                    );
-                }
+            if cache_path.exists()
+                && let Err(e) = fs::remove_file(&cache_path)
+            {
+                tracing::warn!(
+                    "Failed to delete cached file during eviction {}: {}. Cache tracking may be inconsistent.",
+                    cache_path.display(),
+                    e
+                );
             }
 
             // Update size
@@ -588,10 +584,10 @@ impl CachedStorage {
     /// Queue a file for background upload.
     fn queue_upload(&self, local_path: PathBuf, remote_path: PathBuf, size: u64) -> Result<()> {
         // Mark as pending upload
-        if let Ok(mut entries) = self.entries.lock() {
-            if let Some(entry) = entries.get_mut(&remote_path) {
-                entry.pending_upload = true;
-            }
+        if let Ok(mut entries) = self.entries.lock()
+            && let Some(entry) = entries.get_mut(&remote_path)
+        {
+            entry.pending_upload = true;
         }
 
         let task = UploadTask {
@@ -617,7 +613,9 @@ impl CachedStorage {
         if let Ok(stats) = self.stats.lock() {
             stats.clone()
         } else {
-            tracing::error!("Failed to acquire stats lock (mutex poisoned), returning default stats");
+            tracing::error!(
+                "Failed to acquire stats lock (mutex poisoned), returning default stats"
+            );
             CacheStats::default()
         }
     }
@@ -802,22 +800,22 @@ impl Storage for CachedStorage {
 
         // Remove from cache metadata
         {
-            if let Ok(mut entries) = self.entries.lock() {
-                if let Some(entry) = entries.remove(path) {
-                    self.cache_size.fetch_sub(entry.size, Ordering::Relaxed);
-                }
+            if let Ok(mut entries) = self.entries.lock()
+                && let Some(entry) = entries.remove(path)
+            {
+                self.cache_size.fetch_sub(entry.size, Ordering::Relaxed);
             }
         }
 
         // Delete cached file if exists
-        if cache_path.exists() {
-            if let Err(e) = fs::remove_file(&cache_path) {
-                tracing::warn!(
-                    "Failed to delete cached file during delete operation {}: {}. Remote delete will proceed.",
-                    cache_path.display(),
-                    e
-                );
-            }
+        if cache_path.exists()
+            && let Err(e) = fs::remove_file(&cache_path)
+        {
+            tracing::warn!(
+                "Failed to delete cached file during delete operation {}: {}. Remote delete will proceed.",
+                cache_path.display(),
+                e
+            );
         }
 
         // Delete from remote
@@ -1005,23 +1003,23 @@ impl Write for CachedWriter {
 impl Drop for CachedWriter {
     fn drop(&mut self) {
         // Ensure data is written and upload is queued
-        if !self.flushed {
-            if let Err(e) = self.flush() {
-                tracing::error!(
-                    "Failed to flush cached writer on drop: {}. Data may not be fully written.",
-                    e
-                );
-            }
+        if !self.flushed
+            && let Err(e) = self.flush()
+        {
+            tracing::error!(
+                "Failed to flush cached writer on drop: {}. Data may not be fully written.",
+                e
+            );
         }
 
-        if !self.uploaded {
-            if let Err(_e) = self.queue_upload() {
-                tracing::error!(
-                    "Failed to queue upload for {}: Upload will not occur. Data exists locally at {}",
-                    self.remote_path.display(),
-                    self.local_path.display()
-                );
-            }
+        if !self.uploaded
+            && let Err(_e) = self.queue_upload()
+        {
+            tracing::error!(
+                "Failed to queue upload for {}: Upload will not occur. Data exists locally at {}",
+                self.remote_path.display(),
+                self.local_path.display()
+            );
         }
     }
 }
