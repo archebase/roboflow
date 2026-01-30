@@ -241,19 +241,14 @@ impl Storage for RetryingStorage {
     }
 
     fn writer(&self, path: &Path) -> Result<Box<dyn Write + Send + 'static>> {
-        let path = path.to_owned();
-        let inner = self.inner.clone();
-
-        // Retry writer creation - the writer itself is just created, not written to yet
-        // We use a simplified retry that only retries network errors
-        retry_with_backoff(&self.config, "writer", || inner.writer(&path))
+        // Writer doesn't retry well because partial writes may have occurred
+        // We'll just delegate directly without retry
+        self.inner.writer(path)
     }
 
     fn exists(&self, path: &Path) -> bool {
-        // exists() returns bool and doesn't propagate errors
-        // The underlying implementation may return false on network errors
-        // but we can't distinguish from actual non-existence without changing the trait
-        // For now, delegate directly - the caller should handle false appropriately
+        // exists() returns bool, so we can't use the standard retry logic
+        // We'll just delegate directly
         self.inner.exists(path)
     }
 
