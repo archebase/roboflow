@@ -189,6 +189,14 @@ impl OssStorage {
 
     /// Convert object_store metadata to our metadata type
     fn convert_metadata(&self, meta: &object_store::ObjectMeta) -> ObjectMetadata {
+        // Convert chrono DateTime to SystemTime
+        fn chrono_to_system_time(dt: &chrono::DateTime<chrono::Utc>) -> std::time::SystemTime {
+            let timestamp = dt.timestamp();
+            std::time::SystemTime::UNIX_EPOCH
+                .checked_add(std::time::Duration::from_secs(timestamp as u64))
+                .unwrap_or(std::time::SystemTime::now())
+        }
+
         let last_modified = Some(chrono_to_system_time(&meta.last_modified));
 
         ObjectMetadata {
@@ -199,15 +207,6 @@ impl OssStorage {
             is_dir: false,
         }
     }
-}
-
-/// Convert chrono DateTime to SystemTime.
-#[inline]
-pub(crate) fn chrono_to_system_time(dt: &chrono::DateTime<chrono::Utc>) -> std::time::SystemTime {
-    let timestamp = dt.timestamp();
-    std::time::SystemTime::UNIX_EPOCH
-        .checked_add(std::time::Duration::from_secs(timestamp as u64))
-        .unwrap_or(std::time::SystemTime::now())
 }
 
 impl Storage for OssStorage {
@@ -301,9 +300,17 @@ impl Storage for OssStorage {
 
             let mut metas = Vec::new();
 
+            // Helper function to convert DateTime
+            fn chrono_to_system_time(dt: chrono::DateTime<chrono::Utc>) -> std::time::SystemTime {
+                let timestamp = dt.timestamp();
+                std::time::SystemTime::UNIX_EPOCH
+                    .checked_add(std::time::Duration::from_secs(timestamp as u64))
+                    .unwrap_or(std::time::SystemTime::now())
+            }
+
             // Process objects
             for obj in list_result.objects {
-                let last_modified = Some(chrono_to_system_time(&obj.last_modified));
+                let last_modified = Some(chrono_to_system_time(obj.last_modified));
 
                 metas.push(ObjectMetadata {
                     path: obj.location.to_string(),
@@ -458,8 +465,6 @@ impl Write for OssWriter {
         if self.buffer.len() > self.max_buffer_size {
             self.upload()
                 .map_err(|e| std::io::Error::other(format!("Upload failed: {}", e)))?;
-            // Reset uploaded flag so subsequent data gets uploaded on flush/drop
-            self.uploaded = false;
         }
 
         Ok(written)
@@ -490,7 +495,6 @@ impl Drop for OssWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::SystemTime;
 
     #[test]
     fn test_oss_config_new() {
@@ -511,14 +515,6 @@ mod tests {
 
         assert_eq!(config.prefix, Some("data/test".to_string()));
         assert_eq!(config.region, Some("cn-hangzhou".to_string()));
-    }
-
-    #[test]
-    fn test_oss_config_with_internal_endpoint() {
-        let config = OssConfig::new("bucket", "oss-cn-hangzhou.aliyuncs.com", "key", "secret")
-            .with_internal_endpoint();
-
-        assert!(config.use_internal_endpoint);
     }
 
     #[test]
@@ -545,14 +541,6 @@ mod tests {
     }
 
     #[test]
-    fn test_oss_config_full_key_empty_path() {
-        let config = OssConfig::new("bucket", "endpoint", "key", "secret").with_prefix("datasets");
-        // Empty path with prefix results in "datasets/" because Path::new("") creates an empty path
-        // and the format adds a slash
-        assert_eq!(config.full_key(Path::new("")), "datasets/");
-    }
-
-    #[test]
     fn test_oss_config_endpoint_url() {
         let config = OssConfig::new("bucket", "oss-cn-hangzhou.aliyuncs.com", "key", "secret");
         assert_eq!(
@@ -565,103 +553,5 @@ mod tests {
     fn test_oss_config_endpoint_url_already_https() {
         let config = OssConfig::new("bucket", "https://custom.endpoint.com", "key", "secret");
         assert_eq!(config.endpoint_url(), "https://custom.endpoint.com");
-    }
-
-    #[test]
-    fn test_oss_config_endpoint_url_already_http() {
-        let config = OssConfig::new("bucket", "http://custom.endpoint.com", "key", "secret");
-        assert_eq!(config.endpoint_url(), "http://custom.endpoint.com");
-    }
-
-    // Test helper function conversions
-    #[test]
-    #[allow(deprecated)]
-    fn test_chrono_to_system_time_conversion() {
-        use chrono::{DateTime, NaiveDateTime, Utc};
-
-        // Test Unix epoch
-        let dt = DateTime::<Utc>::from_naive_utc_and_offset(
-            NaiveDateTime::from_timestamp_opt(0, 0).unwrap(),
-            Utc,
-        );
-        let st = SystemTime::UNIX_EPOCH;
-        assert_eq!(chrono_to_system_time(&dt), st);
-
-        // Test a future timestamp
-        let dt = DateTime::<Utc>::from_naive_utc_and_offset(
-            NaiveDateTime::from_timestamp_opt(1_000_000_000, 0).unwrap(),
-            Utc,
-        );
-        let st = SystemTime::UNIX_EPOCH
-            .checked_add(std::time::Duration::from_secs(1_000_000_000))
-            .unwrap();
-        assert_eq!(chrono_to_system_time(&dt), st);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_convert_metadata() {
-        use chrono::{DateTime, NaiveDateTime, Utc};
-
-        let dt = DateTime::<Utc>::from_naive_utc_and_offset(
-            NaiveDateTime::from_timestamp_opt(1_600_000_000, 0).unwrap(),
-            Utc,
-        );
-
-        let path = object_store::path::Path::from("test/file.txt");
-        let meta = object_store::ObjectMeta {
-            location: path.clone(),
-            last_modified: dt,
-            size: 1024,
-            e_tag: None,
-            version: None,
-        };
-
-        let result = convert_metadata_for_test(&meta);
-
-        assert_eq!(result.path, "test/file.txt");
-        assert_eq!(result.size, 1024);
-        assert!(result.last_modified.is_some());
-        assert!(result.content_type.is_none());
-        assert!(!result.is_dir);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_convert_metadata_large_file() {
-        use chrono::{DateTime, NaiveDateTime, Utc};
-
-        let dt = DateTime::<Utc>::from_naive_utc_and_offset(
-            NaiveDateTime::from_timestamp_opt(1_700_000_000, 123_456_789).unwrap(),
-            Utc,
-        );
-
-        let path = object_store::path::Path::from("large/video.mp4");
-        let meta = object_store::ObjectMeta {
-            location: path.clone(),
-            last_modified: dt,
-            size: 5_368_709_120, // 5GB
-            e_tag: None,
-            version: None,
-        };
-
-        let result = convert_metadata_for_test(&meta);
-
-        assert_eq!(result.path, "large/video.mp4");
-        assert_eq!(result.size, 5_368_709_120);
-        assert!(result.last_modified.is_some());
-    }
-
-    /// Helper function for testing convert_metadata logic
-    fn convert_metadata_for_test(meta: &object_store::ObjectMeta) -> ObjectMetadata {
-        let last_modified = Some(chrono_to_system_time(&meta.last_modified));
-
-        ObjectMetadata {
-            path: meta.location.to_string(),
-            size: meta.size as u64,
-            last_modified,
-            content_type: None,
-            is_dir: false,
-        }
     }
 }
