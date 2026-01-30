@@ -71,7 +71,7 @@ impl StreamingParquetWriter {
         output_dir: impl AsRef<Path>,
         episode_id: usize,
         config: &KpsConfig,
-    ) -> Result<Self, KpsWriterError> {
+    ) -> Result<Self> {
         let output_dir = output_dir.as_ref();
 
         // Create directory structure for Parquet format
@@ -134,7 +134,7 @@ impl StreamingParquetWriter {
 
         if !series_vec.is_empty() {
             let df = DataFrame::new(series_vec)
-                .map_err(|e| KpsWriterError::Parquet(format!("Failed to create DataFrame: {e}")))?;
+                .map_err(|e| crate::RoboflowError::parse("Parquet", &format!("Failed to create DataFrame: {e}")))?;
 
             // Write to Parquet file
             let path = self
@@ -146,7 +146,7 @@ impl StreamingParquetWriter {
             ParquetWriter::new(&mut file)
                 .finish(&mut df.clone())
                 .map_err(|e| {
-                    KpsWriterError::Parquet(format!("Failed to write Parquet file: {e}"))
+                    crate::RoboflowError::parse("Parquet", &format!("Failed to write Parquet file: {e}"))
                 })?;
 
             // Track output size
@@ -174,7 +174,7 @@ impl StreamingParquetWriter {
             &self.image_shapes,
             &self.state_dims,
         )
-        .map_err(|e| KpsWriterError::Parquet(e.to_string()))?;
+        .map_err(|e| crate::RoboflowError::parse("Parquet", &e.to_string()))?;
 
         // Write episode.jsonl
         info::write_episode_json(
@@ -184,7 +184,7 @@ impl StreamingParquetWriter {
             self.frame_count as u64 * 1_000_000_000 / config.dataset.fps as u64,
             self.frame_count,
         )
-        .map_err(|e| KpsWriterError::Parquet(e.to_string()))?;
+        .map_err(|e| crate::RoboflowError::parse("Parquet", &e.to_string()))?;
 
         Ok(())
     }

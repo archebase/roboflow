@@ -37,7 +37,8 @@ use crate::core::Result;
 ///
 /// let mut frame = AlignedFrame::new(0, 1_000_000_000); // frame 0, 1 second
 /// frame.add_state("observation.joint.position".to_string(), vec![0.0, 1.0, 2.0]);
-/// frame.add_image("observation.camera_0".to_string(), ImageData::new(640, 480, rgb_data));
+/// let data = vec![0u8; 640 * 480 * 3];
+/// frame.add_image("observation.camera_0".to_string(), ImageData::new(640, 480, data));
 /// ```
 #[derive(Debug, Clone)]
 pub struct AlignedFrame {

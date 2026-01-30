@@ -7,6 +7,8 @@
 //! This module provides writers for different Kps dataset formats.
 //! All writers implement the unified [`DatasetWriter`] trait.
 
+use crate::core::Result;
+
 pub mod base;
 
 pub use base::{KpsWriterError, MessageExtractor};
@@ -58,7 +60,7 @@ pub fn create_kps_writer(
     output_dir: impl AsRef<std::path::Path>,
     episode_id: usize,
     config: &crate::dataset::kps::KpsConfig,
-) -> Result<Box<dyn DatasetWriter>, KpsWriterError> {
+) -> Result<Box<dyn DatasetWriter>> {
     use crate::dataset::kps::OutputFormat;
 
     // Check which formats are requested
@@ -73,8 +75,9 @@ pub fn create_kps_writer(
         }
         #[cfg(not(feature = "kps-parquet"))]
         {
-            return Err(KpsWriterError::Encoding(
-                "Parquet support not enabled. Add feature 'kps-parquet' to Cargo.toml".to_string(),
+            return Err(crate::RoboflowError::parse(
+                "DatasetWriter",
+                "Parquet support not enabled. Add feature 'kps-parquet' to Cargo.toml",
             ));
         }
     }
@@ -88,14 +91,16 @@ pub fn create_kps_writer(
         }
         #[cfg(not(feature = "kps-hdf5"))]
         {
-            return Err(KpsWriterError::Encoding(
-                "HDF5 support not enabled. Add feature 'kps-hdf5' to Cargo.toml".to_string(),
+            return Err(crate::RoboflowError::parse(
+                "DatasetWriter",
+                "HDF5 support not enabled. Add feature 'kps-hdf5' to Cargo.toml",
             ));
         }
     }
 
-    Err(KpsWriterError::Encoding(
-        "No valid output format specified".to_string(),
+    Err(crate::RoboflowError::parse(
+        "DatasetWriter",
+        "No valid output format specified",
     ))
 }
 

@@ -110,7 +110,6 @@ pub fn create_dataset_writer(
                 })?;
 
             create_kps_writer(output_dir, 0, kps_config)
-                .map_err(|e| crate::RoboflowError::parse("DatasetWriter", &e.to_string()))
         }
         DatasetFormat::Lerobot => {
             use crate::dataset::lerobot::{LerobotConfig, LerobotWriter};
