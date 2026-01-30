@@ -115,11 +115,16 @@ impl AnnotationData {
     /// Load annotation data from a JSON file.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let content = fs::read_to_string(path)
-            .map_err(|e| crate::RoboflowError::parse("Annotation", &format!("Failed to read {}: {}", path.display(), e)))?;
+        let content = fs::read_to_string(path).map_err(|e| {
+            crate::RoboflowError::parse(
+                "Annotation",
+                format!("Failed to read {}: {}", path.display(), e),
+            )
+        })?;
 
-        let data: AnnotationData = serde_json::from_str(&content)
-            .map_err(|e| crate::RoboflowError::parse("Annotation", &format!("Failed to parse JSON: {}", e)))?;
+        let data: AnnotationData = serde_json::from_str(&content).map_err(|e| {
+            crate::RoboflowError::parse("Annotation", format!("Failed to parse JSON: {}", e))
+        })?;
 
         Ok(data)
     }
@@ -128,9 +133,16 @@ impl AnnotationData {
     ///
     /// Returns a list of (start_pos, end_pos, task_description) tuples.
     pub fn episode_segments(&self) -> Vec<(f64, f64, String)> {
-        self.marks.iter().map(|mark| {
-            (mark.start_position, mark.end_position, mark.task_description())
-        }).collect()
+        self.marks
+            .iter()
+            .map(|mark| {
+                (
+                    mark.start_position,
+                    mark.end_position,
+                    mark.task_description(),
+                )
+            })
+            .collect()
     }
 
     /// Get the total task name for this dataset.

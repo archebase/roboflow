@@ -23,8 +23,12 @@ use tracing::{info, instrument};
 
 use crate::core::Result;
 use crate::dataset::common::{AlignedFrame, ImageData};
-use crate::dataset::kps::config::{KpsConfig, Mapping as KpsMapping, MappingType as KpsMappingType};
-use crate::dataset::lerobot::config::{LerobotConfig, Mapping as LerobotMapping, MappingType as LerobotMappingType};
+use crate::dataset::kps::config::{
+    KpsConfig, Mapping as KpsMapping, MappingType as KpsMappingType,
+};
+use crate::dataset::lerobot::config::{
+    LerobotConfig, Mapping as LerobotMapping, MappingType as LerobotMappingType,
+};
 use crate::dataset::{create_dataset_writer, DatasetFormat};
 use crate::RoboReader;
 use robocodec::CodecValue;
@@ -55,10 +59,7 @@ pub struct DatasetConverter {
 
 impl DatasetConverter {
     /// Create a new dataset converter for KPS format.
-    pub fn new_kps<P: AsRef<Path>>(
-        output_dir: P,
-        config: KpsConfig,
-    ) -> Self {
+    pub fn new_kps<P: AsRef<Path>>(output_dir: P, config: KpsConfig) -> Self {
         Self {
             output_dir: output_dir.as_ref().to_path_buf(),
             format: DatasetFormat::Kps,
@@ -70,10 +71,7 @@ impl DatasetConverter {
     }
 
     /// Create a new dataset converter for LeRobot format.
-    pub fn new_lerobot<P: AsRef<Path>>(
-        output_dir: P,
-        config: LerobotConfig,
-    ) -> Self {
+    pub fn new_lerobot<P: AsRef<Path>>(output_dir: P, config: LerobotConfig) -> Self {
         let fps = config.dataset.fps;
         Self {
             output_dir: output_dir.as_ref().to_path_buf(),
@@ -132,12 +130,8 @@ impl DatasetConverter {
         let fps = kps_config.dataset.fps;
 
         // Create the dataset writer
-        let mut writer = create_dataset_writer(
-            self.format,
-            &self.output_dir,
-            kps_config,
-        )
-        .map_err(|e| crate::RoboflowError::encode("DatasetConverter", e.to_string()))?;
+        let mut writer = create_dataset_writer(self.format, &self.output_dir, kps_config)
+            .map_err(|e| crate::RoboflowError::encode("DatasetConverter", e.to_string()))?;
 
         // Initialize the writer
         writer.initialize(kps_config)?;
@@ -172,22 +166,18 @@ impl DatasetConverter {
             };
 
             // Align timestamp to frame boundary
-            let aligned_timestamp = Self::align_to_frame(
-                timestamped_msg.log_time,
-                frame_interval_ns,
-            );
+            let aligned_timestamp =
+                Self::align_to_frame(timestamped_msg.log_time, frame_interval_ns);
 
             // Get or create frame - track new frames for max_frames limit
             let is_new = !frame_buffer.contains_key(&aligned_timestamp);
-            let frame = frame_buffer
-                .entry(aligned_timestamp)
-                .or_insert_with(|| {
-                    let idx = frame_count;
-                    if is_new {
-                        frame_count += 1;
-                    }
-                    AlignedFrame::new(idx, aligned_timestamp)
-                });
+            let frame = frame_buffer.entry(aligned_timestamp).or_insert_with(|| {
+                let idx = frame_count;
+                if is_new {
+                    frame_count += 1;
+                }
+                AlignedFrame::new(idx, aligned_timestamp)
+            });
 
             // Check max frames after potentially adding a new frame
             if let Some(max) = self.max_frames {
@@ -207,7 +197,7 @@ impl DatasetConverter {
                             ImageData {
                                 original_timestamp: timestamped_msg.log_time,
                                 ..img
-                            }
+                            },
                         );
                     }
                 }
@@ -286,12 +276,8 @@ impl DatasetConverter {
         let fps = lerobot_config.dataset.fps;
 
         // Create the dataset writer
-        let mut writer = create_dataset_writer(
-            self.format,
-            &self.output_dir,
-            lerobot_config,
-        )
-        .map_err(|e| crate::RoboflowError::encode("DatasetConverter", e.to_string()))?;
+        let mut writer = create_dataset_writer(self.format, &self.output_dir, lerobot_config)
+            .map_err(|e| crate::RoboflowError::encode("DatasetConverter", e.to_string()))?;
 
         // Initialize the writer
         writer.initialize(lerobot_config)?;
@@ -326,22 +312,18 @@ impl DatasetConverter {
             };
 
             // Align timestamp to frame boundary
-            let aligned_timestamp = Self::align_to_frame(
-                timestamped_msg.log_time,
-                frame_interval_ns,
-            );
+            let aligned_timestamp =
+                Self::align_to_frame(timestamped_msg.log_time, frame_interval_ns);
 
             // Get or create frame - track new frames for max_frames limit
             let is_new = !frame_buffer.contains_key(&aligned_timestamp);
-            let frame = frame_buffer
-                .entry(aligned_timestamp)
-                .or_insert_with(|| {
-                    let idx = frame_count;
-                    if is_new {
-                        frame_count += 1;
-                    }
-                    AlignedFrame::new(idx, aligned_timestamp)
-                });
+            let frame = frame_buffer.entry(aligned_timestamp).or_insert_with(|| {
+                let idx = frame_count;
+                if is_new {
+                    frame_count += 1;
+                }
+                AlignedFrame::new(idx, aligned_timestamp)
+            });
 
             // Check max frames after potentially adding a new frame
             if let Some(max) = self.max_frames {
@@ -361,7 +343,7 @@ impl DatasetConverter {
                             ImageData {
                                 original_timestamp: timestamped_msg.log_time,
                                 ..img
-                            }
+                            },
                         );
                     }
                 }
@@ -542,10 +524,19 @@ mod tests {
 
         assert_eq!(DatasetConverter::align_to_frame(0, interval), 0);
         // Midpoint (16,666,666) rounds up to 33,333,333
-        assert_eq!(DatasetConverter::align_to_frame(16_666_666, interval), 33_333_333);
+        assert_eq!(
+            DatasetConverter::align_to_frame(16_666_666, interval),
+            33_333_333
+        );
         // 50,000,000 is closer to 66,666,666 than 33,333,333
-        assert_eq!(DatasetConverter::align_to_frame(50_000_000, interval), 66_666_666);
-        assert_eq!(DatasetConverter::align_to_frame(100_000_000, interval), 99_999_999);
+        assert_eq!(
+            DatasetConverter::align_to_frame(50_000_000, interval),
+            66_666_666
+        );
+        assert_eq!(
+            DatasetConverter::align_to_frame(100_000_000, interval),
+            99_999_999
+        );
     }
 
     #[test]
@@ -553,11 +544,14 @@ mod tests {
         use robocodec::CodecValue;
 
         let mut msg = HashMap::new();
-        msg.insert("position".to_string(), CodecValue::Array(vec![
-            CodecValue::Float32(1.0),
-            CodecValue::Float32(2.0),
-            CodecValue::Float32(3.0),
-        ]));
+        msg.insert(
+            "position".to_string(),
+            CodecValue::Array(vec![
+                CodecValue::Float32(1.0),
+                CodecValue::Float32(2.0),
+                CodecValue::Float32(3.0),
+            ]),
+        );
 
         let result = DatasetConverter::extract_float_array(&msg).unwrap();
         assert_eq!(result, vec![1.0, 2.0, 3.0]);

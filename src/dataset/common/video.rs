@@ -7,6 +7,6 @@
 //! The video encoder is used by both KPS and LeRobot for MP4 output.
 
 pub use crate::dataset::kps::video_encoder::{
-    DepthFrame, DepthFrameBuffer, DepthEncoderConfig, DepthMkvEncoder, Mp4Encoder,
+    DepthEncoderConfig, DepthFrame, DepthFrameBuffer, DepthMkvEncoder, Mp4Encoder,
     VideoEncoderConfig, VideoFrame, VideoFrameBuffer,
 };

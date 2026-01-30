@@ -15,10 +15,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use roboflow::dataset::lerobot::{LerobotConfig, DatasetConfig, VideoConfig, Mapping, MappingType};
-use roboflow::dataset::streaming::{StreamingConfig, StreamingDatasetConverter, FrameCompletionCriteria, FeatureRequirement};
+use roboflow::dataset::lerobot::{DatasetConfig, LerobotConfig, Mapping, MappingType, VideoConfig};
+use roboflow::dataset::streaming::{FeatureRequirement, FrameCompletionCriteria, StreamingConfig};
 
 /// Create a test output directory.
+#[allow(dead_code)]
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
     fs::create_dir_all("tests/output").ok();
     tempfile::tempdir_in("tests/output").unwrap_or_else(|_| {
@@ -28,6 +29,7 @@ fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
 }
 
 /// Create a default test configuration for LeRobot.
+#[allow(dead_code)]
 fn test_lerobot_config() -> LerobotConfig {
     LerobotConfig {
         dataset: DatasetConfig {
@@ -54,6 +56,7 @@ fn test_lerobot_config() -> LerobotConfig {
 }
 
 /// Find a test fixture file by pattern.
+#[allow(dead_code)]
 fn find_fixture(pattern: &str) -> Option<String> {
     let fixtures_dir = Path::new("tests/fixtures");
     if !fixtures_dir.exists() {
@@ -82,7 +85,7 @@ fn test_streaming_config_default() {
     assert_eq!(config.fps, 30);
     assert_eq!(config.completion_window_frames, 5);
     assert_eq!(config.max_buffered_frames, 300);
-    assert_eq!(config.max_buffered_memory_mb, 500);  // 500MB default
+    assert_eq!(config.max_buffered_memory_mb, 500); // 500MB default
 }
 
 #[test]
@@ -108,8 +111,14 @@ fn test_streaming_config_feature_requirements() {
 
     // Add feature requirements
     config.feature_requirements = HashMap::from([
-        ("observation.state".to_string(), FeatureRequirement::Required),
-        ("observation.image".to_string(), FeatureRequirement::Optional),
+        (
+            "observation.state".to_string(),
+            FeatureRequirement::Required,
+        ),
+        (
+            "observation.image".to_string(),
+            FeatureRequirement::Optional,
+        ),
     ]);
 
     assert_eq!(config.feature_requirements.len(), 2);
@@ -160,7 +169,10 @@ fn test_streaming_converter_creation() {
     let config = test_lerobot_config();
 
     let converter = StreamingDatasetConverter::new_lerobot(output_dir.path(), config);
-    assert!(converter.is_ok(), "Converter should be created successfully");
+    assert!(
+        converter.is_ok(),
+        "Converter should be created successfully"
+    );
 }
 
 #[cfg(feature = "kps-all")]
@@ -203,7 +215,10 @@ fn test_streaming_converter_with_bag() {
         // We mainly check it doesn't panic
         match result {
             Ok(stats) => {
-                println!("Converted {} frames from {}", stats.frames_written, input_path);
+                println!(
+                    "Converted {} frames from {}",
+                    stats.frames_written, input_path
+                );
                 // Output directory should have been created with data
                 assert!(output_dir.path().exists());
             }
@@ -234,7 +249,10 @@ fn test_streaming_converter_with_mcap() {
 
         match result {
             Ok(stats) => {
-                println!("Converted {} frames from {}", stats.frames_written, input_path);
+                println!(
+                    "Converted {} frames from {}",
+                    stats.frames_written, input_path
+                );
                 assert!(output_dir.path().exists());
             }
             Err(e) => {
@@ -298,12 +316,14 @@ fn test_completion_window_various_fps() {
 
 #[test]
 fn test_require_at_least_builder() {
-    let criteria = FrameCompletionCriteria::new()
-        .require_at_least(vec![
+    let criteria = FrameCompletionCriteria::new().require_at_least(
+        vec![
             "camera_0".to_string(),
             "camera_1".to_string(),
             "camera_2".to_string(),
-        ], 2); // Require at least 2 of 3 cameras
+        ],
+        2,
+    ); // Require at least 2 of 3 cameras
 
     assert_eq!(criteria.features.len(), 3);
 
@@ -320,10 +340,7 @@ fn test_require_at_least_builder() {
 #[test]
 fn test_require_at_least_insufficient() {
     let criteria = FrameCompletionCriteria::new()
-        .require_at_least(vec![
-            "camera_0".to_string(),
-            "camera_1".to_string(),
-        ], 2); // Require both cameras
+        .require_at_least(vec!["camera_0".to_string(), "camera_1".to_string()], 2); // Require both cameras
 
     use std::collections::HashSet;
 

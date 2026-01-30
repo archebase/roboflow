@@ -120,7 +120,11 @@ impl ProgressUpdate {
             frame,
             total
         );
-        ProgressUpdate::VideoProgress { camera, frame, total }
+        ProgressUpdate::VideoProgress {
+            camera,
+            frame,
+            total,
+        }
     }
 
     /// Get the percentage complete (0-100) for this update.
@@ -153,7 +157,9 @@ impl ProgressUpdate {
     /// Get the number of frames processed.
     pub fn frames_processed(&self) -> Option<u64> {
         match self {
-            ProgressUpdate::FrameProgress { frames_processed, .. } => Some(*frames_processed),
+            ProgressUpdate::FrameProgress {
+                frames_processed, ..
+            } => Some(*frames_processed),
             ProgressUpdate::Completed { stats } => Some(stats.frames_written as u64),
             _ => None,
         }
@@ -162,8 +168,12 @@ impl ProgressUpdate {
     /// Get the estimated total frames.
     pub fn estimated_total(&self) -> Option<u64> {
         match self {
-            ProgressUpdate::FrameProgress { estimated_total, .. } => Some(*estimated_total),
-            ProgressUpdate::Started { estimated_frames, .. } => *estimated_frames,
+            ProgressUpdate::FrameProgress {
+                estimated_total, ..
+            } => Some(*estimated_total),
+            ProgressUpdate::Started {
+                estimated_frames, ..
+            } => *estimated_frames,
             _ => None,
         }
     }
@@ -233,11 +243,13 @@ impl ProgressSender {
             use std::time::Duration;
             // For critical updates, clone once and try with timeout
             let update_clone = update.clone();
-            if self.sender.send_timeout(update, Duration::from_millis(100)).is_err() {
+            if self
+                .sender
+                .send_timeout(update, Duration::from_millis(100))
+                .is_err()
+            {
                 // Channel still full after 100ms - log and block until sent
-                eprintln!(
-                    "CRITICAL: Progress channel full - blocking to send critical update"
-                );
+                eprintln!("CRITICAL: Progress channel full - blocking to send critical update");
                 // This will block until the receiver has space
                 let _ = self.sender.send(update_clone);
             }
@@ -273,7 +285,11 @@ impl ProgressSender {
 
     /// Send a video progress update.
     pub fn video_progress(&self, camera: String, frame: u64, total: u64) {
-        self.send(ProgressUpdate::VideoProgress { camera, frame, total });
+        self.send(ProgressUpdate::VideoProgress {
+            camera,
+            frame,
+            total,
+        });
     }
 
     /// Send a warning.
@@ -399,7 +415,7 @@ mod tests {
         sender.started("test2.bag".to_string(), None);
 
         // Should only have one message
-        assert_eq!(receiver.latest().is_some(), true);
-        assert_eq!(receiver.latest().is_some(), false);
+        assert!(receiver.latest().is_some());
+        assert!(receiver.latest().is_none());
     }
 }

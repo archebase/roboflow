@@ -203,7 +203,10 @@ mod tests {
     #[test]
     fn test_backend_codec_names() {
         assert_eq!(HardwareBackend::None.codec_name(), "libx264");
-        assert_eq!(HardwareBackend::VideoToolbox.codec_name(), "h264_videotoolbox");
+        assert_eq!(
+            HardwareBackend::VideoToolbox.codec_name(),
+            "h264_videotoolbox"
+        );
         assert_eq!(HardwareBackend::Nvenc.codec_name(), "h264_nvenc");
         assert_eq!(HardwareBackend::Qsv.codec_name(), "h264_qsv");
         assert_eq!(HardwareBackend::Vaapi.codec_name(), "h264_vaapi");

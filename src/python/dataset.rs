@@ -14,13 +14,8 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::core::Result;
-use crate::dataset::{
-    DatasetConfig as RustDatasetConfig,
-    DatasetFormat,
-};
-use crate::dataset::common::{
-    ProgressReceiver, ProgressSender, ProgressUpdate, WriterStats,
-};
+use crate::dataset::common::{ProgressReceiver, ProgressSender, ProgressUpdate, WriterStats};
+use crate::dataset::{DatasetConfig as RustDatasetConfig, DatasetFormat};
 
 // =============================================================================
 // Error conversion
@@ -53,29 +48,25 @@ fn dataset_error_to_py(error: crate::RoboflowError) -> PyErr {
         | crate::RoboflowError::InvalidSchema { .. }
         | crate::RoboflowError::TypeNotFound { .. }
         | crate::RoboflowError::FieldDecodeError { .. }
-        | crate::RoboflowError::Unsupported { .. } =>
-        {
-            PyValueError::new_err(error.to_string())
-        }
+        | crate::RoboflowError::Unsupported { .. } => PyValueError::new_err(error.to_string()),
 
         // Codec errors (including I/O from formats) -> PyIOError
-        crate::RoboflowError::CodecError { .. } =>
-        {
-            PyIOError::new_err(error.to_string())
-        }
+        crate::RoboflowError::CodecError { .. } => PyIOError::new_err(error.to_string()),
 
         // Encoding/transform errors -> PyRuntimeError
         crate::RoboflowError::EncodeError { .. }
         | crate::RoboflowError::TransformError { .. }
-        | crate::RoboflowError::InvariantViolation { .. } =>
-        {
+        | crate::RoboflowError::InvariantViolation { .. } => {
             PyRuntimeError::new_err(error.to_string())
         }
 
         // Other errors -> check message content
         _ => {
             let msg = error.to_string();
-            if msg.contains("Failed to open") || msg.contains("No such file") || msg.contains("not found") {
+            if msg.contains("Failed to open")
+                || msg.contains("No such file")
+                || msg.contains("not found")
+            {
                 PyIOError::new_err(msg)
             } else if msg.contains("Invalid") || msg.contains("parse") {
                 PyValueError::new_err(msg)
@@ -162,9 +153,7 @@ impl PyDatasetStats {
     fn __repr__(&self) -> String {
         format!(
             "DatasetStats(frames_written={}, images_encoded={}, duration_sec={:.2})",
-            self.stats.frames_written,
-            self.stats.images_encoded,
-            self.stats.duration_sec
+            self.stats.frames_written, self.stats.images_encoded, self.stats.duration_sec
         )
     }
 
@@ -309,7 +298,11 @@ impl PyProgressUpdate {
                     frames_processed, estimated_total, fps
                 )
             }
-            ProgressUpdate::VideoProgress { camera, frame, total } => {
+            ProgressUpdate::VideoProgress {
+                camera,
+                frame,
+                total,
+            } => {
                 format!("ProgressUpdate(Video: {} - {}/{})", camera, frame, total)
             }
             ProgressUpdate::Completed { stats } => {
@@ -321,9 +314,7 @@ impl PyProgressUpdate {
             ProgressUpdate::Warning { message, .. } => {
                 format!("ProgressUpdate(Warning: {})", message)
             }
-            ProgressUpdate::ParquetProgress { .. } => {
-                "ProgressUpdate(Parquet)".to_string()
-            }
+            ProgressUpdate::ParquetProgress { .. } => "ProgressUpdate(Parquet)".to_string(),
         }
     }
 }
@@ -350,10 +341,7 @@ pub struct PyConversionJob {
 }
 
 impl PyConversionJob {
-    fn new(
-        receiver: ProgressReceiver,
-        thread: JoinHandle<Result<WriterStats>>,
-    ) -> Self {
+    fn new(receiver: ProgressReceiver, thread: JoinHandle<Result<WriterStats>>) -> Self {
         Self {
             receiver,
             thread: Some(thread),
@@ -453,7 +441,7 @@ impl PyConversionJob {
         if let Some(timeout_secs) = timeout {
             let start = std::time::Instant::now();
             let timeout_duration = Duration::from_secs_f64(timeout_secs);
-            
+
             py.allow_threads(|| {
                 while start.elapsed() < timeout_duration {
                     if self.stats.is_some() || self.thread.is_none() {
@@ -462,7 +450,7 @@ impl PyConversionJob {
                     thread::sleep(Duration::from_millis(50));
                 }
             });
-            
+
             // Check if complete
             if self.stats.is_some() {
                 return Ok(Some(PyDatasetStats {
@@ -471,12 +459,18 @@ impl PyConversionJob {
                     error_count: self.error_count,
                 }));
             }
-            
+
             // If thread is done, get result
-            if self.thread.as_ref().map(|t| t.is_finished()).unwrap_or(true) {
+            if self
+                .thread
+                .as_ref()
+                .map(|t| t.is_finished())
+                .unwrap_or(true)
+            {
                 if let Some(thread) = self.thread.take() {
                     let result = py.allow_threads(|| {
-                        thread.join()
+                        thread
+                            .join()
                             .map_err(|e| {
                                 if let Some(msg) = e.downcast_ref::<String>() {
                                     PyRuntimeError::new_err(format!("Thread panic: {}", msg))
@@ -496,7 +490,7 @@ impl PyConversionJob {
                     }));
                 }
             }
-            
+
             // Timeout expired
             return Ok(None);
         }
@@ -626,19 +620,16 @@ impl PyDatasetConfig {
     ///     robot_type: Robot type (optional)
     #[new]
     #[pyo3(signature = (format, *, fps, name, robot_type=None))]
-    fn new(
-        format: String,
-        fps: u32,
-        name: String,
-        robot_type: Option<String>,
-    ) -> PyResult<Self> {
+    fn new(format: String, fps: u32, name: String, robot_type: Option<String>) -> PyResult<Self> {
         let ds_format = match format.as_str() {
             "kps" => DatasetFormat::Kps,
             "lerobot" => DatasetFormat::Lerobot,
-            _ => return Err(PyValueError::new_err(format!(
-                "Invalid format '{}'. Must be 'lerobot' or 'kps'",
-                format
-            ))),
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "Invalid format '{}'. Must be 'lerobot' or 'kps'",
+                    format
+                )))
+            }
         };
 
         Ok(Self {
@@ -658,10 +649,12 @@ impl PyDatasetConfig {
         let ds_format = match format {
             "kps" => DatasetFormat::Kps,
             "lerobot" => DatasetFormat::Lerobot,
-            _ => return Err(PyValueError::new_err(format!(
-                "Invalid format '{}'. Must be 'lerobot' or 'kps'",
-                format
-            ))),
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "Invalid format '{}'. Must be 'lerobot' or 'kps'",
+                    format
+                )))
+            }
         };
 
         RustDatasetConfig::from_file(&path, ds_format)
@@ -683,10 +676,12 @@ impl PyDatasetConfig {
         let ds_format = match format {
             "kps" => DatasetFormat::Kps,
             "lerobot" => DatasetFormat::Lerobot,
-            _ => return Err(PyValueError::new_err(format!(
-                "Invalid format '{}'. Must be 'lerobot' or 'kps'",
-                format
-            ))),
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "Invalid format '{}'. Must be 'lerobot' or 'kps'",
+                    format
+                )))
+            }
         };
 
         RustDatasetConfig::from_toml(&toml_str, ds_format)
@@ -701,7 +696,7 @@ impl PyDatasetConfig {
     fn with_max_frames(mut slf: PyRefMut<'_, Self>, max_frames: usize) -> PyResult<()> {
         if max_frames == 0 {
             return Err(PyValueError::new_err(
-                "max_frames must be greater than 0 (use None for unlimited)"
+                "max_frames must be greater than 0 (use None for unlimited)",
             ));
         }
         slf.max_frames = Some(max_frames);
@@ -738,7 +733,9 @@ impl PyDatasetConfig {
     fn __repr__(&self) -> String {
         format!(
             "DatasetConfig(format={}, name={}, fps={})",
-            self.format(), self.name(), self.fps()
+            self.format(),
+            self.name(),
+            self.fps()
         )
     }
 }
@@ -824,11 +821,7 @@ impl PyDatasetConverter {
     /// Returns a ConversionJob that can be monitored for progress.
     /// Note: File existence is not checked here - errors will be reported through
     /// the progress channel so the job can be properly monitored.
-    fn convert_async(
-        &mut self,
-        _py: Python<'_>,
-        input_path: String,
-    ) -> PyResult<PyConversionJob> {
+    fn convert_async(&mut self, _py: Python<'_>, input_path: String) -> PyResult<PyConversionJob> {
         let input_path = PathBuf::from(&input_path);
 
         // Create progress channel with larger capacity for TB-scale conversions
@@ -841,13 +834,7 @@ impl PyDatasetConverter {
 
         // Spawn conversion thread
         let thread = thread::spawn(move || {
-            Self::convert_with_progress(
-                input_path,
-                output_dir,
-                config,
-                max_frames,
-                sender,
-            )
+            Self::convert_with_progress(input_path, output_dir, config, max_frames, sender)
         });
 
         Ok(PyConversionJob::new(receiver, thread))
@@ -871,14 +858,11 @@ impl PyDatasetConverter {
         match &self.config {
             RustDatasetConfig::Kps(kps_config) => {
                 let converter = DatasetConverter::new_kps(&self.output_dir, kps_config.clone());
-                converter.convert(input_path)
-                    .map(|s| s.into_writer_stats())
+                converter.convert(input_path).map(|s| s.into_writer_stats())
             }
-            RustDatasetConfig::Lerobot(_) => {
-                Err(crate::RoboflowError::unsupported(
-                    "LeRobot dataset conversion",
-                ))
-            }
+            RustDatasetConfig::Lerobot(_) => Err(crate::RoboflowError::unsupported(
+                "LeRobot dataset conversion",
+            )),
         }
     }
 
@@ -907,12 +891,12 @@ impl PyDatasetConverter {
                 if let Some(max) = max_frames {
                     converter = converter.with_max_frames(max);
                 }
-                converter.convert(&input_path)?
-                    .into_writer_stats()
+                converter.convert(&input_path)?.into_writer_stats()
             }
             RustDatasetConfig::Lerobot(_) => {
                 progress.error(
-                    "LeRobot dataset conversion is not yet supported. Please use KPS format.".to_string(),
+                    "LeRobot dataset conversion is not yet supported. Please use KPS format."
+                        .to_string(),
                     false,
                 );
                 return Err(crate::RoboflowError::unsupported(

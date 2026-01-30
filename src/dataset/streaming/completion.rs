@@ -33,13 +33,15 @@ impl FrameCompletionCriteria {
 
     /// Add a required feature.
     pub fn require_feature(mut self, feature: impl Into<String>) -> Self {
-        self.features.insert(feature.into(), FeatureRequirement::Required);
+        self.features
+            .insert(feature.into(), FeatureRequirement::Required);
         self
     }
 
     /// Add an optional feature.
     pub fn optional_feature(mut self, feature: impl Into<String>) -> Self {
-        self.features.insert(feature.into(), FeatureRequirement::Optional);
+        self.features
+            .insert(feature.into(), FeatureRequirement::Optional);
         self
     }
 
@@ -90,14 +92,15 @@ impl FrameCompletionCriteria {
             if let FeatureRequirement::AtLeast { min_count } = requirement {
                 at_least_groups
                     .entry(*min_count)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(feature.clone());
             }
         }
 
         // For each group, check if at least min_count features are received
         for (min_count, features) in at_least_groups {
-            let satisfied = features.iter()
+            let satisfied = features
+                .iter()
                 .filter(|f| received_features.contains(*f))
                 .count();
             // We need at least min_count features from this group
@@ -178,8 +181,7 @@ mod tests {
 
     #[test]
     fn test_required_feature() {
-        let criteria = FrameCompletionCriteria::new()
-            .require_feature("observation.state");
+        let criteria = FrameCompletionCriteria::new().require_feature("observation.state");
 
         let mut received = HashSet::new();
 

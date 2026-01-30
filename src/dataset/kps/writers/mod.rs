@@ -14,9 +14,7 @@ pub mod base;
 pub use base::{KpsWriterError, MessageExtractor};
 
 // Re-export common types used by KPS writers
-pub use crate::dataset::common::{
-    AlignedFrame as AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats,
-};
+pub use crate::dataset::common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats};
 
 // HDF5 writer
 #[cfg(feature = "kps-hdf5")]
@@ -56,6 +54,7 @@ pub use audio_writer::{AudioWriter, AudioWriterFactory};
 /// This function examines the Kps config and returns the appropriate
 /// writer implementation. If both formats are specified, Parquet is
 /// preferred as it's the modern format.
+#[allow(unused_variables)]
 pub fn create_kps_writer(
     output_dir: impl AsRef<std::path::Path>,
     episode_id: usize,

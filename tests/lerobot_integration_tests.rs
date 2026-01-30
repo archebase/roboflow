@@ -14,7 +14,9 @@
 use std::fs;
 
 use roboflow::dataset::common::ImageData;
-use roboflow::dataset::lerobot::{LerobotConfig, LerobotWriter, DatasetConfig, VideoConfig, LerobotWriterTrait};
+use roboflow::dataset::lerobot::{
+    DatasetConfig, LerobotConfig, LerobotWriter, LerobotWriterTrait, VideoConfig,
+};
 
 /// Create a test output directory.
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
@@ -64,7 +66,10 @@ fn test_lerobot_end_to_end_conversion() {
     writer.start_episode(Some(0));
 
     // Add some images
-    writer.add_image("observation.images.camera_0".to_string(), create_test_image(64, 48));
+    writer.add_image(
+        "observation.images.camera_0".to_string(),
+        create_test_image(64, 48),
+    );
 
     writer.finish_episode(Some(0)).unwrap();
 
@@ -77,8 +82,10 @@ fn test_lerobot_end_to_end_conversion() {
     assert!(output_dir.path().join("meta").exists());
 
     // Verify metadata files exist
-    assert!(output_dir.path().join("meta/info.json").exists()
-            || output_dir.path().join("info.json").exists());
+    assert!(
+        output_dir.path().join("meta/info.json").exists()
+            || output_dir.path().join("info.json").exists()
+    );
 
     // Verify stats are valid
     assert!(stats.duration_sec >= 0.0);
@@ -125,9 +132,18 @@ fn test_lerobot_multi_camera() {
     writer.start_episode(Some(0));
 
     // Add images for multiple cameras
-    writer.add_image("observation.images.camera_0".to_string(), create_test_image(64, 48));
-    writer.add_image("observation.images.camera_1".to_string(), create_test_image(32, 24));
-    writer.add_image("observation.images.camera_2".to_string(), create_test_image(128, 96));
+    writer.add_image(
+        "observation.images.camera_0".to_string(),
+        create_test_image(64, 48),
+    );
+    writer.add_image(
+        "observation.images.camera_1".to_string(),
+        create_test_image(32, 24),
+    );
+    writer.add_image(
+        "observation.images.camera_2".to_string(),
+        create_test_image(128, 96),
+    );
 
     writer.finish_episode(Some(0)).unwrap();
     let stats = writer.finalize_with_config(&config).unwrap();
@@ -218,8 +234,14 @@ fn test_lerobot_image_buffer() {
     writer.start_episode(Some(0));
 
     // Add images for different cameras
-    writer.add_image("observation.images.camera_0".to_string(), create_test_image(64, 48));
-    writer.add_image("observation.images.camera_1".to_string(), create_test_image(64, 48));
+    writer.add_image(
+        "observation.images.camera_0".to_string(),
+        create_test_image(64, 48),
+    );
+    writer.add_image(
+        "observation.images.camera_1".to_string(),
+        create_test_image(64, 48),
+    );
 
     writer.finish_episode(Some(0)).unwrap();
     let stats = writer.finalize_with_config(&config).unwrap();
@@ -245,7 +267,10 @@ fn test_lerobot_metadata() {
     writer.start_episode(Some(0));
 
     // Add some images
-    writer.add_image("observation.images.high_res".to_string(), create_test_image(320, 240));
+    writer.add_image(
+        "observation.images.high_res".to_string(),
+        create_test_image(320, 240),
+    );
 
     writer.finish_episode(Some(0)).unwrap();
     let _stats = writer.finalize_with_config(&config).unwrap();
@@ -273,7 +298,10 @@ fn test_lerobot_video_codec_config() {
 
     writer.start_episode(Some(0));
 
-    writer.add_image("observation.images.camera_0".to_string(), create_test_image(64, 48));
+    writer.add_image(
+        "observation.images.camera_0".to_string(),
+        create_test_image(64, 48),
+    );
 
     writer.finish_episode(Some(0)).unwrap();
     let _stats = writer.finalize_with_config(&config).unwrap();
@@ -297,7 +325,10 @@ fn test_lerobot_ffmpeg_missing_graceful() {
 
     // Add images
     for _ in 0..3 {
-        writer.add_image("observation.images.camera_0".to_string(), create_test_image(64, 48));
+        writer.add_image(
+            "observation.images.camera_0".to_string(),
+            create_test_image(64, 48),
+        );
     }
 
     // Should not fail even if ffmpeg is not installed
@@ -331,8 +362,14 @@ fn test_lerobot_timestamps() {
     writer.start_episode(Some(0));
 
     // Add images with different timestamps
-    writer.add_image("observation.images.camera_0".to_string(), create_test_image(64, 48));
-    writer.add_image("observation.images.camera_1".to_string(), create_test_image(32, 24));
+    writer.add_image(
+        "observation.images.camera_0".to_string(),
+        create_test_image(64, 48),
+    );
+    writer.add_image(
+        "observation.images.camera_1".to_string(),
+        create_test_image(32, 24),
+    );
 
     writer.finish_episode(Some(0)).unwrap();
     let stats = writer.finalize_with_config(&config).unwrap();

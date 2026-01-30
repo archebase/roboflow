@@ -16,9 +16,9 @@
 //! - [`ProgressSender`] - Channel-based progress reporting
 
 pub mod base;
-pub mod video;
 pub mod parquet_base;
 pub mod progress;
+pub mod video;
 
 // Re-export core types (shared across all formats)
 pub use base::{

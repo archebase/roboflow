@@ -133,8 +133,9 @@ impl StreamingParquetWriter {
         }
 
         if !series_vec.is_empty() {
-            let df = DataFrame::new(series_vec)
-                .map_err(|e| crate::RoboflowError::parse("Parquet", &format!("Failed to create DataFrame: {e}")))?;
+            let df = DataFrame::new(series_vec).map_err(|e| {
+                crate::RoboflowError::parse("Parquet", &format!("Failed to create DataFrame: {e}"))
+            })?;
 
             // Write to Parquet file
             let path = self
@@ -146,7 +147,10 @@ impl StreamingParquetWriter {
             ParquetWriter::new(&mut file)
                 .finish(&mut df.clone())
                 .map_err(|e| {
-                    crate::RoboflowError::parse("Parquet", &format!("Failed to write Parquet file: {e}"))
+                    crate::RoboflowError::parse(
+                        "Parquet",
+                        &format!("Failed to write Parquet file: {e}"),
+                    )
                 })?;
 
             // Track output size
@@ -276,11 +280,9 @@ impl StreamingParquetWriter {
 
 impl DatasetWriter for StreamingParquetWriter {
     fn initialize(&mut self, config: &dyn std::any::Any) -> crate::core::Result<()> {
-        let kps_config = config
-            .downcast_ref::<KpsConfig>()
-            .ok_or_else(|| {
-                crate::RoboflowError::parse("DatasetWriter", "Expected KpsConfig for KPS writer")
-            })?;
+        let kps_config = config.downcast_ref::<KpsConfig>().ok_or_else(|| {
+            crate::RoboflowError::parse("DatasetWriter", "Expected KpsConfig for KPS writer")
+        })?;
 
         // Store config
         self.config = Some(kps_config.clone());
@@ -381,11 +383,9 @@ impl DatasetWriter for StreamingParquetWriter {
     }
 
     fn finalize(&mut self, config: &dyn std::any::Any) -> crate::core::Result<WriterStats> {
-        let kps_config = config
-            .downcast_ref::<KpsConfig>()
-            .ok_or_else(|| {
-                crate::RoboflowError::parse("DatasetWriter", "Expected KpsConfig for KPS writer")
-            })?;
+        let kps_config = config.downcast_ref::<KpsConfig>().ok_or_else(|| {
+            crate::RoboflowError::parse("DatasetWriter", "Expected KpsConfig for KPS writer")
+        })?;
 
         // Write final shard
         #[cfg(feature = "kps-parquet")]

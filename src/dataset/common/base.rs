@@ -15,8 +15,8 @@
 //! - [`ImageData`], [`AudioData`] - Shared multimedia types
 //! - [`WriterStats`] - Common statistics structure
 
-use std::collections::HashMap;
 use crate::core::Result;
+use std::collections::HashMap;
 
 /// Aligned frame data ready for writing to dataset formats.
 ///
@@ -412,16 +412,12 @@ impl AudioData {
     /// Create new audio data.
     pub fn new(samples: Vec<f32>, sample_rate: u32, channels: u8, original_timestamp: i64) -> Self {
         if sample_rate == 0 {
-            tracing::warn!(
-                "AudioData created with sample_rate=0, duration() will return 0.0"
-            );
+            tracing::warn!("AudioData created with sample_rate=0, duration() will return 0.0");
         }
         if channels == 0 {
-            tracing::warn!(
-                "AudioData created with channels=0, frames() will return 0"
-            );
+            tracing::warn!("AudioData created with channels=0, frames() will return 0");
         }
-        if channels > 0 && samples.len() % channels as usize != 0 {
+        if channels > 0 && !samples.len().is_multiple_of(channels as usize) {
             tracing::warn!(
                 sample_count = samples.len(),
                 channels,
@@ -445,7 +441,7 @@ impl AudioData {
         if self.sample_rate == 0 || self.channels == 0 {
             return false;
         }
-        self.samples.len() % self.channels as usize == 0
+        self.samples.len().is_multiple_of(self.channels as usize)
     }
 
     /// Get duration in seconds.

@@ -74,12 +74,18 @@ pub fn calculate_stats(values: &[Vec<f32>]) -> Option<FeatureStats> {
     let mean: Vec<f32> = sum.iter().map(|&s| s / n).collect();
     let std: Vec<f32> = (0..dim)
         .map(|i| {
-            let variance = (sum_sq[i] - (sum[i] * sum[i]) / n) / n;
-            variance.sqrt().max(0.0)
+            let mean_val = mean[i];
+            let variance = (sum_sq[i] / n) - (mean_val * mean_val);
+            variance.max(0.0).sqrt()
         })
         .collect();
 
-    Some(FeatureStats { min, max, mean, std })
+    Some(FeatureStats {
+        min,
+        max,
+        mean,
+        std,
+    })
 }
 
 #[cfg(test)]

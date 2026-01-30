@@ -899,8 +899,8 @@ fn convert_to_lerobot(
 
     // Use StreamingDatasetConverter for bounded-memory streaming conversion
     let converter = StreamingDatasetConverter::new_lerobot(output_dir, config)?
-        .with_completion_window(5)  // 5 frames completion window
-        .with_max_buffered_frames(300);  // Max 10 seconds at 30fps
+        .with_completion_window(5) // 5 frames completion window
+        .with_max_buffered_frames(300); // Max 10 seconds at 30fps
 
     let stats = converter.convert(input)?;
 
@@ -914,10 +914,7 @@ fn convert_to_lerobot(
     println!("Avg buffer size: {:.1} frames", stats.avg_buffer_size);
     println!("Peak memory: {:.1} MB", stats.peak_memory_mb);
     println!("Duration: {:.2}s", stats.duration_sec);
-    println!(
-        "Throughput: {:.1} frames/s",
-        stats.throughput_fps()
-    );
+    println!("Throughput: {:.1} frames/s", stats.throughput_fps());
 
     Ok(())
 }
@@ -952,8 +949,8 @@ fn convert_bag_to_lerobot(
 
     // Use StreamingDatasetConverter for bounded-memory streaming conversion
     let converter = StreamingDatasetConverter::new_lerobot(output_dir, config)?
-        .with_completion_window(5)  // 5 frames completion window
-        .with_max_buffered_frames(300);  // Max 10 seconds at 30fps
+        .with_completion_window(5) // 5 frames completion window
+        .with_max_buffered_frames(300); // Max 10 seconds at 30fps
 
     let stats = converter.convert(input)?;
 
@@ -967,10 +964,7 @@ fn convert_bag_to_lerobot(
     println!("Avg buffer size: {:.1} frames", stats.avg_buffer_size);
     println!("Peak memory: {:.1} MB", stats.peak_memory_mb);
     println!("Duration: {:.2}s", stats.duration_sec);
-    println!(
-        "Throughput: {:.1} frames/s",
-        stats.throughput_fps()
-    );
+    println!("Throughput: {:.1} frames/s", stats.throughput_fps());
 
     Ok(())
 }

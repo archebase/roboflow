@@ -42,8 +42,9 @@ impl LerobotConfig {
 
     /// Parse configuration from a TOML string.
     pub fn from_toml(toml_str: &str) -> Result<Self> {
-        let config: LerobotConfig = toml::from_str(toml_str)
-            .map_err(|e| crate::RoboflowError::parse("LerobotConfig", &format!("TOML parse error: {}", e)))?;
+        let config: LerobotConfig = toml::from_str(toml_str).map_err(|e| {
+            crate::RoboflowError::parse("LerobotConfig", format!("TOML parse error: {}", e))
+        })?;
         Ok(config)
     }
 

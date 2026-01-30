@@ -36,9 +36,9 @@ impl Default for StreamingConfig {
     fn default() -> Self {
         Self {
             fps: 30,
-            completion_window_frames: 5,      // Wait for 5 frames (166ms at 30fps)
-            max_buffered_frames: 300,         // 10 seconds at 30fps
-            max_buffered_memory_mb: 500,       // 500MB max buffer
+            completion_window_frames: 5, // Wait for 5 frames (166ms at 30fps)
+            max_buffered_frames: 300,    // 10 seconds at 30fps
+            max_buffered_memory_mb: 500, // 500MB max buffer
             late_message_strategy: LateMessageStrategy::WarnAndDrop,
             feature_requirements: HashMap::new(),
         }
@@ -127,19 +127,15 @@ impl StreamingConfig {
 
     /// Add a required feature.
     pub fn require_feature(mut self, feature: impl Into<String>) -> Self {
-        self.feature_requirements.insert(
-            feature.into(),
-            FeatureRequirement::Required,
-        );
+        self.feature_requirements
+            .insert(feature.into(), FeatureRequirement::Required);
         self
     }
 
     /// Add an optional feature.
     pub fn optional_feature(mut self, feature: impl Into<String>) -> Self {
-        self.feature_requirements.insert(
-            feature.into(),
-            FeatureRequirement::Optional,
-        );
+        self.feature_requirements
+            .insert(feature.into(), FeatureRequirement::Optional);
         self
     }
 
@@ -203,8 +199,10 @@ mod tests {
 
         // Create a config with fps=0 (only possible through direct struct construction)
         // Note: with_fps() would panic, so we test validate() separately
-        let mut config = StreamingConfig::default();
-        config.fps = 0;
+        let config = StreamingConfig {
+            fps: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 

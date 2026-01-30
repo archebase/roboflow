@@ -94,7 +94,7 @@ impl BackpressureHandler {
         self.current_memory_estimate = buffer.len() * self.estimated_frame_size;
 
         // Adjust frame size estimate over time
-        if buffer.len() > 0 && self.estimated_frame_size < 128 * 1024 {
+        if !buffer.is_empty() && self.estimated_frame_size < 128 * 1024 {
             // Minimum estimate based on actual frames
             self.estimated_frame_size = 128 * 1024;
         }
@@ -160,12 +160,10 @@ mod tests {
 
     #[test]
     fn test_memory_calculation() {
-        let mut handler = BackpressureHandler::from_config(
-            &StreamingConfig {
-                max_buffered_memory_mb: 100,
-                ..Default::default()
-            }
-        );
+        let mut handler = BackpressureHandler::from_config(&StreamingConfig {
+            max_buffered_memory_mb: 100,
+            ..Default::default()
+        });
 
         // Set memory estimate to 50 MB
         handler.current_memory_estimate = 50 * 1024 * 1024;
@@ -178,12 +176,10 @@ mod tests {
 
     #[test]
     fn test_buffer_usage_percent() {
-        let handler = BackpressureHandler::from_config(
-            &StreamingConfig {
-                max_buffered_frames: 100,
-                ..Default::default()
-            }
-        );
+        let handler = BackpressureHandler::from_config(&StreamingConfig {
+            max_buffered_frames: 100,
+            ..Default::default()
+        });
 
         // 0% when empty
         assert_eq!(handler.buffer_usage_percent(0), 0.0);

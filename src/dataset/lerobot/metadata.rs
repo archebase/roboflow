@@ -215,7 +215,11 @@ impl MetadataCollector {
             );
         }
 
-        let robot_type = config.dataset.robot_type.clone().unwrap_or_else(|| "unknown".to_string());
+        let robot_type = config
+            .dataset
+            .robot_type
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
 
         let info = LerobotInfo {
             codebase_version: "v2.1".to_string(),
@@ -232,7 +236,7 @@ impl MetadataCollector {
 
         let info_path = meta_dir.join("info.json");
         let info_json = serde_json::to_string_pretty(&info)
-            .map_err(|e| crate::RoboflowError::parse("Metadata", &format!("JSON error: {}", e)))?;
+            .map_err(|e| crate::RoboflowError::parse("Metadata", format!("JSON error: {}", e)))?;
 
         fs::write(&info_path, info_json)?;
         tracing::info!(path = %info_path.display(), "Wrote LeRobot v2.1 info.json");
@@ -246,8 +250,9 @@ impl MetadataCollector {
         let mut file = File::create(&episodes_path)?;
 
         for episode in &self.episodes {
-            let line = serde_json::to_string(episode)
-                .map_err(|e| crate::RoboflowError::parse("Metadata", &format!("JSON error: {}", e)))?;
+            let line = serde_json::to_string(episode).map_err(|e| {
+                crate::RoboflowError::parse("Metadata", format!("JSON error: {}", e))
+            })?;
             writeln!(file, "{}", line)?;
         }
 
@@ -274,8 +279,9 @@ impl MetadataCollector {
                 task_index: *task_index,
                 task: task.clone(),
             };
-            let line = serde_json::to_string(&task_info)
-                .map_err(|e| crate::RoboflowError::parse("Metadata", &format!("JSON error: {}", e)))?;
+            let line = serde_json::to_string(&task_info).map_err(|e| {
+                crate::RoboflowError::parse("Metadata", format!("JSON error: {}", e))
+            })?;
             writeln!(file, "{}", line)?;
         }
 
@@ -290,8 +296,9 @@ impl MetadataCollector {
         let mut file = File::create(&stats_path)?;
 
         for stats in &self.episode_stats {
-            let line = serde_json::to_string(stats)
-                .map_err(|e| crate::RoboflowError::parse("Metadata", &format!("JSON error: {}", e)))?;
+            let line = serde_json::to_string(stats).map_err(|e| {
+                crate::RoboflowError::parse("Metadata", format!("JSON error: {}", e))
+            })?;
             writeln!(file, "{}", line)?;
         }
 

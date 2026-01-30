@@ -6,8 +6,8 @@
 //!
 //! Minimal, clean bindings that expose roboflow's high-level fluent API.
 
-mod fluent;
 mod dataset;
+mod fluent;
 
 use pyo3::prelude::*;
 

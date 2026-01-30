@@ -7,7 +7,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Instant;
 
-
 use crate::dataset::common::AlignedFrame;
 use crate::dataset::streaming::completion::FrameCompletionCriteria;
 use crate::dataset::streaming::config::StreamingConfig;
@@ -139,21 +138,19 @@ impl FrameAlignmentBuffer {
         let aligned_ts = self.align_to_frame_boundary(timestamped_msg.log_time);
 
         // Get or create partial frame
-        let entry = self.active_frames
-            .entry(aligned_ts)
-            .or_insert_with(|| {
-                let idx = self.next_frame_index;
-                self.next_frame_index += 1;
-                let eligible = aligned_ts + self.config.completion_window_ns();
-                PartialFrame::new(idx, aligned_ts, eligible)
-            });
+        let entry = self.active_frames.entry(aligned_ts).or_insert_with(|| {
+            let idx = self.next_frame_index;
+            self.next_frame_index += 1;
+            let eligible = aligned_ts + self.config.completion_window_ns();
+            PartialFrame::new(idx, aligned_ts, eligible)
+        });
 
         // Add feature to the partial frame
         entry.add_feature(feature_name);
 
         // Extract message data and add to frame
         // Note: We do this before releasing the borrow
-        Self::extract_message_to_frame_static(entry, timestamped_msg, &feature_name);
+        Self::extract_message_to_frame_static(entry, timestamped_msg, feature_name);
 
         // Check for completed frames
         self.check_completions()
@@ -172,7 +169,10 @@ impl FrameAlignmentBuffer {
             partial.frame.frame_index = completed.len();
 
             // Mark as force-completed if not normally complete
-            if !self.completion_criteria.is_complete(&partial.received_features) {
+            if !self
+                .completion_criteria
+                .is_complete(&partial.received_features)
+            {
                 self.stats.record_force_completion();
             } else {
                 self.stats.record_normal_completion();
@@ -224,7 +224,9 @@ impl FrameAlignmentBuffer {
 
         for (&ts, partial) in &self.active_frames {
             // Check if frame is complete by criteria
-            let is_data_complete = self.completion_criteria.is_complete(&partial.received_features);
+            let is_data_complete = self
+                .completion_criteria
+                .is_complete(&partial.received_features);
 
             // Check if frame is complete by time window (eligible time has passed)
             let is_time_complete = self.current_timestamp >= partial.eligible_timestamp;
@@ -240,7 +242,10 @@ impl FrameAlignmentBuffer {
                 // Update frame index
                 partial.frame.frame_index = completed.len();
 
-                if self.completion_criteria.is_complete(&partial.received_features) {
+                if self
+                    .completion_criteria
+                    .is_complete(&partial.received_features)
+                {
                     self.stats.record_normal_completion();
                 } else {
                     self.stats.record_force_completion();
@@ -362,9 +367,15 @@ impl FrameAlignmentBuffer {
         // Add as state or action based on feature name
         if !values.is_empty() {
             if feature_name.starts_with("action.") {
-                partial.frame.actions.insert(feature_name.to_string(), values);
+                partial
+                    .frame
+                    .actions
+                    .insert(feature_name.to_string(), values);
             } else {
-                partial.frame.states.insert(feature_name.to_string(), values);
+                partial
+                    .frame
+                    .states
+                    .insert(feature_name.to_string(), values);
             }
         }
     }

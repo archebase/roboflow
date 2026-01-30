@@ -15,9 +15,9 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crate::core::Result;
-use crate::dataset::common::{AlignedFrame, DatasetWriter, ImageData, WriterStats};
 use crate::dataset::common::parquet_base::calculate_stats;
 use crate::dataset::common::video::{Mp4Encoder, VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
+use crate::dataset::common::{AlignedFrame, DatasetWriter, ImageData, WriterStats};
 use crate::dataset::kps::video_encoder::VideoEncoderError;
 use crate::dataset::lerobot::config::LerobotConfig;
 use crate::dataset::lerobot::metadata::MetadataCollector;
@@ -129,16 +129,18 @@ impl LerobotWriter {
     pub fn add_frame(&mut self, frame: LerobotFrame) {
         // Update metadata
         if let Some(ref state) = frame.observation_state {
-            self.metadata.update_state_dim("observation.state".to_string(), state.len());
+            self.metadata
+                .update_state_dim("observation.state".to_string(), state.len());
         }
         if let Some(ref action) = frame.action {
-            self.metadata.update_state_dim("action".to_string(), action.len());
+            self.metadata
+                .update_state_dim("action".to_string(), action.len());
         }
 
         // Store image data for video encoding
-        for (_camera, _data) in &frame.image_frames {
-            // Image data is added separately via add_image()
-        }
+        // Note: Image data is added separately via add_image()
+        // The image_frames map is iterated during video encoding
+        let _ = &frame.image_frames;
 
         self.frame_data.push(frame);
     }
@@ -146,7 +148,8 @@ impl LerobotWriter {
     /// Add image data for a camera frame.
     pub fn add_image(&mut self, camera: String, data: ImageData) {
         // Update shape metadata
-        self.metadata.update_image_shape(camera.clone(), data.width as usize, data.height as usize);
+        self.metadata
+            .update_image_shape(camera.clone(), data.width as usize, data.height as usize);
 
         // Buffer for video encoding
         self.image_buffers.entry(camera).or_default().push(data);
@@ -186,7 +189,8 @@ impl LerobotWriter {
         self.calculate_episode_stats()?;
 
         // Update metadata
-        self.metadata.add_episode(self.episode_index, self.frame_data.len(), tasks);
+        self.metadata
+            .add_episode(self.episode_index, self.frame_data.len(), tasks);
 
         // Update counters
         self.total_frames += self.frame_data.len();
@@ -205,9 +209,9 @@ impl LerobotWriter {
     /// Write current episode to Parquet file.
     #[cfg(feature = "kps-parquet")]
     fn write_episode_parquet(&mut self) -> Result<()> {
+        use polars::prelude::*;
         use std::fs::File;
         use std::io::BufWriter;
-        use polars::prelude::*;
 
         if self.frame_data.is_empty() {
             return Ok(());
@@ -301,14 +305,20 @@ impl LerobotWriter {
         // Add observation state columns
         for i in 0..state_dim {
             let col_name = format!("observation.state.{}", i);
-            let values: Vec<f32> = observation_state.iter().map(|v| v.get(i).copied().unwrap_or(0.0)).collect();
+            let values: Vec<f32> = observation_state
+                .iter()
+                .map(|v| v.get(i).copied().unwrap_or(0.0))
+                .collect();
             series_vec.push(Series::new(&col_name, values));
         }
 
         // Add action columns
         for i in 0..state_dim {
             let col_name = format!("action.{}", i);
-            let values: Vec<f32> = action.iter().map(|v| v.get(i).copied().unwrap_or(0.0)).collect();
+            let values: Vec<f32> = action
+                .iter()
+                .map(|v| v.get(i).copied().unwrap_or(0.0))
+                .collect();
             series_vec.push(Series::new(&col_name, values));
         }
 
@@ -319,16 +329,23 @@ impl LerobotWriter {
         for camera in &cameras {
             let feature_name = format!("observation.images.{}", camera);
             if let Some(paths) = image_paths.get(camera) {
-                series_vec.push(Series::new(format!("{}_path", feature_name).as_str(), paths.clone()));
+                series_vec.push(Series::new(
+                    format!("{}_path", feature_name).as_str(),
+                    paths.clone(),
+                ));
             }
             if let Some(timestamps) = image_timestamps.get(camera) {
-                series_vec.push(Series::new(format!("{}_timestamp", feature_name).as_str(), timestamps.clone()));
+                series_vec.push(Series::new(
+                    format!("{}_timestamp", feature_name).as_str(),
+                    timestamps.clone(),
+                ));
             }
         }
 
         // Create DataFrame and write
-        let df = DataFrame::new(series_vec)
-            .map_err(|e| crate::RoboflowError::parse("Parquet", &format!("DataFrame error: {}", e)))?;
+        let df = DataFrame::new(series_vec).map_err(|e| {
+            crate::RoboflowError::parse("Parquet", &format!("DataFrame error: {}", e))
+        })?;
 
         let parquet_path = self.output_dir.join(format!(
             "data/chunk-000/episode_{:06}.parquet",
@@ -360,10 +377,10 @@ impl LerobotWriter {
     #[cfg(not(feature = "kps-parquet"))]
     fn write_episode_parquet(&mut self) -> Result<()> {
         // Parquet support not enabled - return error instead of silently skipping
-        return Err(crate::RoboflowError::unsupported(
+        Err(crate::RoboflowError::unsupported(
             "Parquet writing requires the 'kps-parquet' feature to be enabled. \
-             Add --features kps-parquet to your build command."
-        ));
+             Add --features kps-parquet to your build command.",
+        ))
     }
 
     /// Encode videos for all cameras.
@@ -393,7 +410,8 @@ impl LerobotWriter {
         let videos_dir = self.output_dir.join("videos/chunk-000");
 
         // Collect camera data for encoding
-        let camera_data: Vec<(String, Vec<ImageData>)> = self.image_buffers
+        let camera_data: Vec<(String, Vec<ImageData>)> = self
+            .image_buffers
             .iter()
             .filter(|(_, images)| !images.is_empty())
             .map(|(camera, images)| (camera.clone(), images.clone()))
@@ -407,9 +425,8 @@ impl LerobotWriter {
         // 1. Hardware acceleration is enabled (reduces CPU contention)
         // 2. We have multiple cameras
         // 3. parallel_jobs > 1
-        let use_parallel = resolved.hardware_accelerated
-            && resolved.parallel_jobs > 1
-            && camera_data.len() > 1;
+        let use_parallel =
+            resolved.hardware_accelerated && resolved.parallel_jobs > 1 && camera_data.len() > 1;
 
         if use_parallel {
             // Limit concurrent encodings to avoid resource contention
@@ -421,11 +438,7 @@ impl LerobotWriter {
                 concurrent_jobs,
             )?;
         } else {
-            self.encode_videos_sequential(
-                camera_data,
-                &videos_dir,
-                &encoder_config,
-            )?;
+            self.encode_videos_sequential(camera_data, &videos_dir, &encoder_config)?;
         }
 
         eprintln!(
@@ -490,7 +503,7 @@ impl LerobotWriter {
                         self.failed_encodings += 1;
                         return Err(crate::RoboflowError::encode(
                             "VideoEncoder",
-                            format!("Failed to encode video for camera '{}': {}", camera, e)
+                            format!("Failed to encode video for camera '{}': {}", camera, e),
                         ));
                     }
                 }
@@ -624,11 +637,7 @@ impl LerobotWriter {
 
         for img in images {
             if img.width > 0 && img.height > 0 {
-                let rgb_data = if img.is_encoded {
-                    img.data.clone()
-                } else {
-                    img.data.clone()
-                };
+                let rgb_data = img.data.clone();
 
                 let video_frame = VideoFrame::new(img.width, img.height, rgb_data);
                 if let Err(e) = buffer.add_frame(video_frame) {
@@ -657,7 +666,8 @@ impl LerobotWriter {
         let mut stats = HashMap::new();
 
         // Calculate observation.state stats
-        let state_values: Vec<Vec<f32>> = self.frame_data
+        let state_values: Vec<Vec<f32>> = self
+            .frame_data
             .iter()
             .filter_map(|f| f.observation_state.as_ref())
             .cloned()
@@ -668,7 +678,8 @@ impl LerobotWriter {
         }
 
         // Calculate action stats
-        let action_values: Vec<Vec<f32>> = self.frame_data
+        let action_values: Vec<Vec<f32>> = self
+            .frame_data
             .iter()
             .filter_map(|f| f.action.as_ref())
             .cloned()
@@ -863,7 +874,8 @@ impl LerobotWriterTrait for LerobotWriter {
         self.calculate_episode_stats()?;
 
         // Update metadata
-        self.metadata.add_episode(self.episode_index, self.frame_data.len(), tasks);
+        self.metadata
+            .add_episode(self.episode_index, self.frame_data.len(), tasks);
 
         // Update counters
         self.total_frames += self.frame_data.len();
@@ -889,7 +901,8 @@ impl LerobotWriterTrait for LerobotWriter {
 
     fn add_image(&mut self, camera: String, data: ImageData) {
         // Update shape metadata
-        self.metadata.update_image_shape(camera.clone(), data.width as usize, data.height as usize);
+        self.metadata
+            .update_image_shape(camera.clone(), data.width as usize, data.height as usize);
 
         // Buffer for video encoding
         self.image_buffers.entry(camera).or_default().push(data);
@@ -915,15 +928,11 @@ impl FromAlignedFrame for LerobotFrame {
             .map(|(_, v)| v.clone());
 
         // Extract action from the aligned frame
-        let action = frame
-            .actions
-            .values()
-            .next()
-            .cloned();
+        let action = frame.actions.values().next().cloned();
 
         // Build image frame references
         let mut image_frames = HashMap::new();
-        for (camera, _data) in &frame.images {
+        for camera in frame.images.keys() {
             let path = format!(
                 "videos/chunk-000/observation.images.{}/episode_{:06}.mp4",
                 camera, episode_index

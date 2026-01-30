@@ -32,8 +32,8 @@
 //! let stats = writer.finalize(&config)?;
 //! ```
 
-use std::path::Path;
 use crate::core::Result;
+use std::path::Path;
 
 // KPS dataset format
 pub mod kps;
@@ -111,7 +111,7 @@ impl DatasetConfig {
         match format {
             DatasetFormat::Kps => {
                 let config = kps::KpsConfig::from_file(path.as_ref())
-                    .map_err(|e| crate::RoboflowError::parse("DatasetConfig", &e.to_string()))?;
+                    .map_err(|e| crate::RoboflowError::parse("DatasetConfig", e.to_string()))?;
                 Ok(Self::Kps(config))
             }
             DatasetFormat::Lerobot => {
@@ -131,7 +131,7 @@ impl DatasetConfig {
         match format {
             DatasetFormat::Kps => {
                 let config: kps::KpsConfig = toml::from_str(toml_str)
-                    .map_err(|e| crate::RoboflowError::parse("DatasetConfig", &e.to_string()))?;
+                    .map_err(|e| crate::RoboflowError::parse("DatasetConfig", e.to_string()))?;
                 Ok(Self::Kps(config))
             }
             DatasetFormat::Lerobot => {
@@ -157,30 +157,26 @@ impl DatasetConfig {
     ) -> Self {
         let name = name.into();
         match format {
-            DatasetFormat::Kps => {
-                Self::Kps(kps::KpsConfig {
-                    dataset: kps::DatasetConfig {
-                        name,
-                        fps,
-                        robot_type,
-                    },
-                    mappings: Vec::new(),
-                    output: kps::OutputConfig::default(),
-                })
-            }
-            DatasetFormat::Lerobot => {
-                Self::Lerobot(lerobot::LerobotConfig {
-                    dataset: lerobot::DatasetConfig {
-                        name,
-                        fps,
-                        robot_type,
-                        env_type: None,
-                    },
-                    mappings: Vec::new(),
-                    video: Default::default(),
-                    annotation_file: None,
-                })
-            }
+            DatasetFormat::Kps => Self::Kps(kps::KpsConfig {
+                dataset: kps::DatasetConfig {
+                    name,
+                    fps,
+                    robot_type,
+                },
+                mappings: Vec::new(),
+                output: kps::OutputConfig::default(),
+            }),
+            DatasetFormat::Lerobot => Self::Lerobot(lerobot::LerobotConfig {
+                dataset: lerobot::DatasetConfig {
+                    name,
+                    fps,
+                    robot_type,
+                    env_type: None,
+                },
+                mappings: Vec::new(),
+                video: Default::default(),
+                annotation_file: None,
+            }),
         }
     }
 
@@ -308,25 +304,24 @@ pub fn create_dataset_writer(
 ) -> Result<Box<dyn DatasetWriter>> {
     match format {
         DatasetFormat::Kps => {
-            use crate::dataset::kps::KpsConfig;
             use crate::dataset::kps::writers::create_kps_writer;
+            use crate::dataset::kps::KpsConfig;
 
-            let kps_config = config
-                .downcast_ref::<KpsConfig>()
-                .ok_or_else(|| {
-                    crate::RoboflowError::parse("DatasetWriter", "Expected KpsConfig for KPS format")
-                })?;
+            let kps_config = config.downcast_ref::<KpsConfig>().ok_or_else(|| {
+                crate::RoboflowError::parse("DatasetWriter", "Expected KpsConfig for KPS format")
+            })?;
 
             create_kps_writer(output_dir, 0, kps_config)
         }
         DatasetFormat::Lerobot => {
             use crate::dataset::lerobot::{LerobotConfig, LerobotWriter};
 
-            let lerobot_config = config
-                .downcast_ref::<LerobotConfig>()
-                .ok_or_else(|| {
-                    crate::RoboflowError::parse("DatasetWriter", "Expected LerobotConfig for LeRobot format")
-                })?;
+            let lerobot_config = config.downcast_ref::<LerobotConfig>().ok_or_else(|| {
+                crate::RoboflowError::parse(
+                    "DatasetWriter",
+                    "Expected LerobotConfig for LeRobot format",
+                )
+            })?;
 
             let writer = LerobotWriter::create(output_dir, lerobot_config.clone())?;
             Ok(Box::new(writer))

@@ -7,8 +7,8 @@
 //! This module provides optimized video encoding configurations
 //! for different use cases (speed vs quality vs size).
 
-use crate::dataset::lerobot::hardware::HardwareConfig;
 use crate::dataset::lerobot::config::VideoConfig;
+use crate::dataset::lerobot::hardware::HardwareConfig;
 
 /// Video encoding preset - trades encoding speed for compression efficiency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,7 +224,7 @@ impl Profile {
     }
 
     /// Parse from string.
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "balanced" => Some(Profile::Balanced),
             "speed" => Some(Profile::Speed),
@@ -275,12 +275,11 @@ impl ResolvedConfig {
 
         // Check if profile is specified
         if let Some(profile) = &video_config.profile {
-            if let Some(p) = Profile::from_str(profile) {
+            if let Some(p) = Profile::parse(profile) {
                 let profile_config = p.to_encoding_profile();
 
                 // If codec is explicitly set (not default), use it instead of profile's codec
-                let codec = if !video_config.codec.is_empty()
-                    && video_config.codec != "libx264" {
+                let codec = if !video_config.codec.is_empty() && video_config.codec != "libx264" {
                     video_config.codec.clone()
                 } else if profile_config.hardware_accel {
                     hardware.codec().to_string()
@@ -328,7 +327,10 @@ impl ResolvedConfig {
     }
 
     /// Create a VideoEncoderConfig from this resolved config.
-    pub fn to_encoder_config(&self, fps: u32) -> crate::dataset::kps::video_encoder::VideoEncoderConfig {
+    pub fn to_encoder_config(
+        &self,
+        fps: u32,
+    ) -> crate::dataset::kps::video_encoder::VideoEncoderConfig {
         crate::dataset::kps::video_encoder::VideoEncoderConfig {
             codec: self.codec.clone(),
             pixel_format: self.pixel_format.clone(),
@@ -369,25 +371,28 @@ mod tests {
 
     #[test]
     fn test_profile_from_str() {
-        assert_eq!(Profile::from_str("speed"), Some(Profile::Speed));
-        assert_eq!(Profile::from_str("quality"), Some(Profile::Quality));
-        assert_eq!(Profile::from_str("balanced"), Some(Profile::Balanced));
-        assert_eq!(Profile::from_str("storage"), Some(Profile::Storage));
-        assert_eq!(Profile::from_str("prototype"), Some(Profile::Prototype));
-        assert_eq!(Profile::from_str("invalid"), None);
+        assert_eq!(Profile::parse("speed"), Some(Profile::Speed));
+        assert_eq!(Profile::parse("quality"), Some(Profile::Quality));
+        assert_eq!(Profile::parse("balanced"), Some(Profile::Balanced));
+        assert_eq!(Profile::parse("storage"), Some(Profile::Storage));
+        assert_eq!(Profile::parse("prototype"), Some(Profile::Prototype));
+        assert_eq!(Profile::parse("invalid"), None);
     }
 
     #[test]
     fn test_profile_from_str_case_insensitive() {
-        assert_eq!(Profile::from_str("SPEED"), Some(Profile::Speed));
-        assert_eq!(Profile::from_str("Quality"), Some(Profile::Quality));
-        assert_eq!(Profile::from_str("BALANCED"), Some(Profile::Balanced));
+        assert_eq!(Profile::parse("SPEED"), Some(Profile::Speed));
+        assert_eq!(Profile::parse("Quality"), Some(Profile::Quality));
+        assert_eq!(Profile::parse("BALANCED"), Some(Profile::Balanced));
     }
 
     #[test]
     fn test_hardware_backend_codec_names() {
         assert_eq!(HardwareBackend::None.codec_name(), "libx264");
-        assert_eq!(HardwareBackend::VideoToolbox.codec_name(), "h264_videotoolbox");
+        assert_eq!(
+            HardwareBackend::VideoToolbox.codec_name(),
+            "h264_videotoolbox"
+        );
         assert_eq!(HardwareBackend::Nvenc.codec_name(), "h264_nvenc");
         assert_eq!(HardwareBackend::Qsv.codec_name(), "h264_qsv");
         assert_eq!(HardwareBackend::Vaapi.codec_name(), "h264_vaapi");
@@ -446,8 +451,7 @@ mod tests {
 
     #[test]
     fn test_video_encoding_profile_parallel_jobs_min() {
-        let profile = VideoEncodingProfile::speed()
-            .with_parallel_jobs(0);
+        let profile = VideoEncodingProfile::speed().with_parallel_jobs(0);
 
         // Should be at least 1
         assert_eq!(profile.parallel_jobs, 1);
@@ -456,9 +460,18 @@ mod tests {
     #[test]
     fn test_quality_tier_recommended_preset() {
         assert_eq!(QualityTier::High.recommended_preset(), SpeedPreset::Fast);
-        assert_eq!(QualityTier::Medium.recommended_preset(), SpeedPreset::Faster);
-        assert_eq!(QualityTier::Low.recommended_preset(), SpeedPreset::Superfast);
-        assert_eq!(QualityTier::Prototype.recommended_preset(), SpeedPreset::Veryfast);
+        assert_eq!(
+            QualityTier::Medium.recommended_preset(),
+            SpeedPreset::Faster
+        );
+        assert_eq!(
+            QualityTier::Low.recommended_preset(),
+            SpeedPreset::Superfast
+        );
+        assert_eq!(
+            QualityTier::Prototype.recommended_preset(),
+            SpeedPreset::Veryfast
+        );
     }
 
     #[test]

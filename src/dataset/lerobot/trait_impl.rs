@@ -132,10 +132,7 @@ pub trait FromAlignedFrame {
     /// # Returns
     ///
     /// A LeRobot frame with converted data
-    fn from_aligned_frame(
-        frame: &AlignedFrame,
-        episode_index: usize,
-    ) -> Self;
+    fn from_aligned_frame(frame: &AlignedFrame, episode_index: usize) -> Self;
 }
 
 #[cfg(test)]
@@ -145,8 +142,7 @@ mod tests {
     #[test]
     fn test_trait_exists() {
         // This test just verifies the trait compiles
-        fn accepts_trait<T: LerobotWriterTrait>(_: &T) {}
+        fn _accepts_trait<T: LerobotWriterTrait>(_: &T) {}
         // If this compiles, the trait exists
-        assert!(true);
     }
 }

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use tracing::{info, warn, instrument};
+use tracing::{info, instrument, warn};
 
 use crate::core::Result;
 use crate::dataset::common::DatasetWriter;
@@ -132,7 +132,8 @@ impl StreamingDatasetConverter {
 
         // Stream messages
         let mut stats = StreamingStats::default();
-        let mut unmapped_warning_shown: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut unmapped_warning_shown: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
         for result in reader.decode_messages_with_timestamp()? {
             let (timestamped_msg, channel) = result?;
@@ -161,10 +162,7 @@ impl StreamingDatasetConverter {
             };
 
             // Process message through alignment buffer
-            let completed_frames = aligner.process_message(
-                &msg,
-                &mapping.feature,
-            );
+            let completed_frames = aligner.process_message(&msg, &mapping.feature);
 
             // Write completed frames immediately
             for frame in completed_frames {
@@ -246,22 +244,40 @@ impl StreamingDatasetConverter {
 
         match self.format {
             DatasetFormat::Kps => {
-                let config = self.kps_config.as_ref()
-                    .ok_or_else(|| crate::RoboflowError::parse("StreamingConverter", "KPS config required but not provided"))?;
-                create_dataset_writer(self.format, &self.output_dir, config)
-                    .map_err(|e| crate::RoboflowError::encode(
+                let config = self.kps_config.as_ref().ok_or_else(|| {
+                    crate::RoboflowError::parse(
                         "StreamingConverter",
-                        format!("Failed to create KPS writer at {}: {}", self.output_dir.display(), e)
-                    ))
+                        "KPS config required but not provided",
+                    )
+                })?;
+                create_dataset_writer(self.format, &self.output_dir, config).map_err(|e| {
+                    crate::RoboflowError::encode(
+                        "StreamingConverter",
+                        format!(
+                            "Failed to create KPS writer at {}: {}",
+                            self.output_dir.display(),
+                            e
+                        ),
+                    )
+                })
             }
             DatasetFormat::Lerobot => {
-                let config = self.lerobot_config.as_ref()
-                    .ok_or_else(|| crate::RoboflowError::parse("StreamingConverter", "LeRobot config required but not provided"))?;
-                create_dataset_writer(self.format, &self.output_dir, config)
-                    .map_err(|e| crate::RoboflowError::encode(
+                let config = self.lerobot_config.as_ref().ok_or_else(|| {
+                    crate::RoboflowError::parse(
                         "StreamingConverter",
-                        format!("Failed to create LeRobot writer at {}: {}", self.output_dir.display(), e)
-                    ))
+                        "LeRobot config required but not provided",
+                    )
+                })?;
+                create_dataset_writer(self.format, &self.output_dir, config).map_err(|e| {
+                    crate::RoboflowError::encode(
+                        "StreamingConverter",
+                        format!(
+                            "Failed to create LeRobot writer at {}: {}",
+                            self.output_dir.display(),
+                            e
+                        ),
+                    )
+                })
             }
         }
     }
@@ -273,7 +289,10 @@ impl StreamingDatasetConverter {
         } else if let Some(lerobot_config) = &self.lerobot_config {
             Ok(lerobot_config)
         } else {
-            Err(crate::RoboflowError::parse("StreamingConverter", "No config available").into())
+            Err(crate::RoboflowError::parse(
+                "StreamingConverter",
+                "No config available",
+            ))
         }
     }
 
@@ -285,30 +304,40 @@ impl StreamingDatasetConverter {
             DatasetFormat::Kps => {
                 if let Some(config) = &self.kps_config {
                     for mapping in &config.mappings {
-                        map.insert(mapping.topic.clone(), Mapping {
-                            feature: mapping.feature.clone(),
-                            mapping_type: match mapping.mapping_type {
-                                crate::dataset::kps::MappingType::Image => "image",
-                                crate::dataset::kps::MappingType::State => "state",
-                                crate::dataset::kps::MappingType::Action => "action",
-                                _ => "state",
+                        map.insert(
+                            mapping.topic.clone(),
+                            Mapping {
+                                feature: mapping.feature.clone(),
+                                mapping_type: match mapping.mapping_type {
+                                    crate::dataset::kps::MappingType::Image => "image",
+                                    crate::dataset::kps::MappingType::State => "state",
+                                    crate::dataset::kps::MappingType::Action => "action",
+                                    _ => "state",
+                                },
                             },
-                        });
+                        );
                     }
                 }
             }
             DatasetFormat::Lerobot => {
                 if let Some(config) = &self.lerobot_config {
                     for mapping in &config.mappings {
-                        map.insert(mapping.topic.clone(), Mapping {
-                            feature: mapping.feature.clone(),
-                            mapping_type: match mapping.mapping_type {
-                                crate::dataset::lerobot::config::MappingType::Image => "image",
-                                crate::dataset::lerobot::config::MappingType::State => "state",
-                                crate::dataset::lerobot::config::MappingType::Action => "action",
-                                crate::dataset::lerobot::config::MappingType::Timestamp => "timestamp",
+                        map.insert(
+                            mapping.topic.clone(),
+                            Mapping {
+                                feature: mapping.feature.clone(),
+                                mapping_type: match mapping.mapping_type {
+                                    crate::dataset::lerobot::config::MappingType::Image => "image",
+                                    crate::dataset::lerobot::config::MappingType::State => "state",
+                                    crate::dataset::lerobot::config::MappingType::Action => {
+                                        "action"
+                                    }
+                                    crate::dataset::lerobot::config::MappingType::Timestamp => {
+                                        "timestamp"
+                                    }
+                                },
                             },
-                        });
+                        );
                     }
                 }
             }
@@ -327,6 +356,7 @@ struct Mapping {
     feature: String,
     /// Data type for validation/routing (reserved for future use)
     /// Values: "image", "state", "action", "timestamp"
+    #[allow(dead_code)]
     mapping_type: &'static str,
 }
 
@@ -349,10 +379,7 @@ mod tests {
             annotation_file: None,
         };
 
-        let converter = StreamingDatasetConverter::new_lerobot(
-            "/tmp/test",
-            lerobot_config,
-        );
+        let converter = StreamingDatasetConverter::new_lerobot("/tmp/test", lerobot_config);
 
         assert!(converter.is_ok());
     }

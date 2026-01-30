@@ -131,9 +131,11 @@ mod tests {
 
     #[test]
     fn test_throughput_calculation() {
-        let mut stats = StreamingStats::default();
-        stats.frames_written = 3000;
-        stats.duration_sec = 10.0;
+        let stats = StreamingStats {
+            frames_written: 3000,
+            duration_sec: 10.0,
+            ..Default::default()
+        };
 
         assert!((stats.throughput_fps() - 300.0).abs() < 0.1);
     }
@@ -156,7 +158,7 @@ mod tests {
         stats.update_peak_buffer(5);
         assert_eq!(stats.peak_buffer_size, 5);
 
-        stats.update_peak_buffer(3);  // No change
+        stats.update_peak_buffer(3); // No change
         assert_eq!(stats.peak_buffer_size, 5);
 
         stats.update_peak_buffer(10);
