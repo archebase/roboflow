@@ -46,8 +46,8 @@ jobs:
             sudo apt-get update && sudo apt-get install -y libhdf5-dev
           elif [ "$RUNNER_OS" == "macOS" ]; then
             # Use HDF5 1.14 as hdf5-sys doesn't support HDF5 2.x yet
-            brew install hdf5@1.14
-            echo "HDF5_DIR=$(brew --prefix hdf5@1.14)" >> $GITHUB_ENV
+            brew install hdf5@1.10
+            echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
           fi
         shell: bash
 
@@ -73,8 +73,8 @@ jobs:
             sudo apt-get update && sudo apt-get install -y libhdf5-dev
           elif [ "$RUNNER_OS" == "macOS" ]; then
             # Use HDF5 1.14 as hdf5-sys doesn't support HDF5 2.x yet
-            brew install hdf5@1.14
-            echo "HDF5_DIR=$(brew --prefix hdf5@1.14)" >> $GITHUB_ENV
+            brew install hdf5@1.10
+            echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
           fi
         shell: bash
 
