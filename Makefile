@@ -103,7 +103,7 @@ lint: lint-rust lint-python ## Lint all code
 
 lint-rust: ## Lint Rust code with clippy
 	@echo "Linting Rust code..."
-	cargo clippy --all-targets -- -D warnings
+	cargo clippy --all-targets --all-features -- -D warnings
 	@echo "✓ Rust linting passed"
 
 lint-python: ## Lint Python code with ruff
