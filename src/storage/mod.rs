@@ -29,6 +29,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+pub mod cached;
 pub mod factory;
 pub mod local;
 pub mod multipart;
@@ -38,6 +39,7 @@ pub mod url;
 #[cfg(feature = "cloud-storage")]
 pub mod oss;
 
+pub use cached::{CacheConfig, CacheStats, CachedStorage, EvictionPolicy};
 pub use factory::{StorageConfig, StorageFactory};
 pub use local::LocalStorage;
 pub use multipart::{
