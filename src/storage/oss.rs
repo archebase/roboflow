@@ -458,6 +458,8 @@ impl Write for OssWriter {
         if self.buffer.len() > self.max_buffer_size {
             self.upload()
                 .map_err(|e| std::io::Error::other(format!("Upload failed: {}", e)))?;
+            // Reset uploaded flag so subsequent data gets uploaded on flush/drop
+            self.uploaded = false;
         }
 
         Ok(written)
