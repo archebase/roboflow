@@ -262,12 +262,8 @@ impl MultipartUploader {
         progress: Option<&ProgressCallback>,
     ) -> Result<MultipartStats> {
         // Get file size
-        let file_size = reader
-            .seek(SeekFrom::End(0))
-            .map_err(StorageError::Io)? as usize;
-        reader
-            .seek(SeekFrom::Start(0))
-            .map_err(StorageError::Io)?;
+        let file_size = reader.seek(SeekFrom::End(0)).map_err(StorageError::Io)? as usize;
+        reader.seek(SeekFrom::Start(0)).map_err(StorageError::Io)?;
 
         // If file is below threshold, do simple upload
         if file_size < config.threshold {
@@ -297,9 +293,7 @@ impl MultipartUploader {
 
             // Read the part data
             let mut buffer = vec![0u8; to_read];
-            reader
-                .read_exact(&mut buffer)
-                .map_err(StorageError::Io)?;
+            reader.read_exact(&mut buffer).map_err(StorageError::Io)?;
 
             // Upload with retry
             let mut retry_count = 0;
@@ -371,9 +365,7 @@ impl MultipartUploader {
 
         // For small files, we still use the multipart uploader but with a single part
         let mut buffer = Vec::with_capacity(file_size);
-        reader
-            .read_to_end(&mut buffer)
-            .map_err(StorageError::Io)?;
+        reader.read_to_end(&mut buffer).map_err(StorageError::Io)?;
 
         if let Some(cb) = progress {
             cb(file_size as u64, file_size as u64);
