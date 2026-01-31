@@ -303,11 +303,7 @@ impl TikvClient {
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
-            tracing::debug!(
-                limit = limit,
-                results = result.len(),
-                "Scan completed"
-            );
+            tracing::debug!(limit = limit, results = result.len(), "Scan completed");
 
             Ok(result)
         }

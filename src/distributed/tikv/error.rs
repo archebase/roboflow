@@ -62,6 +62,10 @@ pub enum TikvError {
     /// Generic error with context.
     #[error("{0}")]
     Other(String),
+
+    /// Circuit breaker is open - requests are failing fast.
+    #[error("Circuit breaker is open (failures: {failures}) - rejecting call")]
+    CircuitOpen { failures: u32 },
 }
 
 impl TikvError {

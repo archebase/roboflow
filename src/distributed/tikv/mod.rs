@@ -6,12 +6,14 @@
 //!
 //! Provides connection pooling and basic CRUD operations for TiKV.
 
+pub mod circuit;
 pub mod client;
 pub mod config;
 pub mod error;
 pub mod key;
 pub mod schema;
 
+pub use circuit::{CircuitBreaker, CircuitConfig, CircuitState};
 pub use client::TikvClient;
 pub use config::TikvConfig;
 pub use error::TikvError;

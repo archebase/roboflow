@@ -24,6 +24,10 @@ pub use tikv::{
     TikvError, WorkerStatus,
 };
 
+// Re-export circuit breaker types
+#[cfg(feature = "distributed")]
+pub use tikv::{CircuitBreaker, CircuitConfig, CircuitState};
+
 // Re-export constants from config module
 #[cfg(feature = "distributed")]
 pub use tikv::config::{DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_PD_ENDPOINTS, KEY_PREFIX};
