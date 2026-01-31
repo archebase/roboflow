@@ -438,7 +438,33 @@ impl Worker {
         );
 
         // Check for existing checkpoint
-        let _checkpoint = self.tikv.get_checkpoint(&job.id).await.ok();
+        match self.tikv.get_checkpoint(&job.id).await {
+            Ok(Some(checkpoint)) => {
+                tracing::info!(
+                    pod_id = %self.pod_id,
+                    job_id = %job.id,
+                    last_frame = checkpoint.last_frame,
+                    total_frames = checkpoint.total_frames,
+                    progress = checkpoint.progress_percent(),
+                    "Resuming job from checkpoint"
+                );
+            }
+            Ok(None) => {
+                tracing::debug!(
+                    pod_id = %self.pod_id,
+                    job_id = %job.id,
+                    "No existing checkpoint found, starting from beginning"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    pod_id = %self.pod_id,
+                    job_id = %job.id,
+                    error = %e,
+                    "Failed to fetch checkpoint - starting job from beginning (progress may be lost)"
+                );
+            }
+        }
 
         // TODO: Implement full pipeline processing in issue #35
         // For now, this is a placeholder that simulates successful processing
@@ -463,11 +489,45 @@ impl Worker {
 
     /// Complete a job successfully.
     async fn complete_job(&self, job_id: &str) -> Result<(), TikvError> {
-        self.tikv.complete_job(job_id).await?;
+        let completed = self.tikv.complete_job(job_id).await?;
+        if !completed {
+            tracing::warn!(
+                pod_id = %self.pod_id,
+                job_id = %job_id,
+                "Job not in Processing state, cannot complete"
+            );
+            return Err(TikvError::Other(format!(
+                "Job {} not in Processing state",
+                job_id
+            )));
+        }
 
         // Delete checkpoint if exists
         let checkpoint_key = super::tikv::key::StateKeys::checkpoint(job_id);
-        let _ = self.tikv.delete(checkpoint_key).await.ok();
+        match self.tikv.delete(checkpoint_key).await {
+            Ok(()) => {
+                tracing::debug!(
+                    pod_id = %self.pod_id,
+                    job_id = %job_id,
+                    "Checkpoint deleted after successful completion"
+                );
+            }
+            Err(TikvError::KeyNotFound(_)) => {
+                tracing::debug!(
+                    pod_id = %self.pod_id,
+                    job_id = %job_id,
+                    "No checkpoint to delete (job may have been restarted)"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    pod_id = %self.pod_id,
+                    job_id = %job_id,
+                    error = %e,
+                    "Failed to delete checkpoint after job completion - orphaned checkpoint remains"
+                );
+            }
+        }
 
         self.metrics.inc_jobs_completed();
         self.metrics.dec_active_jobs();
@@ -483,8 +543,6 @@ impl Worker {
 
     /// Fail a job with an error message.
     async fn fail_job(&self, job_id: &str, error: String) -> Result<(), TikvError> {
-        let _job_before = self.tikv.get_job(job_id).await?;
-
         self.tikv.fail_job(job_id, error.clone()).await?;
 
         // Check if job is now dead (max attempts exceeded)
@@ -509,6 +567,13 @@ impl Worker {
                 );
                 self.metrics.inc_jobs_failed();
             }
+        } else {
+            // Job not found after fail - this is unexpected
+            tracing::warn!(
+                pod_id = %self.pod_id,
+                job_id = %job_id,
+                "Job not found after fail_job operation"
+            );
         }
 
         self.metrics.dec_active_jobs();
@@ -689,7 +754,13 @@ impl Worker {
             .unwrap_or_else(|| HeartbeatRecord::new(self.pod_id.clone()));
         heartbeat.beat();
         heartbeat.status = WorkerStatus::Draining;
-        let _ = self.tikv.update_heartbeat(&self.pod_id, &heartbeat).await;
+        if let Err(e) = self.tikv.update_heartbeat(&self.pod_id, &heartbeat).await {
+            tracing::error!(
+                pod_id = %self.pod_id,
+                error = %e,
+                "Failed to send final Draining heartbeat - worker shutdown may not be visible to cluster"
+            );
+        }
 
         tracing::info!(
             pod_id = %self.pod_id,
@@ -702,7 +773,31 @@ impl Worker {
     /// Shutdown the worker gracefully.
     pub fn shutdown(&self) -> Result<(), TikvError> {
         if let Some(ref tx) = self.shutdown_tx {
-            let _ = tx.send(());
+            match tx.send(()) {
+                Ok(_) => {
+                    tracing::info!(
+                        pod_id = %self.pod_id,
+                        "Shutdown signal sent successfully"
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        pod_id = %self.pod_id,
+                        "Shutdown signal sent but no receivers - worker may not be running"
+                    );
+                    return Err(TikvError::Other(
+                        "Cannot shutdown worker: no active receiver. Is the worker running?".to_string(),
+                    ));
+                }
+            }
+        } else {
+            tracing::warn!(
+                pod_id = %self.pod_id,
+                "Shutdown requested but worker has no shutdown channel configured"
+            );
+            return Err(TikvError::Other(
+                "Cannot shutdown worker: shutdown channel not initialized".to_string(),
+            ));
         }
         Ok(())
     }
