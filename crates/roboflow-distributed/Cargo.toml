@@ -36,6 +36,9 @@ thiserror = "1.0"
 # Logging
 tracing = "0.1"
 
+# Random for jitter
+fastrand = "2.1"
+
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3.10"

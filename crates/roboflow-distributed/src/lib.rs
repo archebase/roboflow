@@ -22,7 +22,8 @@ pub mod tikv;
 // Re-export public types from tikv (distributed coordination)
 pub use tikv::{
     CheckpointState, CircuitBreaker, CircuitConfig, CircuitState, HeartbeatRecord, JobRecord,
-    JobStatus, LockRecord, TikvClient, TikvConfig, TikvError, WorkerStatus,
+    JobStatus, LockGuard, LockManager, LockManagerConfig, LockRecord, TikvClient, TikvConfig,
+    TikvError, WorkerStatus,
 };
 
 // Re-export public types from catalog (metadata storage)

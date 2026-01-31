@@ -11,12 +11,14 @@ pub mod client;
 pub mod config;
 pub mod error;
 pub mod key;
+pub mod locks;
 pub mod schema;
 
 pub use circuit::{CircuitBreaker, CircuitConfig, CircuitState};
 pub use client::TikvClient;
 pub use config::TikvConfig;
 pub use error::TikvError;
+pub use locks::{LockGuard, LockManager, LockManagerConfig};
 pub use schema::{
     CheckpointState, HeartbeatRecord, JobRecord, JobStatus, LockRecord, WorkerStatus,
 };
