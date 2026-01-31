@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&args.output_dir)?;
 
     // Create LeRobot writer
-    let mut writer = LerobotWriter::create(&args.output_dir, lerobot_config.clone())?;
+    let mut writer = LerobotWriter::new_local(&args.output_dir, lerobot_config.clone())?;
     writer.initialize(&lerobot_config)?;
 
     let total_start = Instant::now();
