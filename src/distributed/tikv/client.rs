@@ -259,6 +259,12 @@ impl TikvClient {
     /// Uses an exclusive range to match all keys starting with the prefix.
     /// The scan is limited to `limit` results.
     pub async fn scan(&self, prefix: Vec<u8>, limit: u32) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        tracing::debug!(
+            limit = limit,
+            prefix = %String::from_utf8_lossy(&prefix),
+            "Starting prefix scan"
+        );
+
         #[cfg(feature = "distributed")]
         {
             let inner = self.inner.as_ref().ok_or_else(|| {
@@ -296,6 +302,12 @@ impl TikvClient {
             txn.commit()
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+            tracing::debug!(
+                limit = limit,
+                results = result.len(),
+                "Scan completed"
+            );
 
             Ok(result)
         }
@@ -575,6 +587,11 @@ impl TikvClient {
     /// and mark it as Completed. Returns an error if the job is not in Processing state
     /// or doesn't exist.
     pub async fn complete_job(&self, file_hash: &str) -> Result<bool> {
+        tracing::debug!(
+            file_hash = %file_hash,
+            "Attempting to complete job"
+        );
+
         #[cfg(feature = "distributed")]
         {
             use super::schema::JobStatus;
@@ -600,6 +617,11 @@ impl TikvClient {
 
                     // Only allow completion if currently processing
                     if job.status != JobStatus::Processing {
+                        tracing::debug!(
+                            file_hash = %file_hash,
+                            status = ?job.status,
+                            "Job not in Processing state, cannot complete"
+                        );
                         return Ok(false);
                     }
 
@@ -620,6 +642,13 @@ impl TikvClient {
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
+            if completed {
+                tracing::info!(
+                    file_hash = %file_hash,
+                    "Job completed successfully"
+                );
+            }
+
             Ok(completed)
         }
 
@@ -637,6 +666,12 @@ impl TikvClient {
     /// This uses a single transaction to read the job, verify it's in Processing state,
     /// and mark it as Failed. Returns an error if the job doesn't exist.
     pub async fn fail_job(&self, file_hash: &str, error: String) -> Result<bool> {
+        tracing::debug!(
+            file_hash = %file_hash,
+            error = %error,
+            "Attempting to fail job"
+        );
+
         #[cfg(feature = "distributed")]
         {
             use super::schema::JobStatus;
@@ -662,10 +697,15 @@ impl TikvClient {
 
                     // Only allow failure if currently processing
                     if job.status != JobStatus::Processing {
+                        tracing::debug!(
+                            file_hash = %file_hash,
+                            status = ?job.status,
+                            "Job not in Processing state, cannot fail"
+                        );
                         return Ok(false);
                     }
 
-                    job.fail(error);
+                    job.fail(error.clone());
                     let new_data = bincode::serialize(&job)
                         .map_err(|e| TikvError::Serialization(e.to_string()))?;
                     txn.put(key, new_data)
@@ -681,6 +721,14 @@ impl TikvClient {
             txn.commit()
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+            if failed {
+                tracing::warn!(
+                    file_hash = %file_hash,
+                    error = %error,
+                    "Job failed"
+                );
+            }
 
             Ok(failed)
         }
@@ -705,6 +753,13 @@ impl TikvClient {
         owner: &str,
         ttl_seconds: i64,
     ) -> Result<bool> {
+        tracing::debug!(
+            resource = %resource,
+            owner = %owner,
+            ttl_seconds = ttl_seconds,
+            "Attempting to acquire lock"
+        );
+
         #[cfg(feature = "distributed")]
         {
             let inner = self.inner.as_ref().ok_or_else(|| {
@@ -737,9 +792,21 @@ impl TikvClient {
                         txn.put(key, new_data)
                             .await
                             .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                        tracing::debug!(
+                            resource = %resource,
+                            owner = %owner,
+                            new_version = lock.version,
+                            "Lock extended"
+                        );
                         true
                     } else if !existing.is_expired() {
                         // Lock is held by someone else and not expired
+                        tracing::debug!(
+                            resource = %resource,
+                            owner = %owner,
+                            current_owner = %existing.owner,
+                            "Lock held by another owner"
+                        );
                         false
                     } else {
                         // Lock expired and not owned by us, take it
@@ -750,6 +817,11 @@ impl TikvClient {
                         txn.put(key, data)
                             .await
                             .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                        tracing::info!(
+                            resource = %resource,
+                            owner = %owner,
+                            "Lock acquired (was expired)"
+                        );
                         true
                     }
                 }
@@ -762,6 +834,11 @@ impl TikvClient {
                     txn.put(key, data)
                         .await
                         .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                    tracing::info!(
+                        resource = %resource,
+                        owner = %owner,
+                        "Lock acquired (new lock)"
+                    );
                     true
                 }
             };
@@ -787,6 +864,12 @@ impl TikvClient {
     /// This uses a single transaction to read the lock, verify ownership, and delete it.
     /// Only the owner of the lock can release it.
     pub async fn release_lock(&self, resource: &str, owner: &str) -> Result<bool> {
+        tracing::debug!(
+            resource = %resource,
+            owner = %owner,
+            "Attempting to release lock"
+        );
+
         #[cfg(feature = "distributed")]
         {
             let inner = self.inner.as_ref().ok_or_else(|| {
@@ -812,12 +895,31 @@ impl TikvClient {
                         txn.delete(key)
                             .await
                             .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                        tracing::info!(
+                            resource = %resource,
+                            owner = %owner,
+                            fencing_token = existing.fencing_token(),
+                            "Lock released"
+                        );
                         true
                     } else {
+                        tracing::warn!(
+                            resource = %resource,
+                            owner = %owner,
+                            actual_owner = %existing.owner,
+                            "Lock release failed: not the owner"
+                        );
                         false
                     }
                 }
-                None => false,
+                None => {
+                    tracing::debug!(
+                        resource = %resource,
+                        owner = %owner,
+                        "Lock release failed: lock not found"
+                    );
+                    false
+                }
             };
 
             txn.commit()
