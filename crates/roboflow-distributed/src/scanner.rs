@@ -360,11 +360,9 @@ impl Scanner {
     /// Extract bucket name from storage URL or metadata.
     fn extract_bucket(&self, metadata: &ObjectMetadata) -> String {
         // Try to extract from path if it looks like a URL
-        if metadata.path.contains("://") {
-            if let Some(rest) = metadata.path.split("://").nth(1) {
-                if let Some(bucket) = rest.split('/').next() {
-                    return bucket.to_string();
-                }
+        if let Some(rest) = metadata.path.split("://").nth(1) {
+            if let Some(bucket) = rest.split('/').next() {
+                return bucket.to_string();
             }
         }
 
