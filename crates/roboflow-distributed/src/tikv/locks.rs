@@ -10,6 +10,7 @@
 //! - **RAII-style lock guards**: Automatic release on drop
 //! - **Blocking acquisition**: Retry with exponential backoff
 //! - **Optional auto-renewal**: Background thread extends TTL
+//! - **Fencing tokens**: Version-based split-brain prevention via `LockGuard::fencing_token()`
 //!
 //! # Usage
 //!
@@ -565,6 +566,31 @@ impl LockGuard {
             .acquire_lock(&self.resource, &self.owner, self.ttl_secs)
             .await?;
         Ok(renewed)
+    }
+
+    /// Get the current fencing token for this lock.
+    ///
+    /// Fencing tokens are monotonically increasing version numbers that
+    /// help detect split-brain scenarios where multiple processes believe
+    /// they own the same lock. Higher tokens always win.
+    ///
+    /// Returns `None` if the lock no longer exists or has been released.
+    pub async fn fencing_token(&self) -> Result<Option<u64>> {
+        let key = super::key::LockKeys::lock(&self.resource);
+        let data = self.client.get(key).await?;
+
+        if let Some(bytes) = data {
+            let lock: LockRecord = bincode::deserialize(&bytes)
+                .map_err(|e| TikvError::Deserialization(e.to_string()))?;
+            // Only return the token if we still own the lock
+            if lock.is_owned_by(&self.owner) && !lock.is_expired() {
+                Ok(Some(lock.fencing_token()))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
     }
 
     /// Internal release implementation.
