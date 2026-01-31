@@ -24,11 +24,6 @@ pub use tikv::{
     TikvError, WorkerStatus,
 };
 
-/// Default key prefix for all roboflow data in TiKV.
-pub const KEY_PREFIX: &str = "/roboflow/v1/";
-
-/// Default PD endpoints for local development.
-pub const DEFAULT_PD_ENDPOINTS: &str = "127.0.0.1:2379";
-
-/// Default connection timeout in seconds.
-pub const DEFAULT_CONNECTION_TIMEOUT_SECS: u64 = 10;
+// Re-export constants from config module
+#[cfg(feature = "distributed")]
+pub use tikv::config::{DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_PD_ENDPOINTS, KEY_PREFIX};

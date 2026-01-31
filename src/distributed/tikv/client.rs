@@ -5,6 +5,21 @@
 //! TiKV client wrapper for distributed coordination.
 //!
 //! Provides connection pooling and basic CRUD operations for TiKV.
+//!
+//! # Atomicity Guarantees
+//!
+//! This client uses TiKV's optimistic transactions. Each CRUD operation
+//! (`get`, `put`, `delete`, `scan`) executes in its own transaction.
+//!
+//! **Important:** High-level operations like `claim_job`, `acquire_lock`,
+//! and `release_lock` are **not atomic** - they perform read-then-write
+//! in separate transactions. For production use, implement proper
+//! retry logic with backoff when conflicts occur.
+//!
+//! # Scan Behavior
+//!
+//! The `scan` method returns keys in lexicographic order. Use the
+//! `KeyBuilder` or `*Keys` types to construct proper prefix-based keys.
 
 use std::sync::Arc;
 
@@ -176,8 +191,17 @@ impl TikvClient {
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
+            // Create a range from prefix to the next lexicographic value
+            // This matches all keys that start with the prefix
+            let mut scan_end = prefix.clone();
+            if let Some(last) = scan_end.last_mut() {
+                *last = last.wrapping_add(1);
+            } else {
+                scan_end.push(0);
+            }
+
             let iter = txn
-                .scan(prefix.clone()..=prefix, limit)
+                .scan(prefix..=scan_end, limit)
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
@@ -373,20 +397,22 @@ impl TikvClient {
 
     /// Complete a job.
     pub async fn complete_job(&self, file_hash: &str) -> Result<()> {
-        if let Some(mut job) = self.get_job(file_hash).await? {
-            job.complete();
-            self.put_job(&job).await?;
-        }
-        Ok(())
+        let mut job = self
+            .get_job(file_hash)
+            .await?
+            .ok_or_else(|| TikvError::KeyNotFound(format!("Job: {}", file_hash)))?;
+        job.complete();
+        self.put_job(&job).await
     }
 
     /// Fail a job with an error message.
     pub async fn fail_job(&self, file_hash: &str, error: String) -> Result<()> {
-        if let Some(mut job) = self.get_job(file_hash).await? {
-            job.fail(error);
-            self.put_job(&job).await?;
-        }
-        Ok(())
+        let mut job = self
+            .get_job(file_hash)
+            .await?
+            .ok_or_else(|| TikvError::KeyNotFound(format!("Job: {}", file_hash)))?;
+        job.fail(error);
+        self.put_job(&job).await
     }
 
     /// Acquire a distributed lock.
@@ -468,9 +494,16 @@ impl TikvClient {
     }
 
     /// Get all stale heartbeats (older than timeout seconds).
-    pub async fn get_stale_heartbeats(&self, timeout_seconds: i64) -> Result<Vec<String>> {
+    ///
+    /// Note: This scans up to `limit` heartbeat records. For very large
+    /// clusters, consider paginating the scan.
+    pub async fn get_stale_heartbeats(
+        &self,
+        timeout_seconds: i64,
+        limit: u32,
+    ) -> Result<Vec<String>> {
         let prefix = HeartbeatKeys::prefix();
-        let results = self.scan(prefix, 1000).await?;
+        let results = self.scan(prefix, limit).await?;
 
         let mut stale_pods = Vec::new();
         for (_key, value) in results {

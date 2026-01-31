@@ -18,6 +18,8 @@
 //! - `heartbeat`: `/roboflow/v1/heartbeat/{pod_id}` - Worker heartbeats
 //! - `system`: `/roboflow/v1/system/scanner_lock` - Scanner leadership
 
+use super::config::KEY_PREFIX;
+
 /// Key builder for constructing TiKV keys.
 pub struct KeyBuilder {
     parts: Vec<String>,
@@ -35,8 +37,13 @@ impl KeyBuilder {
         self
     }
 
-    /// Build the key as a byte vector.
-    pub fn build(self, prefix: &str) -> Vec<u8> {
+    /// Build the key as a byte vector using the default key prefix.
+    pub fn build(self) -> Vec<u8> {
+        self.build_with_prefix(KEY_PREFIX.trim_end_matches('/'))
+    }
+
+    /// Build the key as a byte vector with a custom prefix.
+    pub fn build_with_prefix(self, prefix: &str) -> Vec<u8> {
         let mut key = prefix.to_string();
         for part in &self.parts {
             key.push('/');
@@ -46,10 +53,10 @@ impl KeyBuilder {
     }
 
     /// Build the key as a string for display.
-    pub fn as_str(&self, prefix: &str) -> String {
-        let mut key = prefix.to_string();
+    pub fn as_str(&self) -> String {
+        let mut key = KEY_PREFIX.trim_end_matches('/').to_string();
         for (i, part) in self.parts.iter().enumerate() {
-            if i > 0 || !prefix.ends_with('/') {
+            if i > 0 || !key.ends_with('/') {
                 key.push('/');
             }
             key.push_str(part);
@@ -70,15 +77,12 @@ pub struct JobKeys;
 impl JobKeys {
     /// Create a key for a job record.
     pub fn record(file_hash: &str) -> Vec<u8> {
-        KeyBuilder::new()
-            .push("jobs")
-            .push(file_hash)
-            .build("/roboflow/v1")
+        KeyBuilder::new().push("jobs").push(file_hash).build()
     }
 
     /// Create a prefix for scanning all jobs.
     pub fn prefix() -> Vec<u8> {
-        b"/roboflow/v1/jobs/".to_vec()
+        format!("{KEY_PREFIX}jobs/").into_bytes()
     }
 }
 
@@ -88,15 +92,12 @@ pub struct LockKeys;
 impl LockKeys {
     /// Create a key for a distributed lock.
     pub fn lock(resource: &str) -> Vec<u8> {
-        KeyBuilder::new()
-            .push("locks")
-            .push(resource)
-            .build("/roboflow/v1")
+        KeyBuilder::new().push("locks").push(resource).build()
     }
 
     /// Create a prefix for scanning all locks.
     pub fn prefix() -> Vec<u8> {
-        b"/roboflow/v1/locks/".to_vec()
+        format!("{KEY_PREFIX}locks/").into_bytes()
     }
 }
 
@@ -106,15 +107,12 @@ pub struct StateKeys;
 impl StateKeys {
     /// Create a key for checkpoint state.
     pub fn checkpoint(file_hash: &str) -> Vec<u8> {
-        KeyBuilder::new()
-            .push("state")
-            .push(file_hash)
-            .build("/roboflow/v1")
+        KeyBuilder::new().push("state").push(file_hash).build()
     }
 
     /// Create a prefix for scanning all states.
     pub fn prefix() -> Vec<u8> {
-        b"/roboflow/v1/state/".to_vec()
+        format!("{KEY_PREFIX}state/").into_bytes()
     }
 }
 
@@ -124,15 +122,12 @@ pub struct HeartbeatKeys;
 impl HeartbeatKeys {
     /// Create a key for a worker heartbeat.
     pub fn heartbeat(pod_id: &str) -> Vec<u8> {
-        KeyBuilder::new()
-            .push("heartbeat")
-            .push(pod_id)
-            .build("/roboflow/v1")
+        KeyBuilder::new().push("heartbeat").push(pod_id).build()
     }
 
     /// Create a prefix for scanning all heartbeats.
     pub fn prefix() -> Vec<u8> {
-        b"/roboflow/v1/heartbeat/".to_vec()
+        format!("{KEY_PREFIX}heartbeat/").into_bytes()
     }
 }
 
@@ -145,7 +140,7 @@ impl SystemKeys {
         KeyBuilder::new()
             .push("system")
             .push("scanner_lock")
-            .build("/roboflow/v1")
+            .build()
     }
 }
 
