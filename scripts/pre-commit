@@ -1,0 +1,16 @@
+#!/bin/sh
+# Pre-commit hook for roboflow
+# Runs formatter and linter before allowing commit
+#
+# To install: cp scripts/pre-commit .git/hooks/pre-commit
+
+set -e
+
+echo "Running pre-commit checks..."
+echo "Running 'make fmt'..."
+make fmt
+
+echo "Running 'make lint'..."
+make lint
+
+echo "Pre-commit checks passed!"
