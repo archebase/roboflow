@@ -682,3 +682,4 @@ mod tests {
         assert_eq!(DEFAULT_MAX_ACQUIRE_ATTEMPTS, 20);
     }
 }
+
