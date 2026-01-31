@@ -30,6 +30,38 @@ cargo fmt
 cargo clippy --all-targets -- -D warnings
 ```
 
+## Commit Message Convention
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/) format:
+
+```
+<type>: <description>
+
+[optional body]
+
+[optional footer]
+```
+
+**Types:**
+| Type | Usage |
+|------|-------|
+| `feat:` | New feature |
+| `fix:` | Bug fix |
+| `refactor:` | Code restructuring (no functional change) |
+| `style:` | Code style changes (formatting, etc.) |
+| `docs:` | Documentation only |
+| `test:` | Adding or updating tests |
+| `chore:` | Maintenance tasks (deps, config, etc.) |
+| `perf:` | Performance improvements |
+
+**Examples:**
+```
+feat: add distributed catalog for TiKV backend
+fix: correct frame alignment in streaming converter
+refactor: extract storage layer into separate crate
+style: apply code formatting fixes
+```
+
 ## Feature Flags
 
 | Flag | Purpose |
