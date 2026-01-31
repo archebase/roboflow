@@ -1015,6 +1015,7 @@ impl TikvClient {
             "Attempting to reclaim job"
         );
 
+        #[cfg(feature = "distributed")]
         {
             let inner = self.inner.as_ref().ok_or_else(|| {
                 TikvError::ConnectionFailed("TiKV client not initialized".to_string())

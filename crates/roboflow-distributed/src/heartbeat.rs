@@ -307,7 +307,17 @@ impl HeartbeatManager {
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
-            ticker.tick().await; // Skip first tick for immediate+interval pattern
+
+            // Send first heartbeat immediately, then tick to reset the interval
+            if let Err(e) = update_heartbeat_inner(&tikv, &pod_id).await {
+                metrics.inc_errors();
+                tracing::error!(
+                    pod_id = %pod_id,
+                    error = %e,
+                    "Failed to send initial heartbeat"
+                );
+            }
+            ticker.tick().await; // Reset interval after immediate heartbeat
 
             loop {
                 tokio::select! {
