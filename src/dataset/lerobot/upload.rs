@@ -7,17 +7,41 @@
 //! This module provides coordinated parallel upload of episode files (Parquet + videos)
 //! with progress tracking and statistics collection.
 
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufReader, Read};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
-use crossbeam_channel::{Receiver, Sender, bounded};
 use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "cloud-storage")]
+use std::collections::HashMap;
+
+#[cfg(feature = "cloud-storage")]
+use std::fs::File;
+
+#[cfg(feature = "cloud-storage")]
+use std::io::{BufReader, Read};
+
+#[cfg(feature = "cloud-storage")]
+use std::sync::Mutex;
+
+#[cfg(feature = "cloud-storage")]
+use std::thread;
+
+#[cfg(feature = "cloud-storage")]
+use std::time::Instant;
+
+#[cfg(feature = "cloud-storage")]
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+
+#[cfg(feature = "cloud-storage")]
+use std::sync::MutexGuard;
+
+#[cfg(feature = "cloud-storage")]
+use std::thread::JoinHandle;
+
+#[cfg(feature = "cloud-storage")]
+use crossbeam_channel::{bounded, Receiver, Sender};
 
 #[cfg(feature = "cloud-storage")]
 use crate::storage::Storage;
@@ -467,7 +491,9 @@ impl EpisodeUploadCoordinator {
                             files_failed.fetch_add(1, Ordering::Relaxed);
 
                             // Update failed files list - recover from poisoned state
-                            let mut stats_guard = stats.lock().unwrap_or_else(|e| e.into_inner());
+                            let mut stats_guard = stats.lock().unwrap_or_else(
+                                |e: std::sync::PoisonError<MutexGuard<UploadStats>>| e.into_inner(),
+                            );
                             stats_guard
                                 .failed_files
                                 .push(task.local_path.display().to_string());
@@ -704,12 +730,14 @@ impl EpisodeUploadCoordinator {
 
     /// Get current upload statistics.
     pub fn stats(&self) -> UploadStats {
-        let mut stats = self.stats.lock().unwrap_or_else(|e| {
-            tracing::warn!(
-                "Stats mutex was poisoned, recovering. This indicates a previous panic."
-            );
-            e.into_inner()
-        });
+        let mut stats = self.stats.lock().unwrap_or_else(
+            |e: std::sync::PoisonError<MutexGuard<UploadStats>>| {
+                tracing::warn!(
+                    "Stats mutex was poisoned, recovering. This indicates a previous panic."
+                );
+                e.into_inner()
+            },
+        );
         stats.total_bytes = self.bytes_uploaded.load(Ordering::Relaxed);
         stats.total_files = self.files_uploaded.load(Ordering::Relaxed);
         stats.failed_count = self.files_failed.load(Ordering::Relaxed);
@@ -758,6 +786,7 @@ impl EpisodeUploadCoordinator {
         })?;
 
         for worker in workers.drain(..) {
+            let worker: JoinHandle<()> = worker;
             if let Err(e) = worker.join() {
                 tracing::error!("Worker thread panicked: {:?}", e);
             }
@@ -765,10 +794,12 @@ impl EpisodeUploadCoordinator {
 
         // Clean up pending files if not already deleted
         if !self.config.delete_after_upload {
-            let pending = self.pending_files.lock().unwrap_or_else(|e| {
-                tracing::warn!("Pending files mutex was poisoned during cleanup");
-                e.into_inner()
-            });
+            let pending = self.pending_files.lock().unwrap_or_else(
+                |e: std::sync::PoisonError<std::sync::MutexGuard<HashMap<u64, Vec<PathBuf>>>>| {
+                    tracing::warn!("Pending files mutex was poisoned during cleanup");
+                    e.into_inner()
+                },
+            );
             for (_episode, files) in pending.iter() {
                 for path in files {
                     if let Err(e) = std::fs::remove_file(path) {
