@@ -14,6 +14,36 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "cloud-storage")]
+use std::collections::HashMap;
+
+#[cfg(feature = "cloud-storage")]
+use std::fs::File;
+
+#[cfg(feature = "cloud-storage")]
+use std::io::{BufReader, Read};
+
+#[cfg(feature = "cloud-storage")]
+use std::sync::Mutex;
+
+#[cfg(feature = "cloud-storage")]
+use std::thread;
+
+#[cfg(feature = "cloud-storage")]
+use std::time::Instant;
+
+#[cfg(feature = "cloud-storage")]
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+
+#[cfg(feature = "cloud-storage")]
+use std::sync::MutexGuard;
+
+#[cfg(feature = "cloud-storage")]
+use std::thread::JoinHandle;
+
+#[cfg(feature = "cloud-storage")]
+use crossbeam_channel::{bounded, Receiver, Sender};
+
+#[cfg(feature = "cloud-storage")]
 use crate::storage::Storage;
 
 use crate::core::Result;
@@ -756,7 +786,8 @@ impl EpisodeUploadCoordinator {
         })?;
 
         for worker in workers.drain(..) {
-            if let Err(e) = worker.join::<std::thread::JoinHandle<()>>() {
+            let worker: JoinHandle<()> = worker;
+            if let Err(e) = worker.join() {
                 tracing::error!("Worker thread panicked: {:?}", e);
             }
         }
@@ -764,14 +795,14 @@ impl EpisodeUploadCoordinator {
         // Clean up pending files if not already deleted
         if !self.config.delete_after_upload {
             let pending = self.pending_files.lock().unwrap_or_else(
-                |e: std::sync::PoisonError<MutexGuard<HashMap<String, Vec<PathBuf>>>>| {
+                |e: std::sync::PoisonError<std::sync::MutexGuard<HashMap<u64, Vec<PathBuf>>>>| {
                     tracing::warn!("Pending files mutex was poisoned during cleanup");
                     e.into_inner()
                 },
             );
             for (_episode, files) in pending.iter() {
                 for path in files {
-                    if let Err(e) = std::fs::remove_file::<std::io::Error>(path) {
+                    if let Err(e) = std::fs::remove_file(path) {
                         tracing::warn!("Failed to delete file {}: {}", path.display(), e);
                     }
                 }
