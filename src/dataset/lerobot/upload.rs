@@ -682,7 +682,9 @@ impl EpisodeUploadCoordinator {
     /// Get current upload statistics.
     pub fn stats(&self) -> UploadStats {
         let mut stats = self.stats.lock().unwrap_or_else(|e| {
-            tracing::warn!("Stats mutex was poisoned, recovering. This indicates a previous panic.");
+            tracing::warn!(
+                "Stats mutex was poisoned, recovering. This indicates a previous panic."
+            );
             e.into_inner()
         });
         stats.total_bytes = self.bytes_uploaded.load(Ordering::Relaxed);
