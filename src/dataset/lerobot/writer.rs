@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
@@ -27,8 +27,23 @@ use crate::dataset::lerobot::video_profiles::ResolvedConfig;
 
 /// LeRobot v2.1 dataset writer.
 pub struct LerobotWriter {
-    /// Output directory
-    output_dir: std::path::PathBuf,
+    /// Storage backend for writing data (only available with cloud-storage feature)
+    #[cfg(feature = "cloud-storage")]
+    #[allow(dead_code)]
+    storage: std::sync::Arc<dyn crate::storage::Storage>,
+
+    /// Output prefix within storage (empty for local filesystem root)
+    #[cfg(feature = "cloud-storage")]
+    #[allow(dead_code)]
+    output_prefix: String,
+
+    /// Local buffer directory for temporary files (Parquet, video encoding)
+    #[cfg(feature = "cloud-storage")]
+    #[allow(dead_code)]
+    local_buffer: PathBuf,
+
+    /// Output directory (deprecated, kept for backward compatibility)
+    output_dir: PathBuf,
 
     /// Configuration
     config: LerobotConfig,
@@ -65,6 +80,11 @@ pub struct LerobotWriter {
 
     /// Number of videos that failed to encode
     failed_encodings: usize,
+
+    /// Whether to use cloud storage (detected from storage type)
+    #[cfg(feature = "cloud-storage")]
+    #[allow(dead_code)]
+    use_cloud_storage: bool,
 }
 
 /// Frame data for LeRobot Parquet file.
@@ -140,8 +160,166 @@ impl LerobotWriter {
             fs::create_dir_all(&videos_dir)?;
             fs::create_dir_all(&meta_dir)?;
 
+            #[cfg(feature = "cloud-storage")]
+            {
+                // Create LocalStorage for backward compatibility
+                let storage = std::sync::Arc::new(crate::storage::LocalStorage::new(output_dir));
+                let local_buffer = output_dir.to_path_buf();
+                let output_prefix = String::new();
+
+                Ok(Self {
+                    storage,
+                    output_prefix,
+                    local_buffer,
+                    output_dir: output_dir.to_path_buf(),
+                    config,
+                    episode_index: 0,
+                    frame_data: Vec::new(),
+                    image_buffers: HashMap::new(),
+                    metadata: MetadataCollector::new(),
+                    total_frames: 0,
+                    images_encoded: 0,
+                    skipped_frames: 0,
+                    initialized: false,
+                    start_time: None,
+                    output_bytes: 0,
+                    failed_encodings: 0,
+                    use_cloud_storage: false,
+                })
+            }
+
+            #[cfg(not(feature = "cloud-storage"))]
+            {
+                Ok(Self {
+                    output_dir: output_dir.to_path_buf(),
+                    config,
+                    episode_index: 0,
+                    frame_data: Vec::new(),
+                    image_buffers: HashMap::new(),
+                    metadata: MetadataCollector::new(),
+                    total_frames: 0,
+                    images_encoded: 0,
+                    skipped_frames: 0,
+                    initialized: false,
+                    start_time: None,
+                    output_bytes: 0,
+                    failed_encodings: 0,
+                })
+            }
+        }
+    }
+
+    /// Create a new LeRobot writer with a storage backend.
+    ///
+    /// This constructor enables cloud storage support for writing datasets
+    /// to remote storage backends (OSS, S3, etc.).
+    ///
+    /// # Arguments
+    ///
+    /// * `storage` - Storage backend for writing data
+    /// * `output_prefix` - Output prefix within storage (e.g., "datasets/my_dataset")
+    /// * `local_buffer` - Local buffer directory for temporary files (Parquet, video encoding)
+    /// * `config` - LeRobot configuration
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use roboflow::storage::{Storage, StorageFactory, LocalStorage};
+    /// use roboflow::dataset::lerobot::{LerobotWriter, LerobotConfig};
+    /// use std::sync::Arc;
+    ///
+    /// // Create storage backend
+    /// let factory = StorageFactory::new();
+    /// let storage = factory.create("oss://my-bucket/datasets")?;
+    ///
+    /// // Create writer with cloud storage
+    /// let writer = LerobotWriter::new(
+    ///     storage,
+    ///     "my_dataset".to_string(),
+    ///     "/tmp/roboflow_buffer".into(),
+    ///     LerobotConfig::default(),
+    /// )?;
+    /// ```
+    #[cfg(feature = "cloud-storage")]
+    #[allow(unused_variables)]
+    pub fn new(
+        storage: std::sync::Arc<dyn crate::storage::Storage>,
+        output_prefix: String,
+        local_buffer: impl AsRef<Path>,
+        config: LerobotConfig,
+    ) -> Result<Self> {
+        #[cfg(not(feature = "dataset-parquet"))]
+        {
+            Err(crate::RoboflowError::unsupported(
+                "LeRobot writer requires the 'dataset-parquet' feature to be enabled. \
+                 Add --features dataset-parquet to your build command.",
+            ))
+        }
+
+        #[cfg(feature = "dataset-parquet")]
+        {
+            let local_buffer = local_buffer.as_ref();
+
+            // Create local buffer directory structure
+            let data_dir = local_buffer.join("data/chunk-000");
+            let videos_dir = local_buffer.join("videos/chunk-000");
+            let meta_dir = local_buffer.join("meta");
+
+            fs::create_dir_all(&data_dir)?;
+            fs::create_dir_all(&videos_dir)?;
+            fs::create_dir_all(&meta_dir)?;
+
+            // Detect if this is cloud storage (not LocalStorage)
+            use crate::storage::LocalStorage;
+            let is_local = storage.as_any().is::<LocalStorage>();
+            let use_cloud_storage = !is_local;
+
+            // Create remote directories
+            if !output_prefix.is_empty() {
+                let data_prefix = format!("{}/data/chunk-000", output_prefix);
+                let videos_prefix = format!("{}/videos/chunk-000", output_prefix);
+                let meta_prefix = format!("{}/meta", output_prefix);
+
+                storage
+                    .create_dir_all(Path::new(&data_prefix))
+                    .map_err(|e| {
+                        crate::RoboflowError::encode(
+                            "Storage",
+                            format!(
+                                "Failed to create remote data directory '{}': {}",
+                                data_prefix, e
+                            ),
+                        )
+                    })?;
+                storage
+                    .create_dir_all(Path::new(&videos_prefix))
+                    .map_err(|e| {
+                        crate::RoboflowError::encode(
+                            "Storage",
+                            format!(
+                                "Failed to create remote videos directory '{}': {}",
+                                videos_prefix, e
+                            ),
+                        )
+                    })?;
+                storage
+                    .create_dir_all(Path::new(&meta_prefix))
+                    .map_err(|e| {
+                        crate::RoboflowError::encode(
+                            "Storage",
+                            format!(
+                                "Failed to create remote meta directory '{}': {}",
+                                meta_prefix, e
+                            ),
+                        )
+                    })?;
+            }
+
             Ok(Self {
-                output_dir: output_dir.to_path_buf(),
+                storage,
+                output_prefix,
+                local_buffer: local_buffer.to_path_buf(),
+                output_dir: local_buffer.to_path_buf(),
                 config,
                 episode_index: 0,
                 frame_data: Vec::new(),
@@ -154,6 +332,7 @@ impl LerobotWriter {
                 start_time: None,
                 output_bytes: 0,
                 failed_encodings: 0,
+                use_cloud_storage,
             })
         }
     }
@@ -403,6 +582,188 @@ impl LerobotWriter {
             "Wrote LeRobot v2.1 Parquet file"
         );
 
+        // Upload to cloud storage if enabled
+        #[cfg(feature = "cloud-storage")]
+        {
+            if self.use_cloud_storage {
+                self.upload_parquet_file(&parquet_path)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Upload a Parquet file to cloud storage.
+    #[cfg(feature = "cloud-storage")]
+    #[allow(dead_code)]
+    fn upload_parquet_file(&self, local_path: &Path) -> Result<()> {
+        use std::io::Read;
+
+        let filename = local_path
+            .file_name()
+            .ok_or_else(|| crate::RoboflowError::parse("Path", "Invalid file name"))?;
+
+        let remote_path = if self.output_prefix.is_empty() {
+            Path::new("data/chunk-000").join(filename)
+        } else {
+            Path::new(&self.output_prefix)
+                .join("data/chunk-000")
+                .join(filename)
+        };
+
+        // Read local file
+        let mut file = fs::File::open(local_path).map_err(|e| {
+            crate::RoboflowError::encode("Storage", format!("Failed to open parquet file: {}", e))
+        })?;
+
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer).map_err(|e| {
+            crate::RoboflowError::encode("Storage", format!("Failed to read parquet file: {}", e))
+        })?;
+
+        // Write to storage
+        let mut writer = self.storage.writer(&remote_path).map_err(|e| {
+            crate::RoboflowError::encode(
+                "Storage",
+                format!("Failed to create storage writer: {}", e),
+            )
+        })?;
+
+        use std::io::Write;
+        writer.write_all(&buffer).map_err(|e| {
+            crate::RoboflowError::encode(
+                "Storage",
+                format!("Failed to write parquet to storage: {}", e),
+            )
+        })?;
+
+        writer.flush().map_err(|e| {
+            crate::RoboflowError::encode(
+                "Storage",
+                format!("Failed to flush parquet to storage: {}", e),
+            )
+        })?;
+
+        tracing::info!(
+            local = %local_path.display(),
+            remote = %remote_path.display(),
+            size = buffer.len(),
+            "Uploaded Parquet file to cloud storage"
+        );
+
+        // Delete local file after successful upload
+        if self.use_cloud_storage {
+            if let Err(e) = fs::remove_file(local_path) {
+                tracing::error!(
+                    path = %local_path.display(),
+                    error = %e,
+                    "Failed to delete local Parquet file after upload - disk space may leak"
+                );
+            } else {
+                tracing::debug!(path = %local_path.display(), "Deleted local Parquet file after upload");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Upload a video file to cloud storage.
+    #[cfg(feature = "cloud-storage")]
+    #[allow(dead_code)]
+    fn upload_video_file(&self, local_path: &Path, camera: &str) -> Result<()> {
+        use std::io::Read;
+
+        let filename = local_path
+            .file_name()
+            .ok_or_else(|| crate::RoboflowError::parse("Path", "Invalid file name"))?;
+
+        let feature_name = format!("observation.images.{}", camera);
+        let remote_path = if self.output_prefix.is_empty() {
+            Path::new("videos/chunk-000")
+                .join(&feature_name)
+                .join(filename)
+        } else {
+            Path::new(&self.output_prefix)
+                .join("videos/chunk-000")
+                .join(&feature_name)
+                .join(filename)
+        };
+
+        // Read local file
+        let mut file = fs::File::open(local_path).map_err(|e| {
+            crate::RoboflowError::encode("Storage", format!("Failed to open video file: {}", e))
+        })?;
+
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer).map_err(|e| {
+            crate::RoboflowError::encode("Storage", format!("Failed to read video file: {}", e))
+        })?;
+
+        // Write to storage
+        let mut writer = self.storage.writer(&remote_path).map_err(|e| {
+            crate::RoboflowError::encode(
+                "Storage",
+                format!("Failed to create storage writer: {}", e),
+            )
+        })?;
+
+        use std::io::Write;
+        writer.write_all(&buffer).map_err(|e| {
+            crate::RoboflowError::encode(
+                "Storage",
+                format!("Failed to write video to storage: {}", e),
+            )
+        })?;
+
+        writer.flush().map_err(|e| {
+            crate::RoboflowError::encode(
+                "Storage",
+                format!("Failed to flush video to storage: {}", e),
+            )
+        })?;
+
+        tracing::info!(
+            local = %local_path.display(),
+            remote = %remote_path.display(),
+            size = buffer.len(),
+            camera = %camera,
+            "Uploaded video file to cloud storage"
+        );
+
+        // Delete local file after successful upload
+        if self.use_cloud_storage {
+            if let Err(e) = fs::remove_file(local_path) {
+                tracing::error!(
+                    path = %local_path.display(),
+                    file_size = buffer.len(),
+                    error = %e,
+                    "Failed to delete local video file ({:.2} MB) after upload - disk space may leak",
+                    buffer.len() as f64 / (1024.0 * 1024.0)
+                );
+            } else {
+                tracing::debug!(path = %local_path.display(), "Deleted local video file after upload");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Upload multiple video files to cloud storage in parallel.
+    #[cfg(feature = "cloud-storage")]
+    #[allow(dead_code)]
+    fn upload_videos_parallel(&self, video_files: Vec<(PathBuf, String)>) -> Result<()> {
+        use rayon::prelude::*;
+
+        let results: Vec<Result<()>> = video_files
+            .par_iter()
+            .map(|(path, camera)| self.upload_video_file(path, camera))
+            .collect();
+
+        // Check for any errors
+        for result in results {
+            result?;
+        }
+
         Ok(())
     }
 
@@ -496,6 +857,10 @@ impl LerobotWriter {
         let mut buffer_time = std::time::Duration::ZERO;
         let mut encode_time = std::time::Duration::ZERO;
 
+        // Track video files for cloud upload
+        #[cfg(feature = "cloud-storage")]
+        let mut video_files: Vec<(PathBuf, String)> = Vec::new();
+
         for (camera, images) in camera_data {
             let b_start = std::time::Instant::now();
             let buffer = self.build_frame_buffer(&images)?;
@@ -548,6 +913,22 @@ impl LerobotWriter {
                 if let Ok(metadata) = std::fs::metadata(&video_path) {
                     self.output_bytes += metadata.len();
                 }
+
+                // Track for upload
+                #[cfg(feature = "cloud-storage")]
+                {
+                    if self.use_cloud_storage {
+                        video_files.push((video_path.clone(), camera.clone()));
+                    }
+                }
+            }
+        }
+
+        // Upload videos to cloud storage
+        #[cfg(feature = "cloud-storage")]
+        {
+            if self.use_cloud_storage && !video_files.is_empty() {
+                self.upload_videos_parallel(video_files)?;
             }
         }
 
@@ -594,6 +975,10 @@ impl LerobotWriter {
         let skipped_frames = Arc::new(AtomicUsize::new(0usize));
         let failed_encodings = Arc::new(AtomicUsize::new(0usize));
 
+        // Track video files for cloud upload
+        #[cfg(feature = "cloud-storage")]
+        let video_files = Arc::new(std::sync::Mutex::new(Vec::new()));
+
         let result: Result<Vec<()>> = pool.install(|| {
             camera_data.par_iter().map(|(camera, images)| {
                 let b_start = std::time::Instant::now();
@@ -629,6 +1014,20 @@ impl LerobotWriter {
                                 path = %video_path.display(),
                                 "Encoded MP4 video"
                             );
+
+                            // Track for upload
+                            #[cfg(feature = "cloud-storage")]
+                            {
+                                if self.use_cloud_storage {
+                                    let mut files = video_files.lock().map_err(|e| {
+                                        crate::RoboflowError::encode(
+                                            "VideoEncoder",
+                                            format!("Video files mutex poisoned: {}", e),
+                                        )
+                                    })?;
+                                    files.push((video_path.clone(), camera.clone()));
+                                }
+                            }
                         }
                         Err(VideoEncoderError::FfmpegNotFound) => {
                             tracing::error!(
@@ -670,6 +1069,22 @@ impl LerobotWriter {
         self.output_bytes += output_bytes.load(Ordering::Relaxed);
         self.skipped_frames += skipped_frames.load(Ordering::Relaxed);
         self.failed_encodings += failed_encodings.load(Ordering::Relaxed);
+
+        // Upload videos to cloud storage
+        #[cfg(feature = "cloud-storage")]
+        {
+            if self.use_cloud_storage {
+                let files = video_files.lock().map_err(|e| {
+                    crate::RoboflowError::encode(
+                        "VideoEncoder",
+                        format!("Video files mutex poisoned during upload: {}", e),
+                    )
+                })?;
+                if !files.is_empty() {
+                    self.upload_videos_parallel(files.clone())?;
+                }
+            }
+        }
 
         eprintln!(
             "[TIMING] encode_videos (parallel, {} jobs): {} cameras encoded",
@@ -775,7 +1190,23 @@ impl LerobotWriter {
         }
 
         // Write metadata files
-        self.metadata.write_all(&self.output_dir, &self.config)?;
+        #[cfg(feature = "cloud-storage")]
+        {
+            if self.use_cloud_storage {
+                self.metadata.write_all_to_storage(
+                    &self.storage,
+                    &self.output_prefix,
+                    &self.config,
+                )?;
+            } else {
+                self.metadata.write_all(&self.output_dir, &self.config)?;
+            }
+        }
+
+        #[cfg(not(feature = "cloud-storage"))]
+        {
+            self.metadata.write_all(&self.output_dir, &self.config)?;
+        }
 
         let duration = self
             .start_time
@@ -880,7 +1311,23 @@ impl DatasetWriter for LerobotWriter {
         }
 
         // Write metadata files
-        self.metadata.write_all(&self.output_dir, &self.config)?;
+        #[cfg(feature = "cloud-storage")]
+        {
+            if self.use_cloud_storage {
+                self.metadata.write_all_to_storage(
+                    &self.storage,
+                    &self.output_prefix,
+                    &self.config,
+                )?;
+            } else {
+                self.metadata.write_all(&self.output_dir, &self.config)?;
+            }
+        }
+
+        #[cfg(not(feature = "cloud-storage"))]
+        {
+            self.metadata.write_all(&self.output_dir, &self.config)?;
+        }
 
         let duration = self
             .start_time
