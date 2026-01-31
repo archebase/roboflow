@@ -12,8 +12,8 @@ mod fluent;
 use pyo3::prelude::*;
 
 use fluent::{
-    PyBatchReport, PyCompressionPreset, PyFileResult, PyHyperPipelineReport, PyPipelineReport,
-    PyRobocodec, PyTransformBuilder,
+    PyBatchReport, PyCompressionPreset, PyFileResult, PyHyperPipelineReport, PyRobocodec,
+    PyTransformBuilder,
 };
 
 use dataset::{
@@ -22,7 +22,7 @@ use dataset::{
 
 /// Python module definition
 #[pymodule]
-fn _roboflow(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _roboflow(_roboflow: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
     // Main fluent API classes
@@ -31,7 +31,7 @@ fn _roboflow(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCompressionPreset>()?;
 
     // Result and report classes
-    m.add_class::<PyPipelineReport>()?;
+    // Note: PipelineReport is an alias for HyperPipelineReport (standard pipeline not implemented)
     m.add_class::<PyHyperPipelineReport>()?;
     m.add_class::<PyFileResult>()?;
     m.add_class::<PyBatchReport>()?;

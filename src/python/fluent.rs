@@ -339,6 +339,12 @@ impl PyHyperPipelineReport {
         self.report.crc_enabled
     }
 
+    /// Average throughput in MB/s (alias for throughput_mb_s).
+    #[getter]
+    fn average_throughput_mb_s(&self) -> f64 {
+        self.report.throughput_mb_s
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "HyperPipelineReport(input_file={}, output_file={}, throughput_mb_s={:.2})",

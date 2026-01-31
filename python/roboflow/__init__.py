@@ -30,7 +30,6 @@ from roboflow._roboflow import (
     Roboflow,
     TransformBuilder,
     CompressionPreset,
-    PipelineReport,
     HyperPipelineReport,
     FileResult,
     BatchReport,
@@ -42,6 +41,9 @@ from roboflow._roboflow import (
     ProgressUpdate,
     convert,
 )
+
+# PipelineReport is an alias for HyperPipelineReport (standard pipeline not implemented)
+PipelineReport = HyperPipelineReport
 
 __all__ = [
     "__version__",
