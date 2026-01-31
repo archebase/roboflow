@@ -21,9 +21,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use roboflow::pipeline::fluent::{CompressionPreset, Robocodec};
-use roboflow::pipeline::hyper::{HyperPipeline, HyperPipelineConfig};
-use roboflow::pipeline::{PerformanceMode, PipelineAutoConfig};
+use roboflow::{CompressionPreset, PerformanceMode, Robocodec};
+use roboflow_pipeline::{auto_config::PipelineAutoConfig, fluent::RunOutput, hyper::{HyperPipeline, HyperPipelineConfig}};
 
 #[derive(Parser, Debug)]
 #[command(name = "profiler")]
@@ -208,7 +207,7 @@ fn run_conversion(
 
             // Apply batch size if specified
             if let Some(batch_size) = conv_config.batch_size {
-                use roboflow::pipeline::hyper::config::{BatcherConfig, PrefetcherConfig};
+                use roboflow_pipeline::hyper::config::{BatcherConfig, PrefetcherConfig};
                 let batcher = BatcherConfig {
                     target_size: batch_size,
                     ..Default::default()
@@ -258,18 +257,15 @@ fn run_conversion(
 
         // Extract metrics from the report
         let report = match report {
-            roboflow::pipeline::fluent::RunOutput::Single(r) => r,
-            roboflow::pipeline::fluent::RunOutput::Hyper(_) => {
-                return Err("Unexpected Hyper report when use_hyper=false".into());
-            }
-            roboflow::pipeline::fluent::RunOutput::Batch(_) => {
-                return Err("Expected single report, got batch".into());
+            RunOutput::Hyper(r) => r,
+            RunOutput::Batch(_) => {
+                return Err("Expected single file report, got batch".into());
             }
         };
 
         Ok(RunMetrics {
             duration_secs: duration.as_secs_f64(),
-            throughput_mb_s: report.average_throughput_mb_s,
+            throughput_mb_s: report.throughput_mb_s,
             compression_ratio: report.compression_ratio,
             message_count: report.message_count,
             chunks_written: report.chunks_written,

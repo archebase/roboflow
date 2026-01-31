@@ -12,10 +12,10 @@ use pyo3::types::PyList;
 use std::mem;
 use std::path::{Path, PathBuf};
 
-use crate::core::RoboflowError;
-use crate::pipeline::fluent::{BatchReport, CompressionPreset, FileResult, Robocodec, RunOutput};
-use crate::pipeline::hyper::HyperPipelineReport;
-use crate::pipeline::orchestrator::PipelineReport;
+use roboflow_core::RoboflowError;
+use roboflow_pipeline::fluent::{BatchReport, CompressionPreset, FileResult, Robocodec, RunOutput};
+use roboflow_pipeline::hyper::HyperPipelineReport;
+use roboflow_pipeline::PipelineReport;
 use robocodec::transform::TransformBuilder;
 
 // =============================================================================
@@ -377,14 +377,14 @@ impl PyFileResult {
     /// Error message if conversion failed.
     #[getter]
     fn error(&self) -> Option<String> {
-        self.result.error().map(|e| e.to_string())
+        self.result.error().map(|e: &roboflow_core::RoboflowError| e.to_string())
     }
 
     /// Standard pipeline report (if available).
     #[getter]
     fn standard_report(&self, py: Python<'_>) -> Option<PyObject> {
-        self.result.standard_report().map(|r| {
-            PyPipelineReport { report: r.clone() }
+        self.result.standard_report().map(|r: &roboflow_pipeline::HyperPipelineReport| {
+            PyHyperPipelineReport { report: r.clone() }
                 .into_pyobject(py)
                 .ok()
                 .unwrap()
@@ -395,7 +395,7 @@ impl PyFileResult {
     /// Hyper pipeline report (if available).
     #[getter]
     fn hyper_report(&self, py: Python<'_>) -> Option<PyObject> {
-        self.result.hyper_report().map(|r| {
+        self.result.hyper_report().map(|r: &roboflow_pipeline::hyper::HyperPipelineReport| {
             PyHyperPipelineReport { report: r.clone() }
                 .into_pyobject(py)
                 .ok()
@@ -427,8 +427,9 @@ impl PyBatchReport {
     fn file_reports(&self, py: Python<'_>) -> PyResult<PyObject> {
         let list = PyList::empty(py);
         for result in &self.report.file_reports {
+            let result_ref: &FileResult = result;
             list.append(PyFileResult {
-                result: result.clone(),
+                result: result_ref.clone(),
             })?;
         }
         Ok(list.into())
@@ -772,7 +773,6 @@ impl PyRobocodec {
 
         // Convert output to Python object
         match output {
-            RunOutput::Single(report) => Ok(PyPipelineReport { report }.into_pyobject(py)?.into()),
             RunOutput::Hyper(report) => {
                 Ok(PyHyperPipelineReport { report }.into_pyobject(py)?.into())
             }

@@ -1,1 +1,6 @@
-// Placeholder for dataset_converter module
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
+#[allow(clippy::module_inception)]
+pub mod dataset_converter;

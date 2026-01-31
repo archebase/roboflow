@@ -13,15 +13,15 @@ use std::path::{Path, PathBuf};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::core::Result;
-use crate::dataset::common::{ProgressReceiver, ProgressSender, ProgressUpdate, WriterStats};
-use crate::dataset::{DatasetConfig as RustDatasetConfig, DatasetFormat};
+use roboflow_core::Result;
+use roboflow_dataset::common::{ProgressReceiver, ProgressSender, ProgressUpdate, WriterStats};
+use roboflow_dataset::{DatasetConfig as RustDatasetConfig, DatasetFormat};
 
 // =============================================================================
 // Error conversion
 // =============================================================================
 
-fn dataset_error_to_py(error: crate::RoboflowError) -> PyErr {
+fn dataset_error_to_py(error: roboflow_core::RoboflowError) -> PyErr {
     // Log the error for audit trail with structured fields
     tracing::error!(
         error_code = error.code(),
@@ -33,7 +33,7 @@ fn dataset_error_to_py(error: crate::RoboflowError) -> PyErr {
     // Classify errors by variant for proper Python exception types
     match &error {
         // I/O and file-related errors -> PyIOError
-        crate::RoboflowError::CodecError { message }
+        roboflow_core::RoboflowError::CodecError { message }
             if message.contains("No such file")
                 || message.contains("not found")
                 || message.contains("Failed to open")
@@ -44,19 +44,19 @@ fn dataset_error_to_py(error: crate::RoboflowError) -> PyErr {
         }
 
         // Parse, schema, and validation errors -> PyValueError
-        crate::RoboflowError::ParseError { .. }
-        | crate::RoboflowError::InvalidSchema { .. }
-        | crate::RoboflowError::TypeNotFound { .. }
-        | crate::RoboflowError::FieldDecodeError { .. }
-        | crate::RoboflowError::Unsupported { .. } => PyValueError::new_err(error.to_string()),
+        roboflow_core::RoboflowError::ParseError { .. }
+        | roboflow_core::RoboflowError::InvalidSchema { .. }
+        | roboflow_core::RoboflowError::TypeNotFound { .. }
+        | roboflow_core::RoboflowError::FieldDecodeError { .. }
+        | roboflow_core::RoboflowError::Unsupported { .. } => PyValueError::new_err(error.to_string()),
 
         // Codec errors (including I/O from formats) -> PyIOError
-        crate::RoboflowError::CodecError { .. } => PyIOError::new_err(error.to_string()),
+        roboflow_core::RoboflowError::CodecError { .. } => PyIOError::new_err(error.to_string()),
 
         // Encoding/transform errors -> PyRuntimeError
-        crate::RoboflowError::EncodeError { .. }
-        | crate::RoboflowError::TransformError { .. }
-        | crate::RoboflowError::InvariantViolation { .. } => {
+        roboflow_core::RoboflowError::EncodeError { .. }
+        | roboflow_core::RoboflowError::TransformError { .. }
+        | roboflow_core::RoboflowError::InvariantViolation { .. } => {
             PyRuntimeError::new_err(error.to_string())
         }
 
@@ -464,14 +464,14 @@ impl PyConversionJob {
             if self
                 .thread
                 .as_ref()
-                .map(|t| t.is_finished())
+                .map(|t: &JoinHandle<Result<WriterStats>>| t.is_finished())
                 .unwrap_or(true)
                 && let Some(thread) = self.thread.take()
             {
                 let result = py.allow_threads(|| {
                     thread
                         .join()
-                        .map_err(|e| {
+                        .map_err(|e: Box<dyn std::any::Any + Send>| {
                             if let Some(msg) = e.downcast_ref::<String>() {
                                 PyRuntimeError::new_err(format!("Thread panic: {}", msg))
                             } else if let Some(msg) = e.downcast_ref::<&str>() {
@@ -503,7 +503,7 @@ impl PyConversionJob {
         py.allow_threads(|| {
             thread
                 .join()
-                .map_err(|e| {
+                .map_err(|e: Box<dyn std::any::Any + Send>| {
                     // Provide better panic information
                     if let Some(msg) = e.downcast_ref::<String>() {
                         PyRuntimeError::new_err(format!("Thread panic: {}", msg))
@@ -515,7 +515,7 @@ impl PyConversionJob {
                 })?
                 .map_err(dataset_error_to_py)
         })
-        .map(|stats| {
+        .map(|stats: WriterStats| {
             self.stats = Some(stats.clone());
             Some(PyDatasetStats {
                 stats,
@@ -714,7 +714,7 @@ impl PyDatasetConfig {
     /// Get the robot type.
     #[getter]
     fn robot_type(&self) -> Option<String> {
-        self.config.robot_type().map(|s| s.to_string())
+        self.config.robot_type().map(|s: &str| s.to_string())
     }
 
     /// Get the format.
@@ -849,14 +849,14 @@ impl PyDatasetConverter {
     fn convert_internal(&self, input_path: &Path) -> Result<WriterStats> {
         // This is a simplified synchronous conversion
         // In production, this would use the progress-aware version
-        use crate::pipeline::dataset_converter::DatasetConverter;
+        use roboflow_pipeline::DatasetConverter;
 
         match &self.config {
             RustDatasetConfig::Kps(kps_config) => {
                 let converter = DatasetConverter::new_kps(&self.output_dir, kps_config.clone());
-                converter.convert(input_path).map(|s| s.into_writer_stats())
+                converter.convert(input_path).map(|s: roboflow_pipeline::DatasetConverterStats| s.into_writer_stats())
             }
-            RustDatasetConfig::Lerobot(_) => Err(crate::RoboflowError::unsupported(
+            RustDatasetConfig::Lerobot(_) => Err(roboflow_core::RoboflowError::unsupported(
                 "LeRobot dataset conversion",
             )),
         }
@@ -876,13 +876,13 @@ impl PyDatasetConverter {
         if !input_path.exists() {
             let msg = format!("Input file not found: {}", input_path.display());
             progress.error(msg.clone(), true);
-            return Err(crate::RoboflowError::CodecError { message: msg });
+            return Err(roboflow_core::RoboflowError::CodecError { message: msg });
         }
 
         // Convert based on format
         let stats = match config {
             RustDatasetConfig::Kps(kps_config) => {
-                use crate::pipeline::dataset_converter::DatasetConverter;
+                use roboflow_pipeline::DatasetConverter;
                 let mut converter = DatasetConverter::new_kps(&output_dir, kps_config);
                 if let Some(max) = max_frames {
                     converter = converter.with_max_frames(max);
@@ -895,7 +895,7 @@ impl PyDatasetConverter {
                         .to_string(),
                     false,
                 );
-                return Err(crate::RoboflowError::unsupported(
+                return Err(roboflow_core::RoboflowError::unsupported(
                     "LeRobot dataset conversion",
                 ));
             }
@@ -911,7 +911,7 @@ trait IntoWriterStats {
     fn into_writer_stats(self) -> WriterStats;
 }
 
-impl IntoWriterStats for crate::pipeline::dataset_converter::DatasetConverterStats {
+impl IntoWriterStats for roboflow_pipeline::DatasetConverterStats {
     fn into_writer_stats(self) -> WriterStats {
         WriterStats {
             frames_written: self.frames_written,

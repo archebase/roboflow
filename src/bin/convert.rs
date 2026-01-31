@@ -881,8 +881,8 @@ fn convert_to_lerobot(
     output_dir: &str,
     config_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use roboflow::dataset::lerobot::LerobotConfig;
-    use roboflow::dataset::streaming::StreamingDatasetConverter;
+    use roboflow::lerobot::LerobotConfig;
+    use roboflow::streaming::StreamingDatasetConverter;
 
     println!("Converting MCAP to LeRobot dataset (streaming)");
     println!("  Input: {}", input);
@@ -931,8 +931,8 @@ fn convert_bag_to_lerobot(
     output_dir: &str,
     config_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use roboflow::dataset::lerobot::LerobotConfig;
-    use roboflow::dataset::streaming::StreamingDatasetConverter;
+    use roboflow::lerobot::LerobotConfig;
+    use roboflow::streaming::StreamingDatasetConverter;
 
     println!("Converting BAG to LeRobot dataset (streaming)");
     println!("  Input: {}", input);

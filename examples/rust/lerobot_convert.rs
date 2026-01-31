@@ -18,7 +18,7 @@
 
 use std::path::PathBuf;
 
-use roboflow::dataset::lerobot::{AnnotationData, LerobotConfig, LerobotWriter};
+use roboflow::lerobot::{AnnotationData, LerobotConfig, LerobotWriter};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse arguments
