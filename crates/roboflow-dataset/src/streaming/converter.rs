@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use tracing::{info, instrument, warn};
@@ -13,15 +14,23 @@ use tracing::{info, instrument, warn};
 use crate::DatasetFormat;
 use crate::common::DatasetWriter;
 use crate::streaming::{
-    BackpressureHandler, FrameAlignmentBuffer, StreamingConfig, StreamingStats,
+    BackpressureHandler, FrameAlignmentBuffer, StreamingConfig, StreamingStats, TempFileManager,
 };
 use robocodec::RoboReader;
 use roboflow_core::Result;
+use roboflow_storage::LocalStorage;
+use roboflow_storage::Storage;
 
 /// Streaming dataset converter.
 ///
 /// Converts input files (MCAP/Bag) directly to dataset formats using
 /// a streaming architecture with bounded memory footprint.
+///
+/// # Storage Support
+///
+/// The converter supports both local and cloud storage backends:
+/// - **Input storage**: Downloads cloud files to temp directory before processing
+/// - **Output storage**: Writes output files directly to the configured backend
 pub struct StreamingDatasetConverter {
     /// Output directory
     output_dir: PathBuf,
@@ -37,6 +46,12 @@ pub struct StreamingDatasetConverter {
 
     /// Streaming configuration
     config: StreamingConfig,
+
+    /// Input storage backend for reading input files
+    input_storage: Option<Arc<dyn Storage>>,
+
+    /// Output storage backend for writing output files
+    output_storage: Option<Arc<dyn Storage>>,
 }
 
 impl StreamingDatasetConverter {
@@ -52,6 +67,27 @@ impl StreamingDatasetConverter {
             kps_config: Some(kps_config),
             lerobot_config: None,
             config,
+            input_storage: None,
+            output_storage: None,
+        })
+    }
+
+    /// Create a new streaming converter for KPS format with storage backends.
+    pub fn new_kps_with_storage<P: AsRef<Path>>(
+        output_dir: P,
+        kps_config: crate::kps::config::KpsConfig,
+        config: StreamingConfig,
+        input_storage: Option<Arc<dyn Storage>>,
+        output_storage: Option<Arc<dyn Storage>>,
+    ) -> Result<Self> {
+        Ok(Self {
+            output_dir: output_dir.as_ref().to_path_buf(),
+            format: DatasetFormat::Kps,
+            kps_config: Some(kps_config),
+            lerobot_config: None,
+            config,
+            input_storage,
+            output_storage,
         })
     }
 
@@ -67,7 +103,40 @@ impl StreamingDatasetConverter {
             kps_config: None,
             lerobot_config: Some(lerobot_config),
             config: StreamingConfig::with_fps(fps),
+            input_storage: None,
+            output_storage: None,
         })
+    }
+
+    /// Create a new streaming converter for LeRobot format with storage backends.
+    pub fn new_lerobot_with_storage<P: AsRef<Path>>(
+        output_dir: P,
+        lerobot_config: crate::lerobot::config::LerobotConfig,
+        input_storage: Option<Arc<dyn Storage>>,
+        output_storage: Option<Arc<dyn Storage>>,
+    ) -> Result<Self> {
+        let fps = lerobot_config.dataset.fps;
+        Ok(Self {
+            output_dir: output_dir.as_ref().to_path_buf(),
+            format: DatasetFormat::Lerobot,
+            kps_config: None,
+            lerobot_config: Some(lerobot_config),
+            config: StreamingConfig::with_fps(fps),
+            input_storage,
+            output_storage,
+        })
+    }
+
+    /// Set the input storage backend.
+    pub fn with_input_storage(mut self, storage: Arc<dyn Storage>) -> Self {
+        self.input_storage = Some(storage);
+        self
+    }
+
+    /// Set the output storage backend.
+    pub fn with_output_storage(mut self, storage: Arc<dyn Storage>) -> Self {
+        self.output_storage = Some(storage);
+        self
     }
 
     /// Set the completion window (in frames).
@@ -106,6 +175,38 @@ impl StreamingDatasetConverter {
 
         let start_time = Instant::now();
 
+        // Handle cloud input: download to temp file if needed
+        let input_storage = self.input_storage.clone().unwrap_or_else(|| {
+            Arc::new(LocalStorage::new(
+                input_path.parent().unwrap_or(Path::new(".")),
+            )) as Arc<dyn Storage>
+        });
+
+        let temp_dir = self
+            .config
+            .temp_dir
+            .clone()
+            .unwrap_or_else(std::env::temp_dir);
+
+        let _temp_manager = match TempFileManager::new(input_storage, input_path, &temp_dir) {
+            Ok(manager) => manager,
+            Err(e) => {
+                return Err(roboflow_core::RoboflowError::other(format!(
+                    "Failed to prepare input file: {}",
+                    e
+                )));
+            }
+        };
+
+        let process_path = _temp_manager.path();
+
+        info!(
+            input = %input_path.display(),
+            process_path = %process_path.display(),
+            is_temp = _temp_manager.is_temp(),
+            "Processing input file"
+        );
+
         // Create the dataset writer
         let mut writer = self.create_writer()?;
         writer.initialize(self.get_config_any()?)?;
@@ -123,7 +224,7 @@ impl StreamingDatasetConverter {
         // NOTE: RoboReader decodes BAG/MCAP files directly to TimestampedDecodedMessage.
         // There is NO intermediate MCAP conversion - neither in memory nor on disk.
         // BAG format is parsed natively, messages are decoded directly to HashMap<String, CodecValue>.
-        let reader = RoboReader::open(input_path)?;
+        let reader = RoboReader::open(process_path)?;
 
         info!(
             mappings = topic_mappings.len(),

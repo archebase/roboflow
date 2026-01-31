@@ -79,7 +79,9 @@ pub mod backpressure;
 pub mod completion;
 pub mod config;
 pub mod converter;
+pub mod download;
 pub mod stats;
+pub mod temp_file;
 
 pub use alignment::{FrameAlignmentBuffer, PartialFrame};
 pub use backpressure::{BackpressureHandler, BackpressureStrategy};
@@ -87,3 +89,4 @@ pub use completion::FrameCompletionCriteria;
 pub use config::{FeatureRequirement, LateMessageStrategy, StreamingConfig};
 pub use converter::StreamingDatasetConverter;
 pub use stats::{AlignmentStats, StreamingStats};
+pub use temp_file::TempFileManager;
