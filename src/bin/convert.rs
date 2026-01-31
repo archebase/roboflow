@@ -24,6 +24,9 @@ use std::path::Path;
 
 use robocodec::mcap::ParallelMcapWriter;
 
+#[cfg(feature = "dataset-all")]
+use roboflow_storage::StorageFactory;
+
 // ============================================================================
 // Fluent API Types
 // ============================================================================
@@ -183,12 +186,16 @@ enum Command {
         input: String,
         output: String,
         config: String,
+        input_storage: Option<String>,
+        output_storage: Option<String>,
     },
     #[cfg(feature = "dataset-all")]
     BagToLeRobot {
         input: String,
         output: String,
         config: String,
+        input_storage: Option<String>,
+        output_storage: Option<String>,
     },
 }
 
@@ -200,8 +207,13 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                bag-to-mcap <input.bag> <output.mcap>              - Convert ROS1 BAG to MCAP\n\
                mcap-to-bag <input.mcap> <output.bag>              - Convert MCAP to ROS1 BAG\n\
                normalize <input> <output> <config>                 - Normalize using config file\n\
-               to-lerobot <input.mcap> <output_dir> <config>      - Convert MCAP to LeRobot\n\
-               bag-to-lerobot <input.bag> <output_dir> <config>   - Convert BAG to LeRobot (direct)",
+               to-lerobot <input.mcap> <output_dir> <config> [options] - Convert MCAP to LeRobot\n\
+               bag-to-lerobot <input.bag> <output_dir> <config> [options] - Convert BAG to LeRobot\n\
+             Options:\n\
+               --input-storage <url>  - Storage backend for input (file://, s3://, oss://)\n\
+               --output-storage <url> - Storage backend for output (file://, s3://, oss://)\n\
+             Environment Variables:\n\
+               ROBOFLOW_TEMP_DIR      - Temp directory for cloud input downloads",
             args[0]
         ));
     }
@@ -230,10 +242,39 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                 return Err("to-lerobot command requires a config file argument".to_string());
             }
             let config = args[4].clone();
+
+            // Parse optional arguments
+            let mut input_storage = None;
+            let mut output_storage = None;
+            let mut i = 5;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--input-storage" => {
+                        if i + 1 >= args.len() {
+                            return Err("--input-storage requires a URL argument".to_string());
+                        }
+                        input_storage = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    "--output-storage" => {
+                        if i + 1 >= args.len() {
+                            return Err("--output-storage requires a URL argument".to_string());
+                        }
+                        output_storage = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    _ => {
+                        return Err(format!("Unknown argument: {}", args[i]));
+                    }
+                }
+            }
+
             Command::ToLeRobot {
                 input,
                 output,
                 config,
+                input_storage,
+                output_storage,
             }
         }
         #[cfg(feature = "dataset-all")]
@@ -242,10 +283,39 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                 return Err("bag-to-lerobot command requires a config file argument".to_string());
             }
             let config = args[4].clone();
+
+            // Parse optional arguments
+            let mut input_storage = None;
+            let mut output_storage = None;
+            let mut i = 5;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--input-storage" => {
+                        if i + 1 >= args.len() {
+                            return Err("--input-storage requires a URL argument".to_string());
+                        }
+                        input_storage = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    "--output-storage" => {
+                        if i + 1 >= args.len() {
+                            return Err("--output-storage requires a URL argument".to_string());
+                        }
+                        output_storage = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    _ => {
+                        return Err(format!("Unknown argument: {}", args[i]));
+                    }
+                }
+            }
+
             Command::BagToLeRobot {
                 input,
                 output,
                 config,
+                input_storage,
+                output_storage,
             }
         }
         _ => return Err(format!("Unknown command: {command}")),
@@ -266,13 +336,43 @@ fn run_convert(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
             input,
             output,
             config,
-        } => to_lerobot(&input, &output).config(&config).run(),
+            input_storage,
+            output_storage,
+        } => {
+            // Use storage-aware version if storage URLs are provided
+            if input_storage.is_some() || output_storage.is_some() {
+                convert_to_lerobot_with_storage(
+                    &input,
+                    &output,
+                    &config,
+                    input_storage,
+                    output_storage,
+                )
+            } else {
+                to_lerobot(&input, &output).config(&config).run()
+            }
+        }
         #[cfg(feature = "dataset-all")]
         Command::BagToLeRobot {
             input,
             output,
             config,
-        } => convert_bag_to_lerobot(&input, &output, &config),
+            input_storage,
+            output_storage,
+        } => {
+            // Use storage-aware version if storage URLs are provided
+            if input_storage.is_some() || output_storage.is_some() {
+                convert_bag_to_lerobot_with_storage(
+                    &input,
+                    &output,
+                    &config,
+                    input_storage,
+                    output_storage,
+                )
+            } else {
+                convert_bag_to_lerobot(&input, &output, &config)
+            }
+        }
     }
 }
 
@@ -953,6 +1053,178 @@ fn convert_bag_to_lerobot(
         .with_max_buffered_frames(300); // Max 10 seconds at 30fps
 
     let stats = converter.convert(input)?;
+
+    println!();
+    println!("=== Conversion Complete ===");
+    println!("Frames written: {}", stats.frames_written);
+    println!("Messages processed: {}", stats.messages_processed);
+    if stats.force_completed_frames > 0 {
+        println!("Force-completed frames: {}", stats.force_completed_frames);
+    }
+    println!("Avg buffer size: {:.1} frames", stats.avg_buffer_size);
+    println!("Peak memory: {:.1} MB", stats.peak_memory_mb);
+    println!("Duration: {:.2}s", stats.duration_sec);
+    println!("Throughput: {:.1} frames/s", stats.throughput_fps());
+
+    Ok(())
+}
+
+/// Convert MCAP to LeRobot dataset format with storage backend support.
+#[cfg(feature = "dataset-all")]
+fn convert_to_lerobot_with_storage(
+    input: &str,
+    output_dir: &str,
+    config_path: &str,
+    input_storage_url: Option<String>,
+    output_storage_url: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use roboflow::lerobot::LerobotConfig;
+    use roboflow::streaming::{StreamingConfig, StreamingDatasetConverter};
+
+    println!("Converting MCAP to LeRobot dataset (streaming with storage)");
+    println!("  Input: {}", input);
+    println!("  Output: {}", output_dir);
+    println!("  Config: {}", config_path);
+    if let Some(ref url) = input_storage_url {
+        println!("  Input storage: {}", url);
+    }
+    if let Some(ref url) = output_storage_url {
+        println!("  Output storage: {}", url);
+    }
+
+    // Load LeRobot config
+    let config = LerobotConfig::from_file(config_path)?;
+
+    println!("  Dataset: {}", config.dataset.name);
+    println!("  Robot type: {:?}", config.dataset.robot_type);
+    println!("  FPS: {}", config.dataset.fps);
+    println!("  Mappings: {}", config.mappings.len());
+
+    // Create storage factory
+    let factory = StorageFactory::default();
+
+    // Create input storage backend (clone for later use)
+    let input_storage = input_storage_url
+        .as_ref()
+        .and_then(|url| factory.create(url).ok());
+
+    // Create output storage backend
+    let output_storage = output_storage_url
+        .as_ref()
+        .and_then(|url| factory.create(url).ok());
+
+    // Build streaming config with temp directory
+    let mut streaming_config = StreamingConfig::with_fps(config.dataset.fps);
+    if input_storage.is_some() {
+        let temp_dir = std::env::var("ROBOFLOW_TEMP_DIR")
+            .ok()
+            .or_else(|| std::env::var("TMPDIR").ok())
+            .unwrap_or_else(|| "/tmp".to_string());
+        println!("  Temp directory: {}", temp_dir);
+        streaming_config.temp_dir = Some(std::path::PathBuf::from(temp_dir));
+    }
+
+    // Use StreamingDatasetConverter with storage backends
+    let converter = StreamingDatasetConverter::new_lerobot_with_storage(
+        output_dir,
+        config,
+        input_storage,
+        output_storage,
+    )?
+    .with_completion_window(5) // 5 frames completion window
+    .with_max_buffered_frames(300); // Max 10 seconds at 30fps
+
+    // Extract input path from URL if needed
+    // For now, we use the input directly - the storage backend handles the URL
+    let input_path = input;
+
+    let stats = converter.convert(input_path)?;
+
+    println!();
+    println!("=== Conversion Complete ===");
+    println!("Frames written: {}", stats.frames_written);
+    println!("Messages processed: {}", stats.messages_processed);
+    if stats.force_completed_frames > 0 {
+        println!("Force-completed frames: {}", stats.force_completed_frames);
+    }
+    println!("Avg buffer size: {:.1} frames", stats.avg_buffer_size);
+    println!("Peak memory: {:.1} MB", stats.peak_memory_mb);
+    println!("Duration: {:.2}s", stats.duration_sec);
+    println!("Throughput: {:.1} frames/s", stats.throughput_fps());
+
+    Ok(())
+}
+
+/// Convert BAG file directly to LeRobot dataset format with storage backend support.
+#[cfg(feature = "dataset-all")]
+fn convert_bag_to_lerobot_with_storage(
+    input: &str,
+    output_dir: &str,
+    config_path: &str,
+    input_storage_url: Option<String>,
+    output_storage_url: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use roboflow::lerobot::LerobotConfig;
+    use roboflow::streaming::{StreamingConfig, StreamingDatasetConverter};
+
+    println!("Converting BAG to LeRobot dataset (streaming with storage)");
+    println!("  Input: {}", input);
+    println!("  Output: {}", output_dir);
+    println!("  Config: {}", config_path);
+    if let Some(ref url) = input_storage_url {
+        println!("  Input storage: {}", url);
+    }
+    if let Some(ref url) = output_storage_url {
+        println!("  Output storage: {}", url);
+    }
+
+    // Load LeRobot config
+    let config = LerobotConfig::from_file(config_path)?;
+
+    println!("  Dataset: {}", config.dataset.name);
+    println!("  Robot type: {:?}", config.dataset.robot_type);
+    println!("  FPS: {}", config.dataset.fps);
+    println!("  Mappings: {}", config.mappings.len());
+
+    // Create storage factory
+    let factory = StorageFactory::default();
+
+    // Create input storage backend (clone for later use)
+    let input_storage = input_storage_url
+        .as_ref()
+        .and_then(|url| factory.create(url).ok());
+
+    // Create output storage backend
+    let output_storage = output_storage_url
+        .as_ref()
+        .and_then(|url| factory.create(url).ok());
+
+    // Build streaming config with temp directory
+    let mut streaming_config = StreamingConfig::with_fps(config.dataset.fps);
+    if input_storage.is_some() {
+        let temp_dir = std::env::var("ROBOFLOW_TEMP_DIR")
+            .ok()
+            .or_else(|| std::env::var("TMPDIR").ok())
+            .unwrap_or_else(|| "/tmp".to_string());
+        println!("  Temp directory: {}", temp_dir);
+        streaming_config.temp_dir = Some(std::path::PathBuf::from(temp_dir));
+    }
+
+    // Use StreamingDatasetConverter with storage backends
+    let converter = StreamingDatasetConverter::new_lerobot_with_storage(
+        output_dir,
+        config,
+        input_storage,
+        output_storage,
+    )?
+    .with_completion_window(5) // 5 frames completion window
+    .with_max_buffered_frames(300); // Max 10 seconds at 30fps
+
+    // Extract input path from URL if needed
+    // For now, we use the input directly - the storage backend handles the URL
+    let input_path = input;
+
+    let stats = converter.convert(input_path)?;
 
     println!();
     println!("=== Conversion Complete ===");

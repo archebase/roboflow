@@ -5,6 +5,7 @@
 //! Configuration for streaming dataset conversion.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Streaming dataset converter configuration.
 #[derive(Debug, Clone)]
@@ -30,6 +31,12 @@ pub struct StreamingConfig {
     /// Per-feature completion requirements
     /// Keys are feature names (e.g., "observation.images.cam_high")
     pub feature_requirements: HashMap<String, FeatureRequirement>,
+
+    /// Temporary directory for downloading cloud input files
+    ///
+    /// When the input storage is a cloud backend (S3/OSS), files are downloaded
+    /// to this directory before processing. Defaults to `std::env::temp_dir()`.
+    pub temp_dir: Option<PathBuf>,
 }
 
 impl Default for StreamingConfig {
@@ -41,6 +48,7 @@ impl Default for StreamingConfig {
             max_buffered_memory_mb: 500, // 500MB max buffer
             late_message_strategy: LateMessageStrategy::WarnAndDrop,
             feature_requirements: HashMap::new(),
+            temp_dir: None,
         }
     }
 }
@@ -139,6 +147,12 @@ impl StreamingConfig {
         self
     }
 
+    /// Set the temporary directory for cloud input downloads.
+    pub fn with_temp_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.temp_dir = Some(dir.into());
+        self
+    }
+
     /// Calculate the completion window in nanoseconds.
     ///
     /// # Panics
@@ -201,6 +215,7 @@ mod tests {
         // Note: with_fps() would panic, so we test validate() separately
         let config = StreamingConfig {
             fps: 0,
+            temp_dir: None,
             ..Default::default()
         };
         assert!(config.validate().is_err());
