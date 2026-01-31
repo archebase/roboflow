@@ -13,11 +13,28 @@ Roboflow: Distributed data transformation pipeline converting robotics bag/MCAP 
 - Cloud storage support (OSS, S3) for distributed workloads
 - Python bindings via PyO3 (must use `extension-module` mode)
 
+## Workspace Structure
+
+The project uses a Cargo workspace with 6 crates:
+
+| Crate | Purpose |
+|-------|---------|
+| `roboflow-core` | Error types, registry, values |
+| `roboflow-storage` | S3, OSS, Local storage (always available) |
+| `roboflow-dataset` | KPS, LeRobot, streaming converters |
+| `roboflow-distributed` | TiKV client, catalog, circuit breaker |
+| `roboflow-hdf5` | Optional HDF5 format support |
+| `roboflow-pipeline` | Hyper pipeline, compression stages |
+
+**Import patterns:**
+- Use facade re-exports from `roboflow`: `use roboflow::{Robocodec, DatasetWriter, ...}`
+- Or direct crate imports: `use roboflow_core::Result;`
+
 ## Build & Test
 
 ```bash
 cargo build                              # Standard build
-cargo test --features cloud-storage    # With storage layer
+cargo test --features distributed       # With distributed coordination
 cargo test --test kps_v12_tests         # KPS v1.2 spec tests
 ```
 
@@ -62,28 +79,37 @@ refactor: extract storage layer into separate crate
 style: apply code formatting fixes
 ```
 
+## Git Workflow
+
+1. Create feature branch from `main`
+2. Make commits following the convention above
+3. Push to remote
+4. Create PR with clear description and test checklist
+5. Ensure CI passes (`make lint && cargo test`)
+
 ## Feature Flags
 
 | Flag | Purpose |
 |------|---------|
+| `distributed` | TiKV distributed coordination |
 | `python` | PyO3 bindings |
-| `dataset-all` | All KPS features (HDF5, Parquet, depth) |
-| `cloud-storage` | Storage abstraction (OSS/S3, object_store) |
 | `gpu` | GPU compression (Linux only) |
 | `jemalloc` | jemalloc allocator (Linux only) |
 
+**Note:** Storage (S3/OSS) and dataset formats (Parquet, LeRobot) are always available.
+
 ## Key Conventions
 
-### Storage Layer (`cloud-storage` feature)
+### Storage Layer
 - `Storage` trait uses `&Path` (not `impl AsRef<Path>`) for dyn-compatibility
 - `LocalStorage` implements `SeekableStorage` for seekable reads
 - `StorageFactory` creates backends from URL schemes (file://, s3://, oss://)
 - Environment variables for OSS: `OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, `OSS_ENDPOINT`
 
 ### KPS Dataset
-- TOML config at `src/dataset/kps/config.rs` for topic mappings
+- TOML config at `crates/roboflow-dataset/src/kps/config.rs` for topic mappings
 - v1.2 spec tests in `tests/kps_v12_tests.rs` are authoritative
-- Writers in `src/dataset/kps/writers/` use streaming patterns
+- Writers use streaming patterns
 
 ### Memory
 - **Always use arena allocation** for message data (~22% overhead if skipped)
