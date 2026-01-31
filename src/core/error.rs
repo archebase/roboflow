@@ -435,6 +435,13 @@ impl From<crate::dataset::kps::writers::KpsWriterError> for RoboflowError {
     }
 }
 
+#[cfg(feature = "cloud-storage")]
+impl From<crate::storage::StorageError> for RoboflowError {
+    fn from(err: crate::storage::StorageError) -> Self {
+        RoboflowError::Other(format!("Storage error: {}", err))
+    }
+}
+
 /// Result type for codec operations.
 pub type Result<T> = std::result::Result<T, RoboflowError>;
 

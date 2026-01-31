@@ -97,8 +97,28 @@ pub struct LerobotFrame {
 
 impl LerobotWriter {
     /// Create a new LeRobot writer.
+    ///
+    /// # Deprecated
+    ///
+    /// Use `new_local` instead for clarity. This method will be removed in a future version.
     #[allow(unused_variables)]
+    #[deprecated(since = "0.2.0", note = "Use new_local() instead")]
     pub fn create(output_dir: impl AsRef<Path>, config: LerobotConfig) -> Result<Self> {
+        Self::new_local(output_dir, config)
+    }
+
+    /// Create a new LeRobot writer for local filesystem output.
+    ///
+    /// This is the recommended constructor for local filesystem output.
+    /// For cloud storage support, use the storage-aware constructors when
+    /// the `cloud-storage` feature is enabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `output_dir` - Output directory path
+    /// * `config` - LeRobot configuration
+    #[allow(unused_variables)]
+    pub fn new_local(output_dir: impl AsRef<Path>, config: LerobotConfig) -> Result<Self> {
         #[cfg(not(feature = "dataset-parquet"))]
         {
             Err(crate::RoboflowError::unsupported(

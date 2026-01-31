@@ -22,6 +22,12 @@ use crate::core::Result;
 use crate::dataset::common::parquet_base::FeatureStats;
 use crate::dataset::lerobot::config::LerobotConfig;
 
+#[cfg(feature = "cloud-storage")]
+use std::sync::Arc;
+
+#[cfg(feature = "cloud-storage")]
+use crate::storage::Storage;
+
 /// LeRobot v2.1 info.json structure.
 #[derive(Debug, Serialize)]
 pub struct LerobotInfo {
@@ -161,6 +167,9 @@ impl MetadataCollector {
     }
 
     /// Write all metadata files to the output directory.
+    ///
+    /// This method writes to the local filesystem. For storage backend support,
+    /// use `write_all_to_storage` instead.
     pub fn write_all(&self, output_dir: &Path, config: &LerobotConfig) -> Result<()> {
         let meta_dir = output_dir.join("meta");
         fs::create_dir_all(&meta_dir)?;
@@ -173,7 +182,40 @@ impl MetadataCollector {
         Ok(())
     }
 
-    /// Write meta/info.json.
+    /// Write all metadata files to a storage backend.
+    ///
+    /// This is the preferred method for cloud storage support, as it writes
+    /// directly to the storage backend without requiring local filesystem access.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage` - The storage backend to write to
+    /// * `output_prefix` - The output prefix within storage (e.g., "datasets/my_dataset")
+    /// * `config` - The LeRobot configuration
+    #[cfg(feature = "cloud-storage")]
+    pub fn write_all_to_storage(
+        &self,
+        storage: &Arc<dyn Storage>,
+        output_prefix: &str,
+        config: &LerobotConfig,
+    ) -> Result<()> {
+        let meta_prefix = if output_prefix.is_empty() {
+            "meta".to_string()
+        } else {
+            format!("{}/meta", output_prefix)
+        };
+
+        storage.create_dir_all(Path::new(&meta_prefix))?;
+
+        self.write_info_json_to_storage(storage, &meta_prefix, config)?;
+        self.write_episodes_jsonl_to_storage(storage, &meta_prefix)?;
+        self.write_tasks_jsonl_to_storage(storage, &meta_prefix)?;
+        self.write_episodes_stats_jsonl_to_storage(storage, &meta_prefix)?;
+
+        Ok(())
+    }
+
+    /// Write meta/info.json to storage.
     fn write_info_json(&self, meta_dir: &Path, config: &LerobotConfig) -> Result<()> {
         let mut features = serde_json::Map::new();
 
@@ -313,6 +355,211 @@ impl MetadataCollector {
                 )
             })?;
             writeln!(file, "{}", line)?;
+        }
+
+        tracing::info!(path = %stats_path.display(), "Wrote LeRobot v2.1 episodes_stats.jsonl");
+
+        Ok(())
+    }
+}
+
+// =============================================================================
+// Storage Backend Support (cloud-storage feature)
+// =============================================================================
+
+#[cfg(feature = "cloud-storage")]
+impl MetadataCollector {
+    /// Write meta/info.json to storage.
+    fn write_info_json_to_storage(
+        &self,
+        storage: &Arc<dyn Storage>,
+        meta_dir: &str,
+        config: &LerobotConfig,
+    ) -> Result<()> {
+        let mut features = serde_json::Map::new();
+
+        // Add observation state feature
+        if let Some(&dim) = self.state_dims.get("observation.state") {
+            features.insert(
+                "observation.state".to_string(),
+                json!({
+                    "dtype": "float32",
+                    "shape": [dim],
+                }),
+            );
+        }
+
+        // Add action feature
+        if let Some(&dim) = self.state_dims.get("action") {
+            features.insert(
+                "action".to_string(),
+                json!({
+                    "dtype": "float32",
+                    "shape": [dim],
+                }),
+            );
+        }
+
+        // Add image features
+        for (camera, (w, h)) in &self.image_shapes {
+            features.insert(
+                format!("observation.images.{}", camera),
+                json!({
+                    "dtype": "video",
+                    "shape": [*h, *w, 3],
+                    "names": ["height", "width", "channel"],
+                    "info": {
+                        "video.fps": config.dataset.fps,
+                        "video.codec": config.video.codec,
+                    }
+                }),
+            );
+        }
+
+        let robot_type = config
+            .dataset
+            .robot_type
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let info = LerobotInfo {
+            codebase_version: "v2.1".to_string(),
+            robot_type,
+            total_episodes: self.episodes.len(),
+            total_frames: self.total_frames,
+            fps: config.dataset.fps,
+            features: serde_json::Value::Object(features),
+            video: Some(VideoInfo {
+                fps: config.dataset.fps,
+                codec: config.video.codec.clone(),
+            }),
+        };
+
+        let info_json = serde_json::to_string_pretty(&info).map_err(|e| {
+            crate::RoboflowError::parse("Metadata", format!("Failed to serialize info.json: {}", e))
+        })?;
+
+        let info_path = Path::new(meta_dir).join("info.json");
+        let mut writer = storage.writer(&info_path).map_err(|e| {
+            crate::RoboflowError::Other(format!(
+                "Failed to open writer for {}: {}",
+                info_path.display(),
+                e
+            ))
+        })?;
+        writer.write_all(info_json.as_bytes()).map_err(|e| {
+            crate::RoboflowError::Other(format!("Failed to write info.json: {}", e))
+        })?;
+
+        tracing::info!(path = %info_path.display(), "Wrote LeRobot v2.1 info.json");
+
+        Ok(())
+    }
+
+    /// Write meta/episodes.jsonl to storage.
+    fn write_episodes_jsonl_to_storage(
+        &self,
+        storage: &Arc<dyn Storage>,
+        meta_dir: &str,
+    ) -> Result<()> {
+        let episodes_path = Path::new(meta_dir).join("episodes.jsonl");
+        let mut writer = storage.writer(&episodes_path).map_err(|e| {
+            crate::RoboflowError::Other(format!(
+                "Failed to open writer for {}: {}",
+                episodes_path.display(),
+                e
+            ))
+        })?;
+
+        for episode in &self.episodes {
+            let line = serde_json::to_string(episode).map_err(|e| {
+                crate::RoboflowError::parse(
+                    "Metadata",
+                    format!("Failed to serialize episode for episodes.jsonl: {}", e),
+                )
+            })?;
+            writeln!(writer, "{}", line).map_err(|e| {
+                crate::RoboflowError::Other(format!("Failed to write episodes.jsonl: {}", e))
+            })?;
+        }
+
+        tracing::info!(path = %episodes_path.display(), "Wrote LeRobot v2.1 episodes.jsonl");
+
+        Ok(())
+    }
+
+    /// Write meta/tasks.jsonl to storage.
+    fn write_tasks_jsonl_to_storage(
+        &self,
+        storage: &Arc<dyn Storage>,
+        meta_dir: &str,
+    ) -> Result<()> {
+        if self.tasks.is_empty() {
+            return Ok(());
+        }
+
+        let tasks_path = Path::new(meta_dir).join("tasks.jsonl");
+        let mut writer = storage.writer(&tasks_path).map_err(|e| {
+            crate::RoboflowError::Other(format!(
+                "Failed to open writer for {}: {}",
+                tasks_path.display(),
+                e
+            ))
+        })?;
+
+        // Sort by task index
+        let mut tasks: Vec<_> = self.tasks.iter().collect();
+        tasks.sort_by_key(|(_, idx)| **idx);
+
+        for (task, task_index) in tasks {
+            let task_info = TaskInfo {
+                task_index: *task_index,
+                task: task.clone(),
+            };
+            let line = serde_json::to_string(&task_info).map_err(|e| {
+                crate::RoboflowError::parse(
+                    "Metadata",
+                    format!("Failed to serialize task for tasks.jsonl: {}", e),
+                )
+            })?;
+            writeln!(writer, "{}", line).map_err(|e| {
+                crate::RoboflowError::Other(format!("Failed to write tasks.jsonl: {}", e))
+            })?;
+        }
+
+        tracing::info!(path = %tasks_path.display(), "Wrote LeRobot v2.1 tasks.jsonl");
+
+        Ok(())
+    }
+
+    /// Write meta/episodes_stats.jsonl to storage.
+    fn write_episodes_stats_jsonl_to_storage(
+        &self,
+        storage: &Arc<dyn Storage>,
+        meta_dir: &str,
+    ) -> Result<()> {
+        let stats_path = Path::new(meta_dir).join("episodes_stats.jsonl");
+        let mut writer = storage.writer(&stats_path).map_err(|e| {
+            crate::RoboflowError::Other(format!(
+                "Failed to open writer for {}: {}",
+                stats_path.display(),
+                e
+            ))
+        })?;
+
+        for stats in &self.episode_stats {
+            let line = serde_json::to_string(stats).map_err(|e| {
+                crate::RoboflowError::parse(
+                    "Metadata",
+                    format!(
+                        "Failed to serialize episode stats for episodes_stats.jsonl: {}",
+                        e
+                    ),
+                )
+            })?;
+            writeln!(writer, "{}", line).map_err(|e| {
+                crate::RoboflowError::Other(format!("Failed to write episodes_stats.jsonl: {}", e))
+            })?;
         }
 
         tracing::info!(path = %stats_path.display(), "Wrote LeRobot v2.1 episodes_stats.jsonl");

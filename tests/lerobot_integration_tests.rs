@@ -57,7 +57,7 @@ fn test_lerobot_end_to_end_conversion() {
     let output_dir = test_output_dir("test_lerobot_e2e");
     let config = test_config();
 
-    let mut writer = LerobotWriter::create(output_dir.path(), config.clone()).unwrap();
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
     // Initialize the writer
     writer.initialize_with_config(&config).unwrap();
@@ -100,7 +100,7 @@ fn test_lerobot_episode_segmentation() {
     let output_dir = test_output_dir("test_lerobot_episodes");
     let config = test_config();
 
-    let mut writer = LerobotWriter::create(output_dir.path(), config.clone()).unwrap();
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
     writer.initialize_with_config(&config).unwrap();
 
     // First episode with task_index = 0
@@ -126,7 +126,7 @@ fn test_lerobot_multi_camera() {
     let output_dir = test_output_dir("test_lerobot_multi_camera");
     let config = test_config();
 
-    let mut writer = LerobotWriter::create(output_dir.path(), config.clone()).unwrap();
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
     writer.initialize_with_config(&config).unwrap();
 
     writer.start_episode(Some(0));
@@ -162,7 +162,7 @@ fn test_lerobot_empty_dataset() {
     let output_dir = test_output_dir("test_lerobot_empty");
     let config = test_config();
 
-    let mut writer = LerobotWriter::create(output_dir.path(), config.clone()).unwrap();
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
     writer.initialize_with_config(&config).unwrap();
 
     // Start and finish episode without any frames
@@ -184,7 +184,7 @@ fn test_lerobot_frame_count() {
     let output_dir = test_output_dir("test_lerobot_frame_count");
     let config = test_config();
 
-    let writer = LerobotWriter::create(output_dir.path(), config).unwrap();
+    let writer = LerobotWriter::new_local(output_dir.path(), config).unwrap();
 
     // Before initialization, frame count should be 0
     assert_eq!(writer.frame_count(), 0);
@@ -200,7 +200,7 @@ fn test_lerobot_writer_state() {
     let output_dir = test_output_dir("test_lerobot_state");
     let config = test_config();
 
-    let mut writer = LerobotWriter::create(output_dir.path(), config.clone()).unwrap();
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
     // Check initial state
     assert!(!writer.is_initialized());
@@ -228,7 +228,7 @@ fn test_lerobot_image_buffer() {
     let output_dir = test_output_dir("test_lerobot_image_buffer");
     let config = test_config();
 
-    let mut writer = LerobotWriter::create(output_dir.path(), config.clone()).unwrap();
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
     writer.initialize_with_config(&config).unwrap();
 
     writer.start_episode(Some(0));
@@ -261,7 +261,7 @@ fn test_lerobot_metadata() {
     config.dataset.name = "metadata_test".to_string();
     config.dataset.robot_type = Some("test_bot".to_string());
 
-    let mut writer = LerobotWriter::create(output_dir.path(), config.clone()).unwrap();
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
     writer.initialize_with_config(&config).unwrap();
 
     writer.start_episode(Some(0));
@@ -293,7 +293,7 @@ fn test_lerobot_video_codec_config() {
     let mut config = test_config();
     config.video.codec = "libx264".to_string();
 
-    let mut writer = LerobotWriter::create(output_dir.path(), config.clone()).unwrap();
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
     writer.initialize_with_config(&config).unwrap();
 
     writer.start_episode(Some(0));
@@ -318,7 +318,7 @@ fn test_lerobot_ffmpeg_missing_graceful() {
     let output_dir = test_output_dir("test_lerobot_no_ffmpeg");
     let config = test_config();
 
-    let mut writer = LerobotWriter::create(output_dir.path(), config.clone()).unwrap();
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
     writer.initialize_with_config(&config).unwrap();
 
     writer.start_episode(Some(0));
@@ -356,7 +356,7 @@ fn test_lerobot_timestamps() {
     let output_dir = test_output_dir("test_lerobot_timestamps");
     let config = test_config();
 
-    let mut writer = LerobotWriter::create(output_dir.path(), config.clone()).unwrap();
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
     writer.initialize_with_config(&config).unwrap();
 
     writer.start_episode(Some(0));

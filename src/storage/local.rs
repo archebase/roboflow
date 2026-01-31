@@ -45,8 +45,13 @@ impl LocalStorage {
         }
     }
 
+    /// Get the root directory of this storage backend.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// Get the full path for a relative path within this storage.
-    fn full_path(&self, path: &Path) -> PathBuf {
+    pub fn full_path(&self, path: &Path) -> PathBuf {
         self.root.join(path)
     }
 
@@ -188,6 +193,10 @@ impl Storage for LocalStorage {
         let full_path = self.full_path(path);
         fs::create_dir_all(&full_path).map_err(StorageError::Io)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl SeekableStorage for LocalStorage {
@@ -230,7 +239,7 @@ mod tests {
     #[test]
     fn test_local_storage_new() {
         let storage = LocalStorage::new("/tmp/test_roboflow");
-        assert_eq!(storage.root, PathBuf::from("/tmp/test_roboflow"));
+        assert_eq!(storage.root(), PathBuf::from("/tmp/test_roboflow"));
     }
 
     #[test]
