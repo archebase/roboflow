@@ -26,6 +26,7 @@ jobs:
     name: Rust Lint
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: true
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
@@ -37,8 +38,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Run fmt check
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Check formatting (Rust)
         run: cargo fmt -- --check
+
+      - name: Check formatting (Python)
+        run: ruff format --check python/
 
       - name: Install HDF5
         run: |
@@ -58,6 +65,7 @@ jobs:
     name: Rust Tests
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: true
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
@@ -88,6 +96,7 @@ jobs:
     name: Python Tests
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: true
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ['3.11', '3.12', '3.13']
@@ -158,10 +167,13 @@ jobs:
           echo "$PWD/.venv/bin" >> $GITHUB_PATH
 
       - name: Install dependencies
-        run: pip install maturin[patchelf] mypy
+        run: pip install maturin[patchelf] ruff mypy
 
       - name: Build and install Python package
         run: maturin develop --release --features python
+
+      - name: Run ruff check (Python linting)
+        run: ruff check python/
 
       - name: Run mypy
         run: mypy python/roboflow
