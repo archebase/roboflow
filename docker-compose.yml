@@ -1,0 +1,139 @@
+# SPDX-FileCopyrightText: 2026 ArcheBase
+#
+# SPDX-License-Identifier: MulanPSL-2.0
+
+# Docker Compose configuration for local development infrastructure.
+#
+# This file sets up the following services for roboflow development:
+# - TiKV: Distributed KV storage for metadata/catalog
+# - PD (Placement Driver): Cluster management for TiKV
+# - MinIO: S3-compatible object storage for datasets
+#
+# Usage:
+#   docker compose up -d  # Start all services
+#   docker compose down   # Stop all services
+#   docker compose down -v # Stop and remove volumes
+
+services:
+  # PD (Placement Driver) for TiKV cluster management
+  pd:
+    image: pingcap/pd:v8.5.5
+    container_name: roboflow-pd
+    ports:
+      - "2379:2379"  # PD client API
+      - "2380:2380"  # PD peer API
+    command:
+      - --name=pd1
+      - --data-dir=/data
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://host.docker.internal:2379
+      - --advertise-peer-urls=http://pd:2380
+      - --initial-cluster=pd1=http://pd:2380
+      - --log-level=info
+    volumes:
+      - pd_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2379/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - roboflow-network
+
+  # TiKV node for distributed KV storage
+  tikv:
+    image: pingcap/tikv:v8.5.5
+    container_name: roboflow-tikv
+    ports:
+      - "20160:20160"  # TiKV client API
+      - "20180:20180"  # TiKV status API
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=host.docker.internal:20160
+      - --data-dir=/data
+      - --pd=http://pd:2379
+      - --log-level=info
+      - --status-addr=0.0.0.0:20180
+    volumes:
+      - tikv_data:/data
+    depends_on:
+      pd:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:20180/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks:
+      - roboflow-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+
+  # MinIO for S3-compatible object storage
+  minio:
+    image: minio/minio:latest
+    container_name: roboflow-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console
+    volumes:
+      - minio_data:/data
+    networks:
+      - roboflow-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # MinIO client to create buckets
+  minio-init:
+    image: minio/mc:latest
+    container_name: roboflow-minio-init
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      mc mb myminio/roboflow-datasets --ignore-existing;
+      mc mb myminio/roboflow-raw --ignore-existing;
+      mc mb myminio/roboflow-temp --ignore-existing;
+      mc anonymous set download myminio/roboflow-datasets;
+      exit 0;
+      "
+    networks:
+      - roboflow-network
+
+volumes:
+  pd_data:
+  tikv_data:
+  minio_data:
+
+networks:
+  roboflow-network:
+    driver: bridge

@@ -7,16 +7,10 @@
 //! This module provides coordinated parallel upload of episode files (Parquet + videos)
 //! with progress tracking and statistics collection.
 
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufReader, Read};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
-use crossbeam_channel::{Receiver, Sender, bounded};
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "cloud-storage")]

@@ -208,7 +208,9 @@ impl TikvClient {
             // Collect the iterator into a Vec
             let result: Vec<(Vec<u8>, Vec<u8>)> = iter
                 .map(|pair| {
+                    #[allow(clippy::useless_conversion)]
                     let key: Vec<u8> = pair.key().clone().into();
+                    #[allow(clippy::useless_conversion)]
                     let value: Vec<u8> = pair.value().clone().into();
                     (key, value)
                 })
@@ -323,15 +325,14 @@ impl TikvClient {
 
             if let Some(existing_data) = current {
                 // Parse and check version
-                if let Ok(value_json) = serde_json::from_slice::<Value>(&existing_data) {
-                    if let Some(version) = value_json.get("version").and_then(|v| v.as_u64()) {
-                        if version != expected_version {
-                            return Err(TikvError::CasFailed {
-                                expected: expected_version,
-                                got: version,
-                            });
-                        }
-                    }
+                if let Ok(value_json) = serde_json::from_slice::<Value>(&existing_data)
+                    && let Some(version) = value_json.get("version").and_then(|v| v.as_u64())
+                    && version != expected_version
+                {
+                    return Err(TikvError::CasFailed {
+                        expected: expected_version,
+                        got: version,
+                    });
                 }
             }
 
@@ -382,8 +383,7 @@ impl TikvClient {
 
         match current {
             Some(mut job) if job.is_claimable() => {
-                job.claim(pod_id.to_string())
-                    .map_err(|e| TikvError::Other(e))?;
+                job.claim(pod_id.to_string()).map_err(TikvError::Other)?;
 
                 let data = bincode::serialize(&job)
                     .map_err(|e| TikvError::Serialization(e.to_string()))?;
@@ -507,10 +507,10 @@ impl TikvClient {
 
         let mut stale_pods = Vec::new();
         for (_key, value) in results {
-            if let Ok(record) = bincode::deserialize::<HeartbeatRecord>(&value) {
-                if record.is_stale(timeout_seconds) {
-                    stale_pods.push(record.pod_id);
-                }
+            if let Ok(record) = bincode::deserialize::<HeartbeatRecord>(&value)
+                && record.is_stale(timeout_seconds)
+            {
+                stale_pods.push(record.pod_id);
             }
         }
 
