@@ -767,12 +767,11 @@ mod tests {
     fn test_extract_bucket() {
         // Test the bucket extraction logic
         let test_extract = |path: &str| -> String {
-            if path.contains("://") {
-                if let Some(rest) = path.split("://").nth(1) {
-                    if let Some(bucket) = rest.split('/').next() {
-                        return bucket.to_string();
-                    }
-                }
+            if path.contains("://")
+                && let Some(rest) = path.split("://").nth(1)
+                && let Some(bucket) = rest.split('/').next()
+            {
+                return bucket.to_string();
             }
             "default".to_string()
         };

@@ -392,8 +392,9 @@ impl Worker {
         let claimed = self.tikv.claim_job(job_id, &self.pod_id).await?;
 
         if claimed {
-            // Fetch the updated job record
+            // Fetch the updated job record to confirm the claim
             if let Some(job) = self.tikv.get_job(job_id).await? {
+                // Only increment metrics after confirming the job record exists
                 self.metrics.inc_jobs_claimed();
                 self.metrics.inc_active_jobs();
                 tracing::info!(
@@ -404,6 +405,12 @@ impl Worker {
                 );
                 return Ok(Some(job));
             }
+            // Job was claimed but record not found - this is unexpected
+            tracing::warn!(
+                pod_id = %self.pod_id,
+                job_id = %job_id,
+                "Job claim succeeded but record not found - may have been deleted"
+            );
         }
 
         Ok(None)
@@ -633,7 +640,7 @@ impl Worker {
 
         // Start heartbeat task
         let tikv = self.tikv.clone();
-        let pod_id = self.pod_id.clone();
+        let pod_id_for_heartbeat = self.pod_id.clone();
         let metrics = self.metrics.clone();
         let heartbeat_interval = self.config.heartbeat_interval;
         let mut heartbeat_rx = shutdown_tx.subscribe();
@@ -645,10 +652,10 @@ impl Worker {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        if let Err(e) = send_heartbeat_inner(&tikv, &pod_id, &metrics).await {
+                        if let Err(e) = send_heartbeat_inner(&tikv, &pod_id_for_heartbeat, &metrics).await {
                             metrics.inc_heartbeat_errors();
                             tracing::error!(
-                                pod_id = %pod_id,
+                                pod_id = %pod_id_for_heartbeat,
                                 error = %e,
                                 "Failed to send heartbeat"
                             );
@@ -656,7 +663,7 @@ impl Worker {
                     }
                     _ = heartbeat_rx.recv() => {
                         tracing::info!(
-                            pod_id = %pod_id,
+                            pod_id = %pod_id_for_heartbeat,
                             "Heartbeat task shutting down"
                         );
                         break;
@@ -672,19 +679,11 @@ impl Worker {
             "Starting worker"
         );
 
-        // Main loop
+        // Main loop - use tokio::select! for proper shutdown handling
         loop {
-            // Check for shutdown
-            if shutdown_rx.try_recv().is_ok() {
-                tracing::info!(
-                    pod_id = %self.pod_id,
-                    "Worker shutdown requested"
-                );
-                break;
-            }
-
             // Check if we can claim more jobs
             let active_count = self.metrics.active_jobs.load(Ordering::Relaxed) as usize;
+
             if active_count < self.config.max_concurrent_jobs {
                 // Try to claim and process a job
                 match self.find_and_claim_job().await {
@@ -720,31 +719,60 @@ impl Worker {
                         }
                     }
                     Ok(None) => {
-                        // No jobs available, sleep and retry
-                        tracing::debug!(
-                            pod_id = %self.pod_id,
-                            "No jobs available, sleeping"
-                        );
-                        sleep(self.config.poll_interval).await;
+                        // No jobs available - use tokio::select! to race shutdown against sleep
+                        tokio::select! {
+                            _ = sleep(self.config.poll_interval) => {
+                                tracing::debug!(
+                                    pod_id = %self.pod_id,
+                                    "No jobs available, retrying"
+                                );
+                            }
+                            _ = shutdown_rx.recv() => {
+                                tracing::info!(
+                                    pod_id = %self.pod_id,
+                                    "Worker shutdown requested while idle"
+                                );
+                                break;
+                            }
+                        }
                     }
                     Err(e) => {
                         tracing::error!(
                             pod_id = %self.pod_id,
                             error = %e,
-                            "Failed to find/claim job"
+                            "Failed to find/claim job - backing off before retry"
                         );
                         self.metrics.inc_processing_errors();
-                        sleep(self.config.poll_interval).await;
+                        // Add backoff to prevent tight loop on persistent errors
+                        tokio::select! {
+                            _ = sleep(self.config.poll_interval) => {}
+                            _ = shutdown_rx.recv() => {
+                                tracing::info!(
+                                    pod_id = %self.pod_id,
+                                    "Worker shutdown requested during error backoff"
+                                );
+                                break;
+                            }
+                        }
                     }
                 }
             } else {
-                // At capacity, sleep briefly
-                sleep(Duration::from_millis(100)).await;
+                // At capacity, sleep briefly with shutdown handling
+                tokio::select! {
+                    _ = sleep(Duration::from_millis(100)) => {}
+                    _ = shutdown_rx.recv() => {
+                        tracing::info!(
+                            pod_id = %self.pod_id,
+                            "Worker shutdown requested while at capacity"
+                        );
+                        break;
+                    }
+                }
             }
         }
 
-        // Abort heartbeat task
-        heartbeat_handle.abort();
+        // Wait for heartbeat task to finish gracefully
+        let _ = heartbeat_handle.await;
 
         // Send final heartbeat with Draining status
         let mut heartbeat = self
