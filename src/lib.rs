@@ -74,8 +74,9 @@ pub mod storage;
 // Re-export storage types when feature is enabled
 #[cfg(feature = "cloud-storage")]
 pub use storage::{
-    LocalStorage, ObjectMetadata, OssStorage, SeekRead, SeekableStorage, Storage, StorageConfig,
-    StorageError, StorageFactory, StorageUrl,
+    CacheConfig, CacheStats, CachedStorage, EvictionPolicy, LocalStorage, MultipartConfig,
+    MultipartStats, ObjectMetadata, OssStorage, RetryConfig, RetryingStorage, SeekRead,
+    SeekableStorage, Storage, StorageConfig, StorageError, StorageFactory, StorageUrl,
 };
 
 // =============================================================================
