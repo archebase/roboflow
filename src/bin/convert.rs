@@ -61,8 +61,16 @@ fn load_storage_config(cli_opts: &CredentialOptions) -> StorageConfig {
     });
 
     let file_config = if let Some(path) = config_file_path {
-        RoboflowConfig::load_from(&path).ok().flatten()
+        // If user explicitly provided a config path, report errors
+        match RoboflowConfig::load_from(&path) {
+            Ok(config) => config,
+            Err(e) => {
+                eprintln!("Error loading config file {}: {}", path.display(), e);
+                return StorageConfig::from_env();
+            }
+        }
     } else {
+        // Default config path - silently ignore if not found
         RoboflowConfig::load_default().ok().flatten()
     };
 
@@ -1251,7 +1259,7 @@ fn convert_to_lerobot_with_urls(
     }
 
     // Create storage factory with loaded credentials
-    let factory = StorageFactory::with_config(storage_config.clone());
+    let factory = StorageFactory::with_config(storage_config);
 
     // Create input storage backend if input is a cloud URL
     let input_storage = if input_is_cloud {
@@ -1352,7 +1360,7 @@ fn convert_bag_to_lerobot_with_urls(
     }
 
     // Create storage factory with loaded credentials
-    let factory = StorageFactory::with_config(storage_config.clone());
+    let factory = StorageFactory::with_config(storage_config);
 
     // Create input storage backend if input is a cloud URL
     let input_storage = if input_is_cloud {

@@ -63,9 +63,10 @@ impl RoboflowConfig {
             use std::os::unix::fs::PermissionsExt;
             if let Ok(metadata) = std::fs::metadata(path) {
                 let permissions = metadata.permissions().mode();
-                if permissions & 0o044 != 0 {
+                // Warn if group or others can read (best practice: 0600 for config files)
+                if permissions & 0o077 != 0 {
                     eprintln!(
-                        "Warning: Config file {} is world-readable. Consider: chmod 600 {}",
+                        "Warning: Config file {} has group/other permissions. Consider: chmod 600 {}",
                         path.display(),
                         path.display()
                     );
