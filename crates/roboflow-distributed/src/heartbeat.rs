@@ -236,6 +236,7 @@ impl HeartbeatManager {
     /// This is a synchronous update that writes the heartbeat to TiKV.
     /// It's called automatically by the background task, but can also
     /// be called manually (e.g., after checkpoint updates).
+    #[must_use = "heartbeat errors should be handled to detect TiKV issues"]
     pub async fn update_heartbeat(&self) -> Result<(), TikvError> {
         let current_job = self.config.current_job.lock().await.clone();
         let active_jobs = if current_job.is_some() { 1 } else { 0 };
@@ -351,6 +352,7 @@ impl HeartbeatManager {
     }
 
     /// Delete the heartbeat key from TiKV (cleanup on shutdown).
+    #[must_use = "cleanup errors should be handled to detect TiKV issues"]
     pub async fn cleanup(&self) -> Result<(), TikvError> {
         let key = super::tikv::key::HeartbeatKeys::heartbeat(&self.pod_id);
         self.tikv.delete(key).await?;
@@ -366,6 +368,7 @@ impl HeartbeatManager {
     /// Send a heartbeat with a specific status.
     ///
     /// Useful for state transitions (e.g., shutdown, error).
+    #[must_use = "heartbeat errors should be handled to detect TiKV issues"]
     pub async fn send_with_status(&self, status: WorkerStatus) -> Result<(), TikvError> {
         let mut heartbeat = self
             .tikv
@@ -391,6 +394,11 @@ impl HeartbeatManager {
 }
 
 /// Helper function for sending heartbeat (used in spawned task).
+///
+/// This is a minimal "liveness" heartbeat used by start_background_task().
+/// It sets status to Idle to indicate the worker is available.
+/// For accurate Busy/Idle status based on active jobs, use Worker::run()
+/// which manages heartbeats with proper status tracking.
 async fn update_heartbeat_inner(tikv: &TikvClient, pod_id: &str) -> Result<(), TikvError> {
     let mut heartbeat = tikv
         .get_heartbeat(pod_id)

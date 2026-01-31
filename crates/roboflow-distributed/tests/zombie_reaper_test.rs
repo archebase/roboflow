@@ -129,12 +129,19 @@ mod tests {
 
         // Manually set last_heartbeat to 5 minutes ago
         use chrono::{Duration, Utc};
-        heartbeat.last_heartbeat = Utc::now() - Duration::seconds(300);
+        let five_minutes_ago = Utc::now() - Duration::seconds(300);
+        heartbeat.last_heartbeat = five_minutes_ago;
 
-        // Should be stale with 300 second threshold
-        assert!(heartbeat.is_stale(300));
-        // Should not be stale with 301 second threshold
-        assert!(!heartbeat.is_stale(301));
+        // Age should be approximately 300 seconds
+        let age = Utc::now()
+            .signed_duration_since(heartbeat.last_heartbeat)
+            .num_seconds();
+        assert!((300..=302).contains(&age), "Expected age ~300, got {}", age);
+
+        // Should be stale with 299 second threshold (age > threshold)
+        assert!(heartbeat.is_stale(299));
+        // Should not be stale with age+1 threshold (uses >, not >=)
+        assert!(!heartbeat.is_stale(age + 1));
     }
 
     #[tokio::test]
