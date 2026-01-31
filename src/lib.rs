@@ -10,9 +10,8 @@
 //!
 //! ## Modules
 //!
-//! - [`core`] - Core types (CodecValue, errors, registry)
-//! - [`encoding`] - Message encoding/decoding (CDR, Protobuf, JSON) - from robocodec
-//! - [`schema`] - IDL/MSG schema parser using Pest - from robocodec
+//! - [`roboflow_core::CodecValue`] - Core value types
+//! - [`roboflow_core::RoboflowError`] - Error handling
 //! - [`pipeline`] - Parallel processing pipeline
 //! - [`dataset::kps`] - KPS dataset format (experimental)
 //!
@@ -48,59 +47,91 @@ static GLOBAL: Jemalloc = Jemalloc;
 // Core modules (minimal public API - prefer crate::* imports)
 // =============================================================================
 pub mod config;
-pub mod core;
+
+// Re-export from roboflow-core
+pub use roboflow_core::{
+    CodecValue, DecodedMessage, Encoding, ErrorCategory, PrimitiveType, Result, RoboflowError,
+    SchemaProvider, TypeAccessor, TypeRegistry,
+};
+
+// Re-export CodecError from robocodec
+pub use robocodec::core::CodecError;
+
+// Legacy: keep the old `core::` module path for backward compatibility
+// This will be deprecated in a future release
+pub mod core {
+    pub use robocodec::core::CodecError;
+    pub use roboflow_core::{
+        CodecValue, DecodedMessage, Encoding, ErrorCategory, PrimitiveType, Result, RoboflowError,
+        SchemaProvider, TypeAccessor, TypeRegistry,
+    };
+}
 
 // =============================================================================
 // Parallel processing pipeline
 // =============================================================================
-pub mod pipeline;
+// Pipeline is now provided by roboflow-pipeline crate
+pub use roboflow_pipeline::{
+    auto_config::PerformanceMode,
+    config::CompressionConfig,
+    fluent::{BatchReport, CompressionPreset, PipelineMode, ReadOptions, Robocodec},
+    hyper::{HyperPipeline, HyperPipelineConfig, HyperPipelineReport},
+};
 
 // =============================================================================
 // Schema parsing and encoding (re-exported from robocodec)
 // =============================================================================
-// Schema and encoding are provided by robofmt - use robocodec::schema::* and robocodec::encoding::*
+// Schema and encoding are provided by robocodec - use robocodec::schema::* and robocodec::encoding::*
 
 // =============================================================================
-// Dataset structures (KPS)
+// Dataset structures
 // =============================================================================
-pub mod dataset;
+// Dataset is now provided by roboflow-dataset crate
+pub use roboflow_dataset::{
+    DatasetConfig, DatasetFormat, DatasetWriter, ImageData,
+    kps::{
+        ParquetKpsWriter,
+        config::{KpsConfig, Mapping, MappingType, OutputFormat},
+        delivery_v12::{
+            SeriesDeliveryConfig, SeriesDeliveryConfigBuilder, StatisticsCollector, TaskInfo,
+            TaskStatistics, V12DeliveryBuilder,
+        },
+    },
+    lerobot::{
+        LerobotConfig, LerobotWriter, LerobotWriterTrait,
+        config::{DatasetConfig as LerobotDatasetConfig, VideoConfig},
+    },
+    streaming::StreamingDatasetConverter,
+};
+
+// Re-export the full kps module for test access
+pub use roboflow_dataset::kps;
+
+// Re-export lerobot and streaming modules for test access
+pub use roboflow_dataset::lerobot;
+pub use roboflow_dataset::streaming;
 
 // =============================================================================
-// Storage abstraction layer (cloud storage support)
+// Storage abstraction layer (always available via roboflow-storage)
 // =============================================================================
-#[cfg(feature = "cloud-storage")]
-pub mod storage;
+pub use roboflow_storage::{
+    CacheConfig, CacheStats, CachedStorage, EvictionPolicy, LocalStorage, MultipartConfig,
+    MultipartStats, ObjectMetadata, OssConfig, OssStorage, RetryConfig, RetryingStorage, SeekRead,
+    SeekableStorage, Storage, StorageConfig, StorageError, StorageFactory, StorageResult,
+    StorageUrl,
+};
 
 // =============================================================================
 // Distributed coordination (TiKV backend)
 // =============================================================================
 #[cfg(feature = "distributed")]
-pub mod distributed;
-
-// Re-export storage types when feature is enabled
-#[cfg(feature = "cloud-storage")]
-pub use storage::{
-    CacheConfig, CacheStats, CachedStorage, EvictionPolicy, LocalStorage, MultipartConfig,
-    MultipartStats, ObjectMetadata, OssStorage, RetryConfig, RetryingStorage, SeekRead,
-    SeekableStorage, Storage, StorageConfig, StorageError, StorageFactory, StorageUrl,
-};
-
-// Re-export distributed types when feature is enabled
-#[cfg(feature = "distributed")]
-pub use distributed::{
+pub use roboflow_distributed::{
     DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_PD_ENDPOINTS, KEY_PREFIX,
     tikv::{
         CheckpointState, HeartbeatRecord, JobRecord, JobStatus, LockRecord, TikvClient, TikvConfig,
         TikvError, WorkerStatus,
     },
 };
-
-// =============================================================================
-// Re-exports (minimal, focused on user-facing API)
-// =============================================================================
-
-// Core types (essential)
-pub use core::{CodecError, CodecValue, DecodedMessage, PrimitiveType, Result, RoboflowError};
 
 // Schema parsing (re-exported from robocodec)
 pub use robocodec::schema::{FieldType, MessageSchema, parse_schema};
@@ -115,26 +146,8 @@ pub use robocodec::io::{
 };
 pub use robocodec::transform::TransformBuilder;
 
-// KPS dataset format
-pub use dataset::kps::{
-    Hdf5KpsWriter, ParquetKpsWriter,
-    config::{KpsConfig, Mapping, MappingType, OutputFormat},
-    delivery_v12::{
-        SeriesDeliveryConfig, SeriesDeliveryConfigBuilder, StatisticsCollector, TaskInfo,
-        TaskStatistics, V12DeliveryBuilder,
-    },
-};
-
 // Configuration
 pub use config::NormalizeConfig;
-
-// Pipeline
-#[cfg(feature = "gpu")]
-pub use pipeline::gpu::GpuCompressionConfig;
-pub use pipeline::{AsyncPipeline, CompressionConfig};
-
-// Fluent API
-pub use pipeline::fluent::{BatchReport, CompressionPreset, PipelineMode, ReadOptions, Robocodec};
 
 // =============================================================================
 // Python bindings (conditional compilation)
@@ -155,41 +168,4 @@ pub mod python;
 pub trait Decoder: Send + Sync {
     /// Decode data into a DecodedMessage.
     fn decode(&self, data: &[u8], schema: &str, type_name: Option<&str>) -> Result<DecodedMessage>;
-}
-
-/// Encoding format identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Encoding {
-    /// CDR (Common Data Representation) encoding
-    Cdr,
-    /// Protobuf encoding
-    Protobuf,
-    /// JSON encoding
-    Json,
-}
-
-impl Encoding {
-    /// Check if this encoding is CDR.
-    pub fn is_cdr(&self) -> bool {
-        matches!(self, Encoding::Cdr)
-    }
-
-    /// Check if this encoding is Protobuf.
-    pub fn is_protobuf(&self) -> bool {
-        matches!(self, Encoding::Protobuf)
-    }
-
-    /// Check if this encoding is JSON.
-    pub fn is_json(&self) -> bool {
-        matches!(self, Encoding::Json)
-    }
-
-    /// Convert to string representation.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Encoding::Cdr => "cdr",
-            Encoding::Protobuf => "protobuf",
-            Encoding::Json => "json",
-        }
-    }
 }

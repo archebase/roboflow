@@ -159,7 +159,7 @@ fn test_time_alignment_strategies() {
 /// Test video encoder with fallback.
 #[test]
 fn test_video_encoder_fallback() {
-    use roboflow::dataset::kps::video_encoder::{
+    use roboflow::kps::video_encoder::{
         Mp4Encoder, VideoEncoderConfig, VideoFrame, VideoFrameBuffer,
     };
 
@@ -178,6 +178,7 @@ fn test_video_encoder_fallback() {
     // This should work (either encode as MP4 or save as individual files)
     match encoder.encode_buffer_or_save_images(&buffer, output_dir.path(), "test_camera") {
         Ok(paths) => {
+            let paths: Vec<std::path::PathBuf> = paths;
             println!("Video encoding produced {} output files", paths.len());
             assert!(!paths.is_empty());
         }

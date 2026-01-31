@@ -1,0 +1,25 @@
+[package]
+name = "roboflow-hdf5"
+version = "0.2.0"
+edition = "2024"
+authors = ["Strata Contributors"]
+license = "MulanPSL-2.0"
+repository = "https://github.com/archebase/roboflow"
+description = "HDF5 dataset writer for roboflow - KPS v1.2 format (optional crate)"
+
+[dependencies]
+roboflow-core = { path = "../roboflow-core", version = "0.2.0" }
+roboflow-storage = { path = "../roboflow-storage", version = "0.2.0" }
+
+# HDF5 - requires system library libhdf5-dev
+hdf5 = { git = "https://github.com/archebase/hdf5-rs" }
+
+# Error handling
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+tempfile = "3.10"

@@ -1,0 +1,16 @@
+[package]
+name = "roboflow-core"
+version = "0.2.0"
+edition = "2024"
+authors = ["Strata Contributors"]
+license = "MulanPSL-2.0"
+repository = "https://github.com/archebase/roboflow"
+description = "Core types for roboflow - error handling, codec values, type registry"
+
+[dependencies]
+robocodec = { git = "https://github.com/archebase/robocodec", rev = "5a8e11b" }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+
+[dev-dependencies]
+pretty_assertions = "1.4"

@@ -347,12 +347,9 @@ fn test_bag_to_mcap_with_different_presets() {
     };
 
     let presets = [
-        ("fast", roboflow::pipeline::fluent::CompressionPreset::Fast),
-        (
-            "balanced",
-            roboflow::pipeline::fluent::CompressionPreset::Balanced,
-        ),
-        ("slow", roboflow::pipeline::fluent::CompressionPreset::Slow),
+        ("fast", roboflow::CompressionPreset::Fast),
+        ("balanced", roboflow::CompressionPreset::Balanced),
+        ("slow", roboflow::CompressionPreset::Slow),
     ];
 
     for (name, preset) in presets {
