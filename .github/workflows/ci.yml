@@ -26,6 +26,7 @@ jobs:
     name: Rust Lint
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: true
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
@@ -64,6 +65,7 @@ jobs:
     name: Rust Tests
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: true
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
@@ -94,6 +96,7 @@ jobs:
     name: Python Tests
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: true
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ['3.11', '3.12', '3.13']
