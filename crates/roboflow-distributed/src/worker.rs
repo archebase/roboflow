@@ -786,7 +786,8 @@ impl Worker {
                         "Shutdown signal sent but no receivers - worker may not be running"
                     );
                     return Err(TikvError::Other(
-                        "Cannot shutdown worker: no active receiver. Is the worker running?".to_string(),
+                        "Cannot shutdown worker: no active receiver. Is the worker running?"
+                            .to_string(),
                     ));
                 }
             }
