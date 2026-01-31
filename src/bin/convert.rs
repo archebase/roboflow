@@ -212,7 +212,8 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
              Options:\n\
                --input-storage <url>  - Storage backend for input (file://, s3://, oss://)\n\
                --output-storage <url> - Storage backend for output (file://, s3://, oss://)\n\
-               --temp-dir <path>      - Temp directory for cloud input downloads",
+             Environment Variables:\n\
+               ROBOFLOW_TEMP_DIR      - Temp directory for cloud input downloads",
             args[0]
         ));
     }

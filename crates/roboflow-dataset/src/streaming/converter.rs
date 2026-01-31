@@ -51,6 +51,9 @@ pub struct StreamingDatasetConverter {
     input_storage: Option<Arc<dyn Storage>>,
 
     /// Output storage backend for writing output files
+    ///
+    /// NOTE: Currently unused - reserved for future cloud output support.
+    /// Writing to cloud storage requires changes to DatasetWriter trait.
     output_storage: Option<Arc<dyn Storage>>,
 }
 

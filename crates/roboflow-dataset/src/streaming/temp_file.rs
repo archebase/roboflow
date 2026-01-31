@@ -126,15 +126,16 @@ impl TempFileManager {
         self.temp_path.is_some()
     }
 
-    /// Prevent cleanup of the temp file.
+    /// Prevent cleanup of the temp file and return its path.
     ///
     /// This is useful for debugging when you want to inspect the temp file
-    /// after processing. Returns the path that would have been cleaned up.
-    pub fn retain(mut self) -> PathBuf {
+    /// after processing.
+    ///
+    /// Returns `Some(path)` if a temp file was created (cloud storage),
+    /// or `None` if using the local storage fast path (no temp file).
+    pub fn retain(&mut self) -> Option<PathBuf> {
         self.cleanup_on_drop = false;
-        self.temp_path
-            .clone()
-            .expect("Cannot retain: no temp file was created")
+        self.temp_path.take()
     }
 
     /// Get the temp file path (if created).
@@ -206,17 +207,15 @@ mod tests {
 
         // Since LocalStorage takes the fast path, it doesn't create a temp file
         // This test verifies the fast path behavior
-        let manager =
+        let mut manager =
             TempFileManager::new(storage, Path::new("remote.mcap"), temp_dir.path()).unwrap();
 
         // For LocalStorage, it should use the fast path (no temp file)
         assert!(!manager.is_temp());
 
-        // Verify retain still works (returns original path for LocalStorage)
-        if manager.is_temp() {
-            let retained_path = manager.retain();
-            assert!(retained_path.ends_with("remote.mcap"));
-        }
+        // Verify retain returns None for fast path (no temp file created)
+        let retained_path = manager.retain();
+        assert!(retained_path.is_none(), "retain should return None for LocalStorage");
     }
 
     #[test]
@@ -229,21 +228,14 @@ mod tests {
         file.write_all(b"retain test").unwrap();
 
         // Create manager and get the path
-        let manager =
+        let mut manager =
             TempFileManager::new(storage, Path::new("retain_test.mcap"), temp_dir.path()).unwrap();
 
-        // For LocalStorage, retain returns the original path (no temp file created)
-        // Only call retain if a temp file was actually created
-        if manager.is_temp() {
-            let retained_path = manager.retain();
-
-            // File should still exist (manager was consumed by retain)
-            assert!(retained_path.exists());
-
-            // Manual cleanup
-            fs::remove_file(&retained_path).unwrap();
-        }
-        // For LocalStorage fast path, there's nothing to retain
-        // The manager will be dropped normally here
+        // For LocalStorage, retain returns None (no temp file created)
+        let retained_path = manager.retain();
+        assert!(
+            retained_path.is_none(),
+            "retain should return None for LocalStorage fast path"
+        );
     }
 }

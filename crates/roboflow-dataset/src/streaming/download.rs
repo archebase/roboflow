@@ -27,7 +27,8 @@ use roboflow_storage::{Storage, StorageError};
 ///
 /// # Errors
 ///
-/// Returns `StorageError` if the download fails.
+/// Returns `StorageError` if the download fails. On error, the partial
+/// download is cleaned up automatically.
 pub fn download_with_progress(
     storage: &dyn Storage,
     remote_path: &Path,
@@ -49,34 +50,48 @@ pub fn download_with_progress(
     let mut buffer = vec![0u8; CHUNK_SIZE];
     let mut bytes_downloaded = 0u64;
 
-    loop {
-        let bytes_read = reader.read(&mut buffer).map_err(StorageError::Io)?;
-        if bytes_read == 0 {
-            break;
+    // Scope guard to clean up partial download on error
+    let mut cleanup_on_drop = true;
+
+    let result = (|| -> Result<u64, StorageError> {
+        loop {
+            let bytes_read = reader.read(&mut buffer).map_err(StorageError::Io)?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            writer
+                .write_all(&buffer[..bytes_read])
+                .map_err(StorageError::Io)?;
+            bytes_downloaded += bytes_read as u64;
+
+            // Report progress
+            if let Some(callback) = progress {
+                callback(bytes_downloaded, total_bytes);
+            }
         }
 
-        writer
-            .write_all(&buffer[..bytes_read])
-            .map_err(StorageError::Io)?;
-        bytes_downloaded += bytes_read as u64;
+        writer.flush().map_err(StorageError::Io)?;
 
-        // Report progress
-        if let Some(callback) = progress {
-            callback(bytes_downloaded, total_bytes);
+        // Verify download size
+        if bytes_downloaded != total_bytes {
+            return Err(StorageError::Other(format!(
+                "Download size mismatch: expected {} bytes, got {} bytes",
+                total_bytes, bytes_downloaded
+            )));
         }
+
+        // Success - don't clean up the file
+        cleanup_on_drop = false;
+        Ok(bytes_downloaded)
+    })();
+
+    // Clean up partial download on error
+    if result.is_err() && cleanup_on_drop {
+        let _ = std::fs::remove_file(local_path);
     }
 
-    writer.flush().map_err(StorageError::Io)?;
-
-    // Verify download size
-    if bytes_downloaded != total_bytes {
-        return Err(StorageError::Other(format!(
-            "Download size mismatch: expected {} bytes, got {} bytes",
-            total_bytes, bytes_downloaded
-        )));
-    }
-
-    Ok(bytes_downloaded)
+    result
 }
 
 /// Download a file from storage to a local temporary file.
