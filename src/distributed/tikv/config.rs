@@ -13,6 +13,12 @@ use super::error::TikvError;
 pub const KEY_PREFIX: &str = "/roboflow/v1/";
 pub const DEFAULT_PD_ENDPOINTS: &str = "127.0.0.1:2379";
 pub const DEFAULT_CONNECTION_TIMEOUT_SECS: u64 = 10;
+pub const DEFAULT_OPERATION_TIMEOUT_SECS: u64 = 30;
+pub const DEFAULT_TRANSACTION_TIMEOUT_SECS: u64 = 60;
+pub const DEFAULT_LOCK_TTL_SECS: i64 = 60;
+pub const DEFAULT_LOCK_ACQUIRE_TIMEOUT_SECS: u64 = 10;
+pub const DEFAULT_MAX_RETRIES: u32 = 10;
+pub const DEFAULT_RETRY_BASE_DELAY_MS: u64 = 50;
 
 /// Configuration for TiKV cluster connection.
 #[derive(Debug, Clone)]
@@ -23,6 +29,12 @@ pub struct TikvConfig {
 
     /// Connection timeout duration.
     pub connection_timeout: Duration,
+
+    /// Default operation timeout for individual operations.
+    pub operation_timeout: Duration,
+
+    /// Default transaction timeout.
+    pub transaction_timeout: Duration,
 
     /// Key prefix for all operations (defaults to `/roboflow/v1/`).
     pub key_prefix: String,
@@ -35,6 +47,18 @@ pub struct TikvConfig {
 
     /// Client key path for TLS (optional).
     pub key_path: Option<String>,
+
+    /// Default lock TTL in seconds.
+    pub default_lock_ttl_secs: i64,
+
+    /// Lock acquisition timeout in seconds.
+    pub lock_acquire_timeout: Duration,
+
+    /// Maximum retry attempts for write conflicts.
+    pub max_retries: u32,
+
+    /// Base delay for retry backoff in milliseconds.
+    pub retry_base_delay_ms: u64,
 }
 
 impl Default for TikvConfig {
@@ -44,15 +68,45 @@ impl Default for TikvConfig {
                 &env::var("TIKV_PD_ENDPOINTS").unwrap_or_else(|_| DEFAULT_PD_ENDPOINTS.to_string()),
             ),
             connection_timeout: Duration::from_secs(
-                env::var("TIKV_TIMEOUT_SECS")
+                env::var("TIKV_CONNECTION_TIMEOUT_SECS")
                     .ok()
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(DEFAULT_CONNECTION_TIMEOUT_SECS),
+            ),
+            operation_timeout: Duration::from_secs(
+                env::var("TIKV_OPERATION_TIMEOUT_SECS")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(DEFAULT_OPERATION_TIMEOUT_SECS),
+            ),
+            transaction_timeout: Duration::from_secs(
+                env::var("TIKV_TRANSACTION_TIMEOUT_SECS")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(DEFAULT_TRANSACTION_TIMEOUT_SECS),
             ),
             key_prefix: KEY_PREFIX.to_string(),
             ca_path: env::var("TIKV_CA_PATH").ok(),
             cert_path: env::var("TIKV_CERT_PATH").ok(),
             key_path: env::var("TIKV_KEY_PATH").ok(),
+            default_lock_ttl_secs: env::var("TIKV_LOCK_TTL_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(DEFAULT_LOCK_TTL_SECS),
+            lock_acquire_timeout: Duration::from_secs(
+                env::var("TIKV_LOCK_ACQUIRE_TIMEOUT_SECS")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(DEFAULT_LOCK_ACQUIRE_TIMEOUT_SECS),
+            ),
+            max_retries: env::var("TIKV_MAX_RETRIES")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(DEFAULT_MAX_RETRIES),
+            retry_base_delay_ms: env::var("TIKV_RETRY_BASE_DELAY_MS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(DEFAULT_RETRY_BASE_DELAY_MS),
         }
     }
 }
@@ -106,8 +160,19 @@ impl TikvConfig {
             "disabled"
         };
         format!(
-            "TiKV(pd_endpoints={:?}, timeout={:?}, tls={}, key_prefix={})",
-            self.pd_endpoints, self.connection_timeout, tls, self.key_prefix
+            "TiKV(pd_endpoints={:?}, connection_timeout={:?}, operation_timeout={:?}, \
+             transaction_timeout={:?}, lock_ttl={}s, lock_acquire_timeout={:?}, \
+             max_retries={}, retry_base_delay={}ms, tls={}, key_prefix={})",
+            self.pd_endpoints,
+            self.connection_timeout,
+            self.operation_timeout,
+            self.transaction_timeout,
+            self.default_lock_ttl_secs,
+            self.lock_acquire_timeout,
+            self.max_retries,
+            self.retry_base_delay_ms,
+            tls,
+            self.key_prefix
         )
     }
 
@@ -123,6 +188,38 @@ impl TikvConfig {
                 "Key prefix must start with /".to_string(),
             ));
         }
+
+        // Validate TLS configuration consistency
+        let has_cert = self.cert_path.is_some();
+        let has_key = self.key_path.is_some();
+        if has_cert != has_key {
+            return Err(TikvError::InvalidConfig(
+                "Both cert_path and key_path must be provided together for TLS".to_string(),
+            ));
+        }
+
+        // Validate timeout values are reasonable
+        if self.operation_timeout.as_secs() == 0 {
+            return Err(TikvError::InvalidConfig(
+                "Operation timeout must be greater than 0".to_string(),
+            ));
+        }
+        if self.transaction_timeout.as_secs() == 0 {
+            return Err(TikvError::InvalidConfig(
+                "Transaction timeout must be greater than 0".to_string(),
+            ));
+        }
+        if self.default_lock_ttl_secs <= 0 {
+            return Err(TikvError::InvalidConfig(
+                "Lock TTL must be greater than 0".to_string(),
+            ));
+        }
+        if self.max_retries == 0 {
+            return Err(TikvError::InvalidConfig(
+                "Max retries must be greater than 0".to_string(),
+            ));
+        }
+
         Ok(())
     }
 }
@@ -167,8 +264,62 @@ mod tests {
         let config = TikvConfig::default();
         assert!(config.validate().is_ok());
 
-        let mut config = TikvConfig::default();
-        config.pd_endpoints = vec![];
+        let config = TikvConfig {
+            pd_endpoints: vec![],
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_tls_consistency() {
+        // Only cert without key should fail
+        let config = TikvConfig {
+            cert_path: Some("/path/to/cert".to_string()),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+
+        // Both cert and key should pass
+        let config = TikvConfig {
+            cert_path: Some("/path/to/cert".to_string()),
+            key_path: Some("/path/to/key".to_string()),
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_timeouts() {
+        let config = TikvConfig::default();
+        assert!(config.validate().is_ok());
+
+        // Test that zero operation_timeout fails
+        let config = TikvConfig {
+            operation_timeout: Duration::from_secs(0),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+
+        // Test that zero transaction_timeout fails
+        let config = TikvConfig {
+            transaction_timeout: Duration::from_secs(0),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+
+        // Test that non-positive lock_ttl fails
+        let config = TikvConfig {
+            default_lock_ttl_secs: 0,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+
+        // Test that zero max_retries fails
+        let config = TikvConfig {
+            max_retries: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 }

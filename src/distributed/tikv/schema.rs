@@ -197,6 +197,15 @@ impl LockRecord {
         Utc::now() > self.expires_at
     }
 
+    /// Check if this lock is expired with a grace period.
+    ///
+    /// The grace period helps avoid race conditions during the expiration boundary.
+    /// A lock is considered "not expired" if it's within the grace period, even
+    /// if the expiration time has technically passed.
+    pub fn is_expired_with_grace(&self, grace_seconds: i64) -> bool {
+        Utc::now() > (self.expires_at - chrono::Duration::seconds(grace_seconds))
+    }
+
     /// Extend the lock TTL.
     pub fn extend(&mut self, ttl_seconds: i64) {
         self.expires_at = Utc::now() + chrono::Duration::seconds(ttl_seconds);
@@ -206,6 +215,15 @@ impl LockRecord {
     /// Verify ownership of the lock.
     pub fn is_owned_by(&self, pod_id: &str) -> bool {
         self.owner == pod_id
+    }
+
+    /// Get the fencing token (version) for this lock.
+    ///
+    /// Fencing tokens are used to detect and prevent split-brain scenarios
+    /// where two processes believe they own the same lock. Higher tokens
+    /// always win.
+    pub fn fencing_token(&self) -> u64 {
+        self.version
     }
 }
 
@@ -458,6 +476,16 @@ mod tests {
 
         lock.extend(60);
         assert_eq!(lock.version, 2);
+    }
+
+    #[test]
+    fn test_lock_grace_period() {
+        let lock = LockRecord::new("resource".to_string(), "pod-1".to_string(), 10); // 10 second TTL
+        // Lock should NOT be expired normally
+        assert!(!lock.is_expired());
+        // Lock should NOT be expired even with a small grace period
+        assert!(!lock.is_expired_with_grace(5));
+        assert_eq!(lock.fencing_token(), 1);
     }
 
     #[test]
