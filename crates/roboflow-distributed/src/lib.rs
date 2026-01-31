@@ -17,6 +17,8 @@
 //! All coordination features are **always available** (no feature flags).
 
 pub mod catalog;
+pub mod heartbeat;
+pub mod reaper;
 pub mod scanner;
 pub mod tikv;
 pub mod worker;
@@ -36,6 +38,20 @@ pub use scanner::{MetricsSnapshot, ScanStats, Scanner, ScannerConfig, ScannerMet
 
 // Re-export public types from worker (job processing actor)
 pub use worker::{ProcessingResult, Worker, WorkerConfig, WorkerMetrics, WorkerMetricsSnapshot};
+
+// Re-export public types from heartbeat (liveness tracking)
+pub use heartbeat::{
+    DEFAULT_HEARTBEAT_INTERVAL_SECS as HEARTBEAT_DEFAULT_INTERVAL_SECS,
+    DEFAULT_STALE_THRESHOLD_SECS as HEARTBEAT_DEFAULT_STALE_THRESHOLD_SECS, HeartbeatConfig,
+    HeartbeatManager, HeartbeatMetrics, HeartbeatMetricsSnapshot,
+};
+
+// Re-export public types from reaper (zombie detection)
+pub use reaper::{
+    DEFAULT_MAX_RECLAIMS_PER_ITERATION, DEFAULT_REAPER_INTERVAL_SECS,
+    DEFAULT_STALE_THRESHOLD_SECS as REAPER_DEFAULT_STALE_THRESHOLD_SECS, ReaperConfig,
+    ReaperMetrics, ReaperMetricsSnapshot, ReclaimResult, ZombieReaper,
+};
 
 // Re-export constants from tikv config
 pub use tikv::config::{DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_PD_ENDPOINTS, KEY_PREFIX};
