@@ -545,7 +545,8 @@ impl LockGuard {
     /// or ownership lost.
     pub async fn release(self) -> Result<bool> {
         // Mark as released FIRST to prevent drop from doing cleanup
-        self.released.store(true, std::sync::atomic::Ordering::Release);
+        self.released
+            .store(true, std::sync::atomic::Ordering::Release);
         self.do_release().await
     }
 
@@ -588,9 +589,9 @@ impl LockGuard {
 impl Drop for LockGuard {
     fn drop(&mut self) {
         // Mark as released atomically to stop renewal task
-        let already_released =
-            self.released
-                .swap(true, std::sync::atomic::Ordering::AcqRel);
+        let already_released = self
+            .released
+            .swap(true, std::sync::atomic::Ordering::AcqRel);
 
         if already_released {
             // Already explicitly released, nothing to do
