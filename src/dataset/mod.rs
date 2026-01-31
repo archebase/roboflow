@@ -275,7 +275,7 @@ pub fn create_writer(
         }
         DatasetConfig::Lerobot(lerobot_config) => {
             use crate::dataset::lerobot::LerobotWriter;
-            let writer = LerobotWriter::create(output_dir, lerobot_config.clone())?;
+            let writer = LerobotWriter::new_local(output_dir, lerobot_config.clone())?;
             Ok(Box::new(writer))
         }
     }
@@ -323,7 +323,7 @@ pub fn create_dataset_writer(
                 )
             })?;
 
-            let writer = LerobotWriter::create(output_dir, lerobot_config.clone())?;
+            let writer = LerobotWriter::new_local(output_dir, lerobot_config.clone())?;
             Ok(Box::new(writer))
         }
     }

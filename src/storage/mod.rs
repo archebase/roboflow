@@ -308,6 +308,20 @@ pub trait Storage: Send + Sync {
     ///
     /// Similar to `std::fs::create_dir_all`.
     fn create_dir_all(&self, path: &Path) -> Result<()>;
+
+    /// Get this storage as `Any` for downcasting.
+    ///
+    /// This enables checking the concrete type of a `dyn Storage` trait object,
+    /// which is useful for optimizations like detecting local-only mode.
+    ///
+    /// # Default
+    ///
+    /// Returns a reference that cannot be downcast (for storage types
+    /// that don't need downcasting support). Override this method to return
+    /// `self` for types that support downcasting.
+    fn as_any(&self) -> &dyn std::any::Any {
+        &()
+    }
 }
 
 // =============================================================================
