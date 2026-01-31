@@ -35,7 +35,10 @@ pub mod types;
 
 // Re-export public types from submodules (avoiding module_inception)
 pub use dataset_converter::dataset_converter::{DatasetConverter, DatasetConverterStats};
-pub use orchestrator::orchestrator::{AsyncPipeline, ParallelReaderConfig, ParallelReaderStats, PipelineBuilder, PipelineConfig, PipelineReport};
+pub use orchestrator::orchestrator::{
+    AsyncPipeline, ParallelReaderConfig, ParallelReaderStats, PipelineBuilder, PipelineConfig,
+    PipelineReport,
+};
 
 // Re-export public types (always available)
 pub use auto_config::PerformanceMode;

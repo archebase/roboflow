@@ -21,6 +21,7 @@ use std::path::Path;
 
 use tracing::{info, instrument};
 
+use robocodec::CodecValue;
 use robocodec::RoboReader;
 use roboflow_core::{Result, RoboflowError};
 use roboflow_dataset::common::{AlignedFrame, ImageData};
@@ -30,8 +31,7 @@ use roboflow_dataset::kps::config::{
 use roboflow_dataset::lerobot::config::{
     LerobotConfig, Mapping as LerobotMapping, MappingType as LerobotMappingType,
 };
-use roboflow_dataset::{create_writer, DatasetFormat};
-use robocodec::CodecValue;
+use roboflow_dataset::{DatasetFormat, create_writer};
 
 /// Direct dataset converter.
 ///
@@ -122,17 +122,21 @@ impl DatasetConverter {
         let input_path = input_path.as_ref();
 
         // Get KPS config
-        let kps_config = self.kps_config.as_ref().ok_or_else(|| {
-            RoboflowError::parse("DatasetConverter", "KPS config required")
-        })?;
+        let kps_config = self
+            .kps_config
+            .as_ref()
+            .ok_or_else(|| RoboflowError::parse("DatasetConverter", "KPS config required"))?;
 
         // Use the FPS from config if available
         let fps = kps_config.dataset.fps;
 
         // Create the dataset writer
         let config = roboflow_dataset::DatasetConfig::Kps(kps_config.clone());
-        let mut writer = create_writer(&self.output_dir, &config)
-            .map_err(|e: roboflow_core::RoboflowError| RoboflowError::encode("DatasetConverter", e.to_string()))?;
+        let mut writer = create_writer(&self.output_dir, &config).map_err(
+            |e: roboflow_core::RoboflowError| {
+                RoboflowError::encode("DatasetConverter", e.to_string())
+            },
+        )?;
 
         // Initialize the writer
         writer.initialize(kps_config)?;
@@ -269,17 +273,21 @@ impl DatasetConverter {
         let input_path = input_path.as_ref();
 
         // Get LeRobot config
-        let lerobot_config = self.lerobot_config.as_ref().ok_or_else(|| {
-            RoboflowError::parse("DatasetConverter", "LeRobot config required")
-        })?;
+        let lerobot_config = self
+            .lerobot_config
+            .as_ref()
+            .ok_or_else(|| RoboflowError::parse("DatasetConverter", "LeRobot config required"))?;
 
         // Use the FPS from config
         let fps = lerobot_config.dataset.fps;
 
         // Create the dataset writer
         let config = roboflow_dataset::DatasetConfig::Lerobot(lerobot_config.clone());
-        let mut writer = create_writer(&self.output_dir, &config)
-            .map_err(|e: roboflow_core::RoboflowError| RoboflowError::encode("DatasetConverter", e.to_string()))?;
+        let mut writer = create_writer(&self.output_dir, &config).map_err(
+            |e: roboflow_core::RoboflowError| {
+                RoboflowError::encode("DatasetConverter", e.to_string())
+            },
+        )?;
 
         // Initialize the writer
         writer.initialize(lerobot_config)?;

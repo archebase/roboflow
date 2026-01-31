@@ -48,7 +48,9 @@ fn dataset_error_to_py(error: roboflow_core::RoboflowError) -> PyErr {
         | roboflow_core::RoboflowError::InvalidSchema { .. }
         | roboflow_core::RoboflowError::TypeNotFound { .. }
         | roboflow_core::RoboflowError::FieldDecodeError { .. }
-        | roboflow_core::RoboflowError::Unsupported { .. } => PyValueError::new_err(error.to_string()),
+        | roboflow_core::RoboflowError::Unsupported { .. } => {
+            PyValueError::new_err(error.to_string())
+        }
 
         // Codec errors (including I/O from formats) -> PyIOError
         roboflow_core::RoboflowError::CodecError { .. } => PyIOError::new_err(error.to_string()),
@@ -854,7 +856,9 @@ impl PyDatasetConverter {
         match &self.config {
             RustDatasetConfig::Kps(kps_config) => {
                 let converter = DatasetConverter::new_kps(&self.output_dir, kps_config.clone());
-                converter.convert(input_path).map(|s: roboflow_pipeline::DatasetConverterStats| s.into_writer_stats())
+                converter
+                    .convert(input_path)
+                    .map(|s: roboflow_pipeline::DatasetConverterStats| s.into_writer_stats())
             }
             RustDatasetConfig::Lerobot(_) => Err(roboflow_core::RoboflowError::unsupported(
                 "LeRobot dataset conversion",

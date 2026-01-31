@@ -12,11 +12,11 @@ use pyo3::types::PyList;
 use std::mem;
 use std::path::{Path, PathBuf};
 
+use robocodec::transform::TransformBuilder;
 use roboflow_core::RoboflowError;
+use roboflow_pipeline::PipelineReport;
 use roboflow_pipeline::fluent::{BatchReport, CompressionPreset, FileResult, Robocodec, RunOutput};
 use roboflow_pipeline::hyper::HyperPipelineReport;
-use roboflow_pipeline::PipelineReport;
-use robocodec::transform::TransformBuilder;
 
 // =============================================================================
 // Error conversion
@@ -377,31 +377,37 @@ impl PyFileResult {
     /// Error message if conversion failed.
     #[getter]
     fn error(&self) -> Option<String> {
-        self.result.error().map(|e: &roboflow_core::RoboflowError| e.to_string())
+        self.result
+            .error()
+            .map(|e: &roboflow_core::RoboflowError| e.to_string())
     }
 
     /// Standard pipeline report (if available).
     #[getter]
     fn standard_report(&self, py: Python<'_>) -> Option<PyObject> {
-        self.result.standard_report().map(|r: &roboflow_pipeline::HyperPipelineReport| {
-            PyHyperPipelineReport { report: r.clone() }
-                .into_pyobject(py)
-                .ok()
-                .unwrap()
-                .into()
-        })
+        self.result
+            .standard_report()
+            .map(|r: &roboflow_pipeline::HyperPipelineReport| {
+                PyHyperPipelineReport { report: r.clone() }
+                    .into_pyobject(py)
+                    .ok()
+                    .unwrap()
+                    .into()
+            })
     }
 
     /// Hyper pipeline report (if available).
     #[getter]
     fn hyper_report(&self, py: Python<'_>) -> Option<PyObject> {
-        self.result.hyper_report().map(|r: &roboflow_pipeline::hyper::HyperPipelineReport| {
-            PyHyperPipelineReport { report: r.clone() }
-                .into_pyobject(py)
-                .ok()
-                .unwrap()
-                .into()
-        })
+        self.result
+            .hyper_report()
+            .map(|r: &roboflow_pipeline::hyper::HyperPipelineReport| {
+                PyHyperPipelineReport { report: r.clone() }
+                    .into_pyobject(py)
+                    .ok()
+                    .unwrap()
+                    .into()
+            })
     }
 
     fn __repr__(&self) -> String {

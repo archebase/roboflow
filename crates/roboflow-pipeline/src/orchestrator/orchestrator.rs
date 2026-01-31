@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, instrument, warn};
 
-use roboflow_core::{Result, RoboflowError};
 use crate::stages::compression::{CompressionStage, CompressionStageConfig};
 use crate::stages::reader::{ReaderStage, ReaderStageConfig, ReaderStats};
 use crate::stages::transform::{TransformStage, TransformStageConfig};
@@ -23,6 +22,7 @@ use robocodec::io::detection::detect_format;
 use robocodec::io::metadata::{ChannelInfo as IoChannelInfo, FileFormat};
 use robocodec::io::traits::{FormatReader, MessageChunkData};
 use robocodec::transform::{ChannelInfo, MultiTransform};
+use roboflow_core::{Result, RoboflowError};
 
 /// Statistics from parallel reading (simplified version).
 #[derive(Debug, Clone, Default)]

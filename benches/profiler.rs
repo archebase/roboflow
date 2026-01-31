@@ -22,7 +22,11 @@ use std::time::Instant;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use roboflow::{CompressionPreset, PerformanceMode, Robocodec};
-use roboflow_pipeline::{auto_config::PipelineAutoConfig, fluent::RunOutput, hyper::{HyperPipeline, HyperPipelineConfig}};
+use roboflow_pipeline::{
+    auto_config::PipelineAutoConfig,
+    fluent::RunOutput,
+    hyper::{HyperPipeline, HyperPipelineConfig},
+};
 
 #[derive(Parser, Debug)]
 #[command(name = "profiler")]
