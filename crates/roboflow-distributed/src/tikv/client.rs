@@ -36,7 +36,7 @@ use std::time::Duration;
 use super::config::TikvConfig;
 use super::error::{Result, TikvError};
 use super::key::{HeartbeatKeys, JobKeys, LockKeys, StateKeys};
-use super::schema::{CheckpointState, HeartbeatRecord, JobRecord, LockRecord};
+use super::schema::{CheckpointState, HeartbeatRecord, JobRecord, JobStatus, LockRecord};
 
 use tokio::time::sleep;
 
@@ -996,6 +996,144 @@ impl TikvClient {
     /// Release scanner leadership.
     pub async fn release_scanner_lock(&self, pod_id: &str) -> Result<bool> {
         self.release_lock("scanner_lock", pod_id).await
+    }
+
+    /// Reclaim an orphaned job from a dead worker.
+    ///
+    /// This uses a single transaction to:
+    /// 1. Read the job (verify still Processing)
+    /// 2. Read the owner's heartbeat (verify stale)
+    /// 3. Update job to Pending with no owner
+    ///
+    /// Returns `Ok(true)` if the job was reclaimed, `Ok(false)` if it
+    /// couldn't be reclaimed (not stale, not Processing, or conflict),
+    /// or `Err` if there was a connection error.
+    pub async fn reclaim_job(&self, job_id: &str, stale_threshold_seconds: i64) -> Result<bool> {
+        tracing::debug!(
+            job_id = %job_id,
+            stale_threshold_secs = stale_threshold_seconds,
+            "Attempting to reclaim job"
+        );
+
+        {
+            let inner = self.inner.as_ref().ok_or_else(|| {
+                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+            })?;
+
+            let job_key = JobKeys::record(job_id);
+            let mut txn = inner
+                .begin_optimistic()
+                .await
+                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+            // Read job in transaction
+            let reclaimed = match txn
+                .get(job_key.clone())
+                .await
+                .map_err(|e| TikvError::ClientError(e.to_string()))?
+            {
+                Some(data) => {
+                    let mut job: JobRecord = bincode::deserialize(&data)
+                        .map_err(|e| TikvError::Deserialization(e.to_string()))?;
+
+                    // Verify job is still in Processing state
+                    if job.status != JobStatus::Processing {
+                        tracing::debug!(
+                            job_id = %job_id,
+                            status = ?job.status,
+                            "Job not in Processing state, cannot reclaim"
+                        );
+                        return Ok(false);
+                    }
+
+                    // Verify job has an owner
+                    let owner = match &job.owner {
+                        Some(o) => o.clone(),
+                        None => {
+                            tracing::debug!(
+                                job_id = %job_id,
+                                "Job has no owner, cannot reclaim"
+                            );
+                            return Ok(false);
+                        }
+                    };
+
+                    // Check if owner's heartbeat is stale
+                    let heartbeat_key = HeartbeatKeys::heartbeat(&owner);
+                    let owner_stale = match txn
+                        .get(heartbeat_key)
+                        .await
+                        .map_err(|e| TikvError::ClientError(e.to_string()))?
+                    {
+                        Some(hb_data) => {
+                            if let Ok(record) = bincode::deserialize::<HeartbeatRecord>(&hb_data) {
+                                record.is_stale(stale_threshold_seconds)
+                            } else {
+                                // Invalid heartbeat data - consider stale
+                                true
+                            }
+                        }
+                        None => {
+                            // No heartbeat record - consider stale
+                            true
+                        }
+                    };
+
+                    if !owner_stale {
+                        tracing::debug!(
+                            job_id = %job_id,
+                            owner = %owner,
+                            "Owner's heartbeat is fresh, cannot reclaim"
+                        );
+                        return Ok(false);
+                    }
+
+                    // Reclaim the job: set back to Pending with no owner
+                    job.status = JobStatus::Pending;
+                    job.owner = None;
+                    job.updated_at = chrono::Utc::now();
+
+                    // Note: We preserve the checkpoint for resume capability
+                    // The checkpoint key is NOT deleted here
+
+                    let new_data = bincode::serialize(&job)
+                        .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                    txn.put(job_key, new_data)
+                        .await
+                        .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+                    true
+                }
+                None => {
+                    tracing::debug!(
+                        job_id = %job_id,
+                        "Job not found, cannot reclaim"
+                    );
+                    return Ok(false);
+                }
+            };
+
+            txn.commit()
+                .await
+                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+            if reclaimed {
+                tracing::info!(
+                    job_id = %job_id,
+                    "Job reclaimed successfully"
+                );
+            }
+
+            Ok(reclaimed)
+        }
+
+        #[cfg(not(feature = "distributed"))]
+        {
+            let _ = (job_id, stale_threshold_seconds);
+            Err(TikvError::ConnectionFailed(
+                "Distributed feature not enabled".to_string(),
+            ))
+        }
     }
 
     /// Get a reference to the configuration.
