@@ -494,9 +494,14 @@ impl TikvClient {
     /// optimistic concurrency will detect the write conflict and one will
     /// fail with a `WriteConflict` error.
     pub async fn claim_job(&self, file_hash: &str, pod_id: &str) -> Result<bool> {
+        tracing::debug!(
+            file_hash = %file_hash,
+            pod_id = %pod_id,
+            "Attempting to claim job"
+        );
+
         #[cfg(feature = "distributed")]
         {
-
             let inner = self.inner.as_ref().ok_or_else(|| {
                 TikvError::ConnectionFailed("TiKV client not initialized".to_string())
             })?;
@@ -537,6 +542,20 @@ impl TikvClient {
             txn.commit()
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+            if claimed {
+                tracing::info!(
+                    file_hash = %file_hash,
+                    pod_id = %pod_id,
+                    "Job successfully claimed"
+                );
+            } else {
+                tracing::debug!(
+                    file_hash = %file_hash,
+                    pod_id = %pod_id,
+                    "Job not claimable (already claimed or not found)"
+                );
+            }
 
             Ok(claimed)
         }
@@ -688,7 +707,6 @@ impl TikvClient {
     ) -> Result<bool> {
         #[cfg(feature = "distributed")]
         {
-
             let inner = self.inner.as_ref().ok_or_else(|| {
                 TikvError::ConnectionFailed("TiKV client not initialized".to_string())
             })?;
@@ -771,7 +789,6 @@ impl TikvClient {
     pub async fn release_lock(&self, resource: &str, owner: &str) -> Result<bool> {
         #[cfg(feature = "distributed")]
         {
-
             let inner = self.inner.as_ref().ok_or_else(|| {
                 TikvError::ConnectionFailed("TiKV client not initialized".to_string())
             })?;
