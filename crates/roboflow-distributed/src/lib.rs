@@ -19,6 +19,7 @@
 pub mod catalog;
 pub mod scanner;
 pub mod tikv;
+pub mod worker;
 
 // Re-export public types from tikv (distributed coordination)
 pub use tikv::{
@@ -32,6 +33,9 @@ pub use catalog::{EpisodeMetadata, SegmentMetaData, TiKVCatalog, TiKVConfig, Upl
 
 // Re-export public types from scanner (file discovery actor)
 pub use scanner::{MetricsSnapshot, ScanStats, Scanner, ScannerConfig, ScannerMetrics};
+
+// Re-export public types from worker (job processing actor)
+pub use worker::{ProcessingResult, Worker, WorkerConfig, WorkerMetrics, WorkerMetricsSnapshot};
 
 // Re-export constants from tikv config
 pub use tikv::config::{DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_PD_ENDPOINTS, KEY_PREFIX};
