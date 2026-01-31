@@ -71,12 +71,28 @@ pub mod dataset;
 #[cfg(feature = "cloud-storage")]
 pub mod storage;
 
+// =============================================================================
+// Distributed coordination (TiKV backend)
+// =============================================================================
+#[cfg(feature = "distributed")]
+pub mod distributed;
+
 // Re-export storage types when feature is enabled
 #[cfg(feature = "cloud-storage")]
 pub use storage::{
     CacheConfig, CacheStats, CachedStorage, EvictionPolicy, LocalStorage, MultipartConfig,
     MultipartStats, ObjectMetadata, OssStorage, RetryConfig, RetryingStorage, SeekRead,
     SeekableStorage, Storage, StorageConfig, StorageError, StorageFactory, StorageUrl,
+};
+
+// Re-export distributed types when feature is enabled
+#[cfg(feature = "distributed")]
+pub use distributed::{
+    DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_PD_ENDPOINTS, KEY_PREFIX,
+    tikv::{
+        CheckpointState, HeartbeatRecord, JobRecord, JobStatus, LockRecord, TikvClient, TikvConfig,
+        TikvError, WorkerStatus,
+    },
 };
 
 // =============================================================================
