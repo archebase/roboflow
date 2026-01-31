@@ -13,8 +13,8 @@ use std::time::Instant;
 use tracing::{error, warn};
 
 use crate::hyper::{HyperPipeline, HyperPipelineConfig, HyperPipelineReport};
-use roboflow_core::{Result, RoboflowError};
 use robocodec::transform::MultiTransform;
+use roboflow_core::{Result, RoboflowError};
 
 use super::compression::CompressionPreset;
 use super::read_options::ReadOptions;
@@ -661,11 +661,7 @@ impl FileResult {
         self.report()
     }
 
-    fn from_success(
-        input_path: String,
-        output_path: String,
-        report: HyperPipelineReport,
-    ) -> Self {
+    fn from_success(input_path: String, output_path: String, report: HyperPipelineReport) -> Self {
         Self {
             input_path,
             output_path,
