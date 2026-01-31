@@ -73,7 +73,7 @@ def main():
     print(f"Converting {input_path} to {output_path}...")
     report = convert_single_file(input_path, output_path)
 
-    print(f"\nConversion complete!")
+    print("\nConversion complete!")
     print(f"  Input size:      {report.input_size_bytes / 1024 / 1024:.2f} MB")
     print(f"  Output size:     {report.output_size_bytes / 1024 / 1024:.2f} MB")
     print(f"  Compression:     {report.compression_ratio:.2%} of original")

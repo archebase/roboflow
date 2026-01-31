@@ -9,7 +9,7 @@ Provides interface for reading messages from robotics data formats.
 """
 
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Iterator, Tuple
+from typing import Dict, List, Any, Optional, Iterator
 from dataclasses import dataclass
 import time
 

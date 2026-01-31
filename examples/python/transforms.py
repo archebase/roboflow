@@ -161,7 +161,7 @@ def main():
         print(f"Unknown mode: {mode}")
         sys.exit(1)
 
-    print(f"\nConversion complete!")
+    print("\nConversion complete!")
     print(f"  Throughput:  {report.average_throughput_mb_s:.2f} MB/s")
     print(f"  Messages:    {report.message_count:,}")
     print(f"  Compression: {report.compression_ratio:.2%} of original")

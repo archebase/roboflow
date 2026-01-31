@@ -378,7 +378,7 @@ def print_report(report, detailed: bool = False) -> None:
         detailed: Whether to print detailed information
     """
     if hasattr(report, "file_reports"):  # BatchReport
-        print(f"\nBatch Report:")
+        print("\nBatch Report:")
         print(f"  Total files: {len(report.file_reports)}")
         print(f"  Successful: {report.success_count}")
         print(f"  Failed: {report.failure_count}")
@@ -390,7 +390,7 @@ def print_report(report, detailed: bool = False) -> None:
                 print(f"    {status} {fr.input_path}")
 
     elif hasattr(report, "crc_enabled"):  # HyperPipelineReport
-        print(f"\nHyper Pipeline Report:")
+        print("\nHyper Pipeline Report:")
         print(f"  Input: {report.input_file}")
         print(f"  Output: {report.output_file}")
         print(f"  Throughput: {report.throughput_mb_s:.2f} MB/s")
@@ -398,7 +398,7 @@ def print_report(report, detailed: bool = False) -> None:
         print(f"  Compression: {report.compression_ratio:.2%}")
 
     else:  # PipelineReport
-        print(f"\nPipeline Report:")
+        print("\nPipeline Report:")
         print(f"  Input: {report.input_file}")
         print(f"  Output: {report.output_file}")
         print(f"  Throughput: {report.average_throughput_mb_s:.2f} MB/s")

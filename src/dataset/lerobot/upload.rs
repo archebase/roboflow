@@ -222,6 +222,7 @@ impl UploadStats {
 
 /// Internal task for the upload worker queue.
 #[derive(Debug)]
+#[allow(dead_code)]
 struct UploadTask {
     /// Local file path to upload.
     local_path: PathBuf,

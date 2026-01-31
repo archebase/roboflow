@@ -13,8 +13,8 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from .config import load_config, create_default_config, save_config, KpsConfig
-from .converter import convert_single, convert_dataset, KpsConverter
+from .config import load_config, create_default_config, save_config
+from .converter import convert_single, convert_dataset
 
 
 def cmd_convert(args: list) -> int:
@@ -36,13 +36,11 @@ def cmd_convert(args: list) -> int:
         print(f"Error: Input not found: {input_path}")
         return 1
 
-    # Load config
+    # Validate config path if provided
     if config_path and config_path.exists():
-        config = load_config(config_path)
-    else:
-        config = create_default_config()
-        if config_path:
-            print(f"Config not found, using defaults")
+        _config = load_config(config_path)
+    elif config_path:
+        print("Config not found, using defaults")
 
     # Check if input is a file or directory
     if input_path.is_file():
@@ -80,7 +78,7 @@ def cmd_convert(args: list) -> int:
         successful = sum(1 for r in results if r.get("success"))
         failed = len(results) - successful
 
-        print(f"\nConversion complete:")
+        print("\nConversion complete:")
         print(f"  Successful: {successful}")
         print(f"  Failed: {failed}")
 
@@ -123,7 +121,7 @@ def cmd_config(args: list) -> int:
 
         try:
             config = load_config(file_path)
-            print(f"Config loaded successfully:")
+            print("Config loaded successfully:")
             print(f"  Dataset: {config.dataset.name}")
             print(f"  FPS: {config.dataset.fps}")
             print(f"  Robot type: {config.dataset.robot_type}")
@@ -190,7 +188,7 @@ def cmd_task_info(args: list) -> int:
             print(f"Missing required fields: {', '.join(missing)}")
             return 1
 
-        print(f"task_info.json is valid!")
+        print("task_info.json is valid!")
         print(f"  Episode: {data['episode_id']}")
         print(f"  Scene: {data['scene_name']} / {data['sub_scene_name']}")
         print(f"  Task: {data['english_task_name']}")
