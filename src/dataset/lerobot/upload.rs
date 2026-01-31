@@ -461,7 +461,9 @@ impl EpisodeUploadCoordinator {
                             files_failed.fetch_add(1, Ordering::Relaxed);
 
                             // Update failed files list - recover from poisoned state
-                            let mut stats_guard = stats.lock().unwrap_or_else(|e| e.into_inner());
+                            let mut stats_guard = stats.lock().unwrap_or_else(
+                                |e: std::sync::PoisonError<MutexGuard<UploadStats>>| e.into_inner(),
+                            );
                             stats_guard
                                 .failed_files
                                 .push(task.local_path.display().to_string());
@@ -698,12 +700,14 @@ impl EpisodeUploadCoordinator {
 
     /// Get current upload statistics.
     pub fn stats(&self) -> UploadStats {
-        let mut stats = self.stats.lock().unwrap_or_else(|e| {
-            tracing::warn!(
-                "Stats mutex was poisoned, recovering. This indicates a previous panic."
-            );
-            e.into_inner()
-        });
+        let mut stats = self.stats.lock().unwrap_or_else(
+            |e: std::sync::PoisonError<MutexGuard<UploadStats>>| {
+                tracing::warn!(
+                    "Stats mutex was poisoned, recovering. This indicates a previous panic."
+                );
+                e.into_inner()
+            },
+        );
         stats.total_bytes = self.bytes_uploaded.load(Ordering::Relaxed);
         stats.total_files = self.files_uploaded.load(Ordering::Relaxed);
         stats.failed_count = self.files_failed.load(Ordering::Relaxed);
@@ -752,20 +756,22 @@ impl EpisodeUploadCoordinator {
         })?;
 
         for worker in workers.drain(..) {
-            if let Err(e) = worker.join() {
+            if let Err(e) = worker.join::<std::thread::JoinHandle<()>>() {
                 tracing::error!("Worker thread panicked: {:?}", e);
             }
         }
 
         // Clean up pending files if not already deleted
         if !self.config.delete_after_upload {
-            let pending = self.pending_files.lock().unwrap_or_else(|e| {
-                tracing::warn!("Pending files mutex was poisoned during cleanup");
-                e.into_inner()
-            });
+            let pending = self.pending_files.lock().unwrap_or_else(
+                |e: std::sync::PoisonError<MutexGuard<HashMap<String, Vec<PathBuf>>>>| {
+                    tracing::warn!("Pending files mutex was poisoned during cleanup");
+                    e.into_inner()
+                },
+            );
             for (_episode, files) in pending.iter() {
                 for path in files {
-                    if let Err(e) = std::fs::remove_file(path) {
+                    if let Err(e) = std::fs::remove_file::<std::io::Error>(path) {
                         tracing::warn!("Failed to delete file {}: {}", path.display(), e);
                     }
                 }
