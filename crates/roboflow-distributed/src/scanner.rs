@@ -331,21 +331,28 @@ impl Scanner {
             return Ok(HashSet::new());
         }
 
-        let keys: Vec<Vec<u8>> = hashes.iter().map(|hash| JobKeys::record(hash)).collect();
+        let mut existing = HashSet::new();
 
-        let results = self.tikv.batch_get(keys).await?;
+        // Process hashes in batches to avoid overwhelming TiKV
+        for chunk in hashes.chunks(self.config.batch_size) {
+            let keys: Vec<Vec<u8>> = chunk.iter().map(|hash| JobKeys::record(hash)).collect();
 
-        let existing: HashSet<String> = hashes
-            .iter()
-            .zip(results.iter())
-            .filter_map(|(hash, result)| {
-                if result.is_some() {
-                    Some(hash.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
+            let results = self.tikv.batch_get(keys).await?;
+
+            let chunk_existing: HashSet<String> = chunk
+                .iter()
+                .zip(results.iter())
+                .filter_map(|(hash, result)| {
+                    if result.is_some() {
+                        Some(hash.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            existing.extend(chunk_existing);
+        }
 
         tracing::debug!(
             pod_id = %self.pod_id,
@@ -557,8 +564,10 @@ impl Scanner {
 
             // Try to become leader
             match self.try_become_leader().await {
-                Ok(Some(_guard)) => {
+                Ok(Some(guard)) => {
                     // We are the leader, run scan cycle
+                    // Keep lock held during entire cycle (scan + sleep)
+                    // to prevent other scanners from starting simultaneously
                     if let Err(e) = self.scan_cycle().await {
                         tracing::error!(
                             pod_id = %self.pod_id,
@@ -567,8 +576,21 @@ impl Scanner {
                         );
                     }
 
-                    // Sleep before retry (guard is dropped)
-                    sleep(self.config.scan_interval).await;
+                    // Sleep while holding the lock - prevents race condition
+                    // where another scanner could acquire leadership during sleep
+                    tokio::select! {
+                        _ = sleep(self.config.scan_interval) => {}
+                        _ = shutdown_rx.recv() => {
+                            tracing::info!(
+                                pod_id = %self.pod_id,
+                                "Scanner shutdown requested during leader sleep"
+                            );
+                            break;
+                        }
+                    }
+
+                    // Lock is released here when guard is dropped
+                    drop(guard);
                 }
                 Ok(None) => {
                     // Not leader, wait and retry
