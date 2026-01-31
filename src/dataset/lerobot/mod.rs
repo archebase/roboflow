@@ -12,6 +12,7 @@ pub mod config;
 pub mod hardware;
 pub mod metadata;
 pub mod trait_impl;
+pub mod upload;
 pub mod video_profiles;
 pub mod writer;
 
@@ -19,5 +20,8 @@ pub use annotations::{AnnotationData, SkillMark};
 pub use config::{DatasetConfig, LerobotConfig, Mapping, MappingType, VideoConfig};
 pub use hardware::{HardwareBackend, HardwareConfig};
 pub use trait_impl::{FromAlignedFrame, LerobotWriterTrait};
+#[cfg(feature = "cloud-storage")]
+pub use upload::EpisodeUploadCoordinator;
+pub use upload::{EpisodeFiles, UploadConfig, UploadProgress, UploadStats};
 pub use video_profiles::{Profile, QualityTier, ResolvedConfig, SpeedPreset, VideoEncodingProfile};
 pub use writer::{LerobotFrame, LerobotWriter};
