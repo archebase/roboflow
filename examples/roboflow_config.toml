@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 ArcheBase
+#
+# SPDX-License-Identifier: MulanPSL-2.0
+
+# Roboflow configuration file
+#
+# Location: ~/.roboflow/config.toml
+# Purpose: Default credentials for cloud storage (OSS/S3)
+#
+# Security: Run 'chmod 600 ~/.roboflow/config.toml' to restrict access
+
+[oss]
+# Alibaba Cloud OSS credentials
+# Optional: Can also be set via environment variables (OSS_ACCESS_KEY_ID, etc.)
+# or CLI flags (--oss-access-key-id, etc.)
+
+# OSS access key ID
+# access_key_id = "LTAI5t..."
+
+# OSS access key secret
+# access_key_secret = "..."
+
+# OSS endpoint (e.g., oss-cn-hangzhou.aliyuncs.com)
+# endpoint = "oss-cn-hangzhou.aliyuncs.com"
+
+# OSS region (optional)
+# region = "cn-hangzhou"

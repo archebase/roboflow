@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use crate::{
-    LocalStorage, OssConfig, OssStorage, SeekableStorage, Storage, StorageError,
+    LocalStorage, OssConfig, OssStorage, RoboflowConfig, SeekableStorage, Storage, StorageError,
     StorageResult as Result, url::StorageUrl,
 };
 
@@ -81,6 +81,29 @@ impl StorageConfig {
         }
     }
 
+    /// Merge configuration from a config file with this config.
+    ///
+    /// Config file values are used only if the current values are `None`.
+    /// This allows environment variables and CLI flags to override config file.
+    pub fn merge_with_config_file(mut self, config: Option<RoboflowConfig>) -> Self {
+        if let Some(cfg) = config {
+            // Only use config file values if not already set (env vars take precedence)
+            if self.oss_access_key_id.is_none() {
+                self.oss_access_key_id = cfg.oss_access_key_id().map(String::from);
+            }
+            if self.oss_access_key_secret.is_none() {
+                self.oss_access_key_secret = cfg.oss_access_key_secret().map(String::from);
+            }
+            if self.oss_endpoint.is_none() {
+                self.oss_endpoint = cfg.oss_endpoint().map(String::from);
+            }
+            if self.aws_region.is_none() {
+                self.aws_region = cfg.oss_region().map(String::from);
+            }
+        }
+        self
+    }
+
     /// Set OSS credentials.
     pub fn with_oss_credentials(
         mut self,
@@ -111,6 +134,12 @@ impl StorageConfig {
 
     /// Set AWS region.
     pub fn with_aws_region(mut self, region: impl Into<String>) -> Self {
+        self.aws_region = Some(region.into());
+        self
+    }
+
+    /// Set OSS region (alias for with_aws_region).
+    pub fn with_oss_region(mut self, region: impl Into<String>) -> Self {
         self.aws_region = Some(region.into());
         self
     }
