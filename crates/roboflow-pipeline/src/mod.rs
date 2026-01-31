@@ -2,48 +2,51 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Parallel read-compress-write pipeline for robotics data formats.
+//! High-performance pipeline for robotics data formats.
 //!
-//! This module provides a production-grade pipeline that maximizes CPU utilization
-//! through multi-stage parallelism, auto-tuning, and backpressure handling.
+//! This module provides a production-grade 7-stage hyper pipeline that maximizes
+//! CPU utilization through zero-copy operations, platform-specific I/O optimization,
+//! and lock-free inter-stage communication.
 //!
 //! # Architecture
 //!
-//! The pipeline consists of 4 stages:
+//! The hyper pipeline consists of 7 stages:
 //!
 //! ```text
-//! Reader → Transform → Compression → Writer
-//!  (1th)     (1th)        (N threads)    (1th)
+//! Prefetcher → Parser → Batcher → Transform → Compressor → CRC → Writer
+//!   (io_uring)   (mmap)    (align)     (topic)    (zstd)    (pack)  (seq)
 //! ```
 //!
 //! # Modules
 //!
-//! - `types` - Core data structures (MessageChunk, MessageArena, BufferPool)
-//! - `stages` - Pipeline stage implementations (Reader, Transform, Compression, Writer)
+//! - `types` - Core data structures (MessageChunk, BufferPool)
+//! - `stages` - Pipeline stage implementations
 //! - `compression` - Parallel compression utilities
-//! - `orchestrator` - Main pipeline coordinator and builder
 //! - `config` - Pipeline configuration types
 //! - `auto_config` - Automatic hardware-aware configuration
 //! - `gpu` - GPU compression (experimental, requires "gpu" feature)
+//! - `hyper` - 7-stage hyper pipeline implementation
+//! - `fluent` - Fluent API for pipeline construction
+//! - `dataset_converter` - Direct dataset format conversion
 //!
 //! # Example
 //!
 //! ```no_run
-//! use roboflow::pipeline::PipelineBuilder;
+//! use roboflow::Robocodec;
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let pipeline = PipelineBuilder::new()
-//!         .input_path("input.bag")
-//!         .output_path("output.mcap")
-//!         .build()?;
+//!     let report = Robocodec::open(vec!["input.bag"])?
+//!         .write_to("output.mcap")
+//!         .run()?;
 //!
-//!     let report = pipeline.run()?;
-//!     println!("Throughput: {:.2} MB/s", report.average_throughput_mb_s);
+//!     println!("Throughput: {:.2} MB/s", report.throughput_mb_s);
 //!     Ok(())
 //! }
 //! ```
+//!
 
 // Core data structures
+#[cfg(not(doctest))]
 pub mod types;
 
 // Hardware detection for auto-tuning
@@ -59,28 +62,27 @@ pub mod compression;
 #[cfg(feature = "gpu")]
 pub mod gpu;
 
-// Pipeline configuration and coordinator
+// Pipeline configuration
 pub mod auto_config;
 pub mod config;
 pub mod dataset_converter;
-pub mod orchestrator;
 
 // 7-stage hyper-pipeline for maximum throughput
+#[cfg(not(doctest))]
 pub mod hyper;
 
 // Fluent API for batch processing
 pub mod fluent;
 
 // Re-exports for convenience
-pub use auto_config::{PerformanceMode, PipelineAutoConfig};
+pub use auto_config::PerformanceMode;
 pub use compression::ParallelCompressor;
-pub use config::{CompressionConfig, CompressionTarget};
+pub use config::CompressionConfig;
 pub use dataset_converter::{DatasetConverter, DatasetConverterStats};
 pub use fluent::{BatchReport, CompressionPreset, PipelineMode, ReadOptions, Robocodec};
 pub use hardware::{HardwareInfo, detect_cpu_count};
-pub use orchestrator::{AsyncPipeline, PipelineBuilder, PipelineReport};
-pub use stages::{TransformStage, TransformStageConfig};
-pub use types::{ArenaMessage, CompressedChunk, MessageArena, MessageChunk};
+pub use stages::TransformStage;
 
 // HyperPipeline re-exports
+#[cfg(not(doctest))]
 pub use hyper::{HyperPipeline, HyperPipelineConfig, HyperPipelineReport};

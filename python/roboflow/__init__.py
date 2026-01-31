@@ -67,8 +67,8 @@ __all__ = [
 ]
 
 # Dataset submodule alias for convenience
-import sys
-import types
+import sys  # noqa: E402
+import types  # noqa: E402
 
 # Create the dataset submodule
 _dataset_module = types.ModuleType("roboflow.dataset", "Dataset submodule")

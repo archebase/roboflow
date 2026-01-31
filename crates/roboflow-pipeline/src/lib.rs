@@ -6,9 +6,8 @@
 //!
 //! Processing pipeline for roboflow.
 //!
-//! This crate provides parallel message decoding and transformation:
-//! - **Multi-stage pipeline** - Reader, transform, compression, writer
-//! - **Hyper pipeline** - 7-stage optimized pipeline
+//! This crate provides high-performance message processing:
+//! - **Hyper pipeline** - 7-stage optimized pipeline with zero-copy
 //! - **Fluent API** - Builder-style pipeline construction
 //! - **Hardware detection** - Automatic CPU/GPU feature detection
 //!
@@ -28,17 +27,12 @@ pub mod gpu;
 pub mod hardware;
 #[cfg(not(doctest))]
 pub mod hyper;
-pub mod orchestrator;
 pub mod stages;
 #[cfg(not(doctest))]
 pub mod types;
 
 // Re-export public types from submodules (avoiding module_inception)
 pub use dataset_converter::dataset_converter::{DatasetConverter, DatasetConverterStats};
-pub use orchestrator::orchestrator::{
-    AsyncPipeline, ParallelReaderConfig, ParallelReaderStats, PipelineBuilder, PipelineConfig,
-    PipelineReport,
-};
 
 // Re-export public types (always available)
 pub use auto_config::PerformanceMode;

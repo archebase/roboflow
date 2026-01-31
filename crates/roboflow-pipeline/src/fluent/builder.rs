@@ -14,8 +14,6 @@ use tracing::{error, warn};
 
 use crate::hyper::{HyperPipeline, HyperPipelineConfig, HyperPipelineReport};
 use roboflow_core::{Result, RoboflowError};
-// TODO: Standard pipeline not yet implemented - use hyper pipeline for now
-// use crate::orchestrator::{AsyncPipeline, PipelineConfig, PipelineReport};
 use robocodec::transform::MultiTransform;
 
 use super::compression::CompressionPreset;
@@ -28,10 +26,8 @@ use super::read_options::ReadOptions;
 /// Pipeline execution mode.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PipelineMode {
-    /// Standard 4-stage pipeline (Reader → Transform → Compression → Writer)
+    /// Hyper 7-stage pipeline for maximum throughput (default)
     #[default]
-    Standard,
-    /// Hyper 7-stage pipeline for maximum throughput
     Hyper,
 }
 
@@ -394,8 +390,7 @@ impl Robocodec<WithOutput> {
                 return Ok(RunOutput::Hyper(report));
             }
 
-            // TODO: Standard pipeline not yet implemented - use hyper mode for now
-            // Fall back to hyper pipeline
+            // Single file processing
             let mut config = HyperPipelineConfig::new(input_path, &resolved_output);
             config.compression.compression_level = compression_level;
             config.batcher.target_size = chunk_size;
@@ -468,7 +463,7 @@ impl Robocodec<WithOutput> {
                 let result = HyperPipeline::new(config)
                     .and_then(|pipeline| pipeline.run())
                     .map(|report| {
-                        FileResult::from_hyper_success(
+                        FileResult::from_success(
                             input_path.display().to_string(),
                             output_file.display().to_string(),
                             report,
@@ -490,8 +485,7 @@ impl Robocodec<WithOutput> {
 
                 file_reports.push(result);
             } else {
-                // TODO: Standard pipeline not yet implemented - use hyper mode for now
-                // Fall back to hyper pipeline
+                // Single file processing
                 let mut config = HyperPipelineConfig::new(input_path, &output_file);
                 config.compression.compression_level = compression_level;
                 config.batcher.target_size = chunk_size;
@@ -503,7 +497,7 @@ impl Robocodec<WithOutput> {
                 let result = HyperPipeline::new(config)
                     .and_then(|pipeline| pipeline.run())
                     .map(|report| {
-                        FileResult::from_hyper_success(
+                        FileResult::from_success(
                             input_path.display().to_string(),
                             output_file.display().to_string(),
                             report,
@@ -540,9 +534,6 @@ impl Robocodec<WithOutput> {
 
 /// Output from running the pipeline.
 pub enum RunOutput {
-    // TODO: Add Single(PipelineReport) when standard pipeline is implemented
-    // /// Single file result (standard pipeline)
-    // Single(PipelineReport),
     /// Single file result (hyper pipeline)
     Hyper(HyperPipelineReport),
     /// Batch processing result
@@ -593,10 +584,7 @@ pub struct FileResult {
 /// a success and failure result at the same time.
 #[derive(Debug)]
 pub enum FileResultData {
-    // TODO: Add StandardSuccess(PipelineReport) when standard pipeline is implemented
-    // /// Standard pipeline succeeded
-    // StandardSuccess(PipelineReport),
-    /// Hyper pipeline succeeded
+    /// Pipeline succeeded
     HyperSuccess(HyperPipelineReport),
     /// Conversion failed
     Failure { error: RoboflowError },
@@ -606,10 +594,6 @@ pub enum FileResultData {
 impl Clone for FileResultData {
     fn clone(&self) -> Self {
         match self {
-            // TODO: Add StandardSuccess case when standard pipeline is implemented
-            // FileResultData::StandardSuccess(report) => {
-            //     FileResultData::StandardSuccess(report.clone())
-            // }
             FileResultData::HyperSuccess(report) => FileResultData::HyperSuccess(report.clone()),
             FileResultData::Failure { error } => {
                 // For Clone, we preserve the error category and message
@@ -652,12 +636,7 @@ impl FileResult {
 
     /// Whether the conversion succeeded.
     pub fn success(&self) -> bool {
-        matches!(
-            self.result,
-            // TODO: Add StandardSuccess when standard pipeline is implemented
-            // FileResultData::StandardSuccess(_) |
-            FileResultData::HyperSuccess(_)
-        )
+        matches!(self.result, FileResultData::HyperSuccess(_))
     }
 
     /// Get the error if conversion failed.
@@ -668,40 +647,21 @@ impl FileResult {
         }
     }
 
-    /// Get the standard report if available.
-    // TODO: Implement when standard pipeline is available
-    #[allow(dead_code)]
-    pub fn standard_report(&self) -> Option<&HyperPipelineReport> {
+    /// Get the report if available.
+    pub fn report(&self) -> Option<&HyperPipelineReport> {
         match &self.result {
-            // FileResultData::StandardSuccess(report) => Some(report),
             FileResultData::HyperSuccess(report) => Some(report),
             FileResultData::Failure { .. } => None,
         }
     }
 
-    /// Get the hyper report if available.
+    // TODO: Remove hyper_report alias in next breaking release
+    #[deprecated(since = "0.2.0", note = "Use report() instead")]
     pub fn hyper_report(&self) -> Option<&HyperPipelineReport> {
-        match &self.result {
-            FileResultData::HyperSuccess(report) => Some(report),
-            _ => None,
-        }
+        self.report()
     }
 
-    // TODO: Implement when standard pipeline is available
-    #[allow(dead_code)]
-    fn from_standard_success(
-        input_path: String,
-        output_path: String,
-        report: HyperPipelineReport,
-    ) -> Self {
-        Self {
-            input_path,
-            output_path,
-            result: FileResultData::HyperSuccess(report),
-        }
-    }
-
-    fn from_hyper_success(
+    fn from_success(
         input_path: String,
         output_path: String,
         report: HyperPipelineReport,
