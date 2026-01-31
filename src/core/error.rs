@@ -250,6 +250,18 @@ impl RoboflowError {
         RoboflowError::Other(message.into())
     }
 
+    /// Check if this error is retryable.
+    ///
+    /// Retryable errors include timeouts, network errors, and transient cloud storage errors.
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            RoboflowError::Timeout(_) => true,
+            #[cfg(feature = "cloud-storage")]
+            RoboflowError::Storage(e) => e.is_retryable(),
+            _ => false,
+        }
+    }
+
     /// Get the error category for this error.
     pub fn category(&self) -> ErrorCategory {
         match self {
@@ -436,6 +448,87 @@ impl fmt::Display for RoboflowError {
 }
 
 impl std::error::Error for RoboflowError {}
+
+impl Clone for RoboflowError {
+    fn clone(&self) -> Self {
+        match self {
+            RoboflowError::ParseError { context, message } => RoboflowError::ParseError {
+                context: context.clone(),
+                message: message.clone(),
+            },
+            RoboflowError::InvalidSchema {
+                schema_name,
+                reason,
+            } => RoboflowError::InvalidSchema {
+                schema_name: schema_name.clone(),
+                reason: reason.clone(),
+            },
+            RoboflowError::TypeNotFound { type_name } => RoboflowError::TypeNotFound {
+                type_name: type_name.clone(),
+            },
+            RoboflowError::BufferTooShort {
+                requested,
+                available,
+                cursor_pos,
+            } => RoboflowError::BufferTooShort {
+                requested: *requested,
+                available: *available,
+                cursor_pos: *cursor_pos,
+            },
+            RoboflowError::AlignmentError { expected, actual } => RoboflowError::AlignmentError {
+                expected: *expected,
+                actual: *actual,
+            },
+            RoboflowError::LengthExceeded {
+                length,
+                position,
+                buffer_len,
+            } => RoboflowError::LengthExceeded {
+                length: *length,
+                position: *position,
+                buffer_len: *buffer_len,
+            },
+            RoboflowError::FieldDecodeError {
+                field_name,
+                field_type,
+                cursor_pos,
+                cause,
+            } => RoboflowError::FieldDecodeError {
+                field_name: field_name.clone(),
+                field_type: field_type.clone(),
+                cursor_pos: *cursor_pos,
+                cause: cause.clone(),
+            },
+            RoboflowError::Unsupported { feature } => RoboflowError::Unsupported {
+                feature: feature.clone(),
+            },
+            RoboflowError::EncodeError { codec, message } => RoboflowError::EncodeError {
+                codec: codec.clone(),
+                message: message.clone(),
+            },
+            RoboflowError::TransformError {
+                transform_type,
+                message,
+            } => RoboflowError::TransformError {
+                transform_type: transform_type.clone(),
+                message: message.clone(),
+            },
+            RoboflowError::CodecError { message } => RoboflowError::CodecError {
+                message: message.clone(),
+            },
+            RoboflowError::InvariantViolation { invariant } => RoboflowError::InvariantViolation {
+                invariant: invariant.clone(),
+            },
+            RoboflowError::Other(msg) => RoboflowError::Other(msg.clone()),
+            RoboflowError::Timeout(msg) => RoboflowError::Timeout(msg.clone()),
+            #[cfg(feature = "cloud-storage")]
+            RoboflowError::Storage(err) => {
+                // StorageError is not Clone, convert to string representation
+                RoboflowError::Other(err.to_string())
+            }
+        }
+    }
+}
 
 impl From<std::io::Error> for RoboflowError {
     fn from(err: std::io::Error) -> Self {

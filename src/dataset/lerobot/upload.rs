@@ -45,7 +45,7 @@ pub struct UploadConfig {
     pub show_progress: bool,
 
     /// Whether to delete local files immediately after successful upload.
-    /// If false, files are deleted during `finalize()`.
+    /// If false, files are deleted during `shutdown_and_cleanup()`.
     #[serde(default = "default_delete_after_upload")]
     pub delete_after_upload: bool,
 
@@ -412,14 +412,17 @@ impl EpisodeUploadCoordinator {
             // Receive task with timeout
             match receiver.recv_timeout(Duration::from_millis(100)) {
                 Ok(task) => {
-                    // Check shutdown again before processing
-                    if shutdown.load(Ordering::Acquire) != 0 {
-                        // Put task back for potential resume (not implemented in this version)
-                        break;
-                    }
-
+                    // Update counters BEFORE checking shutdown to ensure consistency
                     files_in_progress.fetch_add(1, Ordering::Relaxed);
                     files_pending.fetch_sub(1, Ordering::Relaxed);
+
+                    // Check shutdown AFTER updating counters - if set, finish this task then exit
+                    if shutdown.load(Ordering::Acquire) != 0 {
+                        tracing::debug!(
+                            "Worker {} shutting down, completing current task",
+                            worker_id
+                        );
+                    }
 
                     let result = Self::upload_with_retry(
                         worker_id,
@@ -471,6 +474,15 @@ impl EpisodeUploadCoordinator {
                     }
 
                     files_in_progress.fetch_sub(1, Ordering::Relaxed);
+
+                    // Check shutdown after completing task and exit if set
+                    if shutdown.load(Ordering::Acquire) != 0 {
+                        tracing::debug!(
+                            "Worker {} exiting after completing current task",
+                            worker_id
+                        );
+                        break;
+                    }
                 }
                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
                     // Timeout, continue loop to check shutdown
@@ -513,11 +525,8 @@ impl EpisodeUploadCoordinator {
                     return Ok(bytes);
                 }
                 Err(e) => {
-                    let is_retryable = matches!(
-                        e,
-                        crate::RoboflowError::Storage(_) if e.to_string().contains("network")
-                            || e.to_string().contains("timeout")
-                    );
+                    // Use the is_retryable method for proper error classification
+                    let is_retryable = e.is_retryable();
 
                     if attempt >= max_retries || !is_retryable {
                         tracing::error!(
@@ -546,14 +555,18 @@ impl EpisodeUploadCoordinator {
         }
     }
 
-    /// Upload a single file.
+    /// Upload a single file with chunked streaming.
+    ///
+    /// This method streams the file in chunks (256KB) to avoid loading
+    /// the entire file into memory, which is important for large video files.
     fn upload_file(
         worker_id: usize,
         task: &UploadTask,
         storage: &Arc<dyn Storage>,
         progress: &Option<UploadProgress>,
     ) -> Result<u64> {
-        // Read file into memory
+        const CHUNK_SIZE: usize = 256 * 1024; // 256KB chunks
+
         let file = File::open(&task.local_path).map_err(|e| {
             crate::RoboflowError::io(format!(
                 "Failed to open file {}: {}",
@@ -562,15 +575,7 @@ impl EpisodeUploadCoordinator {
             ))
         })?;
 
-        let mut reader = BufReader::new(file);
-        let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).map_err(|e| {
-            crate::RoboflowError::io(format!(
-                "Failed to read file {}: {}",
-                task.local_path.display(),
-                e
-            ))
-        })?;
+        let mut reader = BufReader::with_capacity(CHUNK_SIZE, file);
 
         // Upload to storage
         let mut writer = storage.writer(&task.remote_path).map_err(|e| {
@@ -582,30 +587,47 @@ impl EpisodeUploadCoordinator {
         })?;
 
         use std::io::Write;
-        writer
-            .write_all(&buffer)
-            .map_err(|e| crate::RoboflowError::io(format!("Failed to write data: {}", e)))?;
+        let mut buffer = vec![0u8; CHUNK_SIZE];
+        let mut total_bytes = 0u64;
+
+        loop {
+            let n = reader.read(&mut buffer).map_err(|e| {
+                crate::RoboflowError::io(format!(
+                    "Failed to read file {}: {}",
+                    task.local_path.display(),
+                    e
+                ))
+            })?;
+
+            if n == 0 {
+                break; // EOF
+            }
+
+            writer
+                .write_all(&buffer[..n])
+                .map_err(|e| crate::RoboflowError::io(format!("Failed to write data: {}", e)))?;
+
+            total_bytes += n as u64;
+        }
 
         writer
             .flush()
             .map_err(|e| crate::RoboflowError::io(format!("Failed to flush data: {}", e)))?;
 
-        let bytes = buffer.len() as u64;
-
         // Call progress callback
         if let Some(cb) = progress {
-            cb(&task.file_type, bytes, task.file_size);
+            cb(&task.file_type, total_bytes, task.file_size);
         }
 
         tracing::trace!(
             "Worker {} uploaded {} ({} bytes) -> {}",
             worker_id,
             task.local_path.display(),
-            bytes,
+            total_bytes,
             task.remote_path.display()
         );
 
-        Ok(bytes)
+        Ok(total_bytes)
     }
 
     /// Queue an episode for upload.
@@ -722,11 +744,12 @@ impl EpisodeUploadCoordinator {
     pub fn shutdown_and_cleanup(self) -> Result<UploadStats> {
         tracing::info!("Shutting down upload coordinator...");
 
-        // Signal shutdown
-        self.shutdown.store(1, Ordering::Release);
-
-        // Flush pending uploads
+        // Flush pending uploads FIRST before signaling shutdown
+        // This ensures workers process all queued tasks before exiting
         self.flush()?;
+
+        // Signal shutdown AFTER flush completes
+        self.shutdown.store(1, Ordering::Release);
 
         // Join workers
         let mut workers = self.workers.lock().map_err(|e| {
