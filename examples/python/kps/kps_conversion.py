@@ -165,7 +165,7 @@ def convert_dataset(
 
             if result.get("success"):
                 results["successful"] += 1
-                print(f"  Success")
+                print("  Success")
             else:
                 results["failed"] += 1
                 print(f"  Failed: {result.get('error', 'Unknown error')}")

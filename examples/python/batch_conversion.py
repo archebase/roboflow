@@ -118,13 +118,13 @@ def main():
 
     if use_hyper:
         report = convert_with_hyper_mode(input_paths, output_dir)
-        print(f"\nHyper Pipeline complete!")
+        print("\nHyper Pipeline complete!")
         print(f"  Throughput:  {report.throughput_mb_s:.2f} MB/s")
         print(f"  Messages:    {report.message_count:,}")
         print(f"  Compression: {report.compression_ratio:.2%} of original")
     else:
         report = convert_batch(input_paths, output_dir)
-        print(f"\nBatch conversion complete!")
+        print("\nBatch conversion complete!")
         print(f"  Successful:  {report.success_count}/{len(input_files)}")
         print(f"  Failed:      {report.failure_count}/{len(input_files)}")
         print(f"  Duration:    {report.total_duration_seconds:.2f} seconds")

@@ -96,17 +96,17 @@ except ImportError:
 
     def print_report(report, detailed=False):
         if hasattr(report, "file_reports"):
-            print(f"\nBatch Report:")
+            print("\nBatch Report:")
             print(f"  Total files: {len(report.file_reports)}")
             print(f"  Successful: {report.success_count}")
             print(f"  Failed: {report.failure_count}")
         elif hasattr(report, "crc_enabled"):
-            print(f"\nHyper Pipeline Report:")
+            print("\nHyper Pipeline Report:")
             print(f"  Input: {report.input_file}")
             print(f"  Output: {report.output_file}")
             print(f"  Throughput: {report.throughput_mb_s:.2f} MB/s")
         else:
-            print(f"\nPipeline Report:")
+            print("\nPipeline Report:")
             print(f"  Input: {report.input_file}")
             print(f"  Output: {report.output_file}")
             print(f"  Throughput: {report.average_throughput_mb_s:.2f} MB/s")
