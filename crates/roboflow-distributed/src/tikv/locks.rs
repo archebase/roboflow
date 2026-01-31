@@ -421,6 +421,14 @@ impl LockManager {
 ///
 /// Automatically releases the lock when dropped.
 /// Supports optional auto-renewal via background task.
+///
+/// # Drop Behavior
+///
+/// When the guard is dropped, it attempts to release the lock asynchronously:
+/// - If a tokio runtime is available, a cleanup task is spawned
+/// - If no runtime is available, the lock will leak until TTL expires
+///
+/// For critical cleanup, call `release()` explicitly before dropping.
 pub struct LockGuard {
     /// TiKV client for releasing the lock.
     client: Arc<TikvClient>,
@@ -434,8 +442,8 @@ pub struct LockGuard {
     /// Lock TTL in seconds (for renewal).
     ttl_secs: i64,
 
-    /// Whether this guard has been released.
-    released: Arc<Mutex<bool>>,
+    /// Whether this guard has been released (atomic for lock-free access in Drop).
+    released: Arc<std::sync::atomic::AtomicBool>,
 
     /// Handle for the renewal task.
     renewal_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
@@ -450,7 +458,7 @@ impl LockGuard {
         ttl_secs: i64,
         auto_renew: bool,
     ) -> Self {
-        let released = Arc::new(Mutex::new(false));
+        let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let renewal_handle = Arc::new(Mutex::new(None));
 
         if auto_renew {
@@ -467,12 +475,9 @@ impl LockGuard {
                 loop {
                     ticker.tick().await;
 
-                    // Check if already released
-                    {
-                        let released_guard = released_clone.lock().await;
-                        if *released_guard {
-                            break;
-                        }
+                    // Check if already released using atomic load
+                    if released_clone.load(std::sync::atomic::Ordering::Acquire) {
+                        break;
                     }
 
                     // Attempt to renew
@@ -530,9 +535,8 @@ impl LockGuard {
     }
 
     /// Check if the lock is still valid (not released).
-    pub async fn is_valid(&self) -> bool {
-        let released = self.released.lock().await;
-        !*released
+    pub fn is_valid(&self) -> bool {
+        !self.released.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Explicitly release the lock before the guard drops.
@@ -540,10 +544,9 @@ impl LockGuard {
     /// Returns `Ok(true)` if released, `Ok(false)` if already released
     /// or ownership lost.
     pub async fn release(self) -> Result<bool> {
-        let result = self.do_release().await;
-        // Prevent double-release in drop
-        *self.released.lock().await = true;
-        result
+        // Mark as released FIRST to prevent drop from doing cleanup
+        self.released.store(true, std::sync::atomic::Ordering::Release);
+        self.do_release().await
     }
 
     /// Extend the lock TTL.
@@ -584,41 +587,33 @@ impl LockGuard {
 
 impl Drop for LockGuard {
     fn drop(&mut self) {
-        // Note: We can't easily do async cleanup in Drop.
-        // For proper async cleanup, users should call release() explicitly.
-        // This is a known limitation of Rust's Drop trait.
+        // Mark as released atomically to stop renewal task
+        let already_released =
+            self.released
+                .swap(true, std::sync::atomic::Ordering::AcqRel);
 
-        // Mark as released to stop any background renewal
+        if already_released {
+            // Already explicitly released, nothing to do
+            return;
+        }
+
+        // Abort renewal task if possible (best-effort without blocking)
+        if let Ok(mut handle_guard) = self.renewal_handle.try_lock()
+            && let Some(renewal_task) = handle_guard.take()
+        {
+            renewal_task.abort();
+        }
+
         let resource = self.resource.clone();
         let owner = self.owner.clone();
 
         // Use tokio spawn if runtime is available for async cleanup
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             let client = self.client.clone();
-            let released = self.released.clone();
-            let mut renewal_handle_guard = match self.renewal_handle.try_lock() {
-                Ok(guard) => guard,
-                Err(_) => return,
-            };
 
-            // Abort renewal task
-            if let Some(renewal_task) = renewal_handle_guard.take() {
-                renewal_task.abort();
-            }
-            drop(renewal_handle_guard);
-
-            // Spawn cleanup task
+            // Spawn cleanup task - note: this is fire-and-forget and may
+            // not complete if the runtime is shutting down.
             handle.spawn(async move {
-                // Check if already released
-                {
-                    let mut released_guard = released.lock().await;
-                    if *released_guard {
-                        return;
-                    }
-                    *released_guard = true;
-                }
-
-                // Release lock
                 if let Err(e) = client.release_lock(&resource, &owner).await {
                     tracing::warn!(
                         resource = %resource,
@@ -629,11 +624,11 @@ impl Drop for LockGuard {
                 }
             });
         } else {
-            // No runtime available - mark as released and hope for the best
+            // No runtime available - lock will leak until TTL expires
             tracing::warn!(
                 resource = %resource,
                 owner = %owner,
-                "Lock guard dropped without tokio runtime - lock may leak"
+                "Lock guard dropped without tokio runtime - lock will leak until TTL expires"
             );
         }
     }
