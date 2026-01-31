@@ -32,6 +32,7 @@
 //! ```
 
 pub mod cached;
+pub mod config_file;
 pub mod factory;
 pub mod local;
 pub mod multipart;
@@ -41,6 +42,7 @@ pub mod url;
 
 // Re-export public types
 pub use cached::{CacheConfig, CacheStats, CachedStorage, EvictionPolicy};
+pub use config_file::{ConfigError, RoboflowConfig};
 pub use factory::{StorageConfig, StorageFactory};
 pub use local::LocalStorage;
 pub use multipart::{

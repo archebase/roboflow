@@ -25,11 +25,66 @@ use std::path::Path;
 use robocodec::mcap::ParallelMcapWriter;
 
 #[cfg(feature = "dataset-all")]
-use roboflow_storage::StorageFactory;
+use roboflow_storage::{RoboflowConfig, StorageConfig, StorageFactory};
 
 // ============================================================================
 // Fluent API Types
 // ============================================================================
+
+/// CLI credential options.
+#[derive(Debug, Default)]
+#[cfg(feature = "dataset-all")]
+struct CredentialOptions {
+    oss_endpoint: Option<String>,
+    oss_access_key_id: Option<String>,
+    oss_access_key_secret: Option<String>,
+    oss_region: Option<String>,
+    config_file: Option<String>,
+}
+
+/// Check if a path string is a cloud URL.
+#[cfg(feature = "dataset-all")]
+fn is_cloud_url(path: &str) -> bool {
+    path.starts_with("oss://") || path.starts_with("s3://")
+}
+
+/// Load storage configuration from config file, environment, and CLI flags.
+#[cfg(feature = "dataset-all")]
+fn load_storage_config(cli_opts: &CredentialOptions) -> StorageConfig {
+    // Load from config file if specified or default
+    let config_file_path = cli_opts.config_file.as_ref().and_then(|p| {
+        if p == "default" {
+            None // Use default path in RoboflowConfig::load_default()
+        } else {
+            Some(std::path::PathBuf::from(p))
+        }
+    });
+
+    let file_config = if let Some(path) = config_file_path {
+        RoboflowConfig::load_from(&path).ok().flatten()
+    } else {
+        RoboflowConfig::load_default().ok().flatten()
+    };
+
+    // Start with environment variables, then merge config file, then CLI flags
+    let mut config = StorageConfig::from_env().merge_with_config_file(file_config);
+
+    // Merge CLI flag values (highest priority)
+    if cli_opts.oss_access_key_id.is_some() {
+        config.oss_access_key_id = cli_opts.oss_access_key_id.clone();
+    }
+    if cli_opts.oss_access_key_secret.is_some() {
+        config.oss_access_key_secret = cli_opts.oss_access_key_secret.clone();
+    }
+    if cli_opts.oss_endpoint.is_some() {
+        config.oss_endpoint = cli_opts.oss_endpoint.clone();
+    }
+    if cli_opts.oss_region.is_some() {
+        config.aws_region = cli_opts.oss_region.clone();
+    }
+
+    config
+}
 
 /// Convert BAG to MCAP format using the fluent API.
 ///
@@ -186,16 +241,14 @@ enum Command {
         input: String,
         output: String,
         config: String,
-        input_storage: Option<String>,
-        output_storage: Option<String>,
+        credentials: CredentialOptions,
     },
     #[cfg(feature = "dataset-all")]
     BagToLeRobot {
         input: String,
         output: String,
         config: String,
-        input_storage: Option<String>,
-        output_storage: Option<String>,
+        credentials: CredentialOptions,
     },
 }
 
@@ -207,13 +260,39 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                bag-to-mcap <input.bag> <output.mcap>              - Convert ROS1 BAG to MCAP\n\
                mcap-to-bag <input.mcap> <output.bag>              - Convert MCAP to ROS1 BAG\n\
                normalize <input> <output> <config>                 - Normalize using config file\n\
-               to-lerobot <input.mcap> <output_dir> <config> [options] - Convert MCAP to LeRobot\n\
-               bag-to-lerobot <input.bag> <output_dir> <config> [options] - Convert BAG to LeRobot\n\
-             Options:\n\
-               --input-storage <url>  - Storage backend for input (file://, s3://, oss://)\n\
-               --output-storage <url> - Storage backend for output (file://, s3://, oss://)\n\
-             Environment Variables:\n\
-               ROBOFLOW_TEMP_DIR      - Temp directory for cloud input downloads",
+               to-lerobot <input.mcap> <output_dir> <config> [opts] - Convert MCAP to LeRobot\n\
+               bag-to-lerobot <input.bag> <output_dir> <config> [opts] - Convert BAG to LeRobot\n\
+             \n\
+             Input/Output Paths:\n\
+               Local paths: ./input.mcap, /path/to/output/\n\
+               Cloud URLs:  oss://bucket/path/input.mcap, s3://bucket/path/\n\
+             \n\
+             Credential Options (for cloud URLs):\n\
+               --oss-endpoint <url>        - OSS endpoint (e.g., oss-cn-hangzhou.aliyuncs.com)\n\
+               --oss-access-key-id <key>   - OSS access key ID\n\
+               --oss-access-key-secret <key> - OSS access key secret\n\
+               --oss-region <region>       - OSS region\n\
+               --config <path>             - Config file path (default: ~/.roboflow/config.toml)\n\
+             \n\
+             Environment Variables (alternative to CLI flags):\n\
+               OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET, OSS_ENDPOINT, OSS_REGION\n\
+             \n\
+             Examples:\n\
+               # Local to local\n\
+               roboflow to-lerobot input.mcap ./output config.toml\n\
+               \n\
+               # Cloud to local\n\
+               roboflow to-lerobot oss://bucket/input.mcap ./output config.toml\n\
+               \n\
+               # Local to cloud with explicit credentials\n\
+               roboflow to-lerobot input.mcap oss://bucket/output config.toml \\\n\
+                 --oss-endpoint oss-cn-hangzhou.aliyuncs.com \\\n\
+                 --oss-access-key-id LTAI... \\\n\
+                 --oss-access-key-secret ...\n\
+             \n\
+             Deprecated Options (kept for backward compatibility):\n\
+               --input-storage <url>  - Use cloud URLs directly in input path instead\n\
+               --output-storage <url> - Use cloud URLs directly in output path instead",
             args[0]
         ));
     }
@@ -243,24 +322,57 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
             }
             let config = args[4].clone();
 
-            // Parse optional arguments
-            let mut input_storage = None;
-            let mut output_storage = None;
+            // Parse credential and optional arguments
+            let mut credentials = CredentialOptions::default();
             let mut i = 5;
             while i < args.len() {
                 match args[i].as_str() {
-                    "--input-storage" => {
+                    "--oss-endpoint" => {
                         if i + 1 >= args.len() {
-                            return Err("--input-storage requires a URL argument".to_string());
+                            return Err("--oss-endpoint requires a value argument".to_string());
                         }
-                        input_storage = Some(args[i + 1].clone());
+                        credentials.oss_endpoint = Some(args[i + 1].clone());
                         i += 2;
                     }
-                    "--output-storage" => {
+                    "--oss-access-key-id" => {
                         if i + 1 >= args.len() {
-                            return Err("--output-storage requires a URL argument".to_string());
+                            return Err("--oss-access-key-id requires a value argument".to_string());
                         }
-                        output_storage = Some(args[i + 1].clone());
+                        credentials.oss_access_key_id = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    "--oss-access-key-secret" => {
+                        if i + 1 >= args.len() {
+                            return Err(
+                                "--oss-access-key-secret requires a value argument".to_string()
+                            );
+                        }
+                        credentials.oss_access_key_secret = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    "--oss-region" => {
+                        if i + 1 >= args.len() {
+                            return Err("--oss-region requires a value argument".to_string());
+                        }
+                        credentials.oss_region = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    "--config" => {
+                        if i + 1 >= args.len() {
+                            return Err("--config requires a path argument".to_string());
+                        }
+                        credentials.config_file = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    // Legacy flags (kept for backward compatibility, warn but ignore)
+                    "--input-storage" | "--output-storage" => {
+                        eprintln!(
+                            "Warning: {} flag is deprecated. Use cloud URLs directly in input/output paths.",
+                            args[i]
+                        );
+                        if i + 1 >= args.len() {
+                            return Err(format!("--{} requires a URL argument", &args[i][2..]));
+                        }
                         i += 2;
                     }
                     _ => {
@@ -273,8 +385,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                 input,
                 output,
                 config,
-                input_storage,
-                output_storage,
+                credentials,
             }
         }
         #[cfg(feature = "dataset-all")]
@@ -284,24 +395,57 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
             }
             let config = args[4].clone();
 
-            // Parse optional arguments
-            let mut input_storage = None;
-            let mut output_storage = None;
+            // Parse credential and optional arguments
+            let mut credentials = CredentialOptions::default();
             let mut i = 5;
             while i < args.len() {
                 match args[i].as_str() {
-                    "--input-storage" => {
+                    "--oss-endpoint" => {
                         if i + 1 >= args.len() {
-                            return Err("--input-storage requires a URL argument".to_string());
+                            return Err("--oss-endpoint requires a value argument".to_string());
                         }
-                        input_storage = Some(args[i + 1].clone());
+                        credentials.oss_endpoint = Some(args[i + 1].clone());
                         i += 2;
                     }
-                    "--output-storage" => {
+                    "--oss-access-key-id" => {
                         if i + 1 >= args.len() {
-                            return Err("--output-storage requires a URL argument".to_string());
+                            return Err("--oss-access-key-id requires a value argument".to_string());
                         }
-                        output_storage = Some(args[i + 1].clone());
+                        credentials.oss_access_key_id = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    "--oss-access-key-secret" => {
+                        if i + 1 >= args.len() {
+                            return Err(
+                                "--oss-access-key-secret requires a value argument".to_string()
+                            );
+                        }
+                        credentials.oss_access_key_secret = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    "--oss-region" => {
+                        if i + 1 >= args.len() {
+                            return Err("--oss-region requires a value argument".to_string());
+                        }
+                        credentials.oss_region = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    "--config" => {
+                        if i + 1 >= args.len() {
+                            return Err("--config requires a path argument".to_string());
+                        }
+                        credentials.config_file = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    // Legacy flags (kept for backward compatibility, warn but ignore)
+                    "--input-storage" | "--output-storage" => {
+                        eprintln!(
+                            "Warning: {} flag is deprecated. Use cloud URLs directly in input/output paths.",
+                            args[i]
+                        );
+                        if i + 1 >= args.len() {
+                            return Err(format!("--{} requires a URL argument", &args[i][2..]));
+                        }
                         i += 2;
                     }
                     _ => {
@@ -314,8 +458,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                 input,
                 output,
                 config,
-                input_storage,
-                output_storage,
+                credentials,
             }
         }
         _ => return Err(format!("Unknown command: {command}")),
@@ -336,18 +479,14 @@ fn run_convert(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
             input,
             output,
             config,
-            input_storage,
-            output_storage,
+            credentials,
         } => {
-            // Use storage-aware version if storage URLs are provided
-            if input_storage.is_some() || output_storage.is_some() {
-                convert_to_lerobot_with_storage(
-                    &input,
-                    &output,
-                    &config,
-                    input_storage,
-                    output_storage,
-                )
+            // Detect if input/output are cloud URLs
+            let input_is_cloud = is_cloud_url(&input);
+            let output_is_cloud = is_cloud_url(&output);
+
+            if input_is_cloud || output_is_cloud {
+                convert_to_lerobot_with_urls(&input, &output, &config, credentials)
             } else {
                 to_lerobot(&input, &output).config(&config).run()
             }
@@ -357,18 +496,14 @@ fn run_convert(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
             input,
             output,
             config,
-            input_storage,
-            output_storage,
+            credentials,
         } => {
-            // Use storage-aware version if storage URLs are provided
-            if input_storage.is_some() || output_storage.is_some() {
-                convert_bag_to_lerobot_with_storage(
-                    &input,
-                    &output,
-                    &config,
-                    input_storage,
-                    output_storage,
-                )
+            // Detect if input/output are cloud URLs
+            let input_is_cloud = is_cloud_url(&input);
+            let output_is_cloud = is_cloud_url(&output);
+
+            if input_is_cloud || output_is_cloud {
+                convert_bag_to_lerobot_with_urls(&input, &output, &config, credentials)
             } else {
                 convert_bag_to_lerobot(&input, &output, &config)
             }
@@ -1069,28 +1204,21 @@ fn convert_bag_to_lerobot(
     Ok(())
 }
 
-/// Convert MCAP to LeRobot dataset format with storage backend support.
+/// Convert MCAP to LeRobot dataset format with cloud URL support.
 #[cfg(feature = "dataset-all")]
-fn convert_to_lerobot_with_storage(
+fn convert_to_lerobot_with_urls(
     input: &str,
-    output_dir: &str,
+    output: &str,
     config_path: &str,
-    input_storage_url: Option<String>,
-    output_storage_url: Option<String>,
+    credentials: CredentialOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use roboflow::lerobot::LerobotConfig;
     use roboflow::streaming::{StreamingConfig, StreamingDatasetConverter};
 
-    println!("Converting MCAP to LeRobot dataset (streaming with storage)");
+    println!("Converting MCAP to LeRobot dataset (cloud-enabled)");
     println!("  Input: {}", input);
-    println!("  Output: {}", output_dir);
+    println!("  Output: {}", output);
     println!("  Config: {}", config_path);
-    if let Some(ref url) = input_storage_url {
-        println!("  Input storage: {}", url);
-    }
-    if let Some(ref url) = output_storage_url {
-        println!("  Output storage: {}", url);
-    }
 
     // Load LeRobot config
     let config = LerobotConfig::from_file(config_path)?;
@@ -1100,22 +1228,48 @@ fn convert_to_lerobot_with_storage(
     println!("  FPS: {}", config.dataset.fps);
     println!("  Mappings: {}", config.mappings.len());
 
-    // Create storage factory
-    let factory = StorageFactory::default();
+    // Detect if input/output are cloud URLs
+    let input_is_cloud = is_cloud_url(input);
+    let output_is_cloud = is_cloud_url(output);
 
-    // Create input storage backend (clone for later use)
-    let input_storage = input_storage_url
-        .as_ref()
-        .and_then(|url| factory.create(url).ok());
+    // Load credentials from file, env, and CLI flags
+    let storage_config = load_storage_config(&credentials);
 
-    // Create output storage backend
-    let output_storage = output_storage_url
-        .as_ref()
-        .and_then(|url| factory.create(url).ok());
+    // Validate credentials for cloud URLs
+    if (input_is_cloud || output_is_cloud) && !storage_config.has_oss_credentials() {
+        return Err(
+            "OSS credentials required for cloud URLs. Set:\n\
+             - Environment: OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET, OSS_ENDPOINT\n\
+             - Config file: ~/.roboflow/config.toml\n\
+             - CLI flags: --oss-access-key-id, --oss-access-key-secret, --oss-endpoint\n\
+             \n\
+             Examples:\n\
+               roboflow to-lerobot oss://bucket/input.mcap ./output config.toml\n\
+               roboflow to-lerobot ./input.mcap oss://bucket/output config.toml --oss-endpoint oss-cn-hangzhou.aliyuncs.com"
+                .into(),
+        );
+    }
 
-    // Build streaming config with temp directory
+    // Create storage factory with loaded credentials
+    let factory = StorageFactory::with_config(storage_config.clone());
+
+    // Create input storage backend if input is a cloud URL
+    let input_storage = if input_is_cloud {
+        Some(factory.create(input)?)
+    } else {
+        None
+    };
+
+    // Create output storage backend if output is a cloud URL
+    let output_storage = if output_is_cloud {
+        Some(factory.create(output)?)
+    } else {
+        None
+    };
+
+    // Build streaming config with temp directory for cloud downloads
     let mut streaming_config = StreamingConfig::with_fps(config.dataset.fps);
-    if input_storage.is_some() {
+    if input_is_cloud {
         let temp_dir = std::env::var("ROBOFLOW_TEMP_DIR")
             .ok()
             .or_else(|| std::env::var("TMPDIR").ok())
@@ -1126,19 +1280,15 @@ fn convert_to_lerobot_with_storage(
 
     // Use StreamingDatasetConverter with storage backends
     let converter = StreamingDatasetConverter::new_lerobot_with_storage(
-        output_dir,
+        output,
         config,
         input_storage,
         output_storage,
     )?
-    .with_completion_window(5) // 5 frames completion window
-    .with_max_buffered_frames(300); // Max 10 seconds at 30fps
+    .with_completion_window(5)
+    .with_max_buffered_frames(300);
 
-    // Extract input path from URL if needed
-    // For now, we use the input directly - the storage backend handles the URL
-    let input_path = input;
-
-    let stats = converter.convert(input_path)?;
+    let stats = converter.convert(input)?;
 
     println!();
     println!("=== Conversion Complete ===");
@@ -1155,28 +1305,21 @@ fn convert_to_lerobot_with_storage(
     Ok(())
 }
 
-/// Convert BAG file directly to LeRobot dataset format with storage backend support.
+/// Convert BAG file directly to LeRobot dataset format with cloud URL support.
 #[cfg(feature = "dataset-all")]
-fn convert_bag_to_lerobot_with_storage(
+fn convert_bag_to_lerobot_with_urls(
     input: &str,
-    output_dir: &str,
+    output: &str,
     config_path: &str,
-    input_storage_url: Option<String>,
-    output_storage_url: Option<String>,
+    credentials: CredentialOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use roboflow::lerobot::LerobotConfig;
     use roboflow::streaming::{StreamingConfig, StreamingDatasetConverter};
 
-    println!("Converting BAG to LeRobot dataset (streaming with storage)");
+    println!("Converting BAG to LeRobot dataset (cloud-enabled)");
     println!("  Input: {}", input);
-    println!("  Output: {}", output_dir);
+    println!("  Output: {}", output);
     println!("  Config: {}", config_path);
-    if let Some(ref url) = input_storage_url {
-        println!("  Input storage: {}", url);
-    }
-    if let Some(ref url) = output_storage_url {
-        println!("  Output storage: {}", url);
-    }
 
     // Load LeRobot config
     let config = LerobotConfig::from_file(config_path)?;
@@ -1186,22 +1329,48 @@ fn convert_bag_to_lerobot_with_storage(
     println!("  FPS: {}", config.dataset.fps);
     println!("  Mappings: {}", config.mappings.len());
 
-    // Create storage factory
-    let factory = StorageFactory::default();
+    // Detect if input/output are cloud URLs
+    let input_is_cloud = is_cloud_url(input);
+    let output_is_cloud = is_cloud_url(output);
 
-    // Create input storage backend (clone for later use)
-    let input_storage = input_storage_url
-        .as_ref()
-        .and_then(|url| factory.create(url).ok());
+    // Load credentials from file, env, and CLI flags
+    let storage_config = load_storage_config(&credentials);
 
-    // Create output storage backend
-    let output_storage = output_storage_url
-        .as_ref()
-        .and_then(|url| factory.create(url).ok());
+    // Validate credentials for cloud URLs
+    if (input_is_cloud || output_is_cloud) && !storage_config.has_oss_credentials() {
+        return Err(
+            "OSS credentials required for cloud URLs. Set:\n\
+             - Environment: OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET, OSS_ENDPOINT\n\
+             - Config file: ~/.roboflow/config.toml\n\
+             - CLI flags: --oss-access-key-id, --oss-access-key-secret, --oss-endpoint\n\
+             \n\
+             Examples:\n\
+               roboflow bag-to-lerobot oss://bucket/input.bag ./output config.toml\n\
+               roboflow bag-to-lerobot ./input.bag oss://bucket/output config.toml --oss-endpoint oss-cn-hangzhou.aliyuncs.com"
+                .into(),
+        );
+    }
 
-    // Build streaming config with temp directory
+    // Create storage factory with loaded credentials
+    let factory = StorageFactory::with_config(storage_config.clone());
+
+    // Create input storage backend if input is a cloud URL
+    let input_storage = if input_is_cloud {
+        Some(factory.create(input)?)
+    } else {
+        None
+    };
+
+    // Create output storage backend if output is a cloud URL
+    let output_storage = if output_is_cloud {
+        Some(factory.create(output)?)
+    } else {
+        None
+    };
+
+    // Build streaming config with temp directory for cloud downloads
     let mut streaming_config = StreamingConfig::with_fps(config.dataset.fps);
-    if input_storage.is_some() {
+    if input_is_cloud {
         let temp_dir = std::env::var("ROBOFLOW_TEMP_DIR")
             .ok()
             .or_else(|| std::env::var("TMPDIR").ok())
@@ -1212,19 +1381,15 @@ fn convert_bag_to_lerobot_with_storage(
 
     // Use StreamingDatasetConverter with storage backends
     let converter = StreamingDatasetConverter::new_lerobot_with_storage(
-        output_dir,
+        output,
         config,
         input_storage,
         output_storage,
     )?
-    .with_completion_window(5) // 5 frames completion window
-    .with_max_buffered_frames(300); // Max 10 seconds at 30fps
+    .with_completion_window(5)
+    .with_max_buffered_frames(300);
 
-    // Extract input path from URL if needed
-    // For now, we use the input directly - the storage backend handles the URL
-    let input_path = input;
-
-    let stats = converter.convert(input_path)?;
+    let stats = converter.convert(input)?;
 
     println!();
     println!("=== Conversion Complete ===");

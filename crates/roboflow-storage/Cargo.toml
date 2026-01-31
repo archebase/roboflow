@@ -25,6 +25,9 @@ crossbeam-channel = "0.5"
 # Serde for serialization
 serde = { version = "1.0", features = ["derive"] }
 
+# TOML for config file parsing
+toml = "0.8"
+
 # Tracing for logging
 tracing = "0.1"
 
