@@ -409,6 +409,8 @@ impl CachedStorage {
     }
 
     /// Upload a single file from cache to remote storage.
+    ///
+    /// Uses streaming copy to avoid loading entire file into memory.
     fn upload_file(
         _local: &LocalStorage,
         remote: &Arc<dyn Storage>,
@@ -420,17 +422,24 @@ impl CachedStorage {
         let local_path = &task.local_path;
         let remote_path = &task.remote_path;
 
-        // Read local file content
+        // Stream upload using fixed buffer to avoid OOM on large files
+        const BUFFER_SIZE: usize = 64 * 1024; // 64KB buffer
         let mut file = File::open(local_path)
             .map_err(|e| StorageError::Other(format!("Failed to open cached file: {}", e)))?;
 
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)
-            .map_err(|e| StorageError::Other(format!("Failed to read cached file: {}", e)))?;
-
-        // Upload to remote storage
         let mut remote_writer = remote.writer(remote_path)?;
-        remote_writer.write_all(&buffer)?;
+        let mut buffer = vec![0u8; BUFFER_SIZE];
+
+        loop {
+            let n_read = file
+                .read(&mut buffer)
+                .map_err(|e| StorageError::Other(format!("Failed to read cached file: {}", e)))?;
+            if n_read == 0 {
+                break;
+            }
+            remote_writer.write_all(&buffer[..n_read])?;
+        }
+
         remote_writer.flush()?;
 
         tracing::debug!(
@@ -583,22 +592,23 @@ impl CachedStorage {
 
     /// Queue a file for background upload.
     fn queue_upload(&self, local_path: PathBuf, remote_path: PathBuf, size: u64) -> Result<()> {
-        // Mark as pending upload
+        let task = UploadTask {
+            local_path,
+            remote_path: remote_path.clone(),
+            size,
+        };
+
+        // Send first - only mark as pending if send succeeds
+        self.upload_sender
+            .send(task)
+            .map_err(|e| StorageError::Other(format!("Failed to queue upload: {}", e)))?;
+
+        // Mark as pending upload AFTER successful send
         if let Ok(mut entries) = self.entries.lock()
             && let Some(entry) = entries.get_mut(&remote_path)
         {
             entry.pending_upload = true;
         }
-
-        let task = UploadTask {
-            local_path,
-            remote_path,
-            size,
-        };
-
-        self.upload_sender
-            .send(task)
-            .map_err(|e| StorageError::Other(format!("Failed to queue upload: {}", e)))?;
 
         // Update stats
         if let Ok(mut stats) = self.stats.lock() {
@@ -704,35 +714,47 @@ impl Storage for CachedStorage {
             })?;
             Ok(Box::new(BufReader::new(file)))
         } else {
-            // Cache miss - download from remote
+            // Cache miss - download from remote with streaming to avoid OOM
             tracing::debug!("Cache miss for {}", path.display());
 
             if let Ok(mut stats) = self.stats.lock() {
                 stats.cache_misses += 1;
             }
 
-            // Read from remote
-            let mut remote_reader = self.remote.reader(path)?;
-            let mut buffer = Vec::new();
-            remote_reader.read_to_end(&mut buffer)?;
-
-            let size = buffer.len() as u64;
-
             // Ensure parent directory exists
             if let Some(parent) = cache_path.parent() {
-                let _ = fs::create_dir_all(parent);
+                fs::create_dir_all(parent).map_err(|e| {
+                    StorageError::Other(format!("Failed to create cache directory: {}", e))
+                })?;
             }
 
-            // Write to cache
-            {
-                let mut cache_file = File::create(&cache_path).map_err(|e| {
-                    StorageError::Other(format!("Failed to create cache file: {}", e))
+            // Stream from remote to cache file using fixed buffer
+            const BUFFER_SIZE: usize = 64 * 1024; // 64KB buffer
+            let mut remote_reader = self.remote.reader(path)?;
+
+            let mut cache_file = File::create(&cache_path)
+                .map_err(|e| StorageError::Other(format!("Failed to create cache file: {}", e)))?;
+
+            let mut buffer = vec![0u8; BUFFER_SIZE];
+            let mut total_size = 0u64;
+
+            loop {
+                let n_read = remote_reader.read(&mut buffer).map_err(|e| {
+                    StorageError::Other(format!("Failed to read from remote: {}", e))
                 })?;
-                cache_file.write_all(&buffer)?;
+                if n_read == 0 {
+                    break;
+                }
+                total_size += n_read as u64;
+                cache_file.write_all(&buffer[..n_read]).map_err(|e| {
+                    StorageError::Other(format!("Failed to write to cache file: {}", e))
+                })?;
             }
+
+            cache_file.flush()?;
 
             // Add to cache metadata
-            self.add_to_cache(path, size);
+            self.add_to_cache(path, total_size);
 
             // Return reader from cache
             let file = File::open(&cache_path).map_err(StorageError::Io)?;
@@ -751,7 +773,7 @@ impl Storage for CachedStorage {
         }
 
         // Create a cached writer
-        Ok(Box::new(CachedWriter::new(
+        let writer = CachedWriter::new(
             self.local.clone(),
             self.remote.clone(),
             cache_path,
@@ -759,7 +781,9 @@ impl Storage for CachedStorage {
             Arc::new(self.upload_sender.clone()),
             self.config.upload_buffer_size,
             self.config.delete_after_upload,
-        )))
+        )?;
+
+        Ok(Box::new(writer))
     }
 
     fn exists(&self, path: &Path) -> bool {
@@ -926,16 +950,16 @@ impl CachedWriter {
         upload_sender: Arc<Sender<UploadTask>>,
         max_buffer_size: usize,
         delete_after_upload: bool,
-    ) -> Self {
-        let file = File::create(&local_path).unwrap_or_else(|e| {
-            panic!(
+    ) -> Result<Self> {
+        let file = File::create(&local_path).map_err(|e| {
+            StorageError::Other(format!(
                 "Failed to create cache file {}: {}",
                 local_path.display(),
                 e
-            );
-        });
+            ))
+        })?;
 
-        Self {
+        Ok(Self {
             local_writer: BufWriter::with_capacity(64 * 1024, file),
             local_path,
             remote_path,
@@ -944,7 +968,7 @@ impl CachedWriter {
             delete_after_upload,
             uploaded: false,
             flushed: false,
-        }
+        })
     }
 
     /// Queue the file for upload.
