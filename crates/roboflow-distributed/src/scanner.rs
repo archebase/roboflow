@@ -391,18 +391,6 @@ impl Scanner {
         )
     }
 
-    /// Put a job record to TiKV.
-    async fn put_job(&self, job: &JobRecord) -> Result<(), TikvError> {
-        self.tikv.put_job(job).await?;
-        tracing::debug!(
-            pod_id = %self.pod_id,
-            job_id = %job.id,
-            source_key = %job.source_key,
-            "Job created"
-        );
-        Ok(())
-    }
-
     /// Run a single scan cycle.
     async fn scan_cycle(&self) -> Result<ScanStats, TikvError> {
         let start = SystemTime::now();
@@ -500,19 +488,31 @@ impl Scanner {
         let duplicates_skipped = files_discovered - new_files.len() as u64;
         self.metrics.inc_duplicates_skipped(duplicates_skipped);
 
+        // Create jobs in batches for better performance
         let mut jobs_created = 0u64;
-        for (metadata, hash) in new_files {
-            let job = self.create_job(&metadata, &hash);
-            if let Err(e) = self.put_job(&job).await {
+        for chunk in new_files.chunks(self.config.batch_size) {
+            let job_pairs: Vec<(Vec<u8>, Vec<u8>)> = chunk
+                .iter()
+                .map(|(metadata, hash)| {
+                    let job = self.create_job(metadata, hash);
+                    use super::tikv::key::JobKeys;
+                    let key = JobKeys::record(&job.id);
+                    let data = bincode::serialize(&job)
+                        .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                    Ok::<_, TikvError>((key, data))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            if let Err(e) = self.tikv.batch_put(job_pairs).await {
                 tracing::error!(
                     pod_id = %self.pod_id,
                     error = %e,
-                    "Failed to create job"
+                    "Failed to create batch of jobs"
                 );
                 self.metrics.inc_scan_errors();
-                continue;
+            } else {
+                jobs_created += chunk.len() as u64;
             }
-            jobs_created += 1;
         }
         self.metrics.inc_jobs_created(jobs_created);
 
