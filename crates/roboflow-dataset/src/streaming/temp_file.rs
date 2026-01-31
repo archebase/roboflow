@@ -215,7 +215,10 @@ mod tests {
 
         // Verify retain returns None for fast path (no temp file created)
         let retained_path = manager.retain();
-        assert!(retained_path.is_none(), "retain should return None for LocalStorage");
+        assert!(
+            retained_path.is_none(),
+            "retain should return None for LocalStorage"
+        );
     }
 
     #[test]
