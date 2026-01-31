@@ -20,8 +20,10 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use roboflow::dataset::common::{AlignedFrame, DatasetWriter, ImageData};
-use roboflow::dataset::lerobot::{LerobotConfig, LerobotWriter};
+use roboflow::DatasetWriter;
+use roboflow::ImageData;
+use roboflow::lerobot::{LerobotConfig, LerobotWriter};
+use roboflow_dataset::common::AlignedFrame;
 
 /// Timing breakdown for different operations
 #[derive(Debug, Default)]
@@ -240,7 +242,9 @@ impl TimedLerobotWriter {
     }
 
     fn initialize(&mut self, config: &LerobotConfig) -> Result<(), Box<dyn std::error::Error>> {
-        self.inner.initialize(config).map_err(|e| e.into())
+        self.inner
+            .initialize(config)
+            .map_err(|e: roboflow_core::RoboflowError| e.into())
     }
 
     fn into_inner(self) -> LerobotWriter {

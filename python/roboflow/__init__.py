@@ -30,7 +30,6 @@ from roboflow._roboflow import (
     Roboflow,
     TransformBuilder,
     CompressionPreset,
-    PipelineReport,
     HyperPipelineReport,
     FileResult,
     BatchReport,
@@ -42,6 +41,9 @@ from roboflow._roboflow import (
     ProgressUpdate,
     convert,
 )
+
+# PipelineReport is an alias for HyperPipelineReport (standard pipeline not implemented)
+PipelineReport = HyperPipelineReport
 
 __all__ = [
     "__version__",
@@ -65,8 +67,8 @@ __all__ = [
 ]
 
 # Dataset submodule alias for convenience
-import sys
-import types
+import sys  # noqa: E402
+import types  # noqa: E402
 
 # Create the dataset submodule
 _dataset_module = types.ModuleType("roboflow.dataset", "Dataset submodule")

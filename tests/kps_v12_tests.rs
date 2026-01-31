@@ -18,14 +18,16 @@ use std::fs;
 use std::path::Path;
 use std::str::FromStr;
 
-use roboflow::dataset::kps::{
+use roboflow::kps::{
     KpsConfig,
     camera_params::{ExtrinsicParams, IntrinsicParams},
     delivery_v12::{SeriesDeliveryConfig, V12DeliveryBuilder},
-    hdf5_schema::{DataType, KpsHdf5Schema, default_arm_joint_names, default_leg_joint_names},
     robot_calibration::{JointCalibration, RobotCalibration, RobotCalibrationGenerator},
     task_info::{ActionSegment, TaskInfo},
 };
+
+// HDF5 schema types are now in the roboflow-hdf5 crate
+use roboflow_hdf5::{DataType, KpsHdf5Schema, default_arm_joint_names, default_leg_joint_names};
 
 /// Test output directory helper.
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
@@ -814,7 +816,7 @@ fn validate_episode_subdirectories(episode_dir: &Path) -> Result<(), String> {
 }
 
 fn default_dataset_config() -> KpsConfig {
-    use roboflow::dataset::kps::{DatasetConfig, OutputConfig};
+    use roboflow::kps::{DatasetConfig, OutputConfig};
 
     KpsConfig {
         dataset: DatasetConfig {
@@ -828,7 +830,7 @@ fn default_dataset_config() -> KpsConfig {
 }
 
 fn create_valid_task_info() -> TaskInfo {
-    use roboflow::dataset::kps::task_info::LabelInfo;
+    use roboflow::kps::task_info::LabelInfo;
 
     let action_segment = ActionSegment {
         start_frame: 100,

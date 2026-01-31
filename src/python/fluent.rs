@@ -12,11 +12,10 @@ use pyo3::types::PyList;
 use std::mem;
 use std::path::{Path, PathBuf};
 
-use crate::core::RoboflowError;
-use crate::pipeline::fluent::{BatchReport, CompressionPreset, FileResult, Robocodec, RunOutput};
-use crate::pipeline::hyper::HyperPipelineReport;
-use crate::pipeline::orchestrator::PipelineReport;
 use robocodec::transform::TransformBuilder;
+use roboflow_core::RoboflowError;
+use roboflow_pipeline::fluent::{BatchReport, CompressionPreset, FileResult, Robocodec, RunOutput};
+use roboflow_pipeline::hyper::HyperPipelineReport;
 
 // =============================================================================
 // Error conversion
@@ -187,89 +186,6 @@ impl PyTransformBuilder {
 // Pipeline Reports
 // ============================================================================
 
-/// Report from a standard pipeline run.
-#[pyclass(name = "PipelineReport")]
-#[derive(Clone)]
-pub struct PyPipelineReport {
-    pub(crate) report: PipelineReport,
-}
-
-#[pymethods]
-impl PyPipelineReport {
-    /// Input file path.
-    #[getter]
-    fn input_file(&self) -> String {
-        self.report.input_file.clone()
-    }
-
-    /// Output file path.
-    #[getter]
-    fn output_file(&self) -> String {
-        self.report.output_file.clone()
-    }
-
-    /// Input file size in bytes.
-    #[getter]
-    fn input_size_bytes(&self) -> u64 {
-        self.report.input_size_bytes
-    }
-
-    /// Output file size in bytes.
-    #[getter]
-    fn output_size_bytes(&self) -> u64 {
-        self.report.output_size_bytes
-    }
-
-    /// Duration in seconds.
-    #[getter]
-    fn duration_seconds(&self) -> f64 {
-        self.report.duration.as_secs_f64()
-    }
-
-    /// Average throughput in MB/s.
-    #[getter]
-    fn average_throughput_mb_s(&self) -> f64 {
-        self.report.average_throughput_mb_s
-    }
-
-    /// Compression ratio (output / input).
-    #[getter]
-    fn compression_ratio(&self) -> f64 {
-        self.report.compression_ratio
-    }
-
-    /// Number of compression threads used.
-    #[getter]
-    fn threads_used(&self) -> usize {
-        self.report.threads_used
-    }
-
-    /// Number of messages processed.
-    #[getter]
-    fn message_count(&self) -> u64 {
-        self.report.message_count
-    }
-
-    /// Number of data bytes processed.
-    #[getter]
-    fn data_bytes(&self) -> u64 {
-        self.report.data_bytes
-    }
-
-    /// Number of chunks written.
-    #[getter]
-    fn chunks_written(&self) -> u64 {
-        self.report.chunks_written
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "PipelineReport(input_file={}, output_file={}, throughput_mb_s={:.2})",
-            self.report.input_file, self.report.output_file, self.report.average_throughput_mb_s
-        )
-    }
-}
-
 /// Report from a hyper pipeline run.
 #[pyclass(name = "HyperPipelineReport")]
 #[derive(Clone)]
@@ -339,6 +255,12 @@ impl PyHyperPipelineReport {
         self.report.crc_enabled
     }
 
+    /// Average throughput in MB/s (alias for throughput_mb_s).
+    #[getter]
+    fn average_throughput_mb_s(&self) -> f64 {
+        self.report.throughput_mb_s
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "HyperPipelineReport(input_file={}, output_file={}, throughput_mb_s={:.2})",
@@ -377,31 +299,30 @@ impl PyFileResult {
     /// Error message if conversion failed.
     #[getter]
     fn error(&self) -> Option<String> {
-        self.result.error().map(|e| e.to_string())
+        self.result
+            .error()
+            .map(|e: &roboflow_core::RoboflowError| e.to_string())
     }
 
-    /// Standard pipeline report (if available).
+    /// Pipeline report (if available).
     #[getter]
-    fn standard_report(&self, py: Python<'_>) -> Option<PyObject> {
-        self.result.standard_report().map(|r| {
-            PyPipelineReport { report: r.clone() }
-                .into_pyobject(py)
-                .ok()
-                .unwrap()
-                .into()
-        })
+    fn report(&self, py: Python<'_>) -> Option<PyObject> {
+        self.result
+            .report()
+            .map(|r: &roboflow_pipeline::hyper::HyperPipelineReport| {
+                PyHyperPipelineReport { report: r.clone() }
+                    .into_pyobject(py)
+                    .ok()
+                    .unwrap()
+                    .into()
+            })
     }
 
     /// Hyper pipeline report (if available).
+    /// Deprecated: Use report() instead.
     #[getter]
     fn hyper_report(&self, py: Python<'_>) -> Option<PyObject> {
-        self.result.hyper_report().map(|r| {
-            PyHyperPipelineReport { report: r.clone() }
-                .into_pyobject(py)
-                .ok()
-                .unwrap()
-                .into()
-        })
+        self.report(py)
     }
 
     fn __repr__(&self) -> String {
@@ -427,8 +348,9 @@ impl PyBatchReport {
     fn file_reports(&self, py: Python<'_>) -> PyResult<PyObject> {
         let list = PyList::empty(py);
         for result in &self.report.file_reports {
+            let result_ref: &FileResult = result;
             list.append(PyFileResult {
-                result: result.clone(),
+                result: result_ref.clone(),
             })?;
         }
         Ok(list.into())
@@ -772,7 +694,6 @@ impl PyRobocodec {
 
         // Convert output to Python object
         match output {
-            RunOutput::Single(report) => Ok(PyPipelineReport { report }.into_pyobject(py)?.into()),
             RunOutput::Hyper(report) => {
                 Ok(PyHyperPipelineReport { report }.into_pyobject(py)?.into())
             }

@@ -15,10 +15,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use roboflow::dataset::lerobot::{DatasetConfig, LerobotConfig, Mapping, MappingType, VideoConfig};
 #[cfg(feature = "dataset-all")]
-use roboflow::dataset::streaming::StreamingDatasetConverter;
-use roboflow::dataset::streaming::{FeatureRequirement, FrameCompletionCriteria, StreamingConfig};
+use roboflow::StreamingDatasetConverter;
+use roboflow::lerobot::config::DatasetConfig;
+use roboflow::lerobot::{LerobotConfig, Mapping, MappingType, VideoConfig};
+use roboflow::streaming::{FeatureRequirement, FrameCompletionCriteria, StreamingConfig};
 
 /// Create a test output directory.
 #[allow(dead_code)]

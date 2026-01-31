@@ -1,0 +1,54 @@
+[package]
+name = "roboflow-dataset"
+version = "0.2.0"
+edition = "2024"
+authors = ["Strata Contributors"]
+license = "MulanPSL-2.0"
+repository = "https://github.com/archebase/roboflow"
+description = "Dataset writers for roboflow - LeRobot v2.1, Parquet (always available)"
+
+[dependencies]
+roboflow-core = { path = "../roboflow-core", version = "0.2.0" }
+roboflow-storage = { path = "../roboflow-storage", version = "0.2.0" }
+
+# Codec library (from workspace)
+robocodec = { workspace = true }
+
+# Parquet - ALWAYS AVAILABLE (no feature flag)
+polars = { version = "0.41", features = ["parquet"] }
+
+# Depth images
+png = "0.17"
+
+# Video encoding (FFmpeg) - optional, requires system library
+ffmpeg-next = { version = "6.1", optional = true }
+
+# Error handling
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# UUID for episode IDs
+uuid = { version = "1.10", features = ["v4", "serde"] }
+
+# Concurrency
+crossbeam-channel = "0.5"
+num_cpus = "1.16"
+rayon = "1.10"
+
+# Error handling
+anyhow = "1.0"
+
+[features]
+# Enable video encoding via FFmpeg (requires ffmpeg installed on system)
+video = ["dep:ffmpeg-next"]
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+tempfile = "3.10"

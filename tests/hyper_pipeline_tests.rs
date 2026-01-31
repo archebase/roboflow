@@ -14,7 +14,7 @@ use std::path::Path;
 
 use robocodec::io::traits::FormatReader;
 use robocodec::mcap::McapFormat;
-use roboflow::pipeline::hyper::{HyperPipeline, HyperPipelineConfig};
+use roboflow::{HyperPipeline, HyperPipelineConfig};
 
 #[test]
 fn test_hyper_pipeline_mcap_to_mcap() {
