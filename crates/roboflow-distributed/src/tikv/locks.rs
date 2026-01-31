@@ -10,7 +10,6 @@
 //! - **RAII-style lock guards**: Automatic release on drop
 //! - **Blocking acquisition**: Retry with exponential backoff
 //! - **Optional auto-renewal**: Background thread extends TTL
-//! - **Fencing tokens**: Version-based split-brain prevention
 //!
 //! # Usage
 //!
@@ -184,6 +183,7 @@ impl LockManager {
                 resource.to_string(),
                 self.owner.clone(),
                 ttl_secs,
+                self.config.renewal_interval,
                 false, // No auto-renewal for try_acquire
             )
             .await;
@@ -241,6 +241,7 @@ impl LockManager {
                         resource.to_string(),
                         self.owner.clone(),
                         ttl_secs,
+                        self.config.renewal_interval,
                         false, // No auto-renewal for blocking acquire by default
                     )
                     .await;
@@ -265,8 +266,9 @@ impl LockManager {
                     let delay =
                         self.config.backoff_base_delay * 2_u32.pow(attempt.saturating_sub(1));
                     let delay = std::cmp::min(delay, Duration::from_secs(5)); // Cap at 5 seconds
-                    let jitter =
-                        Duration::from_millis(fastrand::u64(0..delay.as_millis() as u64 / 4));
+                    // Jitter: up to 25% of delay, minimum 1ms to avoid panic on small delays
+                    let jitter_ms = u64::try_from(delay.as_millis() / 4).unwrap_or(0).max(1);
+                    let jitter = Duration::from_millis(fastrand::u64(0..jitter_ms));
                     tracing::debug!(
                         resource = %resource,
                         attempt = attempt,
@@ -312,6 +314,7 @@ impl LockManager {
             resource.to_string(),
             self.owner.clone(),
             ttl_secs,
+            self.config.renewal_interval,
             true, // Enable auto-renewal
         )
         .await;
@@ -447,6 +450,10 @@ pub struct LockGuard {
 
     /// Handle for the renewal task.
     renewal_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+
+    /// Renewal interval for auto-renewal (moved into renewal task).
+    #[allow(dead_code)]
+    renewal_interval: Duration,
 }
 
 impl LockGuard {
@@ -456,6 +463,7 @@ impl LockGuard {
         resource: String,
         owner: String,
         ttl_secs: i64,
+        renewal_interval: Duration,
         auto_renew: bool,
     ) -> Self {
         let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -466,7 +474,6 @@ impl LockGuard {
             let resource_clone = resource.clone();
             let owner_clone = owner.clone();
             let released_clone = released.clone();
-            let renewal_interval = Duration::from_secs(DEFAULT_RENEWAL_INTERVAL_SECS);
 
             let handle = tokio::spawn(async move {
                 let mut ticker = interval(renewal_interval);
@@ -521,6 +528,7 @@ impl LockGuard {
             ttl_secs,
             released,
             renewal_handle,
+            renewal_interval,
         }
     }
 
