@@ -17,6 +17,7 @@
 //! All coordination features are **always available** (no feature flags).
 
 pub mod catalog;
+pub mod scanner;
 pub mod tikv;
 
 // Re-export public types from tikv (distributed coordination)
@@ -28,6 +29,9 @@ pub use tikv::{
 
 // Re-export public types from catalog (metadata storage)
 pub use catalog::{EpisodeMetadata, SegmentMetaData, TiKVCatalog, TiKVConfig, UploadStatus};
+
+// Re-export public types from scanner (file discovery actor)
+pub use scanner::{MetricsSnapshot, ScanStats, Scanner, ScannerConfig, ScannerMetrics};
 
 // Re-export constants from tikv config
 pub use tikv::config::{DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_PD_ENDPOINTS, KEY_PREFIX};

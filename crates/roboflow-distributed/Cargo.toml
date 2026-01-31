@@ -39,6 +39,9 @@ tracing = "0.1"
 # Random for jitter
 fastrand = "2.1"
 
+# Glob patterns for file filtering
+glob = "0.3"
+
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3.10"

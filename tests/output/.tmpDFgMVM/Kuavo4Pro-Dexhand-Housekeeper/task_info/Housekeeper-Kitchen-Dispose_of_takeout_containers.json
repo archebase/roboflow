@@ -1,0 +1,11 @@
+{
+  "task": "Dispose_of_takeout_containers",
+  "scene": "Housekeeper",
+  "sub_scene": "Kitchen",
+  "robot": "Kuavo4Pro",
+  "end_effector": "Dexhand",
+  "num_episodes": 1,
+  "total_frames": 100,
+  "fps": 30,
+  "created_at": 1769868136
+}
