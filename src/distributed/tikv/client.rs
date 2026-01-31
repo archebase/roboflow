@@ -11,10 +11,15 @@
 //! This client uses TiKV's optimistic transactions. Each CRUD operation
 //! (`get`, `put`, `delete`, `scan`) executes in its own transaction.
 //!
-//! **Important:** High-level operations like `claim_job`, `acquire_lock`,
-//! and `release_lock` are **not atomic** - they perform read-then-write
+//! High-level operations like `claim_job` and `acquire_lock` use **single
+//! transactions** for both read and write, providing atomicity. If two
+//! workers race to claim the same job or lock, TiKV's optimistic
+//! concurrency control will detect the conflict and one transaction
+//! will fail with a write conflict error.
+//!
+//! **Note:** `release_lock` is not atomic - it performs read-then-write
 //! in separate transactions. For production use, implement proper
-//! retry logic with backoff when conflicts occur.
+//! retry logic with backoff when write conflicts occur.
 //!
 //! # Scan Behavior
 //!
@@ -374,24 +379,67 @@ impl TikvClient {
         self.put(key, data).await
     }
 
-    /// Claim a job (atomic CAS operation).
+    /// Claim a job (atomic operation within a single transaction).
+    ///
+    /// This uses a single transaction to read the job, check if it's claimable,
+    /// and update it. If two workers race to claim the same job, TiKV's
+    /// optimistic concurrency will detect the write conflict and one will
+    /// fail with a `WriteConflict` error.
     pub async fn claim_job(&self, file_hash: &str, pod_id: &str) -> Result<bool> {
-        let key = JobKeys::record(file_hash);
+        #[cfg(feature = "distributed")]
+        {
+            use tikv_client::Transaction;
 
-        // Get current job state
-        let current = self.get_job(file_hash).await?;
+            let inner = self.inner.as_ref().ok_or_else(|| {
+                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+            })?;
 
-        match current {
-            Some(mut job) if job.is_claimable() => {
-                job.claim(pod_id.to_string()).map_err(TikvError::Other)?;
+            let key = JobKeys::record(file_hash);
+            let mut txn = inner
+                .begin_optimistic()
+                .await
+                .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
-                let data = bincode::serialize(&job)
-                    .map_err(|e| TikvError::Serialization(e.to_string()))?;
+            // Read job in transaction
+            let current = txn
+                .get(key.clone())
+                .await
+                .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
-                self.put(key, data).await?;
-                Ok(true)
-            }
-            _ => Ok(false),
+            let claimed = match current {
+                Some(data) => {
+                    let job: JobRecord = bincode::deserialize(&data)
+                        .map_err(|e| TikvError::Deserialization(e.to_string()))?;
+
+                    if job.is_claimable() {
+                        let mut job = job;
+                        job.claim(pod_id.to_string()).map_err(TikvError::Other)?;
+                        let new_data = bincode::serialize(&job)
+                            .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                        txn.put(key, new_data)
+                            .await
+                            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => false,
+            };
+
+            txn.commit()
+                .await
+                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+            Ok(claimed)
+        }
+
+        #[cfg(not(feature = "distributed"))]
+        {
+            let _ = (file_hash, pod_id);
+            Err(TikvError::ConnectionFailed(
+                "Distributed feature not enabled".to_string(),
+            ))
         }
     }
 
@@ -415,42 +463,93 @@ impl TikvClient {
         self.put_job(&job).await
     }
 
-    /// Acquire a distributed lock.
+    /// Acquire a distributed lock (atomic operation within a single transaction).
+    ///
+    /// This uses a single transaction to read the lock, check if it's available,
+    /// and write the new lock record. If two workers race to acquire the same lock,
+    /// TiKV's optimistic concurrency will detect the write conflict and one will fail.
     pub async fn acquire_lock(
         &self,
         resource: &str,
         owner: &str,
         ttl_seconds: i64,
     ) -> Result<bool> {
-        let key = LockKeys::lock(resource);
+        #[cfg(feature = "distributed")]
+        {
+            use tikv_client::Transaction;
 
-        // Check if lock exists and is still valid
-        if let Some(data) = self.get(key.clone()).await? {
-            let existing: LockRecord = bincode::deserialize(&data)
-                .map_err(|e| TikvError::Deserialization(e.to_string()))?;
+            let inner = self.inner.as_ref().ok_or_else(|| {
+                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+            })?;
 
-            if !existing.is_expired() && existing.is_owned_by(owner) {
-                // Already own the lock, extend it
-                let mut lock = existing;
-                lock.extend(ttl_seconds);
-                let new_data = bincode::serialize(&lock)
-                    .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                self.put(key, new_data).await?;
-                return Ok(true);
-            }
+            let key = LockKeys::lock(resource);
+            let mut txn = inner
+                .begin_optimistic()
+                .await
+                .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
-            if !existing.is_expired() {
-                // Lock is held by someone else
-                return Ok(false);
-            }
+            // Read current lock state in transaction
+            let acquired = match txn
+                .get(key.clone())
+                .await
+                .map_err(|e| TikvError::ClientError(e.to_string()))?
+            {
+                Some(data) => {
+                    let existing: LockRecord = bincode::deserialize(&data)
+                        .map_err(|e| TikvError::Deserialization(e.to_string()))?;
+
+                    if !existing.is_expired() && existing.is_owned_by(owner) {
+                        // Already own the lock, extend it
+                        let mut lock = existing;
+                        lock.extend(ttl_seconds);
+                        let new_data = bincode::serialize(&lock)
+                            .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                        txn.put(key, new_data)
+                            .await
+                            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                        true
+                    } else if !existing.is_expired() {
+                        // Lock is held by someone else
+                        false
+                    } else {
+                        // Lock expired, take it
+                        let lock =
+                            LockRecord::new(resource.to_string(), owner.to_string(), ttl_seconds);
+                        let data = bincode::serialize(&lock)
+                            .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                        txn.put(key, data)
+                            .await
+                            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                        true
+                    }
+                }
+                None => {
+                    // No lock exists, create new one
+                    let lock =
+                        LockRecord::new(resource.to_string(), owner.to_string(), ttl_seconds);
+                    let data = bincode::serialize(&lock)
+                        .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                    txn.put(key, data)
+                        .await
+                        .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                    true
+                }
+            };
+
+            txn.commit()
+                .await
+                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+            Ok(acquired)
         }
 
-        // Create new lock
-        let lock = LockRecord::new(resource.to_string(), owner.to_string(), ttl_seconds);
-        let data =
-            bincode::serialize(&lock).map_err(|e| TikvError::Serialization(e.to_string()))?;
-        self.put(key, data).await?;
-        Ok(true)
+        #[cfg(not(feature = "distributed"))]
+        {
+            let _ = (resource, owner, ttl_seconds);
+            Err(TikvError::ConnectionFailed(
+                "Distributed feature not enabled".to_string(),
+            ))
+        }
     }
 
     /// Release a distributed lock.

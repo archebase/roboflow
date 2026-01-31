@@ -4,7 +4,7 @@
 
 //! Distributed coordination with TiKV backend.
 //!
-//! This module provides distributed coordination primitives for robolow:
+//! This module provides distributed coordination primitives for roboflow:
 //! - Job queue and tracking
 //! - Distributed locks
 //! - Checkpoint state management
