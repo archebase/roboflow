@@ -71,6 +71,12 @@ pub const DEFAULT_JOB_TIMEOUT_SECS: u64 = 3600; // 1 hour
 /// Default heartbeat interval in seconds.
 pub const DEFAULT_HEARTBEAT_INTERVAL_SECS: u64 = 30;
 
+/// Default checkpoint interval in frames.
+pub const DEFAULT_CHECKPOINT_INTERVAL_FRAMES: u64 = 100;
+
+/// Default checkpoint interval in seconds.
+pub const DEFAULT_CHECKPOINT_INTERVAL_SECS: u64 = 10;
+
 /// Worker configuration.
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
@@ -89,6 +95,15 @@ pub struct WorkerConfig {
     /// Heartbeat interval.
     pub heartbeat_interval: Duration,
 
+    /// Checkpoint interval in frames.
+    pub checkpoint_interval_frames: u64,
+
+    /// Checkpoint interval in seconds.
+    pub checkpoint_interval_seconds: u64,
+
+    /// Whether to use async checkpointing.
+    pub checkpoint_async: bool,
+
     /// Storage bucket/prefix for reading source files.
     pub storage_prefix: String,
 
@@ -104,6 +119,9 @@ impl Default for WorkerConfig {
             max_attempts: DEFAULT_MAX_ATTEMPTS,
             job_timeout: Duration::from_secs(DEFAULT_JOB_TIMEOUT_SECS),
             heartbeat_interval: Duration::from_secs(DEFAULT_HEARTBEAT_INTERVAL_SECS),
+            checkpoint_interval_frames: DEFAULT_CHECKPOINT_INTERVAL_FRAMES,
+            checkpoint_interval_seconds: DEFAULT_CHECKPOINT_INTERVAL_SECS,
+            checkpoint_async: true,
             storage_prefix: String::from("input/"),
             output_prefix: String::from("output/"),
         }
@@ -155,6 +173,24 @@ impl WorkerConfig {
     /// Set the output prefix.
     pub fn with_output_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.output_prefix = prefix.into();
+        self
+    }
+
+    /// Set the checkpoint interval in frames.
+    pub fn with_checkpoint_interval_frames(mut self, interval: u64) -> Self {
+        self.checkpoint_interval_frames = interval;
+        self
+    }
+
+    /// Set the checkpoint interval in seconds.
+    pub fn with_checkpoint_interval_seconds(mut self, interval: u64) -> Self {
+        self.checkpoint_interval_seconds = interval;
+        self
+    }
+
+    /// Enable or disable async checkpointing.
+    pub fn with_checkpoint_async(mut self, async_mode: bool) -> Self {
+        self.checkpoint_async = async_mode;
         self
     }
 }
@@ -877,6 +913,15 @@ mod tests {
             config.heartbeat_interval.as_secs(),
             DEFAULT_HEARTBEAT_INTERVAL_SECS
         );
+        assert_eq!(
+            config.checkpoint_interval_frames,
+            DEFAULT_CHECKPOINT_INTERVAL_FRAMES
+        );
+        assert_eq!(
+            config.checkpoint_interval_seconds,
+            DEFAULT_CHECKPOINT_INTERVAL_SECS
+        );
+        assert!(config.checkpoint_async);
         assert_eq!(config.storage_prefix, "input/");
         assert_eq!(config.output_prefix, "output/");
     }
@@ -938,5 +983,7 @@ mod tests {
         assert_eq!(DEFAULT_MAX_ATTEMPTS, 3);
         assert_eq!(DEFAULT_JOB_TIMEOUT_SECS, 3600);
         assert_eq!(DEFAULT_HEARTBEAT_INTERVAL_SECS, 30);
+        assert_eq!(DEFAULT_CHECKPOINT_INTERVAL_FRAMES, 100);
+        assert_eq!(DEFAULT_CHECKPOINT_INTERVAL_SECS, 10);
     }
 }

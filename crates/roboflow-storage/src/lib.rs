@@ -51,8 +51,8 @@ pub use multipart::{
     MultipartConfig, MultipartStats, MultipartUploader, ProgressCallback, upload_multipart,
 };
 pub use multipart_parallel::{
-    ParallelMultipartStats, ParallelMultipartUploader, ParallelUploadConfig,
-    upload_multipart_parallel,
+    ParallelMultipartStats, ParallelMultipartUploader, ParallelUploadConfig, UploadedPart,
+    is_upload_expired, upload_multipart_parallel,
 };
 pub use oss::{OssConfig, OssStorage};
 pub use retry::{RetryConfig, RetryingStorage, retry_with_backoff};

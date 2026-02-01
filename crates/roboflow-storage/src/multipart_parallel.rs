@@ -201,6 +201,44 @@ impl ParallelMultipartStats {
 }
 
 // =============================================================================
+// Resumable Upload Support
+// =============================================================================
+
+/// A part that has been uploaded in a multipart upload.
+///
+/// Used for checkpoint tracking to enable resume after interruption.
+#[derive(Debug, Clone)]
+pub struct UploadedPart {
+    /// Part number (1-indexed).
+    pub part_num: u32,
+    /// ETag returned by S3/OSS after upload.
+    pub etag: String,
+    /// Size of the part in bytes.
+    pub size: u64,
+}
+
+impl UploadedPart {
+    /// Create a new uploaded part record.
+    pub fn new(part_num: u32, etag: String, size: u64) -> Self {
+        Self {
+            part_num,
+            etag,
+            size,
+        }
+    }
+}
+
+/// Check if a multipart upload is likely expired.
+///
+/// S3/OSS multipart uploads expire after 7 days by default.
+/// This function checks if the given timestamp is older than the specified days.
+pub fn is_upload_expired(created_at: chrono::DateTime<chrono::Utc>, max_age_days: i64) -> bool {
+    let now = chrono::Utc::now();
+    let duration = now.signed_duration_since(created_at);
+    duration.num_days() > max_age_days
+}
+
+// =============================================================================
 // Parallel Multipart Uploader
 // =============================================================================
 
@@ -271,6 +309,18 @@ impl ParallelMultipartUploader {
     /// Get the destination key.
     pub fn key(&self) -> &ObjectPath {
         &self.key
+    }
+
+    /// Get information about uploaded parts for checkpointing.
+    ///
+    /// This extracts part information from the upload for checkpoint tracking.
+    /// Note: WriteMultipart doesn't expose this directly, so this returns
+    /// an empty vec. In a cloud-specific implementation, this would query
+    /// the cloud provider's API for the list of uploaded parts.
+    pub fn get_uploaded_parts(&self) -> Vec<UploadedPart> {
+        // WriteMultipart doesn't expose part info
+        // Cloud-specific implementations could override this
+        Vec::new()
     }
 
     /// Upload from a reader with parallel multipart support.

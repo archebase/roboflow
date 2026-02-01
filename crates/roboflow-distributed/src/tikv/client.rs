@@ -967,15 +967,15 @@ impl TikvClient {
 
     /// Update checkpoint state.
     pub async fn update_checkpoint(&self, state: &CheckpointState) -> Result<()> {
-        let key = StateKeys::checkpoint(&state.file_hash);
+        let key = StateKeys::checkpoint(&state.job_id);
         let data =
             bincode::serialize(state).map_err(|e| TikvError::Serialization(e.to_string()))?;
         self.put(key, data).await
     }
 
     /// Get checkpoint state.
-    pub async fn get_checkpoint(&self, file_hash: &str) -> Result<Option<CheckpointState>> {
-        let key = StateKeys::checkpoint(file_hash);
+    pub async fn get_checkpoint(&self, job_id: &str) -> Result<Option<CheckpointState>> {
+        let key = StateKeys::checkpoint(job_id);
         let data = self.get(key).await?;
 
         match data {
@@ -1150,6 +1150,19 @@ impl TikvClient {
         #[cfg(not(feature = "distributed"))]
         {
             false
+        }
+    }
+}
+
+#[cfg(test)]
+impl TikvClient {
+    /// Create a no-op client for testing checkpoint manager logic.
+    /// This client is not connected to TiKV and will fail on actual operations.
+    #[allow(dead_code)]
+    pub(crate) fn no_op_for_testing() -> Self {
+        Self {
+            config: TikvConfig::default(),
+            inner: None,
         }
     }
 }
