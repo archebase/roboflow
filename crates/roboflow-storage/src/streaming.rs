@@ -83,8 +83,11 @@ impl StreamingOssReader {
     /// Fetch a chunk starting at the given position.
     fn fetch_chunk_at(&mut self, start: u64) -> IoResult<Bytes> {
         let end = std::cmp::min(start + self.chunk_size as u64, self.object_size);
-        let start_usize = start as usize;
-        let end_usize = end as usize;
+        // Convert to usize for get_range API (with overflow check)
+        let start_usize = usize::try_from(start)
+            .map_err(|_| std::io::Error::other(format!("start offset {} too large", start)))?;
+        let end_usize = usize::try_from(end)
+            .map_err(|_| std::io::Error::other(format!("end offset {} too large", end)))?;
 
         self.runtime
             .block_on(async {

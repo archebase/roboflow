@@ -401,9 +401,11 @@ impl Storage for OssStorage {
 
         let end = end.unwrap_or_else(|| object_size.unwrap());
 
-        // Convert to usize for get_range API
-        let start_usize = start as usize;
-        let end_usize = end as usize;
+        // Convert to usize for get_range API (with overflow check)
+        let start_usize = usize::try_from(start)
+            .map_err(|_| StorageError::Other(format!("start offset {} too large", start)))?;
+        let end_usize = usize::try_from(end)
+            .map_err(|_| StorageError::Other(format!("end offset {} too large", end)))?;
 
         // Fetch range
         let bytes = self.runtime.block_on(async {

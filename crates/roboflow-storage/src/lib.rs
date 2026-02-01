@@ -392,12 +392,11 @@ mod error {
         /// Returns `StorageError::NotFound` if the object doesn't exist.
         fn streaming_reader(
             &self,
-            path: &Path,
+            _path: &Path,
             _config: StreamingConfig,
         ) -> StorageResult<Box<dyn StreamingRead + Send + 'static>> {
             // Default implementation: fall back to regular reader
             // Concrete types should override this for proper streaming support
-            let _ = path;
             Err(StorageError::Other(
                 "streaming_reader not implemented for this storage type".to_string(),
             ))
