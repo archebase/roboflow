@@ -347,9 +347,13 @@ async fn run_worker(
 
     // Create storage backend using factory from environment
     let factory = StorageFactory::from_env();
-    let storage = factory
-        .create(&storage_url)
-        .map_err(|e| anyhow::anyhow!("Failed to create storage backend for URL '{}': {}", storage_url, e))?;
+    let storage = factory.create(&storage_url).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to create storage backend for URL '{}': {}",
+            storage_url,
+            e
+        )
+    })?;
 
     // Load worker configuration from environment
     let config = load_worker_config();
@@ -461,9 +465,13 @@ async fn run_scanner(
 
     // Create storage backend using factory from environment
     let factory = StorageFactory::from_env();
-    let storage = factory
-        .create(&storage_url)
-        .map_err(|e| anyhow::anyhow!("Failed to create storage backend for URL '{}': {}", storage_url, e))?;
+    let storage = factory.create(&storage_url).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to create storage backend for URL '{}': {}",
+            storage_url,
+            e
+        )
+    })?;
 
     // Load scanner configuration from environment
     let config = load_scanner_config();
@@ -590,18 +598,15 @@ async fn start_health_server_background() -> Result<HealthServerHandle, Box<dyn 
     });
 
     // Wait for startup confirmation with a timeout
-    let startup_result = tokio::time::timeout(
-        Duration::from_millis(500),
-        &mut startup_rx,
-    )
-    .await
-    .map_err(|_| {
-        format!(
-            "Health server startup timed out after 500ms - may have failed to bind to {}",
-            addr_for_log
-        )
-    })?
-    .map_err(|e| format!("Health server startup channel closed: {}", e))?;
+    let startup_result = tokio::time::timeout(Duration::from_millis(500), &mut startup_rx)
+        .await
+        .map_err(|_| {
+            format!(
+                "Health server startup timed out after 500ms - may have failed to bind to {}",
+                addr_for_log
+            )
+        })?
+        .map_err(|e| format!("Health server startup channel closed: {}", e))?;
 
     match startup_result {
         HealthServerStartup::Ready => {
@@ -764,9 +769,7 @@ fn handle_health_request(request: &str, ready: &AtomicBool) -> String {
             # TYPE roboflow_health_server_ready gauge\n\
             roboflow_health_server_ready 1\n\r\n"
         }
-        _ => {
-            "HTTP/1.1 404 Not Found\r\n\r\n"
-        }
+        _ => "HTTP/1.1 404 Not Found\r\n\r\n",
     };
 
     response.to_string()
@@ -821,21 +824,16 @@ async fn run_health_command(
                 let mut socket = socket;
                 let mut buf = [0u8; 2048];
 
-                let response = match tokio::time::timeout(
-                    Duration::from_secs(5),
-                    socket.read(&mut buf)
-                ).await {
-                    Ok(Ok(n)) if n > 0 => {
-                        let request = String::from_utf8_lossy(&buf[..n]);
-                        handle_health_request(&request, &ready)
-                    }
-                    Ok(Ok(_)) | Ok(Err(_)) => {
-                        "HTTP/1.1 400 Bad Request\r\n\r\n".to_string()
-                    }
-                    Err(_) => {
-                        "HTTP/1.1 408 Request Timeout\r\n\r\n".to_string()
-                    }
-                };
+                let response =
+                    match tokio::time::timeout(Duration::from_secs(5), socket.read(&mut buf)).await
+                    {
+                        Ok(Ok(n)) if n > 0 => {
+                            let request = String::from_utf8_lossy(&buf[..n]);
+                            handle_health_request(&request, &ready)
+                        }
+                        Ok(Ok(_)) | Ok(Err(_)) => "HTTP/1.1 400 Bad Request\r\n\r\n".to_string(),
+                        Err(_) => "HTTP/1.1 408 Request Timeout\r\n\r\n".to_string(),
+                    };
 
                 let _ = socket.write_all(response.as_bytes()).await;
                 let _ = socket.shutdown().await;
