@@ -138,3 +138,60 @@ fn test_processing_result_failed() {
         }
     }
 }
+
+// =============================================================================
+// Test: Shutdown handler functionality
+// =============================================================================
+
+#[cfg(feature = "distributed")]
+#[test]
+fn test_shutdown_handler_default() {
+    use roboflow_distributed::ShutdownHandler;
+
+    let handler = ShutdownHandler::default();
+    assert!(!handler.is_requested());
+}
+
+#[cfg(feature = "distributed")]
+#[test]
+fn test_shutdown_handler_programmatic() {
+    use roboflow_distributed::ShutdownHandler;
+
+    let handler = ShutdownHandler::new();
+    assert!(!handler.is_requested());
+
+    handler.shutdown();
+    assert!(handler.is_requested());
+}
+
+#[cfg(feature = "distributed")]
+#[test]
+fn test_shutdown_handler_flag() {
+    use roboflow_distributed::ShutdownHandler;
+    use std::sync::atomic::Ordering;
+
+    let handler = ShutdownHandler::new();
+    let flag = handler.flag_clone();
+
+    assert!(!flag.load(Ordering::SeqCst));
+
+    handler.shutdown();
+    assert!(flag.load(Ordering::SeqCst));
+}
+
+#[cfg(feature = "distributed")]
+#[test]
+fn test_shutdown_interrupted_to_string() {
+    use roboflow_distributed::ShutdownInterrupted;
+
+    let err = ShutdownInterrupted;
+    assert_eq!(err.to_string(), "Processing interrupted by shutdown signal");
+}
+
+#[cfg(feature = "distributed")]
+#[test]
+fn test_shutdown_constants() {
+    use roboflow_distributed::SHUTDOWN_DEFAULT_TIMEOUT_SECS;
+
+    assert_eq!(SHUTDOWN_DEFAULT_TIMEOUT_SECS, 30);
+}
