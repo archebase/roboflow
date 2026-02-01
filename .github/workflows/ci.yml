@@ -6,9 +6,6 @@ on:
   pull_request:
     branches: [ main ]
 
-# Cancel in-progress jobs and skip remaining jobs if any job fails
-fail-fast: true
-
 env:
   CARGO_TERM_COLOR: always
 
