@@ -229,7 +229,22 @@ impl Storage for LocalStorage {
         };
 
         let end = end.unwrap_or_else(|| file_size.unwrap());
+
+        // Validate bounds
+        if start > end {
+            return Err(StorageError::invalid_path(format!(
+                "start offset {} exceeds end offset {}",
+                start, end
+            )));
+        }
+
         let length = end - start;
+        let length_usize = usize::try_from(length).map_err(|_| {
+            StorageError::Other(format!(
+                "range length {} too large for memory allocation",
+                length
+            ))
+        })?;
 
         let mut file = File::open(&full_path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -242,7 +257,7 @@ impl Storage for LocalStorage {
         file.seek(SeekFrom::Start(start))
             .map_err(StorageError::Io)?;
 
-        let mut buffer = vec![0u8; length as usize];
+        let mut buffer = vec![0u8; length_usize];
         file.read_exact(&mut buffer).map_err(StorageError::Io)?;
 
         Ok(Box::new(Cursor::new(buffer)))

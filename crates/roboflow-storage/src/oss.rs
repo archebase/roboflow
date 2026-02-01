@@ -401,6 +401,14 @@ impl Storage for OssStorage {
 
         let end = end.unwrap_or_else(|| object_size.unwrap());
 
+        // Validate bounds
+        if start > end {
+            return Err(StorageError::invalid_path(format!(
+                "start offset {} exceeds end offset {}",
+                start, end
+            )));
+        }
+
         // Convert to usize for get_range API (with overflow check)
         let start_usize = usize::try_from(start)
             .map_err(|_| StorageError::Other(format!("start offset {} too large", start)))?;
@@ -420,7 +428,8 @@ impl Storage for OssStorage {
                 })
         })?;
 
-        Ok(Box::new(Cursor::new(bytes.to_vec())))
+        // Bytes implements Read, so wrap it directly in a Cursor
+        Ok(Box::new(Cursor::new(bytes)))
     }
 
     fn streaming_reader(
