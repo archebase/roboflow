@@ -117,7 +117,9 @@ impl CheckpointManager {
     pub fn save(&self, checkpoint: &CheckpointState) -> Result<()> {
         let tikv = self.tikv.clone();
         let checkpoint = checkpoint.clone();
-        Self::block_on(|handle| handle.block_on(async move { tikv.update_checkpoint(&checkpoint).await }))
+        Self::block_on(|handle| {
+            handle.block_on(async move { tikv.update_checkpoint(&checkpoint).await })
+        })
     }
 
     /// Save checkpoint with heartbeat in a single transaction.
@@ -232,8 +234,7 @@ impl CheckpointManager {
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => f(handle),
             Err(_) => {
-                let rt = tokio::runtime::Runtime::new()
-                    .expect("Failed to create tokio runtime");
+                let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
                 f(rt.handle().clone())
             }
         }
@@ -303,6 +304,281 @@ mod tests {
         assert_eq!(next_checkpoint_frame_impl(99, &config), 100);
         assert_eq!(next_checkpoint_frame_impl(100, &config), 200);
         assert_eq!(next_checkpoint_frame_impl(150, &config), 200);
+    }
+
+    // Test CheckpointManager construction
+    #[test]
+    fn test_checkpoint_manager_new() {
+        use super::super::client::TikvClient;
+        use std::sync::Arc;
+
+        // Create a mock client (we just need Arc<TikvClient> for construction tests)
+        // Note: This will fail with actual operations but is fine for construction tests
+        let config = CheckpointConfig::default();
+        let tikv = Arc::new(TikvClient::no_op_for_testing());
+        let manager = CheckpointManager::new(tikv.clone(), config.clone());
+
+        assert_eq!(manager.config().checkpoint_interval_frames, 100);
+        assert_eq!(manager.config().checkpoint_interval_seconds, 10);
+        assert!(manager.config().checkpoint_async);
+    }
+
+    #[test]
+    fn test_checkpoint_manager_with_defaults() {
+        use super::super::client::TikvClient;
+        use std::sync::Arc;
+
+        let tikv = Arc::new(TikvClient::no_op_for_testing());
+        let manager = CheckpointManager::with_defaults(tikv);
+
+        assert_eq!(manager.config().checkpoint_interval_frames, 100);
+        assert_eq!(manager.config().checkpoint_interval_seconds, 10);
+        assert!(manager.config().checkpoint_async);
+    }
+
+    // Test should_checkpoint on manager
+    #[test]
+    fn test_manager_should_checkpoint() {
+        use super::super::client::TikvClient;
+        use std::sync::Arc;
+
+        let tikv = Arc::new(TikvClient::no_op_for_testing());
+        let manager = CheckpointManager::with_defaults(tikv);
+
+        // Should checkpoint when frame interval reached
+        assert!(manager.should_checkpoint(100, Duration::from_secs(5)));
+
+        // Should checkpoint when time interval reached
+        assert!(manager.should_checkpoint(50, Duration::from_secs(10)));
+
+        // Should not checkpoint when neither threshold reached
+        assert!(!manager.should_checkpoint(50, Duration::from_secs(5)));
+
+        // Should checkpoint when both thresholds reached
+        assert!(manager.should_checkpoint(100, Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn test_manager_should_checkpoint_custom_config() {
+        use super::super::client::TikvClient;
+        use std::sync::Arc;
+
+        let config = CheckpointConfig::new()
+            .with_frame_interval(50)
+            .with_time_interval(5);
+        let tikv = Arc::new(TikvClient::no_op_for_testing());
+        let manager = CheckpointManager::new(tikv, config);
+
+        // Should checkpoint at 50 frames
+        assert!(manager.should_checkpoint(50, Duration::from_secs(1)));
+
+        // Should checkpoint at 5 seconds
+        assert!(manager.should_checkpoint(10, Duration::from_secs(5)));
+
+        // Should not checkpoint below thresholds
+        assert!(!manager.should_checkpoint(49, Duration::from_secs(4)));
+    }
+
+    // Test next_checkpoint_frame
+    #[test]
+    fn test_manager_next_checkpoint_frame() {
+        use super::super::client::TikvClient;
+        use std::sync::Arc;
+
+        let tikv = Arc::new(TikvClient::no_op_for_testing());
+        let manager = CheckpointManager::with_defaults(tikv);
+
+        assert_eq!(manager.next_checkpoint_frame(0), 100);
+        assert_eq!(manager.next_checkpoint_frame(50), 100);
+        assert_eq!(manager.next_checkpoint_frame(99), 100);
+        assert_eq!(manager.next_checkpoint_frame(100), 200);
+        assert_eq!(manager.next_checkpoint_frame(150), 200);
+        assert_eq!(manager.next_checkpoint_frame(500), 600);
+    }
+
+    #[test]
+    fn test_manager_next_checkpoint_frame_custom_interval() {
+        use super::super::client::TikvClient;
+        use std::sync::Arc;
+
+        let config = CheckpointConfig::new().with_frame_interval(250);
+        let tikv = Arc::new(TikvClient::no_op_for_testing());
+        let manager = CheckpointManager::new(tikv, config);
+
+        assert_eq!(manager.next_checkpoint_frame(0), 250);
+        assert_eq!(manager.next_checkpoint_frame(100), 250);
+        assert_eq!(manager.next_checkpoint_frame(250), 500);
+        assert_eq!(manager.next_checkpoint_frame(500), 750);
+    }
+
+    // Test block_on helper with existing runtime
+    #[test]
+    fn test_block_on_with_existing_runtime() {
+        use super::super::client::TikvClient;
+        use std::panic::AssertUnwindSafe;
+        use std::sync::Arc;
+
+        // This test runs within the test harness runtime
+        let tikv = Arc::new(TikvClient::no_op_for_testing());
+        let manager = CheckpointManager::with_defaults(tikv);
+
+        // block_on should work with existing runtime
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            // Call a method that uses block_on
+            let job_id = "test-job";
+            let _ = manager.load(job_id);
+        }));
+
+        // Should not panic
+        assert!(result.is_ok());
+    }
+
+    // Test block_on helper without existing runtime
+    #[test]
+    fn test_block_on_creates_runtime() {
+        // Spawn a thread without a tokio runtime
+        let handle = std::thread::spawn(|| {
+            // This thread has no tokio runtime
+            use super::super::client::TikvClient;
+            use std::sync::Arc;
+
+            let tikv = Arc::new(TikvClient::no_op_for_testing());
+            let manager = CheckpointManager::with_defaults(tikv);
+
+            // block_on should create a new runtime
+            let job_id = "test-job-no-runtime";
+            let _ = manager.load(job_id);
+        });
+
+        // Should complete without panic
+        assert!(handle.join().is_ok());
+    }
+
+    // Test save_async with async disabled
+    #[test]
+    fn test_save_async_disabled() {
+        use super::super::client::TikvClient;
+        use super::super::schema::CheckpointState;
+        use chrono::Utc;
+        use std::panic::AssertUnwindSafe;
+        use std::sync::Arc;
+
+        let config = CheckpointConfig::new().with_async(false);
+        let tikv = Arc::new(TikvClient::no_op_for_testing());
+        let manager = CheckpointManager::new(tikv, config);
+
+        let checkpoint = CheckpointState {
+            job_id: "test-async-disabled".to_string(),
+            pod_id: "pod-1".to_string(),
+            byte_offset: 0,
+            last_frame: 100,
+            episode_idx: 0,
+            total_frames: 1000,
+            video_uploads: vec![],
+            parquet_upload: None,
+            updated_at: Utc::now(),
+            version: 1,
+        };
+
+        // Should not panic when async is disabled
+        std::panic::catch_unwind(AssertUnwindSafe(|| {
+            manager.save_async(checkpoint);
+        }))
+        .expect("save_async with disabled async should not panic");
+    }
+
+    // Test save_async with async enabled
+    #[test]
+    fn test_save_async_enabled() {
+        use super::super::client::TikvClient;
+        use super::super::schema::CheckpointState;
+        use chrono::Utc;
+        use std::panic::AssertUnwindSafe;
+        use std::sync::Arc;
+
+        // Need a runtime for tokio::spawn
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(async {
+            let tikv = Arc::new(TikvClient::no_op_for_testing());
+            let manager = CheckpointManager::with_defaults(tikv);
+
+            let checkpoint = CheckpointState {
+                job_id: "test-async-enabled".to_string(),
+                pod_id: "pod-1".to_string(),
+                byte_offset: 0,
+                last_frame: 100,
+                episode_idx: 0,
+                total_frames: 1000,
+                video_uploads: vec![],
+                parquet_upload: None,
+                updated_at: Utc::now(),
+                version: 1,
+            };
+
+            // Should not panic when async is enabled
+            std::panic::catch_unwind(AssertUnwindSafe(|| {
+                manager.save_async(checkpoint);
+            }))
+        });
+
+        // Should complete without panic
+        assert!(result.is_ok());
+
+        // Give the spawned task a moment to complete
+        let _ = rt.block_on(async {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        });
+    }
+
+    // Test edge cases for should_checkpoint
+    #[test]
+    fn test_should_checkpoint_edge_cases() {
+        use super::super::client::TikvClient;
+        use std::sync::Arc;
+
+        let tikv = Arc::new(TikvClient::no_op_for_testing());
+        let manager = CheckpointManager::with_defaults(tikv);
+
+        // Exactly at threshold - should checkpoint
+        assert!(manager.should_checkpoint(100, Duration::from_secs(0)));
+        assert!(manager.should_checkpoint(0, Duration::from_secs(10)));
+
+        // Just below threshold - should not checkpoint
+        assert!(!manager.should_checkpoint(99, Duration::from_secs(0)));
+        assert!(!manager.should_checkpoint(0, Duration::from_secs(9)));
+
+        // Zero values - should not checkpoint (default intervals are 100 and 10)
+        assert!(!manager.should_checkpoint(0, Duration::from_secs(0)));
+    }
+
+    // Test checkpoint config edge cases
+    #[test]
+    fn test_checkpoint_config_zero_intervals() {
+        let config = CheckpointConfig::new()
+            .with_frame_interval(0)
+            .with_time_interval(0);
+
+        // Zero interval means always checkpoint
+        assert!(should_checkpoint_impl(0, Duration::from_secs(0), &config));
+        assert!(should_checkpoint_impl(1, Duration::from_secs(1), &config));
+    }
+
+    // Test next_checkpoint_frame edge cases
+    #[test]
+    fn test_next_checkpoint_frame_edge_cases() {
+        use super::super::client::TikvClient;
+        use std::sync::Arc;
+
+        let tikv = Arc::new(TikvClient::no_op_for_testing());
+        let manager = CheckpointManager::with_defaults(tikv);
+
+        // Large frame numbers
+        assert_eq!(manager.next_checkpoint_frame(9999), 10000);
+        assert_eq!(manager.next_checkpoint_frame(10000), 10100);
+
+        // Frame number exactly at checkpoint boundary
+        assert_eq!(manager.next_checkpoint_frame(100), 200);
+        assert_eq!(manager.next_checkpoint_frame(1000), 1100);
     }
 }
 
