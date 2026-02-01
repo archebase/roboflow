@@ -190,13 +190,18 @@ mod error {
 
     /// Configuration for streaming readers.
     ///
-    /// Controls chunk size and prefetch behavior for streaming storage operations.
+    /// Controls chunk size for streaming storage operations.
+    ///
+    /// # Note
+    ///
+    /// The `prefetch_count` field is reserved for future use. Background prefetch
+    /// is not yet implemented - streaming readers fetch data synchronously on demand.
     #[derive(Debug, Clone)]
     pub struct StreamingConfig {
         /// Size of each chunk to fetch (default: 16MB)
         pub chunk_size: usize,
 
-        /// Number of chunks to prefetch ahead (default: 2)
+        /// Number of chunks to prefetch ahead (reserved for future use, not yet implemented)
         pub prefetch_count: usize,
     }
 
@@ -217,6 +222,11 @@ mod error {
         }
 
         /// Create a new streaming config with custom prefetch count.
+        ///
+        /// # Note
+        ///
+        /// Prefetch is not yet implemented. This setting is reserved for future use.
+        #[allow(unused)]
         pub fn with_prefetch_count(mut self, count: usize) -> Self {
             self.prefetch_count = count;
             self

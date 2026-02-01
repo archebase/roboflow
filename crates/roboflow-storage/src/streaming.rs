@@ -2,10 +2,16 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Streaming readers with prefetch support.
+//! Streaming readers with range request support.
 //!
 //! This module provides streaming implementations for cloud and local storage
-//! that use range requests and prefetch to minimize latency.
+//! that use HTTP range requests to enable reading large files without buffering
+//! entire objects into memory.
+//!
+//! # Note
+//!
+//! Background prefetch is not yet implemented. The `prefetch_count` configuration
+//! option in `StreamingConfig` is reserved for future use.
 
 use bytes::Bytes;
 use std::io::{Read, Result as IoResult};
@@ -17,9 +23,15 @@ use crate::{StorageError, StorageResult, StreamingRead};
 // Streaming OSS Reader
 // =============================================================================
 
-/// Streaming reader for OSS/S3 with range requests and prefetch.
+/// Streaming reader for OSS/S3 with range requests.
 ///
-/// Fetches data in configurable chunks with background prefetch to hide latency.
+/// Fetches data in configurable chunks using HTTP range requests.
+///
+/// # Note
+///
+/// Prefetch is not yet implemented - the `prefetch_count` in `StreamingConfig`
+/// is currently unused. This is a future enhancement that would involve
+/// background fetching of subsequent chunks while processing the current one.
 pub struct StreamingOssReader {
     /// Object store client
     store: Arc<dyn object_store::ObjectStore>,
@@ -37,6 +49,10 @@ pub struct StreamingOssReader {
     current_buffer: Option<Bytes>,
     /// Buffer offset within the object
     buffer_offset: u64,
+    // TODO: Add prefetch support with background task and channel
+    // prefetch_count: usize,
+    // chunk_receiver: Receiver<Option<Bytes>>,
+    // _shutdown_sender: Option<Sender<()>>,
 }
 
 impl StreamingOssReader {
