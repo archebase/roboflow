@@ -21,8 +21,8 @@ tikv-client = "0.3"
 futures = "0.3"
 
 # Async runtime
-tokio = { version = "1.40", features = ["rt-multi-thread", "sync"] }
-tokio-util = "0.7"
+tokio = { version = "1.40", features = ["rt-multi-thread", "sync", "signal", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 
 # Serialization
 bincode = "1.3"

@@ -20,6 +20,7 @@ pub mod catalog;
 pub mod heartbeat;
 pub mod reaper;
 pub mod scanner;
+pub mod shutdown;
 pub mod tikv;
 pub mod worker;
 
@@ -57,6 +58,12 @@ pub use reaper::{
 
 // Re-export constants from tikv config
 pub use tikv::config::{DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_PD_ENDPOINTS, KEY_PREFIX};
+
+// Re-export public types from shutdown (graceful shutdown)
+pub use shutdown::{
+    DEFAULT_SHUTDOWN_TIMEOUT_SECS as SHUTDOWN_DEFAULT_TIMEOUT_SECS, ShutdownHandler,
+    ShutdownInterrupted,
+};
 
 // =============================================================================
 // Coordinator Traits

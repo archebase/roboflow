@@ -45,9 +45,10 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
+use super::shutdown::{ShutdownHandler, ShutdownInterrupted};
 use super::tikv::{
     TikvError,
     checkpoint::{CheckpointConfig, CheckpointManager},
@@ -337,6 +338,8 @@ struct WorkerCheckpointCallback {
     last_checkpoint_frame: Arc<std::sync::atomic::AtomicU64>,
     /// Last checkpoint time
     last_checkpoint_time: Arc<std::sync::Mutex<std::time::Instant>>,
+    /// Shutdown flag for graceful interruption
+    shutdown_flag: Arc<AtomicBool>,
 }
 
 impl roboflow_dataset::streaming::converter::ProgressCallback for WorkerCheckpointCallback {
@@ -346,6 +349,16 @@ impl roboflow_dataset::streaming::converter::ProgressCallback for WorkerCheckpoi
         messages_processed: u64,
         writer: &dyn std::any::Any,
     ) -> std::result::Result<(), String> {
+        // Check for shutdown signal first
+        if self.shutdown_flag.load(std::sync::atomic::Ordering::SeqCst) {
+            tracing::info!(
+                job_id = %self.job_id,
+                frames_written = frames_written,
+                "Shutdown requested, interrupting conversion at checkpoint boundary"
+            );
+            return Err(ShutdownInterrupted.to_string());
+        }
+
         let last_frame = self
             .last_checkpoint_frame
             .load(std::sync::atomic::Ordering::Relaxed);
@@ -439,6 +452,9 @@ pub struct Worker {
     /// Worker metrics.
     metrics: Arc<WorkerMetrics>,
 
+    /// Shutdown handler for graceful termination.
+    shutdown_handler: ShutdownHandler,
+
     /// Shutdown sender.
     shutdown_tx: Option<broadcast::Sender<()>>,
 
@@ -471,6 +487,7 @@ impl Worker {
             storage,
             config,
             metrics: Arc::new(WorkerMetrics::new()),
+            shutdown_handler: ShutdownHandler::new(),
             shutdown_tx: None,
             cancellation_token: Arc::new(CancellationToken::new()),
         })
@@ -700,6 +717,7 @@ impl Worker {
             checkpoint_manager: self.checkpoint_manager.clone(),
             last_checkpoint_frame: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_checkpoint_time: Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
+            shutdown_flag: self.shutdown_handler.flag_clone(),
         });
         converter = converter.with_progress_callback(checkpoint_callback);
 
@@ -906,6 +924,52 @@ impl Worker {
         Ok(())
     }
 
+    /// Release a job back to Pending status (for graceful shutdown).
+    ///
+    /// This is called when shutdown is requested during job processing.
+    /// The job is returned to Pending state so another worker can pick it up,
+    /// and the checkpoint is preserved for resume capability.
+    async fn release_job(&self, job_id: &str) -> Result<(), TikvError> {
+        // Fetch the current job record
+        let Some(mut job) = self.tikv.get_job(job_id).await? else {
+            tracing::warn!(
+                pod_id = %self.pod_id,
+                job_id = %job_id,
+                "Job not found for release"
+            );
+            return Ok(()); // Job doesn't exist, nothing to release
+        };
+
+        // Only release if we own this job
+        if job.owner.as_ref() != Some(&self.pod_id) {
+            tracing::warn!(
+                pod_id = %self.pod_id,
+                job_id = %job_id,
+                owner = ?job.owner,
+                "Cannot release job: not owned by this worker"
+            );
+            return Ok(());
+        }
+
+        // Reset job to Pending status without incrementing attempts
+        job.status = JobStatus::Pending;
+        job.owner = None;
+        job.updated_at = chrono::Utc::now();
+
+        // Save the updated job record
+        self.tikv.put_job(&job).await?;
+
+        self.metrics.dec_active_jobs();
+
+        tracing::info!(
+            pod_id = %self.pod_id,
+            job_id = %job_id,
+            "Job released back to Pending due to shutdown"
+        );
+
+        Ok(())
+    }
+
     /// Send heartbeat to TiKV.
     ///
     /// This is a public method that can be called externally to trigger
@@ -953,6 +1017,9 @@ impl Worker {
     /// 5. Send periodic heartbeats
     /// 6. Repeat until shutdown
     pub async fn run(&mut self) -> Result<(), TikvError> {
+        // Start signal handler for SIGTERM/SIGINT
+        let _signal_rx = self.shutdown_handler.start_signal_handler();
+
         let (shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
         self.shutdown_tx = Some(shutdown_tx.clone());
 
@@ -1008,6 +1075,17 @@ impl Worker {
                     Ok(Some(job)) => {
                         let job_id = job.id.clone();
 
+                        // Check if shutdown was requested before processing
+                        if self.shutdown_handler.is_requested() {
+                            tracing::info!(
+                                pod_id = %self.pod_id,
+                                "Shutdown requested, not processing new job"
+                            );
+                            // Release the job back to Pending
+                            let _ = self.release_job(&job_id).await;
+                            break;
+                        }
+
                         // Process the job
                         let result = self.process_job(&job).await;
 
@@ -1024,6 +1102,17 @@ impl Worker {
                                 }
                             }
                             ProcessingResult::Failed { error } => {
+                                // Check if this was a shutdown interrupt
+                                if error.contains("interrupted by shutdown") {
+                                    tracing::info!(
+                                        pod_id = %self.pod_id,
+                                        job_id = %job_id,
+                                        "Job interrupted by shutdown, releasing back to Pending"
+                                    );
+                                    let _ = self.release_job(&job_id).await;
+                                    break;
+                                }
+
                                 if let Err(e) = self.fail_job(&job_id, error).await {
                                     tracing::error!(
                                         pod_id = %self.pod_id,
@@ -1108,6 +1197,30 @@ impl Worker {
             );
         }
 
+        // Delete heartbeat key to prevent false zombie detection
+        let heartbeat_key = super::tikv::key::HeartbeatKeys::heartbeat(&self.pod_id);
+        match self.tikv.delete(heartbeat_key).await {
+            Ok(()) => {
+                tracing::info!(
+                    pod_id = %self.pod_id,
+                    "Heartbeat key deleted on shutdown"
+                );
+            }
+            Err(TikvError::KeyNotFound(_)) => {
+                tracing::debug!(
+                    pod_id = %self.pod_id,
+                    "Heartbeat key not found (may have been already deleted)"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    pod_id = %self.pod_id,
+                    error = %e,
+                    "Failed to delete heartbeat key - zombie detection may trigger false positive"
+                );
+            }
+        }
+
         tracing::info!(
             pod_id = %self.pod_id,
             "Worker stopped"
@@ -1118,35 +1231,13 @@ impl Worker {
 
     /// Shutdown the worker gracefully.
     pub fn shutdown(&self) -> Result<(), TikvError> {
-        if let Some(ref tx) = self.shutdown_tx {
-            match tx.send(()) {
-                Ok(_) => {
-                    tracing::info!(
-                        pod_id = %self.pod_id,
-                        "Shutdown signal sent successfully"
-                    );
-                }
-                Err(_) => {
-                    tracing::warn!(
-                        pod_id = %self.pod_id,
-                        "Shutdown signal sent but no receivers - worker may not be running"
-                    );
-                    return Err(TikvError::Other(
-                        "Cannot shutdown worker: no active receiver. Is the worker running?"
-                            .to_string(),
-                    ));
-                }
-            }
-        } else {
-            tracing::warn!(
-                pod_id = %self.pod_id,
-                "Shutdown requested but worker has no shutdown channel configured"
-            );
-            return Err(TikvError::Other(
-                "Cannot shutdown worker: shutdown channel not initialized".to_string(),
-            ));
-        }
+        self.shutdown_handler.shutdown();
         Ok(())
+    }
+
+    /// Check if shutdown has been requested.
+    pub fn is_shutdown_requested(&self) -> bool {
+        self.shutdown_handler.is_requested()
     }
 }
 
