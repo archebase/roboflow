@@ -959,18 +959,18 @@ mod tests {
         assert_eq!(snapshot.jobs_failed, 0);
         assert_eq!(snapshot.active_jobs, 0);
 
-        // Test increments
+        // Test increments - simulate 2 jobs claimed, 1 completed
         metrics.inc_jobs_claimed();
-        metrics.inc_jobs_claimed();
-
-        metrics.inc_active_jobs();
+        metrics.inc_active_jobs(); // Job 1 starts
         metrics.inc_jobs_completed();
-        metrics.inc_active_jobs();
+        metrics.dec_active_jobs(); // Job 1 completes
+
+        metrics.inc_jobs_claimed(); // Job 2 claimed
 
         let snapshot = metrics.snapshot();
         assert_eq!(snapshot.jobs_claimed, 2);
         assert_eq!(snapshot.jobs_completed, 1);
-        assert_eq!(snapshot.active_jobs, 1);
+        assert_eq!(snapshot.active_jobs, 0); // Job 1 started and finished, Job 2 not started
     }
 
     // =============================================================================
