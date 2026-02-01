@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: 2026 ArcheBase
+#
+# SPDX-License-Identifier: MulanPSL-2.0
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: roboflow-worker-hpa
+  namespace: roboflow
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: roboflow-worker
+  minReplicas: 2
+  maxReplicas: 100
+  metrics:
+    # Scale based on CPU utilization (simple fallback)
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+    # Scale based on memory utilization
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+  # Optional: Scale based on custom metric (pending jobs in TiKV)
+  # Requires Prometheus Adapter and custom metrics configuration
+  #
+  # - type: Pods
+  #   pods:
+  #     metric:
+  #       name: pending_jobs
+  #     target:
+  #       type: AverageValue
+  #       averageValue: "5"
+
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # Wait 5 min before scaling down
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 0  # Scale up immediately
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 10
+          periodSeconds: 60
+      selectPolicy: Max

@@ -186,6 +186,11 @@ path = "src/bin/schema.rs"
 name = "search"
 path = "src/bin/search.rs"
 
+[[bin]]
+name = "roboflow"
+path = "src/bin/roboflow.rs"
+required-features = ["distributed"]
+
 # Benchmarks
 [[bench]]
 name = "profiler"

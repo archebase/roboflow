@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 ArcheBase
+#
+# SPDX-License-Identifier: MulanPSL-2.0
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: roboflow-worker-pdb
+  namespace: roboflow
+spec:
+  # Ensure at least N pods remain available during voluntary disruptions
+  minAvailable: 1
+  # Alternative: use percentage instead
+  # minAvailable: 25%
+
+  selector:
+    matchLabels:
+      app: roboflow
+      component: worker
