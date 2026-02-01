@@ -41,7 +41,8 @@ COPY src/ ./src/
 #     cargo build --release --bin controller
 
 # Placeholder: create a dummy binary for now
-RUN echo "#!/bin/sh\necho 'Controller not yet implemented'\nexit 1" > /tmp/controller \
+# Exit 0 to avoid crash loops in Kubernetes; controller is not yet implemented
+RUN echo "#!/bin/sh\necho 'Controller not yet implemented'\nexit 0" > /tmp/controller \
     && chmod +x /tmp/controller
 
 # =============================================================================

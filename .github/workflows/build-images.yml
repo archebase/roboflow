@@ -29,14 +29,7 @@ env:
 jobs:
   build-worker:
     name: Build Worker Image
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-        platform: [amd64]
-        include:
-          - os: ubuntu-latest
-            platform: arm64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -71,7 +64,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile.worker
-          platforms: linux/${{ matrix.platform }}
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -95,14 +88,7 @@ jobs:
 
   build-controller:
     name: Build Controller Image
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-        platform: [amd64]
-        include:
-          - os: ubuntu-latest
-            platform: arm64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -136,7 +122,7 @@ jobs:
         with:
           context: ./controller
           file: ./controller/Dockerfile
-          platforms: linux/${{ matrix.platform }}
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
