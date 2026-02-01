@@ -248,6 +248,7 @@ Roboflow.open(["input.bag"]).write_to("output.mcap").run()
 
 ## See Also
 
+- [DISTRIBUTED_DESIGN.md](DISTRIBUTED_DESIGN.md) - Distributed system design for 10 Gbps throughput
 - [PIPELINE.md](PIPELINE.md) - Detailed pipeline architecture
 - [MEMORY.md](MEMORY.md) - Memory management details
 - [README.md](../README.md) - Usage documentation
