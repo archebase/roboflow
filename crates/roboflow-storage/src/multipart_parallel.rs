@@ -212,9 +212,9 @@ impl ParallelMultipartStats {
 /// # Architecture
 ///
 /// - Uses `object_store::WriteMultipart` for managed concurrent uploads
-/// - Parts are streamed to avoid loading entire file into memory
-/// - Retry logic with exponential backoff per part
-/// - Progress tracking via callback
+/// - Parts are written sequentially which spawns async upload tasks
+/// - All tasks run in parallel on the tokio runtime
+/// - `finish()` waits for all tasks to complete
 pub struct ParallelMultipartUploader {
     /// The WriteMultipart upload manager
     upload: Option<WriteMultipart>,
@@ -251,13 +251,12 @@ impl ParallelMultipartUploader {
         })?;
 
         // Create WriteMultipart with configured chunk size
-        // WriteMultipart will automatically spawn parallel upload tasks
+        // WriteMultipart spawns async tasks for each chunk automatically
         let upload = WriteMultipart::new_with_chunk_size(multipart_upload, config.part_size);
 
         tracing::info!(
-            "Created parallel multipart uploader: chunk_size={}, max_concurrency={}",
-            config.part_size,
-            config.concurrency
+            "Created parallel multipart uploader: chunk_size={}",
+            config.part_size
         );
 
         Ok(Self {
@@ -298,11 +297,10 @@ impl ParallelMultipartUploader {
 
         let part_count = config.part_count(file_size);
         tracing::info!(
-            "Starting parallel multipart upload: {} bytes in {} parts of {} bytes with {} concurrency",
+            "Starting parallel multipart upload: {} bytes in {} parts of {} bytes",
             file_size,
             part_count,
-            config.part_size,
-            config.concurrency
+            config.part_size
         );
 
         let mut upload = self
@@ -310,10 +308,8 @@ impl ParallelMultipartUploader {
             .take()
             .ok_or_else(|| StorageError::Other("Uploader already consumed".to_string()))?;
 
-        let mut retried_count = 0u32;
-
-        // Upload parts in streaming fashion with true parallelism
-        // WriteMultipart manages concurrent uploads internally
+        // Upload parts: write() spawns async tasks that run in parallel
+        // We write all parts first, then finish() waits for all tasks to complete
         for part_index in 0..part_count {
             let offset = part_index * config.part_size;
             let remaining = file_size.saturating_sub(offset);
@@ -328,30 +324,18 @@ impl ParallelMultipartUploader {
             let mut buffer = vec![0u8; to_read];
             reader.read_exact(&mut buffer).map_err(StorageError::Io)?;
 
-            // Wait for capacity before writing (provides backpressure)
-            // This ensures we don't exceed the configured concurrency
-            self.runtime.block_on(async {
-                upload
-                    .wait_for_capacity(config.concurrency)
-                    .await
-                    .map_err(|e| {
-                        StorageError::Cloud(format!("Failed to wait for upload capacity: {}", e))
-                    })
-            })?;
+            // Write spawns an async upload task that runs in the background
+            // Multiple tasks can run concurrently on the tokio runtime
+            upload.write(&buffer);
 
-            // Upload part with retry
-            let part_retries =
-                self.upload_part_with_retry(&mut upload, &buffer, config.max_retries)?;
-            retried_count += part_retries;
-
-            // Report progress
+            // Report progress (writing is complete, upload continues in background)
             let uploaded_bytes = ((part_index + 1) * config.part_size).min(file_size) as u64;
             if let Some(cb) = progress {
                 cb(uploaded_bytes, file_size as u64);
             }
         }
 
-        // Complete the upload using finish() not complete()
+        // Complete the upload - waits for all async tasks to complete
         let duration = self.start_time.elapsed().unwrap_or(Duration::from_secs(0));
 
         self.runtime.block_on(async {
@@ -374,7 +358,7 @@ impl ParallelMultipartUploader {
             duration,
             self.config.concurrency,
         )
-        .with_retried_parts(retried_count))
+        .with_retried_parts(0))
     }
 
     /// Upload a small file directly.
@@ -402,7 +386,7 @@ impl ParallelMultipartUploader {
             cb(file_size as u64, file_size as u64);
         }
 
-        // Upload as single chunk - WriteMultipart::write is synchronous
+        // Upload as single chunk
         upload.write(&buffer);
 
         // Complete the upload
@@ -418,26 +402,6 @@ impl ParallelMultipartUploader {
             ParallelMultipartStats::new(file_size as u64, 1, duration, self.config.concurrency)
                 .with_retried_parts(0),
         )
-    }
-
-    /// Upload a single part with retry logic.
-    ///
-    /// Note: With WriteMultipart, retries are handled at a higher level
-    /// since write() is synchronous and spawns tasks internally.
-    /// This method provides a simple wrapper. Actual upload errors
-    /// will be caught by wait_for_capacity or finish.
-    fn upload_part_with_retry(
-        &self,
-        upload: &mut WriteMultipart,
-        data: &[u8],
-        _max_retries: u32,
-    ) -> Result<u32> {
-        // WriteMultipart::write is synchronous - it spawns upload tasks
-        // Errors from spawned tasks are handled in wait_for_capacity or finish
-        upload.write(data);
-
-        // Return 0 retries - actual errors are caught elsewhere
-        Ok(0)
     }
 
     /// Abort the multipart upload.
