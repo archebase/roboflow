@@ -307,7 +307,8 @@ EXAMPLES:
 
     # Run with JSON logging
     LOG_FORMAT=json roboflow worker
-"#.to_string()
+"#
+    .to_string()
 }
 
 // =============================================================================
@@ -325,9 +326,8 @@ async fn run_worker(
     let tikv = Arc::new(roboflow_distributed::TikvClient::from_env().await?);
 
     // Determine storage URL
-    let storage_url = storage_url.unwrap_or_else(|| {
-        env::var("STORAGE_URL").unwrap_or_else(|_| "file://./data".to_string())
-    });
+    let storage_url = storage_url
+        .unwrap_or_else(|| env::var("STORAGE_URL").unwrap_or_else(|_| "file://./data".to_string()));
 
     // Create storage backend using factory from environment
     let factory = StorageFactory::from_env();
@@ -399,8 +399,7 @@ fn load_worker_config() -> WorkerConfig {
         .and_then(|s| s.parse().ok())
         .unwrap_or(10);
 
-    let storage_prefix =
-        env::var("WORKER_STORAGE_PREFIX").unwrap_or_else(|_| "input/".to_string());
+    let storage_prefix = env::var("WORKER_STORAGE_PREFIX").unwrap_or_else(|_| "input/".to_string());
 
     let output_prefix = env::var("WORKER_OUTPUT_PREFIX").unwrap_or_else(|_| "output/".to_string());
 
@@ -439,9 +438,8 @@ async fn run_scanner(
     let tikv = Arc::new(roboflow_distributed::TikvClient::from_env().await?);
 
     // Determine storage URL
-    let storage_url = storage_url.unwrap_or_else(|| {
-        env::var("STORAGE_URL").unwrap_or_else(|_| "file://./data".to_string())
-    });
+    let storage_url = storage_url
+        .unwrap_or_else(|| env::var("STORAGE_URL").unwrap_or_else(|_| "file://./data".to_string()));
 
     // Create storage backend using factory from environment
     let factory = StorageFactory::from_env();
@@ -452,12 +450,7 @@ async fn run_scanner(
 
     // Generate or use provided pod ID
     let pod_id = pod_id.unwrap_or_else(|| {
-        env::var("POD_NAME").unwrap_or_else(|_| {
-            format!(
-                "scanner-{}",
-                uuid::Uuid::new_v4()
-            )
-        })
+        env::var("POD_NAME").unwrap_or_else(|_| format!("scanner-{}", uuid::Uuid::new_v4()))
     });
 
     tracing::info!(
@@ -561,11 +554,7 @@ fn start_health_server_background() -> Result<HealthServerHandle, Box<dyn std::e
 }
 
 /// Run the health check server.
-async fn run_health_server(
-    host: &str,
-    port: u16,
-    shutdown_rx: tokio::sync::oneshot::Receiver<()>,
-) {
+async fn run_health_server(host: &str, port: u16, shutdown_rx: tokio::sync::oneshot::Receiver<()>) {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     // Ready flag - set to true when service is ready
@@ -652,7 +641,8 @@ async fn run_health_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::env;
 
-    let host = host.unwrap_or_else(|| env::var("HEALTH_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()));
+    let host =
+        host.unwrap_or_else(|| env::var("HEALTH_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()));
     let port = port.unwrap_or_else(|| {
         env::var("HEALTH_PORT")
             .ok()
@@ -703,8 +693,11 @@ async fn run_health_command(
 
     #[cfg(not(feature = "distributed"))]
     {
-        return Err("Health command requires 'distributed' feature to be enabled. \
-                    Please rebuild with: cargo build --features distributed".into());
+        return Err(
+            "Health command requires 'distributed' feature to be enabled. \
+                    Please rebuild with: cargo build --features distributed"
+                .into(),
+        );
     }
 }
 
@@ -744,8 +737,14 @@ fn main() {
 
         let result = rt.block_on(async {
             match command {
-                Command::Worker { pod_id, storage_url } => run_worker(pod_id, storage_url).await,
-                Command::Scanner { pod_id, storage_url } => run_scanner(pod_id, storage_url).await,
+                Command::Worker {
+                    pod_id,
+                    storage_url,
+                } => run_worker(pod_id, storage_url).await,
+                Command::Scanner {
+                    pod_id,
+                    storage_url,
+                } => run_scanner(pod_id, storage_url).await,
                 Command::Health { host, port } => run_health_command(host, port).await,
             }
         });
@@ -775,8 +774,11 @@ fn main() {
             }
             _ => {
                 // Error for other commands without distributed feature
-                Err("Worker and scanner commands require 'distributed' feature. \
-                     Please rebuild with: cargo build --features distributed".into())
+                Err(
+                    "Worker and scanner commands require 'distributed' feature. \
+                     Please rebuild with: cargo build --features distributed"
+                        .into(),
+                )
             }
         };
 
