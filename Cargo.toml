@@ -161,6 +161,7 @@ paste = "1.0"
 criterion = "0.5"
 tempfile = "3.10"
 roboflow-hdf5 = { workspace = true }
+roboflow-distributed = { workspace = true }
 
 # Binaries
 [[bin]]

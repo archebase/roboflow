@@ -24,6 +24,7 @@ jobs:
 
   rust-lint:
     name: Rust Lint
+    needs: license
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
@@ -63,6 +64,7 @@ jobs:
 
   rust-test:
     name: Rust Tests
+    needs: rust-lint
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
@@ -94,6 +96,7 @@ jobs:
 
   python:
     name: Python Tests
+    needs: rust-test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
@@ -146,6 +149,7 @@ jobs:
 
   lint:
     name: Python Lint
+    needs: python
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -180,6 +184,7 @@ jobs:
 
   coverage:
     name: Coverage
+    needs: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

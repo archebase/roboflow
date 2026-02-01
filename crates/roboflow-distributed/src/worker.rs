@@ -43,6 +43,7 @@
 //! }
 //! ```
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -55,6 +56,12 @@ use super::tikv::{
 use roboflow_storage::Storage;
 use tokio::sync::broadcast;
 use tokio::time::sleep;
+
+// Dataset conversion imports
+use roboflow_dataset::{
+    lerobot::{DatasetConfig as LerobotDatasetConfig, LerobotConfig, VideoConfig},
+    streaming::StreamingDatasetConverter,
+};
 
 /// Default job poll interval in seconds.
 pub const DEFAULT_POLL_INTERVAL_SECS: u64 = 5;
@@ -323,9 +330,8 @@ pub struct Worker {
 
     /// Storage backend for reading/writing files.
     ///
-    /// This is stored for future use when implementing the full pipeline
-    /// in issue #35. Currently unused but part of the worker's design.
-    #[allow(dead_code)]
+    /// Used by the dataset conversion pipeline to download input files
+    /// and write output datasets via StreamingDatasetConverter.
     storage: Arc<dyn Storage>,
 
     /// Worker configuration.
@@ -470,8 +476,16 @@ impl Worker {
 
     /// Process a job.
     ///
-    /// This is a placeholder implementation. The full pipeline processing
-    /// will be implemented in a future issue (#35).
+    /// This implementation integrates the LerobotWriter with the distributed worker
+    /// infrastructure to process bag/MCAP files and produce LeRobot v2.1 output.
+    ///
+    /// # Pipeline Stages
+    ///
+    /// 1. **Download input** - Fetch source file from S3/OSS to local buffer
+    /// 2. **Initialize converter** - Create StreamingDatasetConverter with LeRobot config
+    /// 3. **Process frames** - Decode, align, and write frames through the pipeline
+    /// 4. **Finalize** - Complete episode and write metadata
+    /// 5. **Upload output** - Output files written to storage (via storage backend)
     async fn process_job(&self, job: &JobRecord) -> ProcessingResult {
         tracing::info!(
             pod_id = %self.pod_id,
@@ -491,6 +505,8 @@ impl Worker {
                     progress = checkpoint.progress_percent(),
                     "Resuming job from checkpoint"
                 );
+                // Note: Checkpoint-based resume will be implemented in a follow-up issue.
+                // For Phase 1, we start from beginning even if checkpoint exists.
             }
             Ok(None) => {
                 tracing::debug!(
@@ -509,25 +525,153 @@ impl Worker {
             }
         }
 
-        // TODO: Implement full pipeline processing in issue #35
-        // For now, this is a placeholder that simulates successful processing
-        // In the full implementation, this would:
-        // 1. Load the source file from storage
-        // 2. Initialize the pipeline with checkpoint if exists
-        // 3. Run the pipeline
-        // 4. Save checkpoints periodically
-        // 5. Write output to storage
+        // Build the full input path from source_key.
+        // Strip storage_prefix if present to avoid double-prefixing with LocalStorage.
+        let input_path =
+            if let Some(prefix) = job.source_key.strip_prefix(&self.config.storage_prefix) {
+                PathBuf::from(prefix)
+            } else {
+                PathBuf::from(&job.source_key)
+            };
 
-        // Simulate some processing time
-        sleep(Duration::from_millis(100)).await;
+        // Build the output path for this job
+        let output_path = self.build_output_path(job);
 
-        tracing::debug!(
-            pod_id = %self.pod_id,
-            job_id = %job.id,
-            "Job processing complete (placeholder)"
+        tracing::info!(
+            input = %input_path.display(),
+            output = %output_path.display(),
+            "Starting conversion"
+        );
+
+        // Create the LeRobot configuration
+        let lerobot_config = self.create_lerobot_config(job);
+
+        // Create streaming converter with storage backends
+        let converter = match StreamingDatasetConverter::new_lerobot_with_storage(
+            &output_path,
+            lerobot_config,
+            Some(self.storage.clone()), // input storage for downloading
+            Some(self.storage.clone()), // output storage for writing
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                let error_msg = format!(
+                    "Failed to create converter for job {} (input: {}, output: {}): {}",
+                    job.id,
+                    input_path.display(),
+                    output_path.display(),
+                    e
+                );
+                tracing::error!(
+                    job_id = %job.id,
+                    input = %input_path.display(),
+                    output = %output_path.display(),
+                    original_error = %e,
+                    "Converter creation failed"
+                );
+                return ProcessingResult::Failed { error: error_msg };
+            }
+        };
+
+        // Run the conversion with a timeout to prevent indefinite hangs.
+        // Note: This is a synchronous operation that may take significant time.
+        // We use spawn_blocking to avoid starving the async runtime.
+        use std::time::Duration;
+        const CONVERSION_TIMEOUT: Duration = Duration::from_secs(3600); // 1 hour
+
+        let job_id = job.id.clone();
+        let job_id_clone = job_id.clone();
+        let conversion_task = tokio::task::spawn_blocking(move || converter.convert(input_path));
+
+        let stats = match tokio::time::timeout(CONVERSION_TIMEOUT, conversion_task).await {
+            Ok(Ok(Ok(stats))) => stats,
+            Ok(Ok(Err(e))) => {
+                let error_msg = format!("Conversion failed for job {}: {}", job_id_clone, e);
+                tracing::error!(
+                    job_id = %job_id_clone,
+                    original_error = %e,
+                    "Job processing failed"
+                );
+                return ProcessingResult::Failed { error: error_msg };
+            }
+            Ok(Err(join_err)) => {
+                // Task panicked or was cancelled
+                let error_msg = if join_err.is_cancelled() {
+                    format!("Conversion task cancelled for job {}", job_id_clone)
+                } else {
+                    format!(
+                        "Conversion task panicked for job {}: {}",
+                        job_id_clone, join_err
+                    )
+                };
+                tracing::error!(
+                    job_id = %job_id_clone,
+                    join_error = %join_err,
+                    "Job processing task failed"
+                );
+                return ProcessingResult::Failed { error: error_msg };
+            }
+            Err(_) => {
+                let error_msg = format!(
+                    "Conversion timed out after {:?} for job {}",
+                    CONVERSION_TIMEOUT, job_id_clone
+                );
+                tracing::error!(
+                    job_id = %job_id_clone,
+                    timeout_secs = CONVERSION_TIMEOUT.as_secs(),
+                    "Job processing timed out"
+                );
+                return ProcessingResult::Failed { error: error_msg };
+            }
+        };
+
+        tracing::info!(
+            job_id = %job_id,
+            frames_written = stats.frames_written,
+            messages = stats.messages_processed,
+            duration_sec = stats.duration_sec,
+            "Job processing complete"
         );
 
         ProcessingResult::Success
+    }
+
+    /// Build the output path for a job.
+    ///
+    /// The output path follows the pattern: `{output_prefix}/{job_id}/`
+    /// This ensures each job has a unique output directory.
+    fn build_output_path(&self, job: &JobRecord) -> PathBuf {
+        // Create a job-specific output directory.
+        // Pattern: output_prefix/job_id/
+        PathBuf::from(format!(
+            "{}/{}",
+            self.config.output_prefix.trim_end_matches('/'),
+            job.id
+        ))
+    }
+
+    /// Create a LeRobot configuration for processing a job.
+    ///
+    /// This creates a default configuration that can be used when no
+    /// job-specific configuration is provided. In production, this would
+    /// be loaded from a config file or passed with the job.
+    fn create_lerobot_config(&self, _job: &JobRecord) -> LerobotConfig {
+        // Create a default LeRobot configuration
+        // In production, this would be loaded from:
+        // 1. A config file stored alongside the input file
+        // 2. Job metadata in TiKV
+        // 3. Default workspace configuration
+        LerobotConfig {
+            dataset: LerobotDatasetConfig {
+                name: format!("roboflow-episode-{}", _job.id),
+                fps: 30, // Default 30 FPS for robotics data
+                robot_type: Some("robot".to_string()),
+                env_type: None,
+            },
+            mappings: Vec::new(), // Empty mappings - messages will be processed as-is
+            video: VideoConfig::default(),
+            annotation_file: None,
+        }
     }
 
     /// Complete a job successfully.
