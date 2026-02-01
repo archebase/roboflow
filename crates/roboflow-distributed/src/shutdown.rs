@@ -18,11 +18,11 @@
 //! 6. Clear heartbeat
 //! 7. Exit cleanly
 //!
-//! # Timeout
+//! # Shutdown Behavior
 //!
-//! A 30-second timeout is enforced after shutdown signal is received.
-//! If the worker hasn't exited within this time, a forced exit occurs
-//! with a warning log.
+//! The worker will wait indefinitely for the current checkpoint to complete.
+//! Jobs are released back to Pending status, allowing other workers to pick them up.
+//! The heartbeat is cleared and the worker exits cleanly.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

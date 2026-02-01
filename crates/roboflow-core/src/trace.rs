@@ -64,7 +64,7 @@ pub fn generate_request_id() -> String {
         format!("{:08x}", hash % 0x100000000)
     };
 
-    format!("req-{}-{}-{}", timestamp, counter, &random_part[..8])
+    format!("req-{}-{}-{}", timestamp, counter, random_part)
 }
 
 /// Generate a job-scoped request ID

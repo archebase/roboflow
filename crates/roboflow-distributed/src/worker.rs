@@ -1103,7 +1103,7 @@ impl Worker {
                             }
                             ProcessingResult::Failed { error } => {
                                 // Check if this was a shutdown interrupt
-                                if error.contains("interrupted by shutdown") {
+                                if error.contains("Job interrupted by shutdown") {
                                     tracing::info!(
                                         pod_id = %self.pod_id,
                                         job_id = %job_id,
