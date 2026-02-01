@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     ObjectMetadata, SeekRead, SeekableStorage, Storage, StorageError, StorageResult as Result,
+    StreamingConfig, StreamingRead,
 };
 
 /// Local filesystem storage backend.
@@ -198,6 +199,72 @@ impl Storage for LocalStorage {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    fn read_range(
+        &self,
+        path: &Path,
+        start: u64,
+        end: Option<u64>,
+    ) -> Result<Box<dyn Read + Send + 'static>> {
+        use std::io::{Cursor, Seek, SeekFrom};
+
+        let full_path = self.full_path(path);
+
+        // Get file size if end not specified
+        let file_size = if end.is_some() {
+            None
+        } else {
+            Some(
+                fs::metadata(&full_path)
+                    .map_err(|e| {
+                        if e.kind() == std::io::ErrorKind::NotFound {
+                            StorageError::not_found(full_path.display().to_string())
+                        } else {
+                            StorageError::Io(e)
+                        }
+                    })?
+                    .len(),
+            )
+        };
+
+        let end = end.unwrap_or_else(|| file_size.unwrap());
+        let length = end - start;
+
+        let mut file = File::open(&full_path).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                StorageError::not_found(full_path.display().to_string())
+            } else {
+                StorageError::Io(e)
+            }
+        })?;
+
+        file.seek(SeekFrom::Start(start))
+            .map_err(StorageError::Io)?;
+
+        let mut buffer = vec![0u8; length as usize];
+        file.read_exact(&mut buffer).map_err(StorageError::Io)?;
+
+        Ok(Box::new(Cursor::new(buffer)))
+    }
+
+    fn streaming_reader(
+        &self,
+        path: &Path,
+        _config: StreamingConfig,
+    ) -> Result<Box<dyn StreamingRead + Send + 'static>> {
+        let full_path = self.full_path(path);
+
+        let file = File::open(&full_path).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                StorageError::not_found(full_path.display().to_string())
+            } else {
+                StorageError::Io(e)
+            }
+        })?;
+
+        let reader = crate::streaming::StreamingLocalReader::new(file)?;
+        Ok(Box::new(reader))
     }
 }
 
