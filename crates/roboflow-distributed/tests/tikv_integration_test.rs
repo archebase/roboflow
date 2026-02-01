@@ -542,18 +542,10 @@ mod tests {
 
         for i in 0..=15 {
             let frames_written = i * 10;
-            let checkpoint = CheckpointState {
-                job_id: job_id.clone(),
-                pod_id: pod_id.to_string(),
-                byte_offset: frames_written * 1000,
-                last_frame: frames_written,
-                episode_idx: 0,
-                total_frames,
-                video_uploads: Vec::new(),
-                parquet_upload: None,
-                updated_at: chrono::Utc::now(),
-                version: 1,
-            };
+            let mut checkpoint =
+                CheckpointState::new(job_id.clone(), pod_id.to_string(), total_frames);
+            checkpoint.last_frame = frames_written;
+            checkpoint.byte_offset = frames_written * 1000;
             checkpoint_manager.save(&checkpoint).unwrap();
         }
 
@@ -571,18 +563,10 @@ mod tests {
         // Simulate continuing from where we left off
         for i in 16..=20 {
             let frames_written = i * 10;
-            let checkpoint = CheckpointState {
-                job_id: job_id.clone(),
-                pod_id: pod_id_2.to_string(), // Different pod after restart
-                byte_offset: frames_written * 1000,
-                last_frame: frames_written,
-                episode_idx: 0,
-                total_frames,
-                video_uploads: Vec::new(),
-                parquet_upload: None,
-                updated_at: chrono::Utc::now(),
-                version: 1,
-            };
+            let mut checkpoint =
+                CheckpointState::new(job_id.clone(), pod_id_2.to_string(), total_frames);
+            checkpoint.last_frame = frames_written;
+            checkpoint.byte_offset = frames_written * 1000;
             checkpoint_manager.save(&checkpoint).unwrap();
         }
 
