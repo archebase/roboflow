@@ -18,6 +18,10 @@
 use roboflow_core::Result;
 use std::collections::HashMap;
 
+/// Upload state for checkpointing.
+/// Maps episode_index -> (completed_video_cameras, parquet_completed).
+pub type UploadState = HashMap<u64, (Vec<String>, bool)>;
+
 /// Aligned frame data ready for writing to dataset formats.
 ///
 /// This is the universal data transfer object for all dataset writers.
@@ -146,7 +150,7 @@ impl AlignedFrame {
 /// }
 /// let stats = writer.finalize(&config)?;
 /// ```
-pub trait DatasetWriter: Send {
+pub trait DatasetWriter: Send + std::any::Any {
     /// Initialize the writer before writing frames.
     ///
     /// Called once before any frames are written. Sets up the output
@@ -199,8 +203,34 @@ pub trait DatasetWriter: Send {
     /// Get the number of frames written so far.
     fn frame_count(&self) -> usize;
 
+    /// Get the current episode index (if supported by the writer).
+    ///
+    /// Returns the episode index for writers that support multi-episode datasets
+    /// (e.g., LeRobotWriter). Returns None for single-episode writers or formats
+    /// that don't track episodes.
+    ///
+    /// This is used for checkpointing to resume from the correct episode.
+    fn episode_index(&self) -> Option<usize> {
+        None
+    }
+
     /// Check if the writer has been initialized.
     fn is_initialized(&self) -> bool;
+
+    /// Return `self` as `&dyn Any` for downcasting.
+    fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Get upload state for checkpointing.
+    ///
+    /// Returns upload completion state for fault-tolerant resume.
+    /// Maps episode_index -> (completed_video_cameras, parquet_completed).
+    /// Returns None for writers that don't support cloud uploads or have no upload state.
+    ///
+    /// This is used during checkpoint saves to track which files have been
+    /// uploaded, enabling resume after failures.
+    fn get_upload_state(&self) -> Option<UploadState> {
+        None
+    }
 }
 
 /// Error type for dataset writer operations.

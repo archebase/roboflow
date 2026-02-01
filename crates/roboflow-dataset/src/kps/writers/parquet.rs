@@ -426,6 +426,10 @@ impl DatasetWriter for StreamingParquetWriter {
     fn is_initialized(&self) -> bool {
         self.initialized
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[cfg(test)]

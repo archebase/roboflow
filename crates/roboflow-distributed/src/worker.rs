@@ -50,15 +50,18 @@ use std::time::Duration;
 
 use super::tikv::{
     TikvError,
+    checkpoint::{CheckpointConfig, CheckpointManager},
     client::TikvClient,
-    schema::{HeartbeatRecord, JobRecord, JobStatus, WorkerStatus},
+    schema::{CheckpointState, HeartbeatRecord, JobRecord, JobStatus, WorkerStatus},
 };
 use roboflow_storage::Storage;
 use tokio::sync::broadcast;
 use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
 
 // Dataset conversion imports
 use roboflow_dataset::{
+    common::DatasetWriter,
     lerobot::{DatasetConfig as LerobotDatasetConfig, LerobotConfig, VideoConfig},
     streaming::StreamingDatasetConverter,
 };
@@ -320,6 +323,99 @@ pub enum ProcessingResult {
     Failed { error: String },
 }
 
+/// Progress callback for saving checkpoints during conversion.
+struct WorkerCheckpointCallback {
+    /// Job ID for this conversion
+    job_id: String,
+    /// Pod ID of the worker
+    pod_id: String,
+    /// Total frames (estimated)
+    total_frames: u64,
+    /// Reference to checkpoint manager
+    checkpoint_manager: CheckpointManager,
+    /// Last checkpoint frame number
+    last_checkpoint_frame: Arc<std::sync::atomic::AtomicU64>,
+    /// Last checkpoint time
+    last_checkpoint_time: Arc<std::sync::Mutex<std::time::Instant>>,
+}
+
+impl roboflow_dataset::streaming::converter::ProgressCallback for WorkerCheckpointCallback {
+    fn on_frame_written(
+        &self,
+        frames_written: u64,
+        messages_processed: u64,
+        writer: &dyn std::any::Any,
+    ) -> std::result::Result<(), String> {
+        let last_frame = self
+            .last_checkpoint_frame
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let frames_since_last = frames_written.saturating_sub(last_frame);
+
+        // Scope the lock tightly to avoid holding it during expensive operations
+        let time_since_last = {
+            let last_time = self.last_checkpoint_time.lock().unwrap();
+            last_time.elapsed()
+        };
+
+        // Check if we should save a checkpoint
+        if self
+            .checkpoint_manager
+            .should_checkpoint(frames_since_last, time_since_last)
+        {
+            // Extract episode index from writer if it's a LeRobotWriter
+            use roboflow_dataset::lerobot::writer::LerobotWriter;
+            let episode_idx = writer
+                .downcast_ref::<LerobotWriter>()
+                .and_then(|w| w.episode_index())
+                .unwrap_or(0) as u64;
+
+            // NOTE: Using messages_processed as byte_offset proxy.
+            // Actual byte offset tracking requires robocodec modifications.
+            // Resume works by re-reading from start and skipping messages.
+            //
+            // NOTE: Upload state tracking requires episode-level checkpointing.
+            // Current frame-level checkpoints don't capture upload state because:
+            // 1. Uploads happen after finish_episode(), not during frame processing
+            // 2. The coordinator tracks completion, not in-progress multipart state
+            // 3. Resume should check which episodes exist in cloud storage
+            //
+            // TODO: Implement episode-level upload state tracking:
+            // - After each episode finishes, save episode completion to TiKV
+            // - On resume, query cloud storage for completed episodes
+            // - Skip re-uploading episodes that already exist
+            let checkpoint = CheckpointState {
+                job_id: self.job_id.clone(),
+                pod_id: self.pod_id.clone(),
+                byte_offset: messages_processed,
+                last_frame: frames_written,
+                episode_idx,
+                total_frames: self.total_frames,
+                video_uploads: Vec::new(),
+                parquet_upload: None,
+                updated_at: chrono::Utc::now(),
+                version: 1,
+            };
+
+            // Use save_async which respects checkpoint_async config:
+            // - When async=true: spawns background task, non-blocking
+            // - When async=false: falls back to synchronous save
+            self.checkpoint_manager.save_async(checkpoint.clone());
+            tracing::debug!(
+                job_id = %self.job_id,
+                last_frame = frames_written,
+                progress = %checkpoint.progress_percent(),
+                "Checkpoint save initiated"
+            );
+            self.last_checkpoint_frame
+                .store(frames_written, std::sync::atomic::Ordering::Relaxed);
+            // Re-acquire lock only for the instant update
+            *self.last_checkpoint_time.lock().unwrap() = std::time::Instant::now();
+        }
+
+        std::result::Result::Ok(())
+    }
+}
+
 /// Worker actor for claiming and processing jobs.
 pub struct Worker {
     /// Pod ID for this worker instance.
@@ -327,6 +423,9 @@ pub struct Worker {
 
     /// TiKV client for job operations.
     tikv: Arc<TikvClient>,
+
+    /// Checkpoint manager for progress tracking.
+    checkpoint_manager: CheckpointManager,
 
     /// Storage backend for reading/writing files.
     ///
@@ -342,6 +441,9 @@ pub struct Worker {
 
     /// Shutdown sender.
     shutdown_tx: Option<broadcast::Sender<()>>,
+
+    /// Cancellation token for aborting conversion tasks.
+    cancellation_token: Arc<CancellationToken>,
 }
 
 impl Worker {
@@ -354,13 +456,23 @@ impl Worker {
     ) -> Result<Self, TikvError> {
         let pod_id = pod_id.into();
 
+        // Create checkpoint manager with config from WorkerConfig
+        let checkpoint_config = CheckpointConfig {
+            checkpoint_interval_frames: config.checkpoint_interval_frames,
+            checkpoint_interval_seconds: config.checkpoint_interval_seconds,
+            checkpoint_async: config.checkpoint_async,
+        };
+        let checkpoint_manager = CheckpointManager::new(tikv.clone(), checkpoint_config);
+
         Ok(Self {
             pod_id,
             tikv,
+            checkpoint_manager,
             storage,
             config,
             metrics: Arc::new(WorkerMetrics::new()),
             shutdown_tx: None,
+            cancellation_token: Arc::new(CancellationToken::new()),
         })
     }
 
@@ -547,7 +659,7 @@ impl Worker {
         let lerobot_config = self.create_lerobot_config(job);
 
         // Create streaming converter with storage backends
-        let converter = match StreamingDatasetConverter::new_lerobot_with_storage(
+        let mut converter = match StreamingDatasetConverter::new_lerobot_with_storage(
             &output_path,
             lerobot_config,
             Some(self.storage.clone()), // input storage for downloading
@@ -573,15 +685,39 @@ impl Worker {
             }
         };
 
+        // Add checkpoint callback if enabled
+        let job_id = job.id.clone();
+        // Estimate total frames from source file size.
+        // Heuristic: ~100KB per frame for typical robotics data (images + state).
+        // This is approximate; actual frame count is updated as we process.
+        // TODO: Improve by parsing bag/MCAP header for actual message count.
+        let estimated_frame_size = 100_000; // 100KB per frame
+        let total_frames = (job.source_size / estimated_frame_size).max(1);
+        let checkpoint_callback = Arc::new(WorkerCheckpointCallback {
+            job_id: job_id.clone(),
+            pod_id: self.pod_id.clone(),
+            total_frames,
+            checkpoint_manager: self.checkpoint_manager.clone(),
+            last_checkpoint_frame: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            last_checkpoint_time: Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
+        });
+        converter = converter.with_progress_callback(checkpoint_callback);
+
         // Run the conversion with a timeout to prevent indefinite hangs.
         // Note: This is a synchronous operation that may take significant time.
         // We use spawn_blocking to avoid starving the async runtime.
+        // A cancellation token is used to attempt cooperative cancellation on timeout.
         use std::time::Duration;
         const CONVERSION_TIMEOUT: Duration = Duration::from_secs(3600); // 1 hour
 
-        let job_id = job.id.clone();
         let job_id_clone = job_id.clone();
-        let conversion_task = tokio::task::spawn_blocking(move || converter.convert(input_path));
+        let cancel_token = self.cancellation_token.child_token();
+        let cancel_token_for_timeout = cancel_token.clone();
+        let conversion_task = tokio::task::spawn_blocking(move || {
+            // Guard cancels the token when dropped (on task completion)
+            let _guard = cancel_token.drop_guard();
+            converter.convert(input_path)
+        });
 
         let stats = match tokio::time::timeout(CONVERSION_TIMEOUT, conversion_task).await {
             Ok(Ok(Ok(stats))) => stats,
@@ -612,6 +748,8 @@ impl Worker {
                 return ProcessingResult::Failed { error: error_msg };
             }
             Err(_) => {
+                // Timeout: request cancellation to potentially stop the blocking work
+                cancel_token_for_timeout.cancel();
                 let error_msg = format!(
                     "Conversion timed out after {:?} for job {}",
                     CONVERSION_TIMEOUT, job_id_clone

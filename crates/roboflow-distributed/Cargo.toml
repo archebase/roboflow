@@ -22,6 +22,7 @@ futures = "0.3"
 
 # Async runtime
 tokio = { version = "1.40", features = ["rt-multi-thread", "sync"] }
+tokio-util = "0.7"
 
 # Serialization
 bincode = "1.3"

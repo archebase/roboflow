@@ -86,6 +86,15 @@ pub struct CheckpointManager {
     config: CheckpointConfig,
 }
 
+impl Clone for CheckpointManager {
+    fn clone(&self) -> Self {
+        Self {
+            tikv: self.tikv.clone(),
+            config: self.config.clone(),
+        }
+    }
+}
+
 impl CheckpointManager {
     /// Create a new checkpoint manager.
     pub fn new(tikv: Arc<TikvClient>, config: CheckpointConfig) -> Self {
