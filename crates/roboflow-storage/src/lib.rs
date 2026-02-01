@@ -38,6 +38,7 @@ pub mod local;
 pub mod multipart;
 pub mod oss;
 pub mod retry;
+pub mod streaming;
 pub mod url;
 
 // Re-export public types
@@ -55,6 +56,7 @@ pub use url::StorageUrl;
 // Re-export from mod.rs
 pub use crate::error::{
     ObjectMetadata, SeekRead, SeekableStorage, Storage, StorageError, StorageResult,
+    StreamingConfig, StreamingRead,
 };
 
 // =============================================================================
@@ -180,6 +182,45 @@ mod error {
 
         /// Whether this object represents a directory (for local filesystem).
         pub is_dir: bool,
+    }
+
+    // =============================================================================
+    // Streaming Configuration
+    // =============================================================================
+
+    /// Configuration for streaming readers.
+    ///
+    /// Controls chunk size and prefetch behavior for streaming storage operations.
+    #[derive(Debug, Clone)]
+    pub struct StreamingConfig {
+        /// Size of each chunk to fetch (default: 16MB)
+        pub chunk_size: usize,
+
+        /// Number of chunks to prefetch ahead (default: 2)
+        pub prefetch_count: usize,
+    }
+
+    impl Default for StreamingConfig {
+        fn default() -> Self {
+            Self {
+                chunk_size: 16 * 1024 * 1024, // 16MB
+                prefetch_count: 2,
+            }
+        }
+    }
+
+    impl StreamingConfig {
+        /// Create a new streaming config with custom chunk size.
+        pub fn with_chunk_size(mut self, size: usize) -> Self {
+            self.chunk_size = size;
+            self
+        }
+
+        /// Create a new streaming config with custom prefetch count.
+        pub fn with_prefetch_count(mut self, count: usize) -> Self {
+            self.prefetch_count = count;
+            self
+        }
     }
 
     impl ObjectMetadata {
@@ -317,6 +358,50 @@ mod error {
         /// Similar to `std::fs::create_dir_all`.
         fn create_dir_all(&self, path: &Path) -> StorageResult<()>;
 
+        /// Read a specific byte range from an object.
+        ///
+        /// Returns a reader for the requested range. The end offset is exclusive.
+        ///
+        /// # Errors
+        ///
+        /// Returns `StorageError::NotFound` if the object doesn't exist.
+        fn read_range(
+            &self,
+            path: &Path,
+            start: u64,
+            _end: Option<u64>,
+        ) -> StorageResult<Box<dyn Read + Send + 'static>> {
+            // Default implementation: read entire object and skip to start
+            let mut reader = self.reader(path)?;
+            let mut skip_buf = vec![0u8; std::cmp::min(8192, start as usize)];
+            let mut remaining = start;
+            while remaining > 0 {
+                let to_skip = std::cmp::min(skip_buf.len() as u64, remaining) as usize;
+                reader.read_exact(&mut skip_buf[..to_skip])?;
+                remaining -= to_skip as u64;
+            }
+            Ok(Box::new(reader))
+        }
+
+        /// Open a streaming reader with prefetch.
+        ///
+        /// Returns a reader that fetches data in chunks with configurable prefetch.
+        ///
+        /// # Errors
+        ///
+        /// Returns `StorageError::NotFound` if the object doesn't exist.
+        fn streaming_reader(
+            &self,
+            _path: &Path,
+            _config: StreamingConfig,
+        ) -> StorageResult<Box<dyn StreamingRead + Send + 'static>> {
+            // Default implementation: fall back to regular reader
+            // Concrete types should override this for proper streaming support
+            Err(StorageError::Other(
+                "streaming_reader not implemented for this storage type".to_string(),
+            ))
+        }
+
         /// Get this storage as `Any` for downcasting.
         ///
         /// This enables checking the concrete type of a `dyn Storage` trait object,
@@ -361,6 +446,24 @@ mod error {
             // Default implementation returns the non-seekable reader
             self.reader(path)
         }
+    }
+
+    // =============================================================================
+    // Streaming Read Extension Trait
+    // =============================================================================
+
+    /// Combined trait for streaming readers with position tracking.
+    ///
+    /// This trait extends `Read` with position and seeking capabilities
+    /// for streaming readers that may not support full `std::io::Seek`.
+    pub trait StreamingRead: Read {
+        /// Get the current read position in bytes.
+        fn position(&self) -> u64;
+
+        /// Seek to a specific byte offset.
+        ///
+        /// Discards any buffered data and starts fetching from the new position.
+        fn seek_to(&mut self, offset: u64) -> StorageResult<()>;
     }
 }
 

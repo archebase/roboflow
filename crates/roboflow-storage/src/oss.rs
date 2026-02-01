@@ -11,7 +11,9 @@ use std::io::{Cursor, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::{ObjectMetadata, Storage, StorageError, StorageResult as Result};
+use crate::{
+    ObjectMetadata, Storage, StorageError, StorageResult as Result, StreamingConfig, StreamingRead,
+};
 
 /// Configuration for Alibaba OSS / S3-compatible storage.
 #[derive(Debug, Clone)]
@@ -379,6 +381,65 @@ impl Storage for OssStorage {
     fn create_dir_all(&self, _path: &Path) -> Result<()> {
         // OSS doesn't have directories - this is a no-op
         Ok(())
+    }
+
+    fn read_range(
+        &self,
+        path: &Path,
+        start: u64,
+        end: Option<u64>,
+    ) -> Result<Box<dyn Read + Send + 'static>> {
+        let key = self.path_to_key(path);
+        let store = self.store.clone();
+
+        // Get object size if end not specified
+        let object_size = if end.is_some() {
+            None
+        } else {
+            Some(self.size(path)?)
+        };
+
+        let end = end.unwrap_or_else(|| object_size.unwrap());
+
+        // Convert to usize for get_range API (with overflow check)
+        let start_usize = usize::try_from(start)
+            .map_err(|_| StorageError::Other(format!("start offset {} too large", start)))?;
+        let end_usize = usize::try_from(end)
+            .map_err(|_| StorageError::Other(format!("end offset {} too large", end)))?;
+
+        // Fetch range
+        let bytes = self.runtime.block_on(async {
+            store
+                .get_range(&key, start_usize..end_usize)
+                .await
+                .map_err(|e| match e {
+                    object_store::Error::NotFound { .. } => {
+                        StorageError::not_found(path.display().to_string())
+                    }
+                    _ => StorageError::Cloud(e.to_string()),
+                })
+        })?;
+
+        Ok(Box::new(Cursor::new(bytes.to_vec())))
+    }
+
+    fn streaming_reader(
+        &self,
+        path: &Path,
+        config: StreamingConfig,
+    ) -> Result<Box<dyn StreamingRead + Send + 'static>> {
+        let key = self.path_to_key(path);
+        let object_size = self.size(path)?;
+
+        let reader = crate::streaming::StreamingOssReader::new(
+            self.store.clone(),
+            self.runtime.handle().clone(),
+            key,
+            object_size,
+            &config,
+        )?;
+
+        Ok(Box::new(reader))
     }
 }
 
