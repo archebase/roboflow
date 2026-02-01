@@ -239,13 +239,12 @@ impl Storage for LocalStorage {
         }
 
         let length = end - start;
-        let length_usize =
-            usize::try_from(length).map_err(|_| {
-                StorageError::Other(format!(
-                    "range length {} too large for memory allocation",
-                    length
-                ))
-            })?;
+        let length_usize = usize::try_from(length).map_err(|_| {
+            StorageError::Other(format!(
+                "range length {} too large for memory allocation",
+                length
+            ))
+        })?;
 
         let mut file = File::open(&full_path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {

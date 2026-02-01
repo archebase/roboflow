@@ -226,9 +226,8 @@ mod error {
         /// # Note
         ///
         /// Prefetch is not yet implemented. This setting is reserved for future use.
-        #[allow(unused)]
-        pub fn with_prefetch_count(mut self, count: usize) -> Self {
-            self.prefetch_count = count;
+        pub fn with_prefetch_count(self, _count: usize) -> Self {
+            // TODO: Implement prefetch and use _count
             self
         }
     }
