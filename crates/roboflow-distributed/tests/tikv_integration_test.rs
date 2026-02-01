@@ -520,6 +520,87 @@ mod tests {
         cleanup_test_data(&client, &job_id, pod_id).await;
     }
 
+    #[tokio::test]
+    async fn test_checkpoint_interrupt_and_resume() {
+        let Some(client) = get_tikv_or_skip().await else {
+            return;
+        };
+
+        let job_id = format!("test_interrupt_resume_{}", uuid::Uuid::new_v4());
+        let pod_id = "test-interrupt-pod";
+        let pod_id_2 = "test-interrupt-pod-2"; // Simulating restart on new pod
+        let total_frames = 1000u64;
+
+        let checkpoint_config = CheckpointConfig::new()
+            .with_frame_interval(50)
+            .with_time_interval(1000);
+        let checkpoint_manager = CheckpointManager::new(client.clone(), checkpoint_config);
+
+        // Phase 1: Simulate initial processing with checkpoint saves
+        use roboflow_distributed::CheckpointState;
+        // We'll "interrupt" at frame 150
+
+        for i in 0..=15 {
+            let frames_written = i * 10;
+            let checkpoint = CheckpointState {
+                job_id: job_id.clone(),
+                pod_id: pod_id.to_string(),
+                byte_offset: frames_written * 1000,
+                last_frame: frames_written,
+                episode_idx: 0,
+                total_frames,
+                video_uploads: Vec::new(),
+                parquet_upload: None,
+                updated_at: chrono::Utc::now(),
+                version: 1,
+            };
+            checkpoint_manager.save(&checkpoint).unwrap();
+        }
+
+        // Verify checkpoint was saved at frame 150
+        let saved_checkpoint = checkpoint_manager.load(&job_id).unwrap();
+        assert!(saved_checkpoint.is_some());
+        let saved = saved_checkpoint.unwrap();
+        assert_eq!(saved.last_frame, 150);
+        assert_eq!(saved.byte_offset, 150000);
+
+        // Phase 2: Simulate resume from checkpoint (new pod takes over)
+        // In real scenario, Worker.process_job would load this checkpoint
+        // and continue from saved.last_frame and saved.byte_offset
+
+        // Simulate continuing from where we left off
+        for i in 16..=20 {
+            let frames_written = i * 10;
+            let checkpoint = CheckpointState {
+                job_id: job_id.clone(),
+                pod_id: pod_id_2.to_string(), // Different pod after restart
+                byte_offset: frames_written * 1000,
+                last_frame: frames_written,
+                episode_idx: 0,
+                total_frames,
+                video_uploads: Vec::new(),
+                parquet_upload: None,
+                updated_at: chrono::Utc::now(),
+                version: 1,
+            };
+            checkpoint_manager.save(&checkpoint).unwrap();
+        }
+
+        // Verify final checkpoint state reflects full progress
+        let final_checkpoint = checkpoint_manager.load(&job_id).unwrap();
+        assert!(final_checkpoint.is_some());
+        let final_cp = final_checkpoint.unwrap();
+        assert_eq!(final_cp.last_frame, 200);
+        assert_eq!(final_cp.pod_id, pod_id_2); // Ownership transferred
+
+        // Verify checkpoint data integrity
+        assert_eq!(final_cp.total_frames, total_frames);
+        assert!(!final_cp.is_complete()); // 200 < 1000
+        assert_eq!(final_cp.progress_percent(), 20.0);
+
+        cleanup_test_data(&client, &job_id, pod_id_2).await;
+    }
+
     // =============================================================================
     // Job Lifecycle Integration Tests
     // =============================================================================
