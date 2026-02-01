@@ -32,12 +32,14 @@ pub trait ProgressCallback: Send + Sync {
     /// Parameters:
     /// - `frames_written`: Total number of frames written so far
     /// - `messages_processed`: Total number of messages processed
+    /// - `writer`: Reference to the writer (for getting episode index, etc.)
     ///
     /// Returns an error if the callback fails (will abort conversion).
     fn on_frame_written(
         &self,
         frames_written: u64,
         messages_processed: u64,
+        writer: &dyn std::any::Any,
     ) -> std::result::Result<(), String>;
 }
 
@@ -49,6 +51,7 @@ impl ProgressCallback for NoOpCallback {
         &self,
         _frames_written: u64,
         _messages_processed: u64,
+        _writer: &dyn std::any::Any,
     ) -> std::result::Result<(), String> {
         std::result::Result::Ok(())
     }
@@ -324,6 +327,7 @@ impl StreamingDatasetConverter {
                     && let Err(e) = callback.on_frame_written(
                         stats.frames_written as u64,
                         stats.messages_processed as u64,
+                        writer.as_any(),
                     )
                 {
                     return Err(roboflow_core::RoboflowError::other(format!(
@@ -355,6 +359,7 @@ impl StreamingDatasetConverter {
                         && let Err(e) = callback.on_frame_written(
                             stats.frames_written as u64,
                             stats.messages_processed as u64,
+                            writer.as_any(),
                         )
                     {
                         return Err(roboflow_core::RoboflowError::other(format!(
@@ -564,8 +569,8 @@ mod tests {
     fn test_noop_callback() {
         // Test that NoOpCallback works without error
         let callback = NoOpCallback;
-        assert!(callback.on_frame_written(100, 1000).is_ok());
-        assert!(callback.on_frame_written(200, 2000).is_ok());
+        assert!(callback.on_frame_written(100, 1000, &()).is_ok());
+        assert!(callback.on_frame_written(200, 2000, &()).is_ok());
     }
 
     #[test]
@@ -581,6 +586,7 @@ mod tests {
                 &self,
                 frames_written: u64,
                 _messages_processed: u64,
+                _writer: &dyn std::any::Any,
             ) -> std::result::Result<(), String> {
                 self.call_count.fetch_add(1, Ordering::Relaxed);
                 self.last_frames.store(frames_written, Ordering::Relaxed);
@@ -597,9 +603,9 @@ mod tests {
         };
 
         // Simulate callback invocations
-        callback.on_frame_written(1, 10).unwrap();
-        callback.on_frame_written(2, 20).unwrap();
-        callback.on_frame_written(3, 30).unwrap();
+        callback.on_frame_written(1, 10, &()).unwrap();
+        callback.on_frame_written(2, 20, &()).unwrap();
+        callback.on_frame_written(3, 30, &()).unwrap();
 
         assert_eq!(call_count.load(Ordering::Relaxed), 3);
         assert_eq!(last_frames.load(Ordering::Relaxed), 3);
@@ -615,13 +621,14 @@ mod tests {
                 &self,
                 _frames_written: u64,
                 _messages_processed: u64,
+                _writer: &dyn std::any::Any,
             ) -> std::result::Result<(), String> {
                 std::result::Result::Err("test error".to_string())
             }
         }
 
         let callback = ErrorCallback;
-        let result = callback.on_frame_written(1, 10);
+        let result = callback.on_frame_written(1, 10, &());
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "test error");
     }

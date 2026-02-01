@@ -116,6 +116,12 @@ impl Default for UploadConfig {
 // Episode Files
 // =============================================================================
 
+/// Type alias for completed uploads tracking per episode.
+/// Maps episode_index -> (completed_video_cameras, parquet_completed)
+pub type CompletedUploadsMap = HashMap<u64, (Vec<String>, bool)>;
+
+// =============================================================================
+
 /// Collection of files for a single episode.
 #[derive(Debug, Clone)]
 pub struct EpisodeFiles {
@@ -234,9 +240,17 @@ impl UploadStats {
 // Upload Task (Internal)
 // =============================================================================
 
+/// File type for upload tracking.
+#[derive(Debug, Clone, PartialEq)]
+enum UploadFileType {
+    /// Parquet dataset file.
+    Parquet,
+    /// Video file with camera name.
+    Video(String),
+}
+
 /// Internal task for the upload worker queue.
 #[derive(Debug)]
-#[allow(dead_code)]
 struct UploadTask {
     /// Local file path to upload.
     local_path: PathBuf,
@@ -247,12 +261,11 @@ struct UploadTask {
     /// File size for progress tracking.
     file_size: u64,
 
-    /// Episode index for tracking.
-    #[allow(dead_code)]
-    episode_index: u64,
+    /// Episode index for tracking (0 if not applicable).
+    episode_index: Option<u64>,
 
-    /// File type identifier for progress callback.
-    file_type: String,
+    /// File type identifier for tracking.
+    file_type: UploadFileType,
 }
 
 // =============================================================================
@@ -285,6 +298,9 @@ pub struct EpisodeUploadCoordinator {
     /// Pending files per episode (for cleanup).
     pending_files: Arc<Mutex<HashMap<u64, Vec<PathBuf>>>>,
 
+    /// Completed uploads per episode for checkpoint tracking.
+    completed_uploads: Arc<Mutex<CompletedUploadsMap>>,
+
     /// Atomic counters for thread-safe stats.
     bytes_uploaded: Arc<AtomicU64>,
     files_uploaded: Arc<AtomicU32>,
@@ -316,6 +332,8 @@ impl EpisodeUploadCoordinator {
 
         let stats = Arc::new(Mutex::new(UploadStats::new()));
         let pending_files = Arc::new(Mutex::new(HashMap::new()));
+        let completed_uploads: Arc<Mutex<CompletedUploadsMap>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let bytes_uploaded = Arc::new(AtomicU64::new(0));
         let files_uploaded = Arc::new(AtomicU32::new(0));
         let files_failed = Arc::new(AtomicU32::new(0));
@@ -331,6 +349,7 @@ impl EpisodeUploadCoordinator {
             workers: Mutex::new(Vec::new()),
             stats,
             pending_files,
+            completed_uploads,
             bytes_uploaded,
             files_uploaded,
             files_failed,
@@ -355,6 +374,7 @@ impl EpisodeUploadCoordinator {
             let storage = Arc::clone(&self.storage);
             let progress = self.progress.clone();
             let stats = Arc::clone(&self.stats);
+            let completed_uploads = Arc::clone(&self.completed_uploads);
             let bytes_uploaded = Arc::clone(&self.bytes_uploaded);
             let files_uploaded = Arc::clone(&self.files_uploaded);
             let files_failed = Arc::clone(&self.files_failed);
@@ -374,6 +394,7 @@ impl EpisodeUploadCoordinator {
                         storage,
                         progress,
                         stats,
+                        completed_uploads,
                         bytes_uploaded,
                         files_uploaded,
                         files_failed,
@@ -406,6 +427,7 @@ impl EpisodeUploadCoordinator {
         storage: Arc<dyn Storage>,
         progress: Option<UploadProgress>,
         stats: Arc<Mutex<UploadStats>>,
+        completed_uploads: Arc<Mutex<CompletedUploadsMap>>,
         bytes_uploaded: Arc<AtomicU64>,
         files_uploaded: Arc<AtomicU32>,
         files_failed: Arc<AtomicU32>,
@@ -453,6 +475,20 @@ impl EpisodeUploadCoordinator {
                         Ok(bytes) => {
                             bytes_uploaded.fetch_add(bytes, Ordering::Relaxed);
                             files_uploaded.fetch_add(1, Ordering::Relaxed);
+
+                            // Track completed upload for checkpointing
+                            if let Some(episode_idx) = task.episode_index {
+                                let mut completed =
+                                    completed_uploads.lock().unwrap_or_else(|e| e.into_inner());
+                                let entry = completed
+                                    .entry(episode_idx)
+                                    .or_insert_with(|| (Vec::new(), false));
+                                if task.file_type == UploadFileType::Parquet {
+                                    entry.1 = true; // Mark parquet as completed
+                                } else if let UploadFileType::Video(camera) = task.file_type {
+                                    entry.0.push(camera);
+                                }
+                            }
 
                             // Delete local file if configured
                             if delete_after_upload {
@@ -638,7 +674,11 @@ impl EpisodeUploadCoordinator {
 
         // Call progress callback
         if let Some(cb) = progress {
-            cb(&task.file_type, total_bytes, task.file_size);
+            let file_name = match &task.file_type {
+                UploadFileType::Parquet => "parquet",
+                UploadFileType::Video(camera) => camera,
+            };
+            cb(file_name, total_bytes, task.file_size);
         }
 
         tracing::trace!(
@@ -662,7 +702,7 @@ impl EpisodeUploadCoordinator {
                 "{}/data/chunk-000/episode_{:06}.parquet",
                 episode.remote_prefix, episode.episode_index
             ),
-            "parquet".to_string(),
+            UploadFileType::Parquet,
         )];
 
         for (camera, path) in &episode.video_paths {
@@ -681,7 +721,7 @@ impl EpisodeUploadCoordinator {
                     "{}/videos/chunk-000/observation.images.{}/{}",
                     episode.remote_prefix, camera, filename
                 ),
-                format!("video:{}", camera),
+                UploadFileType::Video(camera.clone()),
             ));
         }
 
@@ -695,7 +735,7 @@ impl EpisodeUploadCoordinator {
                 local_path: local_path.clone(),
                 remote_path: PathBuf::from(remote_path),
                 file_size: metadata.len(),
-                episode_index: episode.episode_index,
+                episode_index: Some(episode.episode_index),
                 file_type: file_type.clone(),
             };
 
@@ -744,6 +784,17 @@ impl EpisodeUploadCoordinator {
         stats.in_progress_count = self.files_in_progress.load(Ordering::Relaxed);
         stats.total_duration = self.start_time.elapsed();
         stats.clone()
+    }
+
+    /// Get completed upload state for checkpointing.
+    ///
+    /// Returns a map of episode_index -> (completed_video_cameras, parquet_completed).
+    /// This can be used to track upload progress for fault tolerance.
+    pub fn completed_uploads(&self) -> CompletedUploadsMap {
+        self.completed_uploads
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Wait for all pending uploads to complete.

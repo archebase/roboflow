@@ -85,6 +85,10 @@ pub struct LerobotWriter {
 
     #[allow(dead_code)]
     use_cloud_storage: bool,
+
+    /// Upload coordinator for cloud uploads (optional).
+    /// Only available when cloud storage is enabled.
+    upload_coordinator: Option<std::sync::Arc<crate::lerobot::upload::EpisodeUploadCoordinator>>,
 }
 
 /// Frame data for LeRobot Parquet file.
@@ -172,6 +176,7 @@ impl LerobotWriter {
             output_bytes: 0,
             failed_encodings: 0,
             use_cloud_storage: false,
+            upload_coordinator: None,
         })
     }
 
@@ -269,6 +274,32 @@ impl LerobotWriter {
                 })?;
         }
 
+        // Create upload coordinator for cloud storage
+        let upload_coordinator = if use_cloud_storage {
+            // Disable progress for non-interactive batch processing
+            let upload_config = crate::lerobot::upload::UploadConfig {
+                show_progress: false,
+                ..Default::default()
+            };
+
+            match crate::lerobot::upload::EpisodeUploadCoordinator::new(
+                std::sync::Arc::clone(&storage),
+                upload_config,
+                None, // No progress callback for batch processing
+            ) {
+                Ok(coordinator) => Some(std::sync::Arc::new(coordinator)),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to create upload coordinator, uploads will be done synchronously"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             storage,
             output_prefix,
@@ -287,6 +318,7 @@ impl LerobotWriter {
             output_bytes: 0,
             failed_encodings: 0,
             use_cloud_storage,
+            upload_coordinator,
         })
     }
 
@@ -537,11 +569,9 @@ impl LerobotWriter {
         );
 
         // Upload to cloud storage if enabled
-
-        {
-            if self.use_cloud_storage {
-                self.upload_parquet_file(&parquet_path)?;
-            }
+        // Skip direct upload if upload coordinator is available (will be queued later)
+        if self.use_cloud_storage && self.upload_coordinator.is_none() {
+            self.upload_parquet_file(&parquet_path)?;
         }
 
         Ok(())
@@ -730,6 +760,38 @@ impl LerobotWriter {
         Ok(())
     }
 
+    /// Queue episode upload via the upload coordinator (non-blocking).
+    ///
+    /// This method queues all episode files (parquet + videos) for background
+    /// upload via the coordinator. The upload happens asynchronously and
+    /// completion status can be retrieved via `get_upload_state()`.
+    ///
+    /// Returns `Ok(true)` if upload was queued, `Ok(false)` if no coordinator
+    /// is available (falls back to direct uploads).
+    fn queue_episode_upload(
+        &self,
+        parquet_path: &Path,
+        video_paths: &[(String, PathBuf)],
+    ) -> Result<bool> {
+        if let Some(coordinator) = &self.upload_coordinator {
+            let episode_files = crate::lerobot::upload::EpisodeFiles {
+                parquet_path: parquet_path.to_path_buf(),
+                video_paths: video_paths.to_vec(),
+                remote_prefix: self.output_prefix.clone(),
+                episode_index: self.episode_index as u64,
+            };
+
+            coordinator.queue_episode_upload(episode_files)?;
+            tracing::debug!(
+                episode = self.episode_index,
+                "Queued episode upload via coordinator"
+            );
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     /// Encode videos for all cameras.
     ///
     /// This function uses parallel encoding when multiple cameras are present.
@@ -875,11 +937,9 @@ impl LerobotWriter {
         }
 
         // Upload videos to cloud storage
-
-        {
-            if self.use_cloud_storage && !video_files.is_empty() {
-                self.upload_videos_parallel(video_files)?;
-            }
+        // Skip direct upload if upload coordinator is available (will be queued later)
+        if self.use_cloud_storage && self.upload_coordinator.is_none() && !video_files.is_empty() {
+            self.upload_videos_parallel(video_files)?;
         }
 
         eprintln!(
@@ -1020,18 +1080,16 @@ impl LerobotWriter {
         self.failed_encodings += failed_encodings.load(Ordering::Relaxed);
 
         // Upload videos to cloud storage
-
-        {
-            if self.use_cloud_storage {
-                let files = video_files.lock().map_err(|e| {
-                    roboflow_core::RoboflowError::encode(
-                        "VideoEncoder",
-                        format!("Video files mutex poisoned during upload: {}", e),
-                    )
-                })?;
-                if !files.is_empty() {
-                    self.upload_videos_parallel(files.clone())?;
-                }
+        // Skip direct upload if upload coordinator is available (will be queued later)
+        if self.use_cloud_storage && self.upload_coordinator.is_none() {
+            let files = video_files.lock().map_err(|e| {
+                roboflow_core::RoboflowError::encode(
+                    "VideoEncoder",
+                    format!("Video files mutex poisoned during upload: {}", e),
+                )
+            })?;
+            if !files.is_empty() {
+                self.upload_videos_parallel(files.clone())?;
             }
         }
 
@@ -1316,6 +1374,20 @@ impl DatasetWriter for LerobotWriter {
     fn is_initialized(&self) -> bool {
         self.initialized
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn episode_index(&self) -> Option<usize> {
+        Some(self.episode_index)
+    }
+
+    fn get_upload_state(&self) -> Option<crate::common::base::UploadState> {
+        self.upload_coordinator
+            .as_ref()
+            .map(|coordinator| coordinator.completed_uploads())
+    }
 }
 
 /// Implement the LeRobot-specific trait for LerobotWriter.
@@ -1336,6 +1408,45 @@ impl LerobotWriterTrait for LerobotWriter {
 
         // Encode videos
         self.encode_videos()?;
+
+        // Queue upload via coordinator if available (non-blocking)
+        // This must happen before clearing image_buffers
+        if self.upload_coordinator.is_some() {
+            // Reconstruct file paths for upload
+            let parquet_path = self.output_dir.join(format!(
+                "data/chunk-000/episode_{:06}.parquet",
+                self.episode_index
+            ));
+
+            // Collect video paths from image_buffers (before they're cleared)
+            let video_paths: Vec<(String, PathBuf)> = self
+                .image_buffers
+                .keys()
+                .filter(|camera| {
+                    // Only include cameras that had images (video files were created)
+                    self.image_buffers
+                        .get(&**camera)
+                        .is_some_and(|v| !v.is_empty())
+                })
+                .map(|camera| {
+                    let feature_name = format!("observation.images.{}", camera);
+                    let video_path = self.output_dir.join(format!(
+                        "videos/chunk-000/{}/episode_{:06}.mp4",
+                        feature_name, self.episode_index
+                    ));
+                    (camera.clone(), video_path)
+                })
+                .collect();
+
+            // Queue the upload (happens in background)
+            if let Err(e) = self.queue_episode_upload(&parquet_path, &video_paths) {
+                tracing::warn!(
+                    episode = self.episode_index,
+                    error = %e,
+                    "Failed to queue episode upload, files will remain local"
+                );
+            }
+        }
 
         // Calculate and store episode stats
         self.calculate_episode_stats()?;

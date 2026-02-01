@@ -133,7 +133,7 @@ dataset-all = ["dataset-hdf5", "dataset-parquet", "dataset-depth"]
 # Cloud storage support for Alibaba OSS and S3-compatible backends
 cloud-storage = ["dep:object_store", "dep:tokio", "dep:url", "dep:bytes"]
 # Distributed coordination via TiKV
-distributed = ["dep:tikv-client", "dep:futures", "dep:tokio", "dep:bincode"]
+distributed = ["dep:roboflow-distributed", "dep:tikv-client", "dep:futures", "dep:tokio", "dep:bincode"]
 # Python bindings via PyO3 (extension-module mode to prevent libpython linking)
 python = ["pyo3", "robocodec/python"]
 # Python extension module (alias for python, since extension-module is now default)

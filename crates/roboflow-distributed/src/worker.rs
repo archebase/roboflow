@@ -60,6 +60,7 @@ use tokio::time::sleep;
 
 // Dataset conversion imports
 use roboflow_dataset::{
+    common::DatasetWriter,
     lerobot::{DatasetConfig as LerobotDatasetConfig, LerobotConfig, VideoConfig},
     streaming::StreamingDatasetConverter,
 };
@@ -341,30 +342,55 @@ impl roboflow_dataset::streaming::converter::ProgressCallback for WorkerCheckpoi
     fn on_frame_written(
         &self,
         frames_written: u64,
-        _messages_processed: u64,
+        messages_processed: u64,
+        writer: &dyn std::any::Any,
     ) -> std::result::Result<(), String> {
         let last_frame = self
             .last_checkpoint_frame
             .load(std::sync::atomic::Ordering::Relaxed);
         let frames_since_last = frames_written.saturating_sub(last_frame);
 
-        let mut last_time = self.last_checkpoint_time.lock().unwrap();
-        let time_since_last = last_time.elapsed();
+        // Scope the lock tightly to avoid holding it during expensive operations
+        let time_since_last = {
+            let last_time = self.last_checkpoint_time.lock().unwrap();
+            last_time.elapsed()
+        };
 
         // Check if we should save a checkpoint
         if self
             .checkpoint_manager
             .should_checkpoint(frames_since_last, time_since_last)
         {
+            // Extract episode index from writer if it's a LeRobotWriter
+            use roboflow_dataset::lerobot::writer::LerobotWriter;
+            let episode_idx = writer
+                .downcast_ref::<LerobotWriter>()
+                .and_then(|w| w.episode_index())
+                .unwrap_or(0) as u64;
+
+            // NOTE: Using messages_processed as byte_offset proxy.
+            // Actual byte offset tracking requires robocodec modifications.
+            // Resume works by re-reading from start and skipping messages.
+            //
+            // NOTE: Upload state tracking requires episode-level checkpointing.
+            // Current frame-level checkpoints don't capture upload state because:
+            // 1. Uploads happen after finish_episode(), not during frame processing
+            // 2. The coordinator tracks completion, not in-progress multipart state
+            // 3. Resume should check which episodes exist in cloud storage
+            //
+            // TODO: Implement episode-level upload state tracking:
+            // - After each episode finishes, save episode completion to TiKV
+            // - On resume, query cloud storage for completed episodes
+            // - Skip re-uploading episodes that already exist
             let checkpoint = CheckpointState {
                 job_id: self.job_id.clone(),
                 pod_id: self.pod_id.clone(),
-                byte_offset: 0, // TODO: track byte offset
+                byte_offset: messages_processed,
                 last_frame: frames_written,
-                episode_idx: 0, // TODO: track episode index
+                episode_idx,
                 total_frames: self.total_frames,
-                video_uploads: Vec::new(), // TODO: track upload states
-                parquet_upload: None,      // TODO: track parquet upload state
+                video_uploads: Vec::new(),
+                parquet_upload: None,
                 updated_at: chrono::Utc::now(),
                 version: 1,
             };
@@ -386,7 +412,8 @@ impl roboflow_dataset::streaming::converter::ProgressCallback for WorkerCheckpoi
                 );
                 self.last_checkpoint_frame
                     .store(frames_written, std::sync::atomic::Ordering::Relaxed);
-                *last_time = std::time::Instant::now();
+                // Re-acquire lock only for the instant update
+                *self.last_checkpoint_time.lock().unwrap() = std::time::Instant::now();
             }
         }
 
@@ -661,10 +688,16 @@ impl Worker {
 
         // Add checkpoint callback if enabled
         let job_id = job.id.clone();
+        // Estimate total frames from source file size.
+        // Heuristic: ~100KB per frame for typical robotics data (images + state).
+        // This is approximate; actual frame count is updated as we process.
+        // TODO: Improve by parsing bag/MCAP header for actual message count.
+        let estimated_frame_size = 100_000; // 100KB per frame
+        let total_frames = (job.source_size / estimated_frame_size).max(1);
         let checkpoint_callback = Arc::new(WorkerCheckpointCallback {
             job_id: job_id.clone(),
             pod_id: self.pod_id.clone(),
-            total_frames: 0, // TODO: estimate total frames from input
+            total_frames,
             checkpoint_manager: self.checkpoint_manager.clone(),
             last_checkpoint_frame: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_checkpoint_time: Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
