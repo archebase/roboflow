@@ -106,18 +106,9 @@ impl CheckpointManager {
     ///
     /// Returns None if no checkpoint exists.
     pub fn load(&self, job_id: &str) -> Result<Option<CheckpointState>> {
-        // Use blocking wrapper for async operation
         let tikv = self.tikv.clone();
         let job_id = job_id.to_string();
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(async move { tikv.get_checkpoint(&job_id).await }),
-            Err(_) => {
-                // No runtime exists, create a temporary one
-                let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| TikvError::Other(format!("Failed to create runtime: {}", e)))?;
-                rt.block_on(async move { tikv.get_checkpoint(&job_id).await })
-            }
-        }
+        Self::block_on(|handle| handle.block_on(async move { tikv.get_checkpoint(&job_id).await }))
     }
 
     /// Save a checkpoint.
@@ -126,14 +117,7 @@ impl CheckpointManager {
     pub fn save(&self, checkpoint: &CheckpointState) -> Result<()> {
         let tikv = self.tikv.clone();
         let checkpoint = checkpoint.clone();
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(async move { tikv.update_checkpoint(&checkpoint).await }),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| TikvError::Other(format!("Failed to create runtime: {}", e)))?;
-                rt.block_on(async move { tikv.update_checkpoint(&checkpoint).await })
-            }
-        }
+        Self::block_on(|handle| handle.block_on(async move { tikv.update_checkpoint(&checkpoint).await }))
     }
 
     /// Save checkpoint with heartbeat in a single transaction.
@@ -149,66 +133,34 @@ impl CheckpointManager {
         let checkpoint = checkpoint.clone();
         let pod_id = pod_id.to_string();
 
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => {
-                handle.block_on(async move {
-                    // Get existing heartbeat or create new one
-                    let mut heartbeat = tikv
-                        .get_heartbeat(&pod_id)
-                        .await?
-                        .unwrap_or_else(|| HeartbeatRecord::new(pod_id.clone()));
+        Self::block_on(|handle| {
+            handle.block_on(async move {
+                // Get existing heartbeat or create new one
+                let mut heartbeat = tikv
+                    .get_heartbeat(&pod_id)
+                    .await?
+                    .unwrap_or_else(|| HeartbeatRecord::new(pod_id.clone()));
 
-                    heartbeat.beat();
-                    heartbeat.status = status;
+                heartbeat.beat();
+                heartbeat.status = status;
 
-                    // Serialize both
-                    let checkpoint_data = bincode::serialize(&checkpoint)
-                        .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                    let heartbeat_data = bincode::serialize(&heartbeat)
-                        .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                // Serialize both
+                let checkpoint_data = bincode::serialize(&checkpoint)
+                    .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                let heartbeat_data = bincode::serialize(&heartbeat)
+                    .map_err(|e| TikvError::Serialization(e.to_string()))?;
 
-                    // Batch put in single transaction
-                    let checkpoint_key = StateKeys::checkpoint(&checkpoint.job_id);
-                    let heartbeat_key = HeartbeatKeys::heartbeat(&pod_id);
+                // Batch put in single transaction
+                let checkpoint_key = StateKeys::checkpoint(&checkpoint.job_id);
+                let heartbeat_key = HeartbeatKeys::heartbeat(&pod_id);
 
-                    tikv.batch_put(vec![
-                        (checkpoint_key, checkpoint_data),
-                        (heartbeat_key, heartbeat_data),
-                    ])
-                    .await
-                })
-            }
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| TikvError::Other(format!("Failed to create runtime: {}", e)))?;
-                rt.block_on(async move {
-                    // Get existing heartbeat or create new one
-                    let mut heartbeat = tikv
-                        .get_heartbeat(&pod_id)
-                        .await?
-                        .unwrap_or_else(|| HeartbeatRecord::new(pod_id.clone()));
-
-                    heartbeat.beat();
-                    heartbeat.status = status;
-
-                    // Serialize both
-                    let checkpoint_data = bincode::serialize(&checkpoint)
-                        .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                    let heartbeat_data = bincode::serialize(&heartbeat)
-                        .map_err(|e| TikvError::Serialization(e.to_string()))?;
-
-                    // Batch put in single transaction
-                    let checkpoint_key = StateKeys::checkpoint(&checkpoint.job_id);
-                    let heartbeat_key = HeartbeatKeys::heartbeat(&pod_id);
-
-                    tikv.batch_put(vec![
-                        (checkpoint_key, checkpoint_data),
-                        (heartbeat_key, heartbeat_data),
-                    ])
-                    .await
-                })
-            }
-        }
+                tikv.batch_put(vec![
+                    (checkpoint_key, checkpoint_data),
+                    (heartbeat_key, heartbeat_data),
+                ])
+                .await
+            })
+        })
     }
 
     /// Delete a checkpoint.
@@ -217,20 +169,12 @@ impl CheckpointManager {
     pub fn delete(&self, job_id: &str) -> Result<()> {
         let tikv = self.tikv.clone();
         let job_id = job_id.to_string();
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(async move {
+        Self::block_on(|handle| {
+            handle.block_on(async move {
                 let key = StateKeys::checkpoint(&job_id);
                 tikv.delete(key).await
-            }),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| TikvError::Other(format!("Failed to create runtime: {}", e)))?;
-                rt.block_on(async move {
-                    let key = StateKeys::checkpoint(&job_id);
-                    tikv.delete(key).await
-                })
-            }
-        }
+            })
+        })
     }
 
     /// Check if a checkpoint should be saved based on configuration.
@@ -278,6 +222,21 @@ impl CheckpointManager {
     pub fn next_checkpoint_frame(&self, current_frame: u64) -> u64 {
         ((current_frame / self.config.checkpoint_interval_frames) + 1)
             * self.config.checkpoint_interval_frames
+    }
+
+    /// Helper to execute async code in current runtime or create a temporary one.
+    fn block_on<F, R>(f: F) -> R
+    where
+        F: FnOnce(tokio::runtime::Handle) -> R + Send,
+    {
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => f(handle),
+            Err(_) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .expect("Failed to create tokio runtime");
+                f(rt.handle().clone())
+            }
+        }
     }
 }
 
