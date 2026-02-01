@@ -777,6 +777,10 @@ fn extract_bag_time_range(
 }
 
 fn main() {
+    // Initialize structured logging
+    roboflow_core::init_logging()
+        .unwrap_or_else(|e| eprintln!("Failed to initialize logging: {}", e));
+
     let args: Vec<String> = std::env::args().collect();
 
     let (input, cmd) = match parse_args(&args) {
