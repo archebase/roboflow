@@ -1082,7 +1082,14 @@ impl Worker {
                                 "Shutdown requested, not processing new job"
                             );
                             // Release the job back to Pending
-                            let _ = self.release_job(&job_id).await;
+                            if let Err(e) = self.release_job(&job_id).await {
+                                tracing::error!(
+                                    pod_id = %self.pod_id,
+                                    job_id = %job_id,
+                                    error = %e,
+                                    "CRITICAL: Failed to release job during shutdown - job may be stuck in Processing state"
+                                );
+                            }
                             break;
                         }
 

@@ -56,6 +56,7 @@
 
 use std::env;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 #[cfg(feature = "distributed")]
@@ -66,6 +67,21 @@ use roboflow_storage::StorageFactory;
 // =============================================================================
 // Command Types
 // =============================================================================
+
+/// Generate a pod ID from environment or hostname + UUID.
+#[cfg(feature = "distributed")]
+fn generate_pod_id(prefix: &str) -> String {
+    match env::var("POD_NAME") {
+        Ok(name) => name,
+        Err(_) => {
+            // Try to get hostname, fall back to "unknown"
+            let hostname = hostname::get()
+                .map(|h| h.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
+            format!("{}-{}", prefix, hostname)
+        }
+    }
+}
 
 /// CLI command.
 enum Command {
@@ -331,13 +347,15 @@ async fn run_worker(
 
     // Create storage backend using factory from environment
     let factory = StorageFactory::from_env();
-    let storage = factory.create(&storage_url)?;
+    let storage = factory
+        .create(&storage_url)
+        .map_err(|e| anyhow::anyhow!("Failed to create storage backend for URL '{}': {}", storage_url, e))?;
 
     // Load worker configuration from environment
     let config = load_worker_config();
 
     // Generate or use provided pod ID
-    let pod_id = pod_id.unwrap_or_else(Worker::generate_pod_id);
+    let pod_id = pod_id.unwrap_or_else(|| generate_pod_id("worker"));
 
     tracing::info!(
         pod_id = %pod_id,
@@ -349,7 +367,7 @@ async fn run_worker(
     let mut worker = Worker::new(pod_id, tikv, storage, config)?;
 
     // Start health server in background
-    let health_handle = start_health_server_background()?;
+    let health_handle = start_health_server_background().await?;
 
     // Run worker loop (this blocks until shutdown)
     worker.run().await?;
@@ -443,15 +461,15 @@ async fn run_scanner(
 
     // Create storage backend using factory from environment
     let factory = StorageFactory::from_env();
-    let storage = factory.create(&storage_url)?;
+    let storage = factory
+        .create(&storage_url)
+        .map_err(|e| anyhow::anyhow!("Failed to create storage backend for URL '{}': {}", storage_url, e))?;
 
     // Load scanner configuration from environment
     let config = load_scanner_config();
 
     // Generate or use provided pod ID
-    let pod_id = pod_id.unwrap_or_else(|| {
-        env::var("POD_NAME").unwrap_or_else(|_| format!("scanner-{}", uuid::Uuid::new_v4()))
-    });
+    let pod_id = pod_id.unwrap_or_else(|| generate_pod_id("scanner"));
 
     tracing::info!(
         pod_id = %pod_id,
@@ -463,7 +481,7 @@ async fn run_scanner(
     let mut scanner = Scanner::new(pod_id, tikv, storage, config)?;
 
     // Start health server in background
-    let health_handle = start_health_server_background()?;
+    let health_handle = start_health_server_background().await?;
 
     // Run scanner loop (this blocks until shutdown)
     scanner.run().await?;
@@ -496,10 +514,17 @@ fn load_scanner_config() -> ScannerConfig {
 
     // Apply file pattern if provided
     if let Ok(pattern) = env::var("SCANNER_FILE_PATTERN") {
-        config = match config.clone().with_file_pattern(&pattern) {
-            Ok(c) => c,
-            Err(_) => config, // If pattern is invalid, keep config without pattern
-        };
+        match config.clone().with_file_pattern(&pattern) {
+            Ok(c) => config = c,
+            Err(e) => {
+                tracing::warn!(
+                    pattern = %pattern,
+                    error = %e,
+                    "Invalid SCANNER_FILE_PATTERN, scanning without file filter"
+                );
+                // Keep config without pattern
+            }
+        }
     }
 
     config
@@ -520,6 +545,7 @@ async fn run_scanner(
 /// Health server handle for background management.
 pub struct HealthServerHandle {
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    _server_task: tokio::task::JoinHandle<()>,
 }
 
 impl HealthServerHandle {
@@ -528,12 +554,21 @@ impl HealthServerHandle {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
+        // Wait for the server task to complete
+        let _ = tokio::time::timeout(Duration::from_secs(5), self._server_task).await;
     }
 }
 
+/// Health server startup result.
+enum HealthServerStartup {
+    Ready,
+    Failed(String),
+}
+
 /// Start the health server in the background.
+/// Returns error if the server fails to bind within a short timeout.
 #[cfg(feature = "distributed")]
-fn start_health_server_background() -> Result<HealthServerHandle, Box<dyn std::error::Error>> {
+async fn start_health_server_background() -> Result<HealthServerHandle, Box<dyn std::error::Error>> {
     use std::env;
 
     let host = env::var("HEALTH_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
@@ -542,88 +577,199 @@ fn start_health_server_background() -> Result<HealthServerHandle, Box<dyn std::e
         .and_then(|s| s.parse().ok())
         .unwrap_or(8080);
 
+    let addr = format!("{}:{}", host, port);
+    let addr_for_log = addr.clone();
+
+    // Create a channel to verify successful startup
+    let (startup_tx, mut startup_rx) = tokio::sync::oneshot::channel::<HealthServerStartup>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
-    tokio::spawn(async move {
-        run_health_server(&host, port, shutdown_rx).await;
+    // Spawn the server task
+    let server_task = tokio::spawn(async move {
+        run_health_server(&addr, shutdown_rx, startup_tx).await;
     });
+
+    // Wait for startup confirmation with a timeout
+    let startup_result = tokio::time::timeout(
+        Duration::from_millis(500),
+        &mut startup_rx,
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "Health server startup timed out after 500ms - may have failed to bind to {}",
+            addr_for_log
+        )
+    })?
+    .map_err(|e| format!("Health server startup channel closed: {}", e))?;
+
+    match startup_result {
+        HealthServerStartup::Ready => {
+            tracing::info!("Health server successfully started on {}", addr_for_log);
+        }
+        HealthServerStartup::Failed(err) => {
+            return Err(format!("Health server failed to start: {}", err).into());
+        }
+    }
 
     Ok(HealthServerHandle {
         shutdown_tx: Some(shutdown_tx),
+        _server_task: server_task,
     })
 }
 
 /// Run the health check server.
-async fn run_health_server(host: &str, port: u16, shutdown_rx: tokio::sync::oneshot::Receiver<()>) {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
+async fn run_health_server(
+    addr: &str,
+    shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+    startup_tx: tokio::sync::oneshot::Sender<HealthServerStartup>,
+) {
     // Ready flag - set to true when service is ready
     let ready = Arc::new(AtomicBool::new(true));
 
-    // Simple HTTP implementation without external dependencies
-    let addr = format!("{}:{}", host, port);
-    let listener = match tokio::net::TcpListener::bind(&addr).await {
+    // Try to bind the listener
+    let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => {
-            tracing::info!("Health server listening on {}", addr);
+            // Send success signal
+            let _ = startup_tx.send(HealthServerStartup::Ready);
             l
         }
         Err(e) => {
-            tracing::error!("Failed to bind health server to {}: {}", addr, e);
+            let err_msg = format!("Failed to bind health server to {}: {}", addr, e);
+            tracing::error!("{}", err_msg);
+            let _ = startup_tx.send(HealthServerStartup::Failed(err_msg));
             return;
         }
     };
 
     // Use a simple TCP loop to handle HTTP requests
-    tokio::spawn(async move {
-        let ready = Arc::clone(&ready);
-        let mut shutdown_rx = shutdown_rx;
+    let ready = Arc::clone(&ready);
+    let mut shutdown_rx = shutdown_rx;
 
-        loop {
-            tokio::select! {
-                result = listener.accept() => {
-                    match result {
-                        Ok((socket, _)) => {
-                            let ready = Arc::clone(&ready);
-                            tokio::spawn(async move {
-                                use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                                let mut socket: tokio::net::TcpStream = socket;
-                                let mut buf = [0u8; 1024];
-                                if let Ok(n) = socket.read(&mut buf).await {
+    loop {
+        tokio::select! {
+            result = tokio::time::timeout(
+                Duration::from_secs(5),
+                listener.accept()
+            ) => {
+                match result {
+                    Ok(Ok((socket, peer_addr))) => {
+                        let ready = Arc::clone(&ready);
+                        tokio::spawn(async move {
+                            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                            let mut socket: tokio::net::TcpStream = socket;
+                            let mut buf = [0u8; 2048]; // Increased buffer size
+                            let response = match tokio::time::timeout(
+                                Duration::from_secs(5),
+                                socket.read(&mut buf)
+                            ).await {
+                                Ok(Ok(n)) if n > 0 => {
                                     let request = String::from_utf8_lossy(&buf[..n]);
-                                    let response = if request.contains("GET /health/live ") {
-                                        // Liveness probe - always return 200 if we're responding
-                                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"alive\"}\r\n"
-                                    } else if request.contains("GET /health/ready ") {
-                                        // Readiness probe - check ready flag
-                                        if ready.load(Ordering::Relaxed) {
-                                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"ready\"}\r\n"
-                                        } else {
-                                            "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\n\r\n{\"status\":\"not_ready\"}\r\n"
-                                        }
-                                    } else if request.contains("GET /health ") {
-                                        // Basic health check
-                                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"healthy\"}\r\n"
-                                    } else {
-                                        "HTTP/1.1 404 Not Found\r\n\r\n"
-                                    };
-
-                                    let _ = socket.write_all(response.as_bytes()).await;
-                                    let _ = socket.shutdown().await;
+                                    handle_health_request(&request, &ready)
                                 }
-                            });
-                        }
-                        Err(e) => {
-                            tracing::debug!("Health server accept error: {}", e);
-                        }
+                                Ok(Ok(_)) => {
+                                    "HTTP/1.1 400 Bad Request\r\n\r\n".to_string()
+                                }
+                                Ok(Err(e)) => {
+                                    tracing::warn!(
+                                        peer = %peer_addr,
+                                        error = %e,
+                                        "Health server socket read error"
+                                    );
+                                    "HTTP/1.1 500 Internal Server Error\r\n\r\n".to_string()
+                                }
+                                Err(_) => {
+                                    tracing::warn!(
+                                        peer = %peer_addr,
+                                        "Health server read timeout"
+                                    );
+                                    "HTTP/1.1 408 Request Timeout\r\n\r\n".to_string()
+                                }
+                            };
+
+                            if let Err(e) = socket.write_all(response.as_bytes()).await {
+                                tracing::warn!(
+                                    peer = %peer_addr,
+                                    error = %e,
+                                    "Health server response write failed"
+                                );
+                            }
+                            let _ = socket.shutdown().await;
+                        });
+                    }
+                    Ok(Err(e)) => {
+                        // Log at warn level (not debug) so production can see issues
+                        tracing::warn!(
+                            error = %e,
+                            "Health server accept error - may indicate network issues or resource exhaustion"
+                        );
+                    }
+                    Err(_) => {
+                        // Timeout is expected - no connections, just loop again
                     }
                 }
-                _ = &mut shutdown_rx => {
-                    tracing::info!("Health server shutting down");
-                    break;
-                }
+            }
+            _ = &mut shutdown_rx => {
+                tracing::info!("Health server shutting down");
+                break;
             }
         }
-    }).await.ok();
+    }
+}
+
+/// Handle a health check HTTP request.
+fn handle_health_request(request: &str, ready: &AtomicBool) -> String {
+    use std::sync::atomic::Ordering;
+
+    // Basic request validation - check for HTTP/1.x GET request
+    if !request.starts_with("GET /") {
+        return "HTTP/1.1 400 Bad Request\r\n\r\n".to_string();
+    }
+
+    // Extract path more carefully
+    let path_end = match request.find(' ') {
+        Some(pos) if request.starts_with("GET ") => pos,
+        _ => return "HTTP/1.1 400 Bad Request\r\n\r\n".to_string(),
+    };
+
+    // Skip "GET " to get the path
+    let request_line = &request[4..path_end];
+
+    let response = match request_line {
+        "/health/live" => {
+            // Liveness probe - always return 200 if we're responding
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"alive\"}\r\n"
+        }
+        "/health/ready" => {
+            // Readiness probe - check ready flag
+            if ready.load(Ordering::Relaxed) {
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"ready\"}\r\n"
+            } else {
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\n\r\n{\"status\":\"not_ready\"}\r\n"
+            }
+        }
+        "/health" => {
+            // Basic health check
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"healthy\"}\r\n"
+        }
+        "/metrics" => {
+            // Prometheus metrics endpoint
+            // Returns placeholder metrics - actual worker/scanner metrics
+            // would need to be shared via a global registry
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\n\r\n\
+            # HELP roboflow_up Whether the roboflow service is up\n\
+            # TYPE roboflow_up gauge\n\
+            roboflow_up 1\n\
+            # HELP roboflow_health_server_ready Whether the service is ready\n\
+            # TYPE roboflow_health_server_ready gauge\n\
+            roboflow_health_server_ready 1\n\r\n"
+        }
+        _ => {
+            "HTTP/1.1 404 Not Found\r\n\r\n"
+        }
+    };
+
+    response.to_string()
 }
 
 #[cfg(not(feature = "distributed"))]
@@ -656,8 +802,7 @@ async fn run_health_command(
 
     #[cfg(feature = "distributed")]
     {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
+        let ready = Arc::new(AtomicBool::new(true));
         let listener = tokio::net::TcpListener::bind(&addr).await?;
 
         println!("Health server listening on http://{}", addr);
@@ -665,28 +810,35 @@ async fn run_health_command(
         println!("  http://{}/health/live   - Liveness probe", addr);
         println!("  http://{}/health/ready  - Readiness probe", addr);
         println!("  http://{}/health        - Basic health check", addr);
+        println!("  http://{}/metrics       - Prometheus metrics", addr);
 
         loop {
             let (socket, _) = listener.accept().await?;
 
+            let ready = Arc::clone(&ready);
             tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
                 let mut socket = socket;
-                let mut buf = [0u8; 1024];
-                if let Ok(n) = socket.read(&mut buf).await {
-                    let request = String::from_utf8_lossy(&buf[..n]);
-                    let response = if request.contains("GET /health/live ") {
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"alive\"}\r\n"
-                    } else if request.contains("GET /health/ready ") {
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"ready\"}\r\n"
-                    } else if request.contains("GET /health ") {
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"healthy\"}\r\n"
-                    } else {
-                        "HTTP/1.1 404 Not Found\r\n\r\n"
-                    };
+                let mut buf = [0u8; 2048];
 
-                    let _ = socket.write_all(response.as_bytes()).await;
-                    let _ = socket.shutdown().await;
-                }
+                let response = match tokio::time::timeout(
+                    Duration::from_secs(5),
+                    socket.read(&mut buf)
+                ).await {
+                    Ok(Ok(n)) if n > 0 => {
+                        let request = String::from_utf8_lossy(&buf[..n]);
+                        handle_health_request(&request, &ready)
+                    }
+                    Ok(Ok(_)) | Ok(Err(_)) => {
+                        "HTTP/1.1 400 Bad Request\r\n\r\n".to_string()
+                    }
+                    Err(_) => {
+                        "HTTP/1.1 408 Request Timeout\r\n\r\n".to_string()
+                    }
+                };
+
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.shutdown().await;
             });
         }
     }
