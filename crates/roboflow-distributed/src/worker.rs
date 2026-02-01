@@ -525,9 +525,13 @@ impl Worker {
             }
         }
 
-        // Build the full input path (source storage + source key)
-        // Convert to owned PathBuf to avoid lifetime issues with spawn_blocking
-        let input_path = PathBuf::from(&job.source_key);
+        // Build the full input path from source_key.
+        // Strip storage_prefix if present to avoid double-prefixing with LocalStorage.
+        let input_path = if let Some(prefix) = job.source_key.strip_prefix(&self.config.storage_prefix) {
+            PathBuf::from(prefix)
+        } else {
+            PathBuf::from(&job.source_key)
+        };
 
         // Build the output path for this job
         let output_path = self.build_output_path(job);
@@ -544,34 +548,71 @@ impl Worker {
         // Create streaming converter with storage backends
         let converter = match StreamingDatasetConverter::new_lerobot_with_storage(
             &output_path,
-            lerobot_config.clone(),
+            lerobot_config,
             Some(self.storage.clone()), // input storage for downloading
             Some(self.storage.clone()), // output storage for writing
         ) {
             Ok(c) => c,
             Err(e) => {
-                let error_msg = format!("Failed to create converter: {}", e);
-                tracing::error!(error = %error_msg, "Converter creation failed");
+                let error_msg = format!(
+                    "Failed to create converter for job {} (input: {}, output: {}): {}",
+                    job.id, input_path.display(), output_path.display(), e
+                );
+                tracing::error!(
+                    job_id = %job.id,
+                    input = %input_path.display(),
+                    output = %output_path.display(),
+                    original_error = %e,
+                    "Converter creation failed"
+                );
                 return ProcessingResult::Failed { error: error_msg };
             }
         };
 
-        // Run the conversion
+        // Run the conversion with a timeout to prevent indefinite hangs.
         // Note: This is a synchronous operation that may take significant time.
         // We use spawn_blocking to avoid starving the async runtime.
-        // Clone job_id for use inside the blocking task.
+        use std::time::Duration;
+        const CONVERSION_TIMEOUT: Duration = Duration::from_secs(3600); // 1 hour
+
         let job_id = job.id.clone();
-        let stats = match tokio::task::spawn_blocking(move || converter.convert(input_path)).await {
-            Ok(Ok(stats)) => stats,
-            Ok(Err(e)) => {
-                let error_msg = format!("Conversion failed: {}", e);
-                tracing::error!(error = %error_msg, "Job processing failed");
+        let job_id_clone = job_id.clone();
+        let conversion_task = tokio::task::spawn_blocking(move || {
+            converter.convert(input_path)
+        });
+
+        let stats = match tokio::time::timeout(CONVERSION_TIMEOUT, conversion_task).await {
+            Ok(Ok(Ok(stats))) => stats,
+            Ok(Ok(Err(e))) => {
+                let error_msg = format!("Conversion failed for job {}: {}", job_id_clone, e);
+                tracing::error!(
+                    job_id = %job_id_clone,
+                    original_error = %e,
+                    "Job processing failed"
+                );
                 return ProcessingResult::Failed { error: error_msg };
             }
-            Err(join_err) => {
-                // Task spawning failed or panicked
-                let error_msg = format!("Task failed: {}", join_err);
-                tracing::error!(error = %error_msg, "Job processing task failed");
+            Ok(Err(join_err)) => {
+                // Task panicked or was cancelled
+                let error_msg = if join_err.is_cancelled() {
+                    format!("Conversion task cancelled for job {}", job_id_clone)
+                } else {
+                    format!("Conversion task panicked for job {}: {}", job_id_clone, join_err)
+                };
+                tracing::error!(
+                    job_id = %job_id_clone,
+                    join_error = %join_err,
+                    "Job processing task failed"
+                );
+                return ProcessingResult::Failed { error: error_msg };
+            }
+            Err(_) => {
+                let error_msg = format!("Conversion timed out after {:?} for job {}", CONVERSION_TIMEOUT, job_id_clone);
+                tracing::error!(
+                    job_id = %job_id_clone,
+                    timeout_secs = CONVERSION_TIMEOUT.as_secs(),
+                    "Job processing timed out"
+                );
                 return ProcessingResult::Failed { error: error_msg };
             }
         };
@@ -592,9 +633,12 @@ impl Worker {
     /// The output path follows the pattern: `{output_prefix}/{job_id}/`
     /// This ensures each job has a unique output directory.
     fn build_output_path(&self, job: &JobRecord) -> PathBuf {
-        // Create a job-specific output directory
+        // Create a job-specific output directory.
         // Pattern: output_prefix/job_id/
-        PathBuf::from(format!("{}/{}/", self.config.output_prefix, job.id))
+        PathBuf::from(format!("{}/{}",
+            self.config.output_prefix.trim_end_matches('/'),
+            job.id
+        ))
     }
 
     /// Create a LeRobot configuration for processing a job.

@@ -15,10 +15,13 @@ use roboflow::{ImageData, LerobotConfig, LerobotWriter, VideoConfig};
 
 /// Create a test output directory.
 fn test_output_dir() -> tempfile::TempDir {
-    fs::create_dir_all("tests/output").ok();
-    tempfile::tempdir_in("tests/output").unwrap_or_else(|_| {
-        // Fallback to system temp if tests/output doesn't exist
-        tempfile::tempdir().expect("Failed to create temp dir")
+    // Explicitly create the test output directory; log and fall back on error
+    if let Err(e) = fs::create_dir_all("tests/output") {
+        eprintln!("Warning: Failed to create tests/output directory: {}. Using system temp.", e);
+        return tempfile::tempdir().expect("Failed to create temp dir");
+    }
+    tempfile::tempdir_in("tests/output").unwrap_or_else(|e| {
+        panic!("Failed to create tempdir in tests/output: {}", e)
     })
 }
 
