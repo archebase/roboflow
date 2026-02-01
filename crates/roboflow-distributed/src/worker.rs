@@ -527,11 +527,12 @@ impl Worker {
 
         // Build the full input path from source_key.
         // Strip storage_prefix if present to avoid double-prefixing with LocalStorage.
-        let input_path = if let Some(prefix) = job.source_key.strip_prefix(&self.config.storage_prefix) {
-            PathBuf::from(prefix)
-        } else {
-            PathBuf::from(&job.source_key)
-        };
+        let input_path =
+            if let Some(prefix) = job.source_key.strip_prefix(&self.config.storage_prefix) {
+                PathBuf::from(prefix)
+            } else {
+                PathBuf::from(&job.source_key)
+            };
 
         // Build the output path for this job
         let output_path = self.build_output_path(job);
@@ -556,7 +557,10 @@ impl Worker {
             Err(e) => {
                 let error_msg = format!(
                     "Failed to create converter for job {} (input: {}, output: {}): {}",
-                    job.id, input_path.display(), output_path.display(), e
+                    job.id,
+                    input_path.display(),
+                    output_path.display(),
+                    e
                 );
                 tracing::error!(
                     job_id = %job.id,
@@ -577,9 +581,7 @@ impl Worker {
 
         let job_id = job.id.clone();
         let job_id_clone = job_id.clone();
-        let conversion_task = tokio::task::spawn_blocking(move || {
-            converter.convert(input_path)
-        });
+        let conversion_task = tokio::task::spawn_blocking(move || converter.convert(input_path));
 
         let stats = match tokio::time::timeout(CONVERSION_TIMEOUT, conversion_task).await {
             Ok(Ok(Ok(stats))) => stats,
@@ -597,7 +599,10 @@ impl Worker {
                 let error_msg = if join_err.is_cancelled() {
                     format!("Conversion task cancelled for job {}", job_id_clone)
                 } else {
-                    format!("Conversion task panicked for job {}: {}", job_id_clone, join_err)
+                    format!(
+                        "Conversion task panicked for job {}: {}",
+                        job_id_clone, join_err
+                    )
                 };
                 tracing::error!(
                     job_id = %job_id_clone,
@@ -607,7 +612,10 @@ impl Worker {
                 return ProcessingResult::Failed { error: error_msg };
             }
             Err(_) => {
-                let error_msg = format!("Conversion timed out after {:?} for job {}", CONVERSION_TIMEOUT, job_id_clone);
+                let error_msg = format!(
+                    "Conversion timed out after {:?} for job {}",
+                    CONVERSION_TIMEOUT, job_id_clone
+                );
                 tracing::error!(
                     job_id = %job_id_clone,
                     timeout_secs = CONVERSION_TIMEOUT.as_secs(),
@@ -635,7 +643,8 @@ impl Worker {
     fn build_output_path(&self, job: &JobRecord) -> PathBuf {
         // Create a job-specific output directory.
         // Pattern: output_prefix/job_id/
-        PathBuf::from(format!("{}/{}",
+        PathBuf::from(format!(
+            "{}/{}",
             self.config.output_prefix.trim_end_matches('/'),
             job.id
         ))
