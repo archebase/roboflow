@@ -57,6 +57,7 @@ use super::tikv::{
 use roboflow_storage::Storage;
 use tokio::sync::broadcast;
 use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
 
 // Dataset conversion imports
 use roboflow_dataset::{
@@ -395,26 +396,20 @@ impl roboflow_dataset::streaming::converter::ProgressCallback for WorkerCheckpoi
                 version: 1,
             };
 
-            if let Err(e) = self.checkpoint_manager.save(&checkpoint) {
-                tracing::warn!(
-                    job_id = %self.job_id,
-                    last_frame = frames_written,
-                    error = %e,
-                    "Failed to save checkpoint"
-                );
-                // Don't fail the conversion for checkpoint errors
-            } else {
-                tracing::debug!(
-                    job_id = %self.job_id,
-                    last_frame = frames_written,
-                    progress = %checkpoint.progress_percent(),
-                    "Checkpoint saved"
-                );
-                self.last_checkpoint_frame
-                    .store(frames_written, std::sync::atomic::Ordering::Relaxed);
-                // Re-acquire lock only for the instant update
-                *self.last_checkpoint_time.lock().unwrap() = std::time::Instant::now();
-            }
+            // Use save_async which respects checkpoint_async config:
+            // - When async=true: spawns background task, non-blocking
+            // - When async=false: falls back to synchronous save
+            self.checkpoint_manager.save_async(checkpoint.clone());
+            tracing::debug!(
+                job_id = %self.job_id,
+                last_frame = frames_written,
+                progress = %checkpoint.progress_percent(),
+                "Checkpoint save initiated"
+            );
+            self.last_checkpoint_frame
+                .store(frames_written, std::sync::atomic::Ordering::Relaxed);
+            // Re-acquire lock only for the instant update
+            *self.last_checkpoint_time.lock().unwrap() = std::time::Instant::now();
         }
 
         std::result::Result::Ok(())
@@ -446,6 +441,9 @@ pub struct Worker {
 
     /// Shutdown sender.
     shutdown_tx: Option<broadcast::Sender<()>>,
+
+    /// Cancellation token for aborting conversion tasks.
+    cancellation_token: Arc<CancellationToken>,
 }
 
 impl Worker {
@@ -474,6 +472,7 @@ impl Worker {
             config,
             metrics: Arc::new(WorkerMetrics::new()),
             shutdown_tx: None,
+            cancellation_token: Arc::new(CancellationToken::new()),
         })
     }
 
@@ -707,11 +706,18 @@ impl Worker {
         // Run the conversion with a timeout to prevent indefinite hangs.
         // Note: This is a synchronous operation that may take significant time.
         // We use spawn_blocking to avoid starving the async runtime.
+        // A cancellation token is used to attempt cooperative cancellation on timeout.
         use std::time::Duration;
         const CONVERSION_TIMEOUT: Duration = Duration::from_secs(3600); // 1 hour
 
         let job_id_clone = job_id.clone();
-        let conversion_task = tokio::task::spawn_blocking(move || converter.convert(input_path));
+        let cancel_token = self.cancellation_token.child_token();
+        let cancel_token_for_timeout = cancel_token.clone();
+        let conversion_task = tokio::task::spawn_blocking(move || {
+            // Guard cancels the token when dropped (on task completion)
+            let _guard = cancel_token.drop_guard();
+            converter.convert(input_path)
+        });
 
         let stats = match tokio::time::timeout(CONVERSION_TIMEOUT, conversion_task).await {
             Ok(Ok(Ok(stats))) => stats,
@@ -742,6 +748,8 @@ impl Worker {
                 return ProcessingResult::Failed { error: error_msg };
             }
             Err(_) => {
+                // Timeout: request cancellation to potentially stop the blocking work
+                cancel_token_for_timeout.cancel();
                 let error_msg = format!(
                     "Conversion timed out after {:?} for job {}",
                     CONVERSION_TIMEOUT, job_id_clone

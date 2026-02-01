@@ -115,6 +115,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Create virtual environment
+        run: |
+          python -m venv .venv
+          echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+
       - name: Install dependencies
         run: pip install maturin[patchelf] pytest pytest-cov
 

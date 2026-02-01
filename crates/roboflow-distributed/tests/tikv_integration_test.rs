@@ -17,8 +17,8 @@ mod tests {
     use std::time::Duration;
 
     use roboflow_distributed::{
-        CheckpointConfig, CheckpointManager, HeartbeatConfig, HeartbeatManager,
-        HeartbeatRecord, JobRecord, JobStatus, LockManager, WorkerMetrics, WorkerStatus,
+        CheckpointConfig, CheckpointManager, HeartbeatConfig, HeartbeatManager, HeartbeatRecord,
+        JobRecord, JobStatus, LockManager, WorkerMetrics, WorkerStatus,
     };
     use roboflow_distributed::{
         TikvClient, Worker, WorkerConfig,
@@ -608,13 +608,9 @@ mod tests {
         let job_id1 = job_id.clone();
         let job_id2 = job_id.clone();
 
-        let claim1 = tokio::spawn(async move {
-            client1.claim_job(&job_id1, pod1).await.unwrap()
-        });
+        let claim1 = tokio::spawn(async move { client1.claim_job(&job_id1, pod1).await.unwrap() });
 
-        let claim2 = tokio::spawn(async move {
-            client2.claim_job(&job_id2, pod2).await.unwrap()
-        });
+        let claim2 = tokio::spawn(async move { client2.claim_job(&job_id2, pod2).await.unwrap() });
 
         let (result1, result2) = tokio::join!(claim1, claim2);
 
@@ -725,7 +721,9 @@ mod tests {
         assert!(heartbeat.is_stale(299));
 
         // Should not be stale with age+1 threshold
-        let age = Utc::now().signed_duration_since(heartbeat.last_heartbeat).num_seconds();
+        let age = Utc::now()
+            .signed_duration_since(heartbeat.last_heartbeat)
+            .num_seconds();
         assert!(!heartbeat.is_stale(age + 1));
     }
 
@@ -785,7 +783,8 @@ mod tests {
         std::fs::write(input_dir.join("test1.mcap"), b"test data 1").unwrap();
         std::fs::write(input_dir.join("test2.mcap"), b"test data 2").unwrap();
 
-        let storage = Arc::new(LocalStorage::new(temp_dir.path())) as Arc<dyn roboflow_storage::Storage>;
+        let storage =
+            Arc::new(LocalStorage::new(temp_dir.path())) as Arc<dyn roboflow_storage::Storage>;
 
         // Create scanner
         use roboflow_distributed::{Scanner, ScannerConfig};
@@ -793,12 +792,8 @@ mod tests {
             .with_batch_size(10)
             .with_scan_interval(Duration::from_millis(100));
 
-        let scanner = Scanner::new(
-            "test-scanner-discovery",
-            client.clone(),
-            storage,
-            config,
-        ).expect("Failed to create scanner");
+        let scanner = Scanner::new("test-scanner-discovery", client.clone(), storage, config)
+            .expect("Failed to create scanner");
 
         // Verify scanner has metrics
         let metrics = scanner.metrics().snapshot();
@@ -817,7 +812,8 @@ mod tests {
         };
 
         let temp_dir = TempDir::new().unwrap();
-        let storage = Arc::new(LocalStorage::new(temp_dir.path())) as Arc<dyn roboflow_storage::Storage>;
+        let storage =
+            Arc::new(LocalStorage::new(temp_dir.path())) as Arc<dyn roboflow_storage::Storage>;
 
         // Create multiple workers
         let mut workers = Vec::new();
