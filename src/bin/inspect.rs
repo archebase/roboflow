@@ -817,6 +817,10 @@ fn show_chunks(file: &str, ext: &str) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 fn main() {
+    // Initialize structured logging
+    roboflow_core::init_logging()
+        .unwrap_or_else(|e| eprintln!("Failed to initialize logging: {}", e));
+
     let args: Vec<String> = env::args().collect();
 
     let (file, cmd) = match parse_args(&args) {

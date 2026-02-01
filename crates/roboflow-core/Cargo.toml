@@ -12,5 +12,10 @@ robocodec = { git = "https://github.com/archebase/robocodec", rev = "5a8e11b" }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
 
+# Structured logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow = "1.0"
+
 [dev-dependencies]
 pretty_assertions = "1.4"

@@ -1415,6 +1415,10 @@ fn convert_bag_to_lerobot_with_urls(
 }
 
 fn main() {
+    // Initialize structured logging
+    roboflow_core::init_logging()
+        .unwrap_or_else(|e| eprintln!("Failed to initialize logging: {}", e));
+
     let args: Vec<String> = env::args().collect();
 
     let cmd = match parse_args(&args) {
