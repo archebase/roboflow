@@ -14,6 +14,7 @@ distributed = []
 [dependencies]
 roboflow-core = { path = "../roboflow-core", version = "0.2.0" }
 roboflow-storage = { path = "../roboflow-storage", version = "0.2.0" }
+roboflow-dataset = { path = "../roboflow-dataset", version = "0.2.0" }
 
 # TiKV client
 tikv-client = "0.3"
