@@ -36,6 +36,7 @@ pub mod config_file;
 pub mod factory;
 pub mod local;
 pub mod multipart;
+pub mod multipart_parallel;
 pub mod oss;
 pub mod retry;
 pub mod streaming;
@@ -48,6 +49,10 @@ pub use factory::{StorageConfig, StorageFactory};
 pub use local::LocalStorage;
 pub use multipart::{
     MultipartConfig, MultipartStats, MultipartUploader, ProgressCallback, upload_multipart,
+};
+pub use multipart_parallel::{
+    ParallelMultipartStats, ParallelMultipartUploader, ParallelUploadConfig,
+    upload_multipart_parallel,
 };
 pub use oss::{OssConfig, OssStorage};
 pub use retry::{RetryConfig, RetryingStorage, retry_with_backoff};
