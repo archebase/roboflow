@@ -79,6 +79,22 @@ refactor: extract storage layer into separate crate
 style: apply code formatting fixes
 ```
 
+## Pull Request Titles
+
+PR titles should follow the same Conventional Commits format as commit messages:
+
+**Do:**
+- `feat: add graceful shutdown handling for distributed workers`
+- `fix: correct frame alignment in streaming converter`
+- `docs: update storage configuration examples`
+
+**Don't:**
+- `[Phase 7.2] Add graceful shutdown` ← No internal project tags
+- `Adding graceful shutdown` ← Use imperative mood
+- `Added graceful shutdown` ← Use imperative mood
+
+PR titles are public-facing and should be clean, descriptive, and free of internal project management artifacts (phase numbers, sprint tags, etc.).
+
 ## Git Workflow
 
 1. Create feature branch from `main`
