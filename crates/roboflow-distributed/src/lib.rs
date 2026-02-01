@@ -25,9 +25,11 @@ pub mod worker;
 
 // Re-export public types from tikv (distributed coordination)
 pub use tikv::{
-    CheckpointState, CircuitBreaker, CircuitConfig, CircuitState, HeartbeatRecord, JobRecord,
-    JobStatus, LockGuard, LockManager, LockManagerConfig, LockRecord, TikvClient, TikvConfig,
-    TikvError, WorkerStatus,
+    CheckpointConfig, CheckpointManager, CheckpointState, CircuitBreaker, CircuitConfig,
+    CircuitState, DEFAULT_CHECKPOINT_INTERVAL_FRAMES, DEFAULT_CHECKPOINT_INTERVAL_SECS,
+    HeartbeatRecord, JobRecord, JobStatus, LockGuard, LockManager, LockManagerConfig, LockRecord,
+    ParquetUploadState, TikvClient, TikvConfig, TikvError, UploadedPart, VideoUploadState,
+    WorkerStatus,
 };
 
 // Re-export public types from catalog (metadata storage)

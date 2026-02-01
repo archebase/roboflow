@@ -245,7 +245,9 @@ mod tests {
 
         // Create a checkpoint for the job
         let mut checkpoint = CheckpointState::new(job_id.to_string(), pod_id.to_string(), 1000);
-        checkpoint.update(500).expect("Failed to update checkpoint");
+        checkpoint
+            .update(500, 50000)
+            .expect("Failed to update checkpoint");
         client
             .update_checkpoint(&checkpoint)
             .await
