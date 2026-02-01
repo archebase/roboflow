@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: 2026 ArcheBase
+#
+# SPDX-License-Identifier: MulanPSL-2.0
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "roboflow.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: roboflow
+    {{- include "roboflow.labels" . | nindent 4 }}
+data:
+  # Logging configuration
+  RUST_LOG: {{ .Values.config.logLevel | quote }}
+  RUST_BACKTRACE: {{ .Values.config.rustBacktrace | quote }}
+
+  # TiKV configuration
+  TIKV_PD_ENDPOINTS: {{ .Values.config.tikv.pdEndpoints | quote }}
+
+  # Storage configuration (as env vars for compatibility)
+  STORAGE_BACKEND: {{ .Values.config.storage.backend | quote }}
+  STORAGE_ENDPOINT: {{ .Values.config.storage.endpoint | quote }}
+  STORAGE_REGION: {{ .Values.config.storage.region | quote }}
+  INPUT_BUCKET: {{ .Values.config.storage.inputBucket | quote }}
+  OUTPUT_BUCKET: {{ .Values.config.storage.outputBucket | quote }}
+  TEMP_BUCKET: {{ .Values.config.storage.tempBucket | quote }}
+
+  # Pipeline configuration
+  NUM_THREADS: {{ .Values.config.pipeline.numThreads | quote }}
+  BATCH_SIZE: {{ .Values.config.pipeline.batchSize | quote }}
+  COMPRESSION_LEVEL: {{ .Values.config.pipeline.compressionLevel | quote }}
+
+  # Checkpoint configuration
+  CHECKPOINT_INTERVAL: {{ .Values.config.checkpoint.intervalSeconds | quote }}
+  HEARTBEAT_INTERVAL: {{ .Values.config.checkpoint.heartbeatIntervalSeconds | quote }}
+
+  # Dataset configuration
+  DATASET_FORMAT: {{ .Values.config.dataset.format | quote }}
+  VIDEO_FORMAT: {{ .Values.config.dataset.videoFormat | quote }}
+  VIDEO_CODEC: {{ .Values.config.dataset.videoCodec | quote }}
+
+  # Feature flags
+  ENABLE_GPU: {{ .Values.config.features.enableGpu | quote }}
+  ENABLE_HDF5: {{ .Values.config.features.enableHdf5 | quote }}
+  ENABLE_PARQUET: {{ .Values.config.features.enableParquet | quote }}

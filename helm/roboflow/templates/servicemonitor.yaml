@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2026 ArcheBase
+#
+# SPDX-License-Identifier: MulanPSL-2.0
+
+{{- if .Values.serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "roboflow.fullname" . }}-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: roboflow-worker
+    app.kubernetes.io/component: worker
+    {{- include "roboflow.labels" . | nindent 4 }}
+  {{- with .Values.serviceMonitor.additionalLabels }}
+  {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: roboflow-worker
+      {{- include "roboflow.labels" . | nindent 6 }}
+  namespaces:
+  {{- if .Values.serviceMonitor.namespace }}
+  - {{ .Values.serviceMonitor.namespace }}
+  {{- else }}
+  - {{ .Release.Namespace }}
+  {{- end }}
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: {{ .Values.serviceMonitor.interval }}
+    scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
+  {{- with .Values.serviceMonitor.relabelings }}
+  relabelings:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.serviceMonitor.metricRelabelings }}
+  metricRelabelings:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,153 @@
+# SPDX-FileCopyrightText: 2026 ArcheBase
+#
+# SPDX-License-Identifier: MulanPSL-2.0
+
+{{- if not .Values.job.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "roboflow.fullname" . }}-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: roboflow-worker
+    app.kubernetes.io/component: worker
+    {{- include "roboflow.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "roboflow.workerSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "roboflow.workerSelectorLabels" . | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+        {{- with .Values.worker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.global.commonAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- include "roboflow.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "roboflow.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.worker.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.worker.priorityClassName }}
+      priorityClassName: {{ .Values.worker.priorityClassName }}
+      {{- end }}
+      restartPolicy: Always
+      containers:
+      - name: worker
+        image: {{ include "roboflow.image" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        {{- with .Values.worker.containerSecurityContext }}
+        securityContext:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.worker.command }}
+        command:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.worker.args }}
+        args:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        env:
+        - name: RUST_LOG
+          value: {{ .Values.config.logLevel | quote }}
+        - name: RUST_BACKTRACE
+          value: {{ .Values.config.rustBacktrace | quote }}
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        {{- with .Values.worker.env }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.worker.envFrom }}
+        envFrom:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        # OSS credentials
+        - name: OSS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secrets.existingSecrets.storage | default (printf "%s-storage" (include "roboflow.fullname" .)) }}
+              key: oss-access-key-id
+              optional: true
+        - name: OSS_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secrets.existingSecrets.storage | default (printf "%s-storage" (include "roboflow.fullname" .)) }}
+              key: oss-access-key-secret
+              optional: true
+        - name: OSS_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secrets.existingSecrets.storage | default (printf "%s-storage" (include "roboflow.fullname" .)) }}
+              key: oss-endpoint
+              optional: true
+        # S3 credentials
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secrets.existingSecrets.storage | default (printf "%s-storage" (include "roboflow.fullname" .)) }}
+              key: aws-access-key-id
+              optional: true
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secrets.existingSecrets.storage | default (printf "%s-storage" (include "roboflow.fullname" .)) }}
+              key: aws-secret-access-key
+              optional: true
+        - name: AWS_REGION
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secrets.existingSecrets.storage | default (printf "%s-storage" (include "roboflow.fullname" .)) }}
+              key: aws-region
+              optional: true
+        - name: AWS_ENDPOINT_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secrets.existingSecrets.storage | default (printf "%s-storage" (include "roboflow.fullname" .)) }}
+              key: aws-endpoint
+              optional: true
+        {{- with .Values.worker.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.worker.livenessProbe }}
+        livenessProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.worker.readinessProbe }}
+        readinessProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.worker.startupProbe }}
+        startupProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+{{- end }}

@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 ArcheBase
+#
+# SPDX-License-Identifier: MulanPSL-2.0
+
+{{- if .Values.job.enabled }}
+Your Roboflow conversion job has been deployed to namespace: {{ .Release.Namespace }}
+
+Job name: {{ include "roboflow.fullname" . }}-job
+
+To check the job status:
+  kubectl -n {{ .Release.Namespace }} get job {{ include "roboflow.fullname" . }}-job
+
+To view job logs:
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/name=roboflow-job --follow
+
+To view pod logs:
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/name=roboflow-job -f
+{{- else }}
+Your Roboflow worker deployment has been installed to namespace: {{ .Release.Namespace }}
+
+Deployment name: {{ include "roboflow.fullname" . }}-worker
+Service name: {{ include "roboflow.fullname" . }}-worker
+
+To get the worker pods:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/name=roboflow-worker
+
+To view worker logs:
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/name=roboflow-worker --tail=100 -f
+
+To scale the workers:
+  kubectl -n {{ .Release.Namespace }} scale deployment {{ include "roboflow.fullname" . }}-worker --replicas=<number>
+{{- end }}
+
+To check the status of all resources:
+  kubectl -n {{ .Release.Namespace }} get all
+
+For more information, visit:
+  https://github.com/archebase/roboflow
