@@ -61,7 +61,7 @@ pub fn generate_request_id() -> String {
             .wrapping_add(counter)
             .wrapping_mul(0x517cc1b727220a95);
         let hash = nonce.wrapping_mul(0x85ebca6b);
-        format!("{:08x}", hash)
+        format!("{:08x}", hash % 0x100000000)
     };
 
     format!("req-{}-{}-{}", timestamp, counter, &random_part[..8])
