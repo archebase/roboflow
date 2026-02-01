@@ -79,6 +79,40 @@ refactor: extract storage layer into separate crate
 style: apply code formatting fixes
 ```
 
+## Pull Request Titles
+
+PR titles should follow the same Conventional Commits format as commit messages:
+
+**Do:**
+- `feat: add graceful shutdown handling for distributed workers`
+- `fix: correct frame alignment in streaming converter`
+- `docs: update storage configuration examples`
+
+**Don't:**
+- `[Phase 7.2] Add graceful shutdown` ← No internal project tags
+- `Adding graceful shutdown` ← Use imperative mood
+- `Added graceful shutdown` ← Use imperative mood
+
+PR titles are public-facing and should be clean, descriptive, and free of internal project management artifacts (phase numbers, sprint tags, etc.).
+
+## Branch Naming
+
+Use descriptive branch names with prefixes:
+
+| Prefix | Usage |
+|--------|-------|
+| `feat/` | New features |
+| `fix/` | Bug fixes |
+| `docs/` | Documentation changes |
+| `refactor/` | Code restructuring |
+| `test/` | Test changes |
+
+**Examples:**
+- `feat/graceful-shutdown`
+- `fix/frame-alignment`
+- `docs/pr-conventions`
+- `refactor/storage-layer`
+
 ## Git Workflow
 
 1. Create feature branch from `main`
@@ -86,6 +120,58 @@ style: apply code formatting fixes
 3. Push to remote
 4. Create PR with clear description and test checklist
 5. Ensure CI passes (`make lint && cargo test`)
+
+## Rebasing
+
+If your branch falls behind `main`:
+
+```bash
+git fetch origin main
+git rebase origin/main
+```
+
+If conflicts occur:
+1. Resolve conflicts in the affected files
+2. `git add <resolved-files>`
+3. `git rebase --continue`
+
+After successful rebase, force push:
+```bash
+git push --force-with-lease
+```
+
+**Never use `git push --force`** - always use `--force-with-lease` to prevent overwriting others' work.
+
+## Recovering Unmerged Changes
+
+If your PR is merged but you have local commits that weren't included (e.g., documentation updates made after the PR was created):
+
+1. Switch to main and pull latest:
+   ```bash
+   git checkout main && git pull
+   ```
+
+2. Create a new branch for the orphaned changes:
+   ```bash
+   git checkout -b new-branch-name
+   ```
+
+3. Cherry-pick the specific commit:
+   ```bash
+   git cherry-pick <commit-hash>
+   ```
+
+4. Push and create a new PR.
+
+## Code Review
+
+Automated review tools (e.g., Greptile) may provide feedback on PRs. When addressing review comments:
+
+- Read the comment carefully to understand the specific issue
+- Make targeted fixes that address the exact concern
+- Verify tests pass after changes
+- Commit fixes with descriptive messages (e.g., `fix: address Greptile review comments`)
+- Push updates; the PR will automatically re-run checks
 
 ## Feature Flags
 
