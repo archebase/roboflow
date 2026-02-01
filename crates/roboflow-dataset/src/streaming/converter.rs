@@ -21,6 +21,39 @@ use roboflow_core::Result;
 use roboflow_storage::LocalStorage;
 use roboflow_storage::Storage;
 
+/// Progress callback for checkpoint saving during conversion.
+///
+/// This trait allows the caller to receive progress updates during
+/// streaming conversion, enabling periodic checkpoint saves for
+/// fault-tolerant distributed processing.
+pub trait ProgressCallback: Send + Sync {
+    /// Called after each frame is written.
+    ///
+    /// Parameters:
+    /// - `frames_written`: Total number of frames written so far
+    /// - `messages_processed`: Total number of messages processed
+    ///
+    /// Returns an error if the callback fails (will abort conversion).
+    fn on_frame_written(
+        &self,
+        frames_written: u64,
+        messages_processed: u64,
+    ) -> std::result::Result<(), String>;
+}
+
+/// A no-op callback for when checkpointing is not needed.
+pub struct NoOpCallback;
+
+impl ProgressCallback for NoOpCallback {
+    fn on_frame_written(
+        &self,
+        _frames_written: u64,
+        _messages_processed: u64,
+    ) -> std::result::Result<(), String> {
+        std::result::Result::Ok(())
+    }
+}
+
 /// Streaming dataset converter.
 ///
 /// Converts input files (MCAP/Bag) directly to dataset formats using
@@ -55,6 +88,9 @@ pub struct StreamingDatasetConverter {
     /// NOTE: Currently unused - reserved for future cloud output support.
     /// Writing to cloud storage requires changes to DatasetWriter trait.
     output_storage: Option<Arc<dyn Storage>>,
+
+    /// Optional progress callback for checkpointing
+    progress_callback: Option<Arc<dyn ProgressCallback>>,
 }
 
 impl StreamingDatasetConverter {
@@ -72,6 +108,7 @@ impl StreamingDatasetConverter {
             config,
             input_storage: None,
             output_storage: None,
+            progress_callback: None,
         })
     }
 
@@ -91,6 +128,7 @@ impl StreamingDatasetConverter {
             config,
             input_storage,
             output_storage,
+            progress_callback: None,
         })
     }
 
@@ -108,6 +146,7 @@ impl StreamingDatasetConverter {
             config: StreamingConfig::with_fps(fps),
             input_storage: None,
             output_storage: None,
+            progress_callback: None,
         })
     }
 
@@ -127,6 +166,7 @@ impl StreamingDatasetConverter {
             config: StreamingConfig::with_fps(fps),
             input_storage,
             output_storage,
+            progress_callback: None,
         })
     }
 
@@ -139,6 +179,12 @@ impl StreamingDatasetConverter {
     /// Set the output storage backend.
     pub fn with_output_storage(mut self, storage: Arc<dyn Storage>) -> Self {
         self.output_storage = Some(storage);
+        self
+    }
+
+    /// Set the progress callback for checkpointing.
+    pub fn with_progress_callback(mut self, callback: Arc<dyn ProgressCallback>) -> Self {
+        self.progress_callback = Some(callback);
         self
     }
 
@@ -273,6 +319,19 @@ impl StreamingDatasetConverter {
                 writer.write_frame(&frame)?;
                 stats.frames_written += 1;
 
+                // Call progress callback for checkpointing
+                if let Some(ref callback) = self.progress_callback
+                    && let Err(e) = callback.on_frame_written(
+                        stats.frames_written as u64,
+                        stats.messages_processed as u64,
+                    )
+                {
+                    return Err(roboflow_core::RoboflowError::other(format!(
+                        "Progress callback failed: {}",
+                        e
+                    )));
+                }
+
                 // Update memory estimate
                 backpressure.update_memory_estimate(&aligner);
             }
@@ -290,6 +349,19 @@ impl StreamingDatasetConverter {
                     writer.write_frame(&frame)?;
                     stats.frames_written += 1;
                     stats.force_completed_frames += 1;
+
+                    // Call progress callback for checkpointing
+                    if let Some(ref callback) = self.progress_callback
+                        && let Err(e) = callback.on_frame_written(
+                            stats.frames_written as u64,
+                            stats.messages_processed as u64,
+                        )
+                    {
+                        return Err(roboflow_core::RoboflowError::other(format!(
+                            "Progress callback failed: {}",
+                            e
+                        )));
+                    }
                 }
 
                 backpressure.record_backpressure();
@@ -465,6 +537,8 @@ struct Mapping {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     #[test]
     fn test_converter_creation() {
@@ -484,5 +558,71 @@ mod tests {
         let converter = StreamingDatasetConverter::new_lerobot("/tmp/test", lerobot_config);
 
         assert!(converter.is_ok());
+    }
+
+    #[test]
+    fn test_noop_callback() {
+        // Test that NoOpCallback works without error
+        let callback = NoOpCallback;
+        assert!(callback.on_frame_written(100, 1000).is_ok());
+        assert!(callback.on_frame_written(200, 2000).is_ok());
+    }
+
+    #[test]
+    fn test_progress_callback_invocation() {
+        // Test callback that counts invocations
+        struct CountingCallback {
+            call_count: Arc<AtomicU64>,
+            last_frames: Arc<AtomicU64>,
+        }
+
+        impl ProgressCallback for CountingCallback {
+            fn on_frame_written(
+                &self,
+                frames_written: u64,
+                _messages_processed: u64,
+            ) -> std::result::Result<(), String> {
+                self.call_count.fetch_add(1, Ordering::Relaxed);
+                self.last_frames.store(frames_written, Ordering::Relaxed);
+                std::result::Result::Ok(())
+            }
+        }
+
+        let call_count = Arc::new(AtomicU64::new(0));
+        let last_frames = Arc::new(AtomicU64::new(0));
+
+        let callback = CountingCallback {
+            call_count: call_count.clone(),
+            last_frames: last_frames.clone(),
+        };
+
+        // Simulate callback invocations
+        callback.on_frame_written(1, 10).unwrap();
+        callback.on_frame_written(2, 20).unwrap();
+        callback.on_frame_written(3, 30).unwrap();
+
+        assert_eq!(call_count.load(Ordering::Relaxed), 3);
+        assert_eq!(last_frames.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn test_callback_returns_error() {
+        // Test that callback errors are propagated
+        struct ErrorCallback;
+
+        impl ProgressCallback for ErrorCallback {
+            fn on_frame_written(
+                &self,
+                _frames_written: u64,
+                _messages_processed: u64,
+            ) -> std::result::Result<(), String> {
+                std::result::Result::Err("test error".to_string())
+            }
+        }
+
+        let callback = ErrorCallback;
+        let result = callback.on_frame_written(1, 10);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "test error");
     }
 }

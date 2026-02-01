@@ -50,8 +50,9 @@ use std::time::Duration;
 
 use super::tikv::{
     TikvError,
+    checkpoint::{CheckpointConfig, CheckpointManager},
     client::TikvClient,
-    schema::{HeartbeatRecord, JobRecord, JobStatus, WorkerStatus},
+    schema::{CheckpointState, HeartbeatRecord, JobRecord, JobStatus, WorkerStatus},
 };
 use roboflow_storage::Storage;
 use tokio::sync::broadcast;
@@ -320,6 +321,79 @@ pub enum ProcessingResult {
     Failed { error: String },
 }
 
+/// Progress callback for saving checkpoints during conversion.
+struct WorkerCheckpointCallback {
+    /// Job ID for this conversion
+    job_id: String,
+    /// Pod ID of the worker
+    pod_id: String,
+    /// Total frames (estimated)
+    total_frames: u64,
+    /// Reference to checkpoint manager
+    checkpoint_manager: CheckpointManager,
+    /// Last checkpoint frame number
+    last_checkpoint_frame: Arc<std::sync::atomic::AtomicU64>,
+    /// Last checkpoint time
+    last_checkpoint_time: Arc<std::sync::Mutex<std::time::Instant>>,
+}
+
+impl roboflow_dataset::streaming::converter::ProgressCallback for WorkerCheckpointCallback {
+    fn on_frame_written(
+        &self,
+        frames_written: u64,
+        _messages_processed: u64,
+    ) -> std::result::Result<(), String> {
+        let last_frame = self
+            .last_checkpoint_frame
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let frames_since_last = frames_written.saturating_sub(last_frame);
+
+        let mut last_time = self.last_checkpoint_time.lock().unwrap();
+        let time_since_last = last_time.elapsed();
+
+        // Check if we should save a checkpoint
+        if self
+            .checkpoint_manager
+            .should_checkpoint(frames_since_last, time_since_last)
+        {
+            let checkpoint = CheckpointState {
+                job_id: self.job_id.clone(),
+                pod_id: self.pod_id.clone(),
+                byte_offset: 0, // TODO: track byte offset
+                last_frame: frames_written,
+                episode_idx: 0, // TODO: track episode index
+                total_frames: self.total_frames,
+                video_uploads: Vec::new(), // TODO: track upload states
+                parquet_upload: None,      // TODO: track parquet upload state
+                updated_at: chrono::Utc::now(),
+                version: 1,
+            };
+
+            if let Err(e) = self.checkpoint_manager.save(&checkpoint) {
+                tracing::warn!(
+                    job_id = %self.job_id,
+                    last_frame = frames_written,
+                    error = %e,
+                    "Failed to save checkpoint"
+                );
+                // Don't fail the conversion for checkpoint errors
+            } else {
+                tracing::debug!(
+                    job_id = %self.job_id,
+                    last_frame = frames_written,
+                    progress = %checkpoint.progress_percent(),
+                    "Checkpoint saved"
+                );
+                self.last_checkpoint_frame
+                    .store(frames_written, std::sync::atomic::Ordering::Relaxed);
+                *last_time = std::time::Instant::now();
+            }
+        }
+
+        std::result::Result::Ok(())
+    }
+}
+
 /// Worker actor for claiming and processing jobs.
 pub struct Worker {
     /// Pod ID for this worker instance.
@@ -327,6 +401,9 @@ pub struct Worker {
 
     /// TiKV client for job operations.
     tikv: Arc<TikvClient>,
+
+    /// Checkpoint manager for progress tracking.
+    checkpoint_manager: CheckpointManager,
 
     /// Storage backend for reading/writing files.
     ///
@@ -354,9 +431,18 @@ impl Worker {
     ) -> Result<Self, TikvError> {
         let pod_id = pod_id.into();
 
+        // Create checkpoint manager with config from WorkerConfig
+        let checkpoint_config = CheckpointConfig {
+            checkpoint_interval_frames: config.checkpoint_interval_frames,
+            checkpoint_interval_seconds: config.checkpoint_interval_seconds,
+            checkpoint_async: config.checkpoint_async,
+        };
+        let checkpoint_manager = CheckpointManager::new(tikv.clone(), checkpoint_config);
+
         Ok(Self {
             pod_id,
             tikv,
+            checkpoint_manager,
             storage,
             config,
             metrics: Arc::new(WorkerMetrics::new()),
@@ -547,7 +633,7 @@ impl Worker {
         let lerobot_config = self.create_lerobot_config(job);
 
         // Create streaming converter with storage backends
-        let converter = match StreamingDatasetConverter::new_lerobot_with_storage(
+        let mut converter = match StreamingDatasetConverter::new_lerobot_with_storage(
             &output_path,
             lerobot_config,
             Some(self.storage.clone()), // input storage for downloading
@@ -573,13 +659,24 @@ impl Worker {
             }
         };
 
+        // Add checkpoint callback if enabled
+        let job_id = job.id.clone();
+        let checkpoint_callback = Arc::new(WorkerCheckpointCallback {
+            job_id: job_id.clone(),
+            pod_id: self.pod_id.clone(),
+            total_frames: 0, // TODO: estimate total frames from input
+            checkpoint_manager: self.checkpoint_manager.clone(),
+            last_checkpoint_frame: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            last_checkpoint_time: Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
+        });
+        converter = converter.with_progress_callback(checkpoint_callback);
+
         // Run the conversion with a timeout to prevent indefinite hangs.
         // Note: This is a synchronous operation that may take significant time.
         // We use spawn_blocking to avoid starving the async runtime.
         use std::time::Duration;
         const CONVERSION_TIMEOUT: Duration = Duration::from_secs(3600); // 1 hour
 
-        let job_id = job.id.clone();
         let job_id_clone = job_id.clone();
         let conversion_task = tokio::task::spawn_blocking(move || converter.convert(input_path));
 
