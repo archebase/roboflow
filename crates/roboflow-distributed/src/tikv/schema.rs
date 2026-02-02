@@ -87,9 +87,12 @@ impl JobRecord {
             && self.attempts < self.max_attempts
     }
 
-    /// Check if this job is terminal (completed or dead).
+    /// Check if this job is terminal (completed, dead, or cancelled).
     pub fn is_terminal(&self) -> bool {
-        matches!(self.status, JobStatus::Completed | JobStatus::Dead)
+        matches!(
+            self.status,
+            JobStatus::Completed | JobStatus::Dead | JobStatus::Cancelled
+        )
     }
 
     /// Mark this job as claimed by a pod.
@@ -141,6 +144,9 @@ pub enum JobStatus {
 
     /// Job failed permanently (max attempts exceeded).
     Dead,
+
+    /// Job was cancelled by user request.
+    Cancelled,
 }
 
 impl JobStatus {
