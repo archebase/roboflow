@@ -70,6 +70,7 @@ libc = "0.2"
 num_cpus = "1.16"
 sysinfo = "0.30"
 raw-cpuid = { version = "11.0", optional = true }
+hostname = "0.4"
 
 # Compression
 zstd = "0.13"
@@ -185,6 +186,11 @@ path = "src/bin/schema.rs"
 [[bin]]
 name = "search"
 path = "src/bin/search.rs"
+
+[[bin]]
+name = "roboflow"
+path = "src/bin/roboflow.rs"
+required-features = ["distributed"]
 
 # Benchmarks
 [[bench]]

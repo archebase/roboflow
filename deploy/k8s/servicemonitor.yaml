@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 ArcheBase
+#
+# SPDX-License-Identifier: MulanPSL-2.0
+
+# Prometheus ServiceMonitor for scraping metrics from roboflow workers.
+# This requires the kube-prometheus-stack or Prometheus Operator to be installed.
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: roboflow-worker
+  namespace: roboflow
+  labels:
+    app: roboflow
+    component: worker
+spec:
+  selector:
+    matchLabels:
+      app: roboflow
+      component: worker
+  endpoints:
+    - port: health
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - roboflow

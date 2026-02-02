@@ -506,13 +506,15 @@ impl Scanner {
             if let Err(e) = self.tikv.batch_put(job_pairs).await {
                 tracing::error!(
                     pod_id = %self.pod_id,
+                    batch_size = chunk.len(),
                     error = %e,
-                    "Failed to create batch of jobs"
+                    "Failed to create batch of jobs - scan cycle incomplete, files skipped"
                 );
                 self.metrics.inc_scan_errors();
-            } else {
-                jobs_created += chunk.len() as u64;
+                // Return error to fail the entire scan cycle - continuing would skip files
+                return Err(e);
             }
+            jobs_created += chunk.len() as u64;
         }
         self.metrics.inc_jobs_created(jobs_created);
 
