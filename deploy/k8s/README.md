@@ -19,7 +19,7 @@ This directory contains Kubernetes manifests for deploying Roboflow as long-runn
 │  │  - Discovers files in storage                        │  │
 │  │  - Creates jobs in TiKV                              │  │
 │  │  - Leader election via TiKV locks                    │  │
-│  │  - Health server on :8080 (different process)        │  │
+│  │  - Health server on :8081                              │  │
 │  └───────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
                             ↓
