@@ -157,7 +157,10 @@ impl JobStatus {
 
     /// Check if this status is a terminal state.
     pub fn is_terminal(&self) -> bool {
-        matches!(self, JobStatus::Completed | JobStatus::Dead | JobStatus::Cancelled)
+        matches!(
+            self,
+            JobStatus::Completed | JobStatus::Dead | JobStatus::Cancelled
+        )
     }
 
     /// Check if this status indicates failure.
