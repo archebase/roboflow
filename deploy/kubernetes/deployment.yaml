@@ -1,0 +1,146 @@
+# SPDX-FileCopyrightText: 2026 ArcheBase
+#
+# SPDX-License-Identifier: MulanPSL-2.0
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: roboflow-worker
+  namespace: roboflow
+  labels:
+    app.kubernetes.io/name: roboflow-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: roboflow
+    app.kubernetes.io/version: "0.2.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: roboflow-worker
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: roboflow-worker
+        app.kubernetes.io/component: worker
+        app.kubernetes.io/part-of: roboflow
+        app.kubernetes.io/version: "0.2.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: roboflow-worker
+
+      # Restart policy for worker pods
+      restartPolicy: Always
+
+      # Container configuration
+      containers:
+      - name: worker
+        image: ghcr.io/archebase/roboflow-worker:0.2.0
+        imagePullPolicy: IfNotPresent
+
+        # Command to run the worker
+        # TODO: Update when worker subcommand is implemented
+        command: ["/usr/local/bin/convert"]
+        args: ["--help"]
+
+        # Environment variables from ConfigMap
+        envFrom:
+        - configMapRef:
+            name: roboflow-config
+
+        # Environment variables from Secrets
+        env:
+        - name: OSS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: roboflow-storage-credentials
+              key: oss-access-key-id
+              optional: true
+        - name: OSS_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: roboflow-storage-credentials
+              key: oss-access-key-secret
+              optional: true
+        - name: OSS_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: roboflow-storage-credentials
+              key: oss-endpoint
+              optional: true
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: roboflow-storage-credentials
+              key: aws-access-key-id
+              optional: true
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: roboflow-storage-credentials
+              key: aws-secret-access-key
+              optional: true
+        - name: AWS_REGION
+          valueFrom:
+            secretKeyRef:
+              name: roboflow-storage-credentials
+              key: aws-region
+              optional: true
+
+        # Resource requests and limits
+        resources:
+          requests:
+            cpu: "1"
+            memory: "2Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+            # Uncomment for GPU support:
+            # nvidia.com/gpu: "1"
+
+        # Liveness probe - check if container is healthy
+        livenessProbe:
+          exec:
+            command:
+            - /usr/local/bin/convert
+            - --version
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+
+        # Readiness probe - check if container is ready to process work
+        readinessProbe:
+          exec:
+            command:
+            - /usr/local/bin/convert
+            - --version
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        # Startup probe - give container time to start
+        startupProbe:
+          exec:
+            command:
+            - /usr/local/bin/convert
+            - --version
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 30
+
+      # Node selector for GPU nodes (if needed)
+      # nodeSelector:
+      #   accelerator: nvidia-gpu
+
+      # Tolerations for GPU nodes
+      # tolerations:
+      # - key: nvidia.com/gpu
+      #   operator: Exists
+      #   effect: NoSchedule

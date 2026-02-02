@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 ArcheBase
+#
+# SPDX-License-Identifier: MulanPSL-2.0
+
+{{- if not .Values.job.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "roboflow.fullname" . }}-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: roboflow-worker
+    app.kubernetes.io/component: worker
+    {{- include "roboflow.labels" . | nindent 4 }}
+  {{- with .Values.worker.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.worker.service.type }}
+  clusterIP: {{ .Values.worker.service.clusterIP }}
+  selector:
+    {{- include "roboflow.workerSelectorLabels" . | nindent 4 }}
+  ports:
+  - name: metrics
+    port: {{ .Values.worker.service.ports.metrics.port }}
+    targetPort: 9090
+    protocol: {{ .Values.worker.service.ports.metrics.protocol | default "TCP" }}
+{{- end }}

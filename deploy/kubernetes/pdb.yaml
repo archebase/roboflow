@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 ArcheBase
+#
+# SPDX-License-Identifier: MulanPSL-2.0
+
+---
+# PodDisruptionBudget to ensure availability during node maintenance
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: roboflow-worker
+  namespace: roboflow
+  labels:
+    app.kubernetes.io/name: roboflow-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: roboflow
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: roboflow-worker
+      app.kubernetes.io/component: worker
