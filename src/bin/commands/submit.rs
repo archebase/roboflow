@@ -409,17 +409,20 @@ impl SubmitCommand {
                 );
             }
 
-            // Submit each matched file
+            // Submit each matched file and track the first job
+            let mut first_job = None;
             for file_path in &matched_files {
                 let full_url = format!("{}/{}", storage_url.trim_end_matches('/'), file_path);
-                self.submit_job_spec(&full_url, output, config_hash, max_attempts, factory, tikv)
+                let job = self
+                    .submit_job_spec(&full_url, output, config_hash, max_attempts, factory, tikv)
                     .await?;
+                if first_job.is_none() {
+                    first_job = Some(job);
+                }
             }
 
             // Return the first job as representative
-            let first_url = format!("{}/{}", storage_url.trim_end_matches('/'), matched_files[0]);
-            self.submit_job_spec(&first_url, output, config_hash, max_attempts, factory, tikv)
-                .await
+            first_job.ok_or_else(|| "No files matched pattern".to_string())
         } else {
             // Single file
             self.submit_job_spec(input, output, config_hash, max_attempts, factory, tikv)

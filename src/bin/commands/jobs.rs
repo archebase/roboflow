@@ -687,14 +687,19 @@ impl JobsCommand {
                 println!("Cancelled pending job: {}", job_id);
             }
             JobStatus::Processing => {
-                // Mark as cancelled - worker will check and stop
+                // Mark as cancelled - note: workers don't currently check for cancellation
+                // during processing. The job will continue until completion or failure.
+                // A future enhancement would add periodic status checks in workers.
                 job.status = JobStatus::Cancelled;
                 job.updated_at = Utc::now();
 
                 tikv.put_job(&job)
                     .await
                     .map_err(|e| format!("Failed to update job: {}", e))?;
-                println!("Cancelled processing job: {}", job_id);
+                println!(
+                    "Marked job {} as Cancelled. Note: worker may still complete processing.",
+                    job_id
+                );
             }
             _ => {
                 return Err(format!(
