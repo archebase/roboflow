@@ -31,6 +31,9 @@ pub struct JobRecord {
     /// Owner pod ID when Processing.
     pub owner: Option<String>,
 
+    /// User who submitted this job (for authorization).
+    pub submitted_by: Option<String>,
+
     /// Number of processing attempts.
     pub attempts: u32,
 
@@ -51,6 +54,9 @@ pub struct JobRecord {
 
     /// Hash of configuration used for this job.
     pub config_hash: String,
+
+    /// Cancellation timestamp (if job was cancelled).
+    pub cancelled_at: Option<DateTime<Utc>>,
 }
 
 impl JobRecord {
@@ -71,6 +77,8 @@ impl JobRecord {
             source_size,
             status: JobStatus::Pending,
             owner: None,
+            submitted_by: None,
+            cancelled_at: None,
             attempts: 0,
             max_attempts: 3,
             created_at: now,
@@ -81,15 +89,12 @@ impl JobRecord {
         }
     }
 
-    /// Check if this job can be claimed.
-    pub fn is_claimable(&self) -> bool {
-        matches!(self.status, JobStatus::Pending | JobStatus::Failed)
-            && self.attempts < self.max_attempts
-    }
-
-    /// Check if this job is terminal (completed or dead).
+    /// Check if this job is terminal (completed, dead, or cancelled).
     pub fn is_terminal(&self) -> bool {
-        matches!(self.status, JobStatus::Completed | JobStatus::Dead)
+        matches!(
+            self.status,
+            JobStatus::Completed | JobStatus::Dead | JobStatus::Cancelled
+        )
     }
 
     /// Mark this job as claimed by a pod.
@@ -122,6 +127,53 @@ impl JobRecord {
         self.error = Some(error);
         self.updated_at = Utc::now();
     }
+
+    /// Mark this job as cancelled.
+    pub fn cancel(&mut self, _requester: &str) {
+        self.status = JobStatus::Cancelled;
+        self.cancelled_at = Some(Utc::now());
+        self.owner = None;
+        self.updated_at = Utc::now();
+    }
+
+    /// Check if a requester is authorized to cancel this job.
+    ///
+    /// Authorization rules:
+    /// - Admin users (from ROBOFLOW_ADMIN_USERS env var) can cancel any job
+    /// - The submitter of the job can cancel their own jobs
+    /// - The current processing pod can cancel its assigned job
+    pub fn can_cancel(&self, requester: &str, admin_users: &[String]) -> bool {
+        // Admin users can cancel any job
+        if admin_users.contains(&requester.to_string()) {
+            return true;
+        }
+
+        // The submitter can cancel their own jobs
+        if let Some(submitter) = &self.submitted_by
+            && submitter == requester
+        {
+            return true;
+        }
+
+        // The current processing pod can cancel its job
+        if let Some(owner) = &self.owner
+            && owner == requester
+        {
+            return true;
+        }
+
+        false
+    }
+
+    /// Check if this job can be claimed (considering cancelled state).
+    pub fn is_claimable(&self) -> bool {
+        // Cannot claim if previously cancelled
+        if self.cancelled_at.is_some() {
+            return false;
+        }
+        matches!(self.status, JobStatus::Pending | JobStatus::Failed)
+            && self.attempts < self.max_attempts
+    }
 }
 
 /// Job status enum.
@@ -141,6 +193,9 @@ pub enum JobStatus {
 
     /// Job failed permanently (max attempts exceeded).
     Dead,
+
+    /// Job was cancelled by user request.
+    Cancelled,
 }
 
 impl JobStatus {
@@ -151,7 +206,10 @@ impl JobStatus {
 
     /// Check if this status is a terminal state.
     pub fn is_terminal(&self) -> bool {
-        matches!(self, JobStatus::Completed | JobStatus::Dead)
+        matches!(
+            self,
+            JobStatus::Completed | JobStatus::Dead | JobStatus::Cancelled
+        )
     }
 
     /// Check if this status indicates failure.

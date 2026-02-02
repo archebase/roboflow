@@ -118,6 +118,9 @@ fn test_processing_result_success() {
         ProcessingResult::Failed { error } => {
             panic!("Unexpected failed result: {}", error);
         }
+        ProcessingResult::Cancelled => {
+            panic!("Unexpected cancelled result");
+        }
     }
 }
 
@@ -135,6 +138,9 @@ fn test_processing_result_failed() {
         }
         ProcessingResult::Failed { error } => {
             assert_eq!(error, "Test error");
+        }
+        ProcessingResult::Cancelled => {
+            panic!("Unexpected cancelled result");
         }
     }
 }

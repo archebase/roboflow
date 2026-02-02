@@ -9,6 +9,8 @@
 //!
 //! ## Subcommands
 //!
+//! - `submit` - Submit jobs to the distributed queue
+//! - `jobs` - Manage jobs (list, get, retry, cancel, delete, stats)
 //! - `worker` - Run a worker that claims and processes jobs from TiKV
 //! - `scanner` - Run a scanner that discovers files and creates jobs
 //! - `health` - Run a standalone health check server (for testing)
@@ -64,6 +66,9 @@ use roboflow_distributed::{Scanner, ScannerConfig, Worker, WorkerConfig};
 #[cfg(feature = "distributed")]
 use roboflow_storage::StorageFactory;
 
+// Include CLI commands module
+mod commands;
+
 // =============================================================================
 // Command Types
 // =============================================================================
@@ -85,6 +90,16 @@ fn generate_pod_id(prefix: &str) -> String {
 
 /// CLI command.
 enum Command {
+    /// Submit jobs to the distributed queue
+    Submit {
+        /// Remaining arguments for submit command
+        args: Vec<String>,
+    },
+    /// Manage jobs
+    Jobs {
+        /// Remaining arguments for jobs command
+        args: Vec<String>,
+    },
     /// Run the worker loop
     Worker {
         /// Pod ID for this worker
@@ -117,6 +132,16 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
     let command = &args[1];
 
     match command.as_str() {
+        "submit" => {
+            // Collect remaining args for submit command
+            let submit_args: Vec<String> = args[2..].to_vec();
+            Ok(Command::Submit { args: submit_args })
+        }
+        "jobs" => {
+            // Collect remaining args for jobs command
+            let jobs_args: Vec<String> = args[2..].to_vec();
+            Ok(Command::Jobs { args: jobs_args })
+        }
         "worker" => {
             let mut pod_id = None;
             let mut storage_url = None;
@@ -252,6 +277,8 @@ USAGE:
     roboflow <COMMAND> [OPTIONS]
 
 COMMANDS:
+    submit       Submit jobs to the distributed queue
+    jobs         Manage jobs (list, get, retry, cancel, delete, stats)
     worker       Run a worker that claims and processes jobs from TiKV
     scanner      Run a scanner that discovers files and creates jobs
     health       Run a standalone health check server
@@ -309,6 +336,18 @@ ENVIRONMENT VARIABLES:
         RUST_LOG                          Per-module log levels
 
 EXAMPLES:
+    # Submit a single file
+    roboflow submit oss://bucket/file.mcap --output oss://bucket/output/
+
+    # List all jobs
+    roboflow jobs list
+
+    # List failed jobs
+    roboflow jobs list --status failed
+
+    # Get job details
+    roboflow jobs get <job-id>
+
     # Run worker with default settings
     roboflow worker
 
@@ -888,6 +927,12 @@ fn main() {
 
         let result = rt.block_on(async {
             match command {
+                Command::Submit { args } => crate::commands::run_submit_command(&args)
+                    .await
+                    .map_err(|e| e.into()),
+                Command::Jobs { args } => crate::commands::run_jobs_command(&args)
+                    .await
+                    .map_err(|e| e.into()),
                 Command::Worker {
                     pod_id,
                     storage_url,
@@ -922,6 +967,12 @@ fn main() {
                     }
                 };
                 rt.block_on(run_health_command(host, port))
+            }
+            Command::Submit { .. } | Command::Jobs { .. } => {
+                // Error for submit/jobs commands without distributed feature
+                Err("Submit and Jobs commands require 'distributed' feature. \
+                     Please rebuild with: cargo build --features distributed"
+                    .into())
             }
             _ => {
                 // Error for other commands without distributed feature
