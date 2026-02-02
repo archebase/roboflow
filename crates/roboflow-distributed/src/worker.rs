@@ -322,6 +322,8 @@ pub enum ProcessingResult {
     Success,
     /// Job failed with retryable error.
     Failed { error: String },
+    /// Job was cancelled by user request.
+    Cancelled,
 }
 
 /// Progress callback for saving checkpoints during conversion.
@@ -731,6 +733,50 @@ impl Worker {
         let job_id_clone = job_id.clone();
         let cancel_token = self.cancellation_token.child_token();
         let cancel_token_for_timeout = cancel_token.clone();
+        let tikv_for_monitor = self.tikv.clone();
+        let tikv_for_status_check = self.tikv.clone();
+        let cancel_token_for_monitor = cancel_token.clone();
+
+        // Spawn background task to monitor for job cancellation
+        let job_id_for_monitor = job_id_clone.clone();
+        let monitor_handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            interval.tick().await; // Skip first tick
+
+            loop {
+                interval.tick().await;
+
+                match tikv_for_monitor.get_job(&job_id_for_monitor).await {
+                    Ok(Some(job)) if job.status == JobStatus::Cancelled => {
+                        tracing::info!(
+                            job_id = %job_id_for_monitor,
+                            "Job cancellation detected, requesting cooperative cancellation"
+                        );
+                        cancel_token_for_monitor.cancel();
+                        break;
+                    }
+                    Ok(None) => {
+                        tracing::debug!(
+                            job_id = %job_id_for_monitor,
+                            "Job not found during cancellation check, treating as not cancelled"
+                        );
+                        // Job may have been deleted, continue monitoring
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            job_id = %job_id_for_monitor,
+                            error = %e,
+                            "Failed to check job cancellation status, will retry"
+                        );
+                        // Continue monitoring on transient errors
+                    }
+                    _ => {
+                        // Job exists and not cancelled, continue monitoring
+                    }
+                }
+            }
+        });
+
         let conversion_task = tokio::task::spawn_blocking(move || {
             // Guard cancels the token when dropped (on task completion)
             let _guard = cancel_token.drop_guard();
@@ -738,8 +784,13 @@ impl Worker {
         });
 
         let stats = match tokio::time::timeout(CONVERSION_TIMEOUT, conversion_task).await {
-            Ok(Ok(Ok(stats))) => stats,
+            Ok(Ok(Ok(stats))) => {
+                // Abort the monitor task since conversion completed successfully
+                monitor_handle.abort();
+                stats
+            }
             Ok(Ok(Err(e))) => {
+                monitor_handle.abort();
                 let error_msg = format!("Conversion failed for job {}: {}", job_id_clone, e);
                 tracing::error!(
                     job_id = %job_id_clone,
@@ -749,15 +800,36 @@ impl Worker {
                 return ProcessingResult::Failed { error: error_msg };
             }
             Ok(Err(join_err)) => {
-                // Task panicked or was cancelled
-                let error_msg = if join_err.is_cancelled() {
-                    format!("Conversion task cancelled for job {}", job_id_clone)
-                } else {
-                    format!(
-                        "Conversion task panicked for job {}: {}",
-                        job_id_clone, join_err
-                    )
-                };
+                monitor_handle.abort();
+
+                // Check if this was a job cancellation (not timeout)
+                if join_err.is_cancelled() {
+                    // Check job status to distinguish cancellation types
+                    match tikv_for_status_check.get_job(&job_id_clone).await {
+                        Ok(Some(job)) if job.status == JobStatus::Cancelled => {
+                            tracing::info!(
+                                job_id = %job_id_clone,
+                                "Job was cancelled"
+                            );
+                            return ProcessingResult::Cancelled;
+                        }
+                        _ => {
+                            // Regular task cancellation or error checking status
+                            let error_msg = format!("Conversion task cancelled for job {}", job_id_clone);
+                            tracing::error!(
+                                job_id = %job_id_clone,
+                                join_error = %join_err,
+                                "Job processing task failed"
+                            );
+                            return ProcessingResult::Failed { error: error_msg };
+                        }
+                    }
+                }
+
+                let error_msg = format!(
+                    "Conversion task panicked for job {}: {}",
+                    job_id_clone, join_err
+                );
                 tracing::error!(
                     job_id = %job_id_clone,
                     join_error = %join_err,
@@ -766,6 +838,7 @@ impl Worker {
                 return ProcessingResult::Failed { error: error_msg };
             }
             Err(_) => {
+                monitor_handle.abort();
                 // Timeout: request cancellation to potentially stop the blocking work
                 cancel_token_for_timeout.cancel();
                 let error_msg = format!(
@@ -1129,6 +1202,23 @@ impl Worker {
                                     );
                                     self.metrics.inc_processing_errors();
                                 }
+                            }
+                            ProcessingResult::Cancelled => {
+                                tracing::info!(
+                                    pod_id = %self.pod_id,
+                                    job_id = %job_id,
+                                    "Job was cancelled, releasing back to Pending"
+                                );
+                                if let Err(e) = self.release_job(&job_id).await {
+                                    tracing::error!(
+                                        pod_id = %self.pod_id,
+                                        job_id = %job_id,
+                                        error = %e,
+                                        "Failed to release cancelled job"
+                                    );
+                                    self.metrics.inc_processing_errors();
+                                }
+                                // Don't break the loop - continue processing other jobs
                             }
                         }
                     }

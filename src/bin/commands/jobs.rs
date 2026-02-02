@@ -687,9 +687,7 @@ impl JobsCommand {
                 println!("Cancelled pending job: {}", job_id);
             }
             JobStatus::Processing => {
-                // Mark as cancelled - note: workers don't currently check for cancellation
-                // during processing. The job will continue until completion or failure.
-                // A future enhancement would add periodic status checks in workers.
+                // Mark as cancelled - worker will detect and stop processing
                 job.status = JobStatus::Cancelled;
                 job.updated_at = Utc::now();
 
@@ -697,7 +695,7 @@ impl JobsCommand {
                     .await
                     .map_err(|e| format!("Failed to update job: {}", e))?;
                 println!(
-                    "Marked job {} as Cancelled. Note: worker may still complete processing.",
+                    "Cancelling job {}. Worker will detect and stop processing.",
                     job_id
                 );
             }
