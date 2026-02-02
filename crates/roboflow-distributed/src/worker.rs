@@ -56,11 +56,11 @@ use super::tikv::{
     schema::{CheckpointState, HeartbeatRecord, JobRecord, JobStatus, WorkerStatus},
 };
 use roboflow_storage::Storage;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
 use tokio::sync::broadcast;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
-use std::collections::HashMap;
-use tokio::sync::RwLock;
 
 // Dataset conversion imports
 use roboflow_dataset::{
@@ -425,7 +425,9 @@ impl roboflow_dataset::streaming::converter::ProgressCallback for WorkerCheckpoi
         }
 
         // Check for job cancellation via token
-        if let Some(token) = &self.cancellation_token && token.is_cancelled() {
+        if let Some(token) = &self.cancellation_token
+            && token.is_cancelled()
+        {
             tracing::info!(
                 job_id = %self.job_id,
                 frames_written = frames_written,
