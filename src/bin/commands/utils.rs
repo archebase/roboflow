@@ -10,16 +10,47 @@ use std::hash::{Hash, Hasher};
 /// Validate a storage path component to prevent path traversal and injection attacks.
 ///
 /// Returns an error if the path contains:
-/// - Path traversal sequences (../..)
+/// - Path traversal sequences (./, ../, .. at path segment boundaries)
 /// - Null bytes
 /// - Control characters
+///
+/// Note: We allow ".." in the middle of valid key names (e.g., "data..2024..backup"),
+/// but reject actual path traversal patterns like "../", "./", or segments starting
+/// with "." or ".." followed by a path separator.
 fn validate_path_component(component: &str, name: &str) -> Result<(), String> {
-    // Check for path traversal attempts
-    if component.contains("..") {
+    // Check for actual path traversal patterns
+    // - "../" or "..\" (parent directory traversal)
+    // - "./" or ".\" (current directory reference)
+    // - Paths starting with "./" or "../"
+    // - Paths ending with "/.." or "\.."
+    if component.contains("../")
+        || component.contains("..\\")
+        || component.contains("./")
+        || component.contains(".\\")
+    {
         return Err(format!(
-            "Invalid {}: path traversal sequences (..) are not allowed",
+            "Invalid {}: path traversal sequences are not allowed",
             name
         ));
+    }
+
+    // Check if component starts with "." or ".." (could be traversal)
+    if component.starts_with('.') {
+        // Allow ".." within a valid key name like "file..v2.mcap"
+        // But reject ".key" or "../parent" patterns
+        if component == "." || component == ".." {
+            return Err(format!(
+                "Invalid {}: path traversal components are not allowed",
+                name
+            ));
+        }
+        // Check if it starts with a traversal pattern (e.g., ".hidden/path" or "../path")
+        if component.chars().nth(1) == Some('/') || component.chars().nth(1) == Some('\\') {
+            return Err(format!(
+                "Invalid {}: path traversal sequences are not allowed",
+                name
+            ));
+        }
     }
 
     // Check for null bytes

@@ -101,9 +101,21 @@ pub struct AuditLogger;
 impl AuditLogger {
     /// Log an audit entry.
     pub fn log(entry: &AuditEntry) {
-        let operation = serde_json::to_string(&entry.operation).unwrap_or_default();
-        let context = serde_json::to_string(&entry.context).unwrap_or_default();
+        // Use JSON serialization, falling back to Debug representation on failure
+        let operation = serde_json::to_string(&entry.operation)
+            .unwrap_or_else(|_| format!("{:?}", entry.operation));
+        let context = serde_json::to_string(&entry.context)
+            .unwrap_or_else(|_| format!("{:?}", entry.context));
         let timestamp = entry.timestamp.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+        // Warn if serialization failed (indicates potential audit data loss)
+        // Debug format produces "(...)" while valid JSON produces "{...}"
+        if !operation.contains('{') || !context.contains('{') {
+            tracing::warn!(
+                target: "audit",
+                "JSON serialization failed for audit entry, using Debug format instead"
+            );
+        }
 
         if entry.success {
             tracing::info!(

@@ -893,12 +893,24 @@ impl JobsCommand {
         }
 
         // Authorization check for delete operations
-        // Delete is a destructive operation, so we require either admin status
-        // or ownership for explicitly specified jobs
+        // Delete is a destructive operation, so we require:
+        // 1. Admin access for filter-based deletes (using --completed or --older-than without explicit IDs)
+        // 2. Admin access OR ownership for explicitly specified job IDs
         let is_admin = admin_users.contains(&requester);
+
+        // Filter-based deletes (no explicit job IDs) require admin access
+        let is_filter_based_delete = job_ids.is_empty() && (completed || older_than.is_some());
+        if is_filter_based_delete && !is_admin {
+            return Err(format!(
+                "Filter-based deletes require admin access. Use --force with admin privileges or specify individual job IDs. Requester: {}",
+                requester
+            ));
+        }
+
+        // For explicitly specified job IDs, check ownership if not admin
         if !is_admin && !job_ids.is_empty() {
             // Check authorization for each explicitly specified job
-            for job_id in &jobs_to_delete {
+            for job_id in job_ids {
                 match tikv.get_job(job_id).await {
                     Ok(Some(job)) => {
                         if !job.can_cancel(&requester, &admin_users) {
@@ -964,34 +976,65 @@ impl JobsCommand {
 
         // Delete each job
         let mut deleted = 0;
+        let mut failed_deletes = Vec::new();
+        let mut failed_checkpoints = Vec::new();
+
         for job_id in &jobs_to_delete {
             // Delete job record
             let key = roboflow_distributed::tikv::key::JobKeys::record(job_id);
-            if tikv.delete(key).await.is_ok() {
-                deleted += 1;
+            match tikv.delete(key).await {
+                Ok(()) => deleted += 1,
+                Err(e) => {
+                    failed_deletes.push((job_id.clone(), e.to_string()));
+                }
             }
 
             // Delete checkpoint if requested
             if delete_checkpoint {
                 let checkpoint_key = roboflow_distributed::tikv::key::StateKeys::checkpoint(job_id);
-                let _ = tikv.delete(checkpoint_key).await;
+                if tikv.delete(checkpoint_key).await.is_err() {
+                    failed_checkpoints.push(job_id.clone());
+                }
             }
         }
 
         // Log audit entry
-        if deleted > 0 {
+        if deleted > 0 && failed_deletes.is_empty() {
             AuditLogger::log_success(operation.clone(), &requester, &target, &audit_context);
         } else {
-            AuditLogger::log_failure(
-                operation,
-                &requester,
-                &target,
-                &audit_context,
-                "No jobs were deleted",
-            );
+            let error_msg = if failed_deletes.is_empty() {
+                format!(
+                    "{} checkpoint(s) failed to delete",
+                    failed_checkpoints.len()
+                )
+            } else {
+                format!(
+                    "{} job(s) failed to delete: {}",
+                    failed_deletes.len(),
+                    failed_deletes
+                        .iter()
+                        .map(|(id, e)| format!("{}: {}", id, e))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            AuditLogger::log_failure(operation, &requester, &target, &audit_context, &error_msg);
         }
 
+        // Report results
         println!("Deleted {} job(s)", deleted);
+        if !failed_deletes.is_empty() {
+            eprintln!("Warning: {} job(s) failed to delete:", failed_deletes.len());
+            for (job_id, error) in &failed_deletes {
+                eprintln!("  - {}: {}", job_id, error);
+            }
+        }
+        if !failed_checkpoints.is_empty() && failed_deletes.is_empty() {
+            eprintln!(
+                "Warning: {} checkpoint(s) failed to delete (jobs were deleted successfully)",
+                failed_checkpoints.len()
+            );
+        }
 
         Ok(())
     }
