@@ -484,6 +484,37 @@ impl TikvClient {
         self.put(key, data).await
     }
 
+    /// Batch get multiple job records.
+    ///
+    /// Returns a vector of (job_id, Option<JobRecord>) tuples.
+    /// Jobs that don't exist will have None as the record.
+    pub async fn batch_get_jobs(
+        &self,
+        job_ids: &[String],
+    ) -> Result<Vec<(String, Option<JobRecord>)>> {
+        use super::key::JobKeys;
+
+        let keys: Vec<Vec<u8>> = job_ids.iter().map(|id| JobKeys::record(id)).collect();
+
+        let values = self.batch_get(keys).await?;
+
+        let mut results = Vec::with_capacity(job_ids.len());
+        for (i, data) in values.into_iter().enumerate() {
+            let job_id = &job_ids[i];
+            let record = match data {
+                Some(bytes) => {
+                    let record: JobRecord = bincode::deserialize(&bytes)
+                        .map_err(|e| TikvError::Deserialization(e.to_string()))?;
+                    Some(record)
+                }
+                None => None,
+            };
+            results.push((job_id.clone(), record));
+        }
+
+        Ok(results)
+    }
+
     /// Claim a job (atomic operation within a single transaction).
     ///
     /// This uses a single transaction to read the job, check if it's claimable,

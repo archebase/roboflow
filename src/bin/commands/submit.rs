@@ -479,6 +479,12 @@ impl SubmitCommand {
             ));
         }
 
+        // Get submitter identity for authorization
+        let submitter = std::env::var("ROBOFLOW_USER")
+            .or_else(|_| std::env::var("USER"))
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| "unknown".to_string());
+
         // Create job record
         let job = JobRecord::new(
             job_id.clone(),
@@ -491,6 +497,7 @@ impl SubmitCommand {
 
         let mut job = job;
         job.max_attempts = max_attempts;
+        job.submitted_by = Some(submitter);
 
         if self.dry_run {
             println!("Would submit job: {}", job_id);

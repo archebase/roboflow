@@ -59,6 +59,8 @@ use roboflow_storage::Storage;
 use tokio::sync::broadcast;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
 
 // Dataset conversion imports
 use roboflow_dataset::{
@@ -87,6 +89,65 @@ pub const DEFAULT_CHECKPOINT_INTERVAL_FRAMES: u64 = 100;
 
 /// Default checkpoint interval in seconds.
 pub const DEFAULT_CHECKPOINT_INTERVAL_SECS: u64 = 10;
+
+/// Default cancellation check interval in seconds.
+pub const DEFAULT_CANCELLATION_CHECK_INTERVAL_SECS: u64 = 5;
+
+/// Registry for tracking active jobs and their cancellation tokens.
+///
+/// # Architecture
+///
+/// This implements a **batch cancellation monitoring** pattern that addresses
+/// the scalability issues of per-job monitoring:
+///
+/// - **Before (Per-Job Monitoring)**: Each job spawned a monitor task → O(n) tasks
+/// - **After (Batch Monitoring)**: Single monitor per worker → O(1) task
+///
+/// # Performance Impact
+///
+/// For 1000 concurrent jobs:
+/// - Per-job: 1000 monitor tasks × 5s interval = 200 QPS to TiKV
+/// - Batch: 1 monitor task × 5s interval = 0.2 QPS to TiKV (1000× reduction)
+///
+/// # Extension Points
+///
+/// To implement alternative monitoring strategies (e.g., push-based notifications),
+/// the JobRegistry can be extended to:
+/// - Support different backends (in-memory, Redis, etc.)
+/// - Implement different polling strategies
+/// - Add event-driven notification mechanisms
+///
+/// The current implementation prioritizes simplicity and immediate scalability
+/// improvements over full abstraction.
+#[derive(Debug, Default)]
+struct JobRegistry {
+    /// Map of job_id -> cancellation_token for active jobs.
+    active_jobs: HashMap<String, Arc<CancellationToken>>,
+}
+
+impl JobRegistry {
+    /// Register a job for cancellation monitoring.
+    fn register(&mut self, job_id: String, token: Arc<CancellationToken>) {
+        self.active_jobs.insert(job_id, token);
+    }
+
+    /// Unregister a job from cancellation monitoring.
+    fn unregister(&mut self, job_id: &str) {
+        self.active_jobs.remove(job_id);
+    }
+
+    /// Get all registered job IDs.
+    fn job_ids(&self) -> Vec<String> {
+        self.active_jobs.keys().cloned().collect()
+    }
+
+    /// Cancel a specific job by ID.
+    fn cancel_job(&mut self, job_id: &str) {
+        if let Some(token) = self.active_jobs.get(job_id) {
+            token.cancel();
+        }
+    }
+}
 
 /// Worker configuration.
 #[derive(Debug, Clone)]
@@ -342,6 +403,8 @@ struct WorkerCheckpointCallback {
     last_checkpoint_time: Arc<std::sync::Mutex<std::time::Instant>>,
     /// Shutdown flag for graceful interruption
     shutdown_flag: Arc<AtomicBool>,
+    /// Cancellation token for job cancellation
+    cancellation_token: Option<Arc<CancellationToken>>,
 }
 
 impl roboflow_dataset::streaming::converter::ProgressCallback for WorkerCheckpointCallback {
@@ -359,6 +422,16 @@ impl roboflow_dataset::streaming::converter::ProgressCallback for WorkerCheckpoi
                 "Shutdown requested, interrupting conversion at checkpoint boundary"
             );
             return Err(ShutdownInterrupted.to_string());
+        }
+
+        // Check for job cancellation via token
+        if let Some(token) = &self.cancellation_token && token.is_cancelled() {
+            tracing::info!(
+                job_id = %self.job_id,
+                frames_written = frames_written,
+                "Job cancellation detected, interrupting conversion at checkpoint boundary"
+            );
+            return Err("Job cancelled by user request".to_string());
         }
 
         let last_frame = self
@@ -462,6 +535,9 @@ pub struct Worker {
 
     /// Cancellation token for aborting conversion tasks.
     cancellation_token: Arc<CancellationToken>,
+
+    /// Job registry for batch cancellation monitoring.
+    job_registry: Arc<RwLock<JobRegistry>>,
 }
 
 impl Worker {
@@ -492,6 +568,7 @@ impl Worker {
             shutdown_handler: ShutdownHandler::new(),
             shutdown_tx: None,
             cancellation_token: Arc::new(CancellationToken::new()),
+            job_registry: Arc::new(RwLock::new(JobRegistry::default())),
         })
     }
 
@@ -712,6 +789,13 @@ impl Worker {
         // TODO: Improve by parsing bag/MCAP header for actual message count.
         let estimated_frame_size = 100_000; // 100KB per frame
         let total_frames = (job.source_size / estimated_frame_size).max(1);
+
+        // Create cancellation token for this job
+        let cancel_token = self.cancellation_token.child_token();
+        let cancel_token_for_monitor = Arc::new(cancel_token.clone());
+        let cancel_token_for_callback = Arc::new(cancel_token.clone());
+
+        // Create progress callback with cancellation token
         let checkpoint_callback = Arc::new(WorkerCheckpointCallback {
             job_id: job_id.clone(),
             pod_id: self.pod_id.clone(),
@@ -720,8 +804,19 @@ impl Worker {
             last_checkpoint_frame: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_checkpoint_time: Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
             shutdown_flag: self.shutdown_handler.flag_clone(),
+            cancellation_token: Some(cancel_token_for_callback),
         });
         converter = converter.with_progress_callback(checkpoint_callback);
+
+        // Register this job with the batch cancellation monitor
+        {
+            let mut registry = self.job_registry.write().await;
+            registry.register(job_id.clone(), cancel_token_for_monitor);
+        }
+        tracing::debug!(
+            job_id = %job_id,
+            "Registered job with batch cancellation monitor"
+        );
 
         // Run the conversion with a timeout to prevent indefinite hangs.
         // Note: This is a synchronous operation that may take significant time.
@@ -731,51 +826,9 @@ impl Worker {
         const CONVERSION_TIMEOUT: Duration = Duration::from_secs(3600); // 1 hour
 
         let job_id_clone = job_id.clone();
-        let cancel_token = self.cancellation_token.child_token();
         let cancel_token_for_timeout = cancel_token.clone();
-        let tikv_for_monitor = self.tikv.clone();
         let tikv_for_status_check = self.tikv.clone();
-        let cancel_token_for_monitor = cancel_token.clone();
-
-        // Spawn background task to monitor for job cancellation
-        let job_id_for_monitor = job_id_clone.clone();
-        let monitor_handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
-            interval.tick().await; // Skip first tick
-
-            loop {
-                interval.tick().await;
-
-                match tikv_for_monitor.get_job(&job_id_for_monitor).await {
-                    Ok(Some(job)) if job.status == JobStatus::Cancelled => {
-                        tracing::info!(
-                            job_id = %job_id_for_monitor,
-                            "Job cancellation detected, requesting cooperative cancellation"
-                        );
-                        cancel_token_for_monitor.cancel();
-                        break;
-                    }
-                    Ok(None) => {
-                        tracing::debug!(
-                            job_id = %job_id_for_monitor,
-                            "Job not found during cancellation check, treating as not cancelled"
-                        );
-                        // Job may have been deleted, continue monitoring
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            job_id = %job_id_for_monitor,
-                            error = %e,
-                            "Failed to check job cancellation status, will retry"
-                        );
-                        // Continue monitoring on transient errors
-                    }
-                    _ => {
-                        // Job exists and not cancelled, continue monitoring
-                    }
-                }
-            }
-        });
+        let job_registry_for_cleanup = self.job_registry.clone();
 
         let conversion_task = tokio::task::spawn_blocking(move || {
             // Guard cancels the token when dropped (on task completion)
@@ -785,12 +838,16 @@ impl Worker {
 
         let stats = match tokio::time::timeout(CONVERSION_TIMEOUT, conversion_task).await {
             Ok(Ok(Ok(stats))) => {
-                // Abort the monitor task since conversion completed successfully
-                monitor_handle.abort();
+                // Unregister from cancellation monitor
+                let mut registry = job_registry_for_cleanup.write().await;
+                registry.unregister(&job_id_clone);
                 stats
             }
             Ok(Ok(Err(e))) => {
-                monitor_handle.abort();
+                // Unregister from cancellation monitor
+                let mut registry = job_registry_for_cleanup.write().await;
+                registry.unregister(&job_id_clone);
+
                 let error_msg = format!("Conversion failed for job {}: {}", job_id_clone, e);
                 tracing::error!(
                     job_id = %job_id_clone,
@@ -800,7 +857,9 @@ impl Worker {
                 return ProcessingResult::Failed { error: error_msg };
             }
             Ok(Err(join_err)) => {
-                monitor_handle.abort();
+                // Unregister from cancellation monitor
+                let mut registry = job_registry_for_cleanup.write().await;
+                registry.unregister(&job_id_clone);
 
                 // Check if this was a job cancellation (not timeout)
                 if join_err.is_cancelled() {
@@ -839,7 +898,10 @@ impl Worker {
                 return ProcessingResult::Failed { error: error_msg };
             }
             Err(_) => {
-                monitor_handle.abort();
+                // Unregister from cancellation monitor
+                let mut registry = job_registry_for_cleanup.write().await;
+                registry.unregister(&job_id_clone);
+
                 // Timeout: request cancellation to potentially stop the blocking work
                 cancel_token_for_timeout.cancel();
                 let error_msg = format!(
@@ -1131,6 +1193,77 @@ impl Worker {
             }
         });
 
+        // Start cancellation monitor task
+        // This batch-checks all active jobs for cancellation, reducing TiKV load
+        let tikv_for_monitor = self.tikv.clone();
+        let job_registry_for_monitor = self.job_registry.clone();
+        let pod_id_for_monitor = self.pod_id.clone();
+        let mut cancel_monitor_rx = shutdown_tx.subscribe();
+
+        let _cancel_monitor_handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(
+                DEFAULT_CANCELLATION_CHECK_INTERVAL_SECS,
+            ));
+            interval.tick().await; // Skip first tick
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        // Get all active job IDs
+                        let job_ids = {
+                            let registry = job_registry_for_monitor.read().await;
+                            registry.job_ids()
+                        };
+
+                        if job_ids.is_empty() {
+                            continue;
+                        }
+
+                        // Batch check all jobs for cancellation
+                        match tikv_for_monitor
+                            .batch_get_jobs(&job_ids)
+                            .await
+                        {
+                            Ok(jobs) => {
+                                let mut registry = job_registry_for_monitor.write().await;
+                                for (job_id, job) in jobs {
+                                    if let Some(job) = job {
+                                        if job.status == JobStatus::Cancelled {
+                                            tracing::info!(
+                                                pod_id = %pod_id_for_monitor,
+                                                job_id = %job_id,
+                                                "Job cancellation detected in batch check"
+                                            );
+                                            registry.cancel_job(&job_id);
+                                            registry.unregister(&job_id);
+                                        }
+                                    } else {
+                                        // Job no longer exists, unregister
+                                        registry.unregister(&job_id);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    pod_id = %pod_id_for_monitor,
+                                    job_count = job_ids.len(),
+                                    error = %e,
+                                    "Failed to batch check job cancellation status"
+                                );
+                            }
+                        }
+                    }
+                    _ = cancel_monitor_rx.recv() => {
+                        tracing::info!(
+                            pod_id = %pod_id_for_monitor,
+                            "Cancellation monitor task shutting down"
+                        );
+                        break;
+                    }
+                }
+            }
+        });
+
         tracing::info!(
             pod_id = %self.pod_id,
             max_concurrent_jobs = self.config.max_concurrent_jobs,
@@ -1208,17 +1341,11 @@ impl Worker {
                                 tracing::info!(
                                     pod_id = %self.pod_id,
                                     job_id = %job_id,
-                                    "Job was cancelled, releasing back to Pending"
+                                    "Job was cancelled by user, keeping in Cancelled state"
                                 );
-                                if let Err(e) = self.release_job(&job_id).await {
-                                    tracing::error!(
-                                        pod_id = %self.pod_id,
-                                        job_id = %job_id,
-                                        error = %e,
-                                        "Failed to release cancelled job"
-                                    );
-                                    self.metrics.inc_processing_errors();
-                                }
+                                // Job is already marked as Cancelled in TiKV by the cancel command
+                                // Do NOT release back to Pending - cancelled jobs should not be re-claimed
+                                self.metrics.dec_active_jobs();
                                 // Don't break the loop - continue processing other jobs
                             }
                         }

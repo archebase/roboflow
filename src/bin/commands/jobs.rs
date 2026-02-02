@@ -670,12 +670,34 @@ impl JobsCommand {
     ) -> Result<(), String> {
         let tikv = create_tikv_client(tikv_endpoints).await?;
 
+        // Get requester identity for authorization
+        let requester = std::env::var("ROBOFLOW_USER")
+            .or_else(|_| std::env::var("USER"))
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| "unknown".to_string());
+
+        // Get admin users from environment
+        let admin_users: Vec<String> = std::env::var("ROBOFLOW_ADMIN_USERS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
         // Get the job
         let mut job = match tikv.get_job(job_id).await {
             Ok(Some(job)) => job,
             Ok(None) => return Err(format!("Job not found: {}", job_id)),
             Err(e) => return Err(format!("Failed to get job: {}", e)),
         };
+
+        // Authorization check
+        if !job.can_cancel(&requester, &admin_users) {
+            return Err(format!(
+                "Not authorized to cancel job {}. Job submitted by: {:?}, current pod: {:?}",
+                job_id, job.submitted_by, job.owner
+            ));
+        }
 
         match job.status {
             JobStatus::Pending => {
@@ -684,19 +706,21 @@ impl JobsCommand {
                 tikv.delete(key)
                     .await
                     .map_err(|e| format!("Failed to delete job: {}", e))?;
-                println!("Cancelled pending job: {}", job_id);
+                println!(
+                    "Cancelled pending job: {} (requested by: {})",
+                    job_id, requester
+                );
             }
             JobStatus::Processing => {
                 // Mark as cancelled - worker will detect and stop processing
-                job.status = JobStatus::Cancelled;
-                job.updated_at = Utc::now();
+                job.cancel(&requester);
 
                 tikv.put_job(&job)
                     .await
                     .map_err(|e| format!("Failed to update job: {}", e))?;
                 println!(
-                    "Cancelling job {}. Worker will detect and stop processing.",
-                    job_id
+                    "Cancelling job {}. Worker will detect and stop processing (requested by: {}).",
+                    job_id, requester
                 );
             }
             _ => {
