@@ -576,7 +576,8 @@ enum HealthServerStartup {
 /// Start the health server in the background.
 /// Returns error if the server fails to bind within a short timeout.
 #[cfg(feature = "distributed")]
-async fn start_health_server_background() -> Result<HealthServerHandle, Box<dyn std::error::Error>> {
+async fn start_health_server_background() -> Result<HealthServerHandle, Box<dyn std::error::Error>>
+{
     use std::env;
 
     let host = env::var("HEALTH_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
