@@ -815,7 +815,8 @@ impl Worker {
                         }
                         _ => {
                             // Regular task cancellation or error checking status
-                            let error_msg = format!("Conversion task cancelled for job {}", job_id_clone);
+                            let error_msg =
+                                format!("Conversion task cancelled for job {}", job_id_clone);
                             tracing::error!(
                                 job_id = %job_id_clone,
                                 join_error = %join_err,
