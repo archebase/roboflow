@@ -33,7 +33,41 @@ use chrono::{DateTime, Duration, Utc};
 use roboflow_distributed::{JobRecord, JobStatus, TikvClient};
 use serde::Serialize;
 
+use crate::commands::audit::{AuditContext, AuditLogger, AuditOperation};
 use crate::commands::utils::compute_file_hash;
+
+/// Validate a job ID to prevent injection attacks.
+///
+/// Job IDs should be hexadecimal strings (16 chars) from our hash function,
+/// or valid file paths. This prevents command injection and other attacks.
+fn validate_job_id(job_id: &str) -> Result<(), String> {
+    // Check length limits
+    if job_id.is_empty() {
+        return Err("Job ID cannot be empty".to_string());
+    }
+
+    if job_id.len() > 1024 {
+        return Err("Job ID too long (max 1024 characters)".to_string());
+    }
+
+    // Check for null bytes
+    if job_id.contains('\0') {
+        return Err("Job ID contains null bytes".to_string());
+    }
+
+    // Check for control characters (except tab)
+    if job_id.chars().any(|c| c.is_control() && c != '\t') {
+        return Err("Job ID contains control characters".to_string());
+    }
+
+    // Check for shell metacharacters that might indicate injection
+    const DANGEROUS_CHARS: &[char] = &[';', '|', '&', '$', '`', '\n', '\r'];
+    if job_id.chars().any(|c| DANGEROUS_CHARS.contains(&c)) {
+        return Err("Job ID contains invalid characters".to_string());
+    }
+
+    Ok(())
+}
 
 /// Output format for job commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -560,6 +594,9 @@ impl JobsCommand {
         format: OutputFormat,
         tikv_endpoints: &Option<String>,
     ) -> Result<(), String> {
+        // Validate job ID to prevent injection attacks
+        validate_job_id(job_id)?;
+
         let tikv = create_tikv_client(tikv_endpoints).await?;
 
         // Try to get the job
@@ -597,6 +634,11 @@ impl JobsCommand {
         all_failed: bool,
         tikv_endpoints: &Option<String>,
     ) -> Result<(), String> {
+        // Validate job ID if provided
+        if let Some(id) = job_id {
+            validate_job_id(id)?;
+        }
+
         let tikv = create_tikv_client(tikv_endpoints).await?;
 
         if all_failed {
@@ -668,6 +710,9 @@ impl JobsCommand {
         job_id: &str,
         tikv_endpoints: &Option<String>,
     ) -> Result<(), String> {
+        // Validate job ID to prevent injection attacks
+        validate_job_id(job_id)?;
+
         let tikv = create_tikv_client(tikv_endpoints).await?;
 
         // Get requester identity for authorization
@@ -703,9 +748,28 @@ impl JobsCommand {
             JobStatus::Pending => {
                 // Delete pending job
                 let key = roboflow_distributed::tikv::key::JobKeys::record(job_id);
-                tikv.delete(key)
-                    .await
-                    .map_err(|e| format!("Failed to delete job: {}", e))?;
+                tikv.delete(key).await.map_err(|e| {
+                    // Log failed cancellation attempt
+                    AuditLogger::log_failure(
+                        AuditOperation::JobCancel,
+                        &requester,
+                        job_id,
+                        &AuditContext::default().add("status", "Pending"),
+                        &e.to_string(),
+                    );
+                    format!("Failed to delete job: {}", e)
+                })?;
+
+                // Log successful cancellation
+                AuditLogger::log_success(
+                    AuditOperation::JobCancel,
+                    &requester,
+                    job_id,
+                    &AuditContext::default()
+                        .add("status", "Pending")
+                        .add("submitted_by", job.submitted_by.unwrap_or_default()),
+                );
+
                 println!(
                     "Cancelled pending job: {} (requested by: {})",
                     job_id, requester
@@ -715,9 +779,29 @@ impl JobsCommand {
                 // Mark as cancelled - worker will detect and stop processing
                 job.cancel(&requester);
 
-                tikv.put_job(&job)
-                    .await
-                    .map_err(|e| format!("Failed to update job: {}", e))?;
+                tikv.put_job(&job).await.map_err(|e| {
+                    // Log failed cancellation attempt
+                    AuditLogger::log_failure(
+                        AuditOperation::JobCancel,
+                        &requester,
+                        job_id,
+                        &AuditContext::default().add("status", "Processing"),
+                        &e.to_string(),
+                    );
+                    format!("Failed to update job: {}", e)
+                })?;
+
+                // Log successful cancellation
+                AuditLogger::log_success(
+                    AuditOperation::JobCancel,
+                    &requester,
+                    job_id,
+                    &AuditContext::default()
+                        .add("status", "Processing")
+                        .add("owner", job.owner.unwrap_or_default())
+                        .add("submitted_by", job.submitted_by.unwrap_or_default()),
+                );
+
                 println!(
                     "Cancelling job {}. Worker will detect and stop processing (requested by: {}).",
                     job_id, requester
@@ -744,7 +828,26 @@ impl JobsCommand {
         delete_checkpoint: bool,
         tikv_endpoints: &Option<String>,
     ) -> Result<(), String> {
+        // Validate all job IDs to prevent injection attacks
+        for job_id in job_ids {
+            validate_job_id(job_id)?;
+        }
+
         let tikv = create_tikv_client(tikv_endpoints).await?;
+
+        // Get requester identity for authorization
+        let requester = std::env::var("ROBOFLOW_USER")
+            .or_else(|_| std::env::var("USER"))
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| "unknown".to_string());
+
+        // Get admin users from environment
+        let admin_users: Vec<String> = std::env::var("ROBOFLOW_ADMIN_USERS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
 
         let mut jobs_to_delete = Vec::new();
 
@@ -789,6 +892,36 @@ impl JobsCommand {
             return Ok(());
         }
 
+        // Authorization check for delete operations
+        // Delete is a destructive operation, so we require either admin status
+        // or ownership for explicitly specified jobs
+        let is_admin = admin_users.contains(&requester);
+        if !is_admin && !job_ids.is_empty() {
+            // Check authorization for each explicitly specified job
+            for job_id in &jobs_to_delete {
+                match tikv.get_job(job_id).await {
+                    Ok(Some(job)) => {
+                        if !job.can_cancel(&requester, &admin_users) {
+                            return Err(format!(
+                                "Not authorized to delete job {}. Job submitted by: {:?}, current pod: {:?}. Admin access required.",
+                                job_id, job.submitted_by, job.owner
+                            ));
+                        }
+                    }
+                    Ok(None) => {
+                        // Job doesn't exist, allow deletion attempt (will fail gracefully)
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            job_id = %job_id,
+                            error = %e,
+                            "Failed to check job authorization for delete, allowing"
+                        );
+                    }
+                }
+            }
+        }
+
         // Confirm unless force
         if !force {
             println!(
@@ -805,6 +938,30 @@ impl JobsCommand {
             }
         }
 
+        // Log the delete operation for audit trail
+        let operation = if jobs_to_delete.len() > 1 {
+            AuditOperation::BatchJobDelete
+        } else {
+            AuditOperation::JobDelete
+        };
+
+        let target = if jobs_to_delete.len() > 1 {
+            format!("{} jobs", jobs_to_delete.len())
+        } else {
+            jobs_to_delete.first().cloned().unwrap_or_default()
+        };
+
+        let mut audit_context = AuditContext::default()
+            .add("admin", is_admin.to_string())
+            .add("job_count", jobs_to_delete.len().to_string());
+
+        if let Some(older) = older_than {
+            audit_context = audit_context.add("older_than", older);
+        }
+        if completed {
+            audit_context = audit_context.add("filter", "completed");
+        }
+
         // Delete each job
         let mut deleted = 0;
         for job_id in &jobs_to_delete {
@@ -819,6 +976,19 @@ impl JobsCommand {
                 let checkpoint_key = roboflow_distributed::tikv::key::StateKeys::checkpoint(job_id);
                 let _ = tikv.delete(checkpoint_key).await;
             }
+        }
+
+        // Log audit entry
+        if deleted > 0 {
+            AuditLogger::log_success(operation.clone(), &requester, &target, &audit_context);
+        } else {
+            AuditLogger::log_failure(
+                operation,
+                &requester,
+                &target,
+                &audit_context,
+                "No jobs were deleted",
+            );
         }
 
         println!("Deleted {} job(s)", deleted);

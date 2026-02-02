@@ -9,6 +9,7 @@
 //! - Querying job status
 //! - Managing jobs (cancel, retry, delete)
 
+pub mod audit;
 pub mod jobs;
 pub mod submit;
 pub mod utils;

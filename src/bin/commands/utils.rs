@@ -7,8 +7,51 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-/// Parse a storage URL into (bucket, key) components.
+/// Validate a storage path component to prevent path traversal and injection attacks.
+///
+/// Returns an error if the path contains:
+/// - Path traversal sequences (../..)
+/// - Null bytes
+/// - Control characters
+fn validate_path_component(component: &str, name: &str) -> Result<(), String> {
+    // Check for path traversal attempts
+    if component.contains("..") {
+        return Err(format!(
+            "Invalid {}: path traversal sequences (..) are not allowed",
+            name
+        ));
+    }
+
+    // Check for null bytes
+    if component.contains('\0') {
+        return Err(format!("Invalid {}: null bytes are not allowed", name));
+    }
+
+    // Check for suspicious characters that might indicate injection
+    if component.contains('\r') || component.contains('\n') {
+        return Err(format!("Invalid {}: line breaks are not allowed", name));
+    }
+
+    // Check for empty component
+    if component.is_empty() {
+        return Err(format!("Invalid {}: cannot be empty", name));
+    }
+
+    Ok(())
+}
+
+/// Parse a storage URL into (bucket, key) components with security validation.
+///
+/// This function validates the input to prevent:
+/// - Path traversal attacks (../.. sequences)
+/// - Null byte injection
+/// - Control character injection
 pub fn parse_storage_url(url: &str) -> Result<(String, String), String> {
+    // Validate URL length (prevent DoS via extremely long URLs)
+    if url.len() > 4096 {
+        return Err("Storage URL too long (max 4096 characters)".to_string());
+    }
+
     if let Some(rest) = url
         .strip_prefix("oss://")
         .or_else(|| url.strip_prefix("s3://"))
@@ -16,13 +59,31 @@ pub fn parse_storage_url(url: &str) -> Result<(String, String), String> {
         let mut parts = rest.splitn(2, '/');
         let bucket = parts
             .next()
-            .ok_or_else(|| "Invalid storage URL".to_string())?;
+            .ok_or_else(|| "Invalid storage URL: missing bucket name".to_string())?;
+
+        // Validate bucket name
+        validate_path_component(bucket, "bucket name")?;
+
+        // Additional bucket name validation per cloud provider rules
+        if bucket.len() > 255 {
+            return Err("Bucket name too long (max 255 characters)".to_string());
+        }
+
         let key = parts.next().unwrap_or("").to_string();
+
+        // Validate key for path traversal
+        if !key.is_empty() {
+            validate_path_component(&key, "key")?;
+        }
+
         Ok((bucket.to_string(), key))
     } else if let Some(path) = url.strip_prefix("file://") {
+        // Validate file path
+        validate_path_component(path, "file path")?;
         Ok(("local".to_string(), path.to_string()))
     } else {
-        // Assume local file path
+        // Validate local path
+        validate_path_component(url, "path")?;
         Ok(("local".to_string(), url.to_string()))
     }
 }
