@@ -40,7 +40,7 @@ use super::schema::{CheckpointState, HeartbeatRecord, JobRecord, JobStatus, Lock
 
 use tokio::time::sleep;
 
-/// TiKV client wrapper with connection pooling.
+/// TiKV client wrapper with connection pooling and circuit breaker.
 #[derive(Clone)]
 pub struct TikvClient {
     /// TiKV configuration.
@@ -48,6 +48,9 @@ pub struct TikvClient {
 
     /// Underlying transaction client.
     inner: Option<Arc<tikv_client::TransactionClient>>,
+
+    /// Circuit breaker for fault tolerance.
+    circuit_breaker: Arc<super::circuit::CircuitBreaker>,
 }
 
 impl TikvClient {
@@ -55,6 +58,9 @@ impl TikvClient {
     pub async fn new(config: TikvConfig) -> Result<Self> {
         // Validate configuration first
         config.validate()?;
+
+        // Create circuit breaker with default configuration
+        let circuit_breaker = Arc::new(super::circuit::CircuitBreaker::new());
 
         {
             // Try to connect to TiKV cluster
@@ -70,6 +76,7 @@ impl TikvClient {
             Ok(Self {
                 config,
                 inner: Some(Arc::new(client)),
+                circuit_breaker,
             })
         }
 
@@ -79,6 +86,7 @@ impl TikvClient {
             Ok(Self {
                 config,
                 inner: None,
+                circuit_breaker,
             })
         }
     }
@@ -150,27 +158,65 @@ impl TikvClient {
         ))
     }
 
+    /// Execute an operation with circuit breaker protection.
+    ///
+    /// This method wraps the operation with circuit breaker logic, which will
+    /// fail fast if the circuit is open (TiKV service is experiencing issues).
+    /// This prevents cascading failures by rejecting requests quickly when
+    /// the service is down.
+    #[allow(dead_code)]
+    async fn with_circuit_breaker<F, Fut, T>(&self, operation: F) -> Result<T>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        self.circuit_breaker.call(operation).await
+    }
+
+    /// Get the circuit breaker state (for monitoring).
+    pub fn circuit_state(&self) -> super::circuit::CircuitState {
+        self.circuit_breaker.state()
+    }
+
+    /// Get the circuit breaker failure count (for monitoring).
+    pub fn circuit_failure_count(&self) -> u64 {
+        self.circuit_breaker.failure_count()
+    }
+
     /// Get a value by key.
     pub async fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>> {
+        // Check circuit breaker state before attempting operation
+        if !self.circuit_breaker.is_call_permitted() {
+            return Err(TikvError::CircuitOpen {
+                failures: self.circuit_breaker.failure_count() as u32,
+            });
+        }
+
         {
             let inner = self.inner.as_ref().ok_or_else(|| {
                 TikvError::ConnectionFailed("TiKV client not initialized".to_string())
             })?;
 
-            let mut txn = inner
-                .begin_optimistic()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+            let mut txn = inner.begin_optimistic().await.map_err(|e| {
+                // Record failure for circuit breaker
+                self.circuit_breaker.record_failure();
+                TikvError::ClientError(e.to_string())
+            })?;
 
-            let result = txn
-                .get(key)
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+            let result = txn.get(key).await.map_err(|e| {
+                // Record failure for circuit breaker
+                self.circuit_breaker.record_failure();
+                TikvError::ClientError(e.to_string())
+            })?;
 
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+            txn.commit().await.map_err(|e| {
+                // Record failure for circuit breaker
+                self.circuit_breaker.record_failure();
+                TikvError::ClientError(e.to_string())
+            })?;
 
+            // Record success for circuit breaker
+            self.circuit_breaker.record_success();
             Ok(result)
         }
 
@@ -185,24 +231,34 @@ impl TikvClient {
 
     /// Put a key-value pair.
     pub async fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
+        // Check circuit breaker state before attempting operation
+        if !self.circuit_breaker.is_call_permitted() {
+            return Err(TikvError::CircuitOpen {
+                failures: self.circuit_breaker.failure_count() as u32,
+            });
+        }
+
         {
             let inner = self.inner.as_ref().ok_or_else(|| {
                 TikvError::ConnectionFailed("TiKV client not initialized".to_string())
             })?;
 
-            let mut txn = inner
-                .begin_optimistic()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+            let mut txn = inner.begin_optimistic().await.map_err(|e| {
+                self.circuit_breaker.record_failure();
+                TikvError::ClientError(e.to_string())
+            })?;
 
-            txn.put(key, value)
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+            txn.put(key, value).await.map_err(|e| {
+                self.circuit_breaker.record_failure();
+                TikvError::ClientError(e.to_string())
+            })?;
 
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+            txn.commit().await.map_err(|e| {
+                self.circuit_breaker.record_failure();
+                TikvError::ClientError(e.to_string())
+            })?;
 
+            self.circuit_breaker.record_success();
             Ok(())
         }
 
@@ -217,24 +273,34 @@ impl TikvClient {
 
     /// Delete a key.
     pub async fn delete(&self, key: Vec<u8>) -> Result<()> {
+        // Check circuit breaker state before attempting operation
+        if !self.circuit_breaker.is_call_permitted() {
+            return Err(TikvError::CircuitOpen {
+                failures: self.circuit_breaker.failure_count() as u32,
+            });
+        }
+
         {
             let inner = self.inner.as_ref().ok_or_else(|| {
                 TikvError::ConnectionFailed("TiKV client not initialized".to_string())
             })?;
 
-            let mut txn = inner
-                .begin_optimistic()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+            let mut txn = inner.begin_optimistic().await.map_err(|e| {
+                self.circuit_breaker.record_failure();
+                TikvError::ClientError(e.to_string())
+            })?;
 
-            txn.delete(key)
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+            txn.delete(key).await.map_err(|e| {
+                self.circuit_breaker.record_failure();
+                TikvError::ClientError(e.to_string())
+            })?;
 
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+            txn.commit().await.map_err(|e| {
+                self.circuit_breaker.record_failure();
+                TikvError::ClientError(e.to_string())
+            })?;
 
+            self.circuit_breaker.record_success();
             Ok(())
         }
 
@@ -1194,6 +1260,7 @@ impl TikvClient {
         Self {
             config: TikvConfig::default(),
             inner: None,
+            circuit_breaker: Arc::new(super::circuit::CircuitBreaker::new()),
         }
     }
 }
