@@ -140,7 +140,7 @@ pub use robocodec::schema::{FieldType, MessageSchema, parse_schema};
 pub use robocodec::io::{
     ChannelInfo,
     metadata::RawMessage,
-    reader::{ReaderBuilder, RoboReader},
+    reader::RoboReader,
     traits::{FormatReader, FormatWriter},
     writer::RoboWriter,
 };

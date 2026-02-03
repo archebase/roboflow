@@ -451,7 +451,15 @@ impl LerobotWriter {
             image_timestamps.insert(camera.clone(), Vec::new());
         }
 
+        // Track last action for forward-fill
+        let mut last_action: Option<Vec<f32>> = None;
+
         for frame in &self.frame_data {
+            // Require observation_state
+            if frame.observation_state.is_none() {
+                continue;
+            }
+
             episode_index.push(frame.episode_index as i64);
             frame_index.push(frame.frame_index as i64);
             index.push(frame.index as i64);
@@ -460,8 +468,17 @@ impl LerobotWriter {
             if let Some(ref state) = frame.observation_state {
                 observation_state.push(state.clone());
             }
-            if let Some(ref act) = frame.action {
-                action.push(act.clone());
+
+            // Use action if available, otherwise forward-fill from previous frame
+            let act = frame.action.as_ref().or(last_action.as_ref());
+            if let Some(a) = act {
+                action.push(a.clone());
+                last_action = Some(a.clone());
+            } else if !observation_state.is_empty() {
+                // No action available yet, use zeros with correct dimension
+                // Will infer dimension from first state
+                let dim = observation_state.last().map_or(14, |s| s.len().min(14));
+                action.push(vec![0.0; dim]);
             }
 
             task_index.push(frame.task_index.map(|t| t as i64).unwrap_or(0));
@@ -508,8 +525,13 @@ impl LerobotWriter {
             series_vec.push(Series::new(&col_name, values));
         }
 
-        // Add action columns
-        for i in 0..state_dim {
+        // Add action columns - use action dimension from first non-empty action
+        let action_dim = action
+            .iter()
+            .find(|v| !v.is_empty())
+            .map(|v| v.len())
+            .unwrap_or(14); // Default to 14 if no actions
+        for i in 0..action_dim {
             let col_name = format!("action.{}", i);
             let values: Vec<f32> = action
                 .iter()

@@ -122,23 +122,22 @@ impl ParquetKpsWriter {
 
         let mut frame_index = 0usize;
 
-        // Process messages - use decode_messages_with_timestamp to get timestamps
-        let iter = reader.decode_messages_with_timestamp()?;
-        for result in iter {
-            let (timestamped_msg, _channel_info) = result?;
+        // Process messages - use decoded() to get timestamps
+        for item in reader.decoded()? {
+            let timestamped_msg = item?;
 
             // Find matching mapping
-            let mapping = config
-                .mappings
-                .iter()
-                .find(|m| _channel_info.topic == m.topic || _channel_info.topic.contains(&m.topic));
+            let mapping = config.mappings.iter().find(|m| {
+                timestamped_msg.channel.topic == m.topic
+                    || timestamped_msg.channel.topic.contains(&m.topic)
+            });
 
             let Some(mapping) = mapping else {
                 continue;
             };
 
             // Extract actual message timestamp (convert nanoseconds to microseconds)
-            let timestamp = (timestamped_msg.log_time / 1000) as i64;
+            let timestamp = (timestamped_msg.log_time.unwrap_or(0) / 1000) as i64;
             self.timestamps.push(timestamp);
 
             let msg = &timestamped_msg.message;

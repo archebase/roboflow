@@ -12,7 +12,6 @@
 
 use std::path::Path;
 
-use robocodec::io::traits::FormatReader;
 use robocodec::mcap::McapFormat;
 use roboflow::{HyperPipeline, HyperPipelineConfig};
 

@@ -161,18 +161,18 @@ impl DatasetConverter {
 
         info!(mappings = topic_mappings.len(), "Processing messages");
 
-        for result in reader.decode_messages_with_timestamp()? {
-            let (timestamped_msg, channel_info) = result?;
+        for msg_result in reader.decoded()? {
+            let timestamped_msg = msg_result?;
 
             // Find mapping for this topic
-            let mapping = match topic_mappings.get(&channel_info.topic) {
+            let mapping = match topic_mappings.get(&timestamped_msg.channel.topic) {
                 Some(m) => m,
                 None => continue, // Skip unmapped topics
             };
 
             // Align timestamp to frame boundary
             let aligned_timestamp =
-                Self::align_to_frame(timestamped_msg.log_time, frame_interval_ns);
+                Self::align_to_frame(timestamped_msg.log_time.unwrap_or(0), frame_interval_ns);
 
             // Get or create frame - track new frames for max_frames limit
             let is_new = !frame_buffer.contains_key(&aligned_timestamp);
@@ -200,7 +200,7 @@ impl DatasetConverter {
                         frame.add_image(
                             mapping.feature.clone(),
                             ImageData {
-                                original_timestamp: timestamped_msg.log_time,
+                                original_timestamp: timestamped_msg.log_time.unwrap_or(0),
                                 ..img
                             },
                         );
@@ -217,7 +217,10 @@ impl DatasetConverter {
                     }
                 }
                 KpsMappingType::Timestamp => {
-                    frame.add_timestamp(mapping.feature.clone(), timestamped_msg.log_time);
+                    frame.add_timestamp(
+                        mapping.feature.clone(),
+                        timestamped_msg.log_time.unwrap_or(0),
+                    );
                 }
                 _ => {}
             }
@@ -312,18 +315,18 @@ impl DatasetConverter {
 
         info!(mappings = topic_mappings.len(), "Processing messages");
 
-        for result in reader.decode_messages_with_timestamp()? {
-            let (timestamped_msg, channel_info) = result?;
+        for msg_result in reader.decoded()? {
+            let timestamped_msg = msg_result?;
 
             // Find mapping for this topic
-            let mapping = match topic_mappings.get(&channel_info.topic) {
+            let mapping = match topic_mappings.get(&timestamped_msg.channel.topic) {
                 Some(m) => m,
                 None => continue, // Skip unmapped topics
             };
 
             // Align timestamp to frame boundary
             let aligned_timestamp =
-                Self::align_to_frame(timestamped_msg.log_time, frame_interval_ns);
+                Self::align_to_frame(timestamped_msg.log_time.unwrap_or(0), frame_interval_ns);
 
             // Get or create frame - track new frames for max_frames limit
             let is_new = !frame_buffer.contains_key(&aligned_timestamp);
@@ -351,7 +354,7 @@ impl DatasetConverter {
                         frame.add_image(
                             mapping.feature.clone(),
                             ImageData {
-                                original_timestamp: timestamped_msg.log_time,
+                                original_timestamp: timestamped_msg.log_time.unwrap_or(0),
                                 ..img
                             },
                         );
@@ -368,7 +371,10 @@ impl DatasetConverter {
                     }
                 }
                 LerobotMappingType::Timestamp => {
-                    frame.add_timestamp(mapping.feature.clone(), timestamped_msg.log_time);
+                    frame.add_timestamp(
+                        mapping.feature.clone(),
+                        timestamped_msg.log_time.unwrap_or(0),
+                    );
                 }
             }
         }

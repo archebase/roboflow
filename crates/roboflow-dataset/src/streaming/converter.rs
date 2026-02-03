@@ -141,12 +141,14 @@ impl StreamingDatasetConverter {
         lerobot_config: crate::lerobot::config::LerobotConfig,
     ) -> Result<Self> {
         let fps = lerobot_config.dataset.fps;
+        // Require observation.state for LeRobot datasets
+        let config = StreamingConfig::with_fps(fps).require_feature("observation.state");
         Ok(Self {
             output_dir: output_dir.as_ref().to_path_buf(),
             format: DatasetFormat::Lerobot,
             kps_config: None,
             lerobot_config: Some(lerobot_config),
-            config: StreamingConfig::with_fps(fps),
+            config,
             input_storage: None,
             output_storage: None,
             progress_callback: None,
@@ -161,12 +163,14 @@ impl StreamingDatasetConverter {
         output_storage: Option<Arc<dyn Storage>>,
     ) -> Result<Self> {
         let fps = lerobot_config.dataset.fps;
+        // Require observation.state for LeRobot datasets
+        let config = StreamingConfig::with_fps(fps).require_feature("observation.state");
         Ok(Self {
             output_dir: output_dir.as_ref().to_path_buf(),
             format: DatasetFormat::Lerobot,
             kps_config: None,
             lerobot_config: Some(lerobot_config),
-            config: StreamingConfig::with_fps(fps),
+            config,
             input_storage,
             output_storage,
             progress_callback: None,
@@ -288,18 +292,18 @@ impl StreamingDatasetConverter {
         let mut unmapped_warning_shown: std::collections::HashSet<String> =
             std::collections::HashSet::new();
 
-        for result in reader.decode_messages_with_timestamp()? {
-            let (timestamped_msg, channel) = result?;
+        for msg_result in reader.decoded()? {
+            let msg_result = msg_result?;
             stats.messages_processed += 1;
 
             // Find mapping for this topic
-            let mapping = match topic_mappings.get(&channel.topic) {
+            let mapping = match topic_mappings.get(&msg_result.channel.topic) {
                 Some(m) => m,
                 None => {
                     // Log warning once per unmapped topic to avoid spam
-                    if unmapped_warning_shown.insert(channel.topic.clone()) {
+                    if unmapped_warning_shown.insert(msg_result.channel.topic.clone()) {
                         tracing::warn!(
-                            topic = %channel.topic,
+                            topic = %msg_result.channel.topic,
                             "Message from unmapped topic will be ignored. Add this topic to your configuration if needed."
                         );
                     }
@@ -310,8 +314,8 @@ impl StreamingDatasetConverter {
 
             // Convert to our TimestampedMessage type
             let msg = crate::streaming::alignment::TimestampedMessage {
-                log_time: timestamped_msg.log_time,
-                message: timestamped_msg.message,
+                log_time: msg_result.log_time.unwrap_or(0),
+                message: msg_result.message,
             };
 
             // Process message through alignment buffer

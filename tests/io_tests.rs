@@ -12,7 +12,6 @@ use std::path::Path;
 
 use robocodec::io::detection::detect_format;
 use robocodec::io::metadata::{ChannelInfo, FileFormat, RawMessage};
-use robocodec::io::reader::{ReadStrategy, ReaderBuilder};
 use robocodec::mcap::McapFormat;
 
 #[test]
@@ -62,30 +61,6 @@ fn test_detect_format_unknown() {
 }
 
 #[test]
-fn test_reader_builder() {
-    let builder = ReaderBuilder::new();
-    let _builder = builder;
-}
-
-#[test]
-fn test_reader_builder_missing_path() {
-    let result = ReaderBuilder::new().build();
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_read_strategy_resolve() {
-    let strategy = ReadStrategy::Auto.resolve(FileFormat::Bag, false, false);
-    assert_eq!(strategy, ReadStrategy::Sequential);
-
-    let strategy = ReadStrategy::Auto.resolve(FileFormat::Mcap, true, true);
-    assert_eq!(strategy, ReadStrategy::Parallel);
-
-    let strategy = ReadStrategy::Auto.resolve(FileFormat::Mcap, false, false);
-    assert_eq!(strategy, ReadStrategy::Sequential);
-}
-
-#[test]
 fn test_channel_info_builder() {
     let info = ChannelInfo::new(1, "/test", "std_msgs/String")
         .with_encoding("json")
@@ -118,10 +93,7 @@ fn test_mcap_format_exists() {
 }
 
 #[test]
-fn test_robo_reader_auto_strategy() {
-    let result = robocodec::io::RoboReader::open_with_strategy(
-        "/tmp/claude/nonexistent_file_xYz123.mcap",
-        ReadStrategy::Auto,
-    );
+fn test_robo_reader_open_nonexistent() {
+    let result = robocodec::io::RoboReader::open("/tmp/claude/nonexistent_file_xYz123.mcap");
     assert!(result.is_err());
 }

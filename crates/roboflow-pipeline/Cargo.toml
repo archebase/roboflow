@@ -17,8 +17,8 @@ roboflow-core = { path = "../roboflow-core", version = "0.2.0" }
 roboflow-storage = { path = "../roboflow-storage", version = "0.2.0" }
 roboflow-dataset = { path = "../roboflow-dataset", version = "0.2.0" }
 
-# External dependencies from robocodec
-robocodec = { git = "https://github.com/archebase/robocodec", rev = "5a8e11b" }
+# External dependencies from robocodec (uses workspace version)
+robocodec = { workspace = true }
 
 # Compression
 zstd = "0.13"

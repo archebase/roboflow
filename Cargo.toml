@@ -20,7 +20,7 @@ roboflow-hdf5 = { path = "crates/roboflow-hdf5", version = "0.2.0" }
 roboflow-pipeline = { path = "crates/roboflow-pipeline", version = "0.2.0" }
 
 # External dependencies
-robocodec = { git = "https://github.com/archebase/robocodec", rev = "5a8e11b" }
+robocodec = { git = "https://github.com/archebase/robocodec", rev = "8adde9f" }
 
 [package]
 name = "roboflow"

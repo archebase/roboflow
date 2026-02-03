@@ -103,7 +103,7 @@ fn test_mcap_file(fixture_path: &Path, _expectations: &FixtureExpectations) -> T
 /// Validate that a decoded message has expected structure.
 fn validate_decoded_message_simple(
     decoded: &std::collections::HashMap<String, roboflow::CodecValue>,
-    channel_info: &robocodec::mcap::reader::ChannelInfo,
+    channel_info: &robocodec::io::ChannelInfo,
 ) {
     // Check that we decoded some fields
     if decoded.is_empty() {
