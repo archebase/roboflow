@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Instant;
 
 use crate::common::AlignedFrame;
+use crate::image::{ImageDecoderFactory, ImageFormat};
 use crate::streaming::completion::FrameCompletionCriteria;
 use crate::streaming::config::StreamingConfig;
 use crate::streaming::stats::AlignmentStats;
@@ -88,6 +89,9 @@ pub struct FrameAlignmentBuffer {
     /// Statistics
     stats: AlignmentStats,
 
+    /// Image decoder factory (optional, for decoding CompressedImage messages)
+    decoder: Option<ImageDecoderFactory>,
+
     /// Next frame index to assign
     next_frame_index: usize,
 
@@ -99,12 +103,14 @@ impl FrameAlignmentBuffer {
     /// Create a new frame alignment buffer.
     pub fn new(config: StreamingConfig) -> Self {
         let completion_criteria = Self::build_completion_criteria(&config);
+        let decoder = config.decoder_config.as_ref().map(ImageDecoderFactory::new);
 
         Self {
             active_frames: BTreeMap::new(),
             config,
             completion_criteria,
             stats: AlignmentStats::new(),
+            decoder,
             next_frame_index: 0,
             current_timestamp: 0,
         }
@@ -115,11 +121,14 @@ impl FrameAlignmentBuffer {
         config: StreamingConfig,
         criteria: FrameCompletionCriteria,
     ) -> Self {
+        let decoder = config.decoder_config.as_ref().map(ImageDecoderFactory::new);
+
         Self {
             active_frames: BTreeMap::new(),
             config,
             completion_criteria: criteria,
             stats: AlignmentStats::new(),
+            decoder,
             next_frame_index: 0,
             current_timestamp: 0,
         }
@@ -131,8 +140,101 @@ impl FrameAlignmentBuffer {
         timestamped_msg: &TimestampedMessage,
         feature_name: &str,
     ) -> Vec<AlignedFrame> {
+        use crate::common::ImageData;
+        use robocodec::CodecValue;
+
         // Update current timestamp
         self.current_timestamp = timestamped_msg.log_time;
+
+        // Extract image data (if any) before borrowing entry
+        let msg = &timestamped_msg.message;
+        let mut width = 0u32;
+        let mut height = 0u32;
+        let mut image_data: Option<Vec<u8>> = None;
+        let mut is_encoded = false;
+
+        for (key, value) in msg.iter() {
+            match key.as_str() {
+                "width" => {
+                    if let CodecValue::UInt32(w) = value {
+                        width = *w;
+                    }
+                }
+                "height" => {
+                    if let CodecValue::UInt32(h) = value {
+                        height = *h;
+                    }
+                }
+                "data" => {
+                    if let CodecValue::Bytes(b) = value {
+                        image_data = Some(b.clone());
+                    }
+                }
+                "format" => {
+                    if let CodecValue::String(f) = value {
+                        is_encoded = f != "rgb8";
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Decode compressed image if decoder available and data is present
+        let (decoded_image, final_is_encoded) = if let Some(ref data) = image_data {
+            if is_encoded {
+                // Extract dimensions from header if not provided
+                if width == 0 && height == 0
+                    && let Some((w, h)) = Self::extract_image_dimensions(data)
+                {
+                    width = w;
+                    height = h;
+                }
+            }
+
+            // Try decoding if we have compressed data and a decoder
+            if is_encoded {
+                if self.decoder.is_some() {
+                    let format = ImageFormat::from_magic_bytes(data);
+                    if format != ImageFormat::Unknown {
+                        // SAFETY: We're in &mut self context, so we can call get_decoder
+                        // We need to explicitly reborrow to get mutable access
+                        match self
+                            .decoder
+                            .as_mut()
+                            .unwrap()
+                            .get_decoder()
+                            .decode(data, format)
+                        {
+                            Ok(decoded) => {
+                                tracing::debug!(
+                                    width = decoded.width,
+                                    height = decoded.height,
+                                    feature = %feature_name,
+                                    "Decoded compressed image"
+                                );
+                                (Some(decoded.data), false)
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    feature = %feature_name,
+                                    "Failed to decode image, storing compressed"
+                                );
+                                (Some(data.clone()), true)
+                            }
+                        }
+                    } else {
+                        (Some(data.clone()), true)
+                    }
+                } else {
+                    (Some(data.clone()), true)
+                }
+            } else {
+                (Some(data.clone()), is_encoded)
+            }
+        } else {
+            (None, false)
+        };
 
         // Align timestamp to frame boundary
         let aligned_ts = self.align_to_frame_boundary(timestamped_msg.log_time);
@@ -152,9 +254,56 @@ impl FrameAlignmentBuffer {
         // Add feature to the partial frame
         entry.add_feature(feature_name);
 
-        // Extract message data and add to frame
-        // Note: We do this before releasing the borrow
-        Self::extract_message_to_frame_static(entry, timestamped_msg, feature_name);
+        // Add image data to the frame (if we extracted any)
+        if let Some(data) = decoded_image {
+            entry.frame.images.insert(
+                feature_name.to_string(),
+                ImageData {
+                    width,
+                    height,
+                    data,
+                    original_timestamp: timestamped_msg.log_time,
+                    is_encoded: final_is_encoded,
+                },
+            );
+        }
+
+        // Process state/action data (needs the message borrow)
+        let mut values = Vec::new();
+        for value in msg.values() {
+            match value {
+                CodecValue::Float32(n) => values.push(*n),
+                CodecValue::Float64(n) => values.push(*n as f32),
+                CodecValue::UInt8(n) => values.push(*n as f32),
+                CodecValue::UInt16(n) => values.push(*n as f32),
+                CodecValue::UInt32(n) => values.push(*n as f32),
+                CodecValue::UInt64(n) => values.push(*n as f32),
+                CodecValue::Int8(n) => values.push(*n as f32),
+                CodecValue::Int16(n) => values.push(*n as f32),
+                CodecValue::Int32(n) => values.push(*n as f32),
+                CodecValue::Int64(n) => values.push(*n as f32),
+                CodecValue::Array(arr) => {
+                    for v in arr.iter() {
+                        match v {
+                            CodecValue::Float32(n) => values.push(*n),
+                            CodecValue::Float64(n) => values.push(*n as f32),
+                            CodecValue::UInt8(n) => values.push(*n as f32),
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Add as state or action based on feature name
+        if !values.is_empty() {
+            if feature_name.starts_with("action.") {
+                entry.frame.actions.insert(feature_name.to_string(), values);
+            } else {
+                entry.frame.states.insert(feature_name.to_string(), values);
+            }
+        }
 
         // Check for completed frames
         self.check_completions()
@@ -209,9 +358,33 @@ impl FrameAlignmentBuffer {
     }
 
     /// Estimate memory usage in bytes.
+    ///
+    /// Calculates actual memory usage based on the images stored in active frames,
+    /// accounting for whether images are encoded (JPEG/PNG) or decoded RGB.
     pub fn estimated_memory_bytes(&self) -> usize {
-        // Rough estimate: 1MB per frame (images dominate)
-        self.active_frames.len() * 1_024 * 1_024
+        let mut total = 0usize;
+
+        for partial in self.active_frames.values() {
+            // Estimate image memory usage
+            for image in partial.frame.images.values() {
+                if image.is_encoded {
+                    // Compressed image - use actual data size
+                    total += image.data.len();
+                } else {
+                    // RGB decoded image - width * height * 3
+                    total += (image.width as usize) * (image.height as usize) * 3;
+                }
+            }
+
+            // Estimate state/action memory (small contribution)
+            total += partial.frame.states.len() * 100; // Rough estimate
+            total += partial.frame.actions.len() * 100;
+        }
+
+        // Add overhead for the data structures themselves
+        total += self.active_frames.len() * 512; // BTreeMap overhead
+
+        total
     }
 
     /// Align a timestamp to the nearest frame boundary.
@@ -291,107 +464,79 @@ impl FrameAlignmentBuffer {
         criteria
     }
 
-    /// Extract message data and add it to the frame.
-    fn extract_message_to_frame_static(
-        partial: &mut PartialFrame,
-        timestamped_msg: &TimestampedMessage,
-        feature_name: &str,
-    ) {
-        use crate::common::ImageData;
-        use robocodec::CodecValue;
-
-        let msg = &timestamped_msg.message;
-
-        // Try to extract image data
-        let mut width = 0u32;
-        let mut height = 0u32;
-        let mut data: Option<Vec<u8>> = None;
-        let mut is_encoded = false;
-
-        for (key, value) in msg.iter() {
-            match key.as_str() {
-                "width" => {
-                    if let CodecValue::UInt32(w) = value {
-                        width = *w;
-                    }
-                }
-                "height" => {
-                    if let CodecValue::UInt32(h) = value {
-                        height = *h;
-                    }
-                }
-                "data" => {
-                    if let CodecValue::Bytes(b) = value {
-                        data = Some(b.clone());
-                    }
-                }
-                "format" => {
-                    if let CodecValue::String(f) = value {
-                        is_encoded = f != "rgb8";
-                    }
-                }
-                _ => {}
-            }
+    /// Extract image dimensions from JPEG/PNG header data.
+    ///
+    /// Returns Some((width, height)) if dimensions can be extracted, None otherwise.
+    fn extract_image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+        if data.len() < 4 {
+            return None;
         }
 
-        if let Some(image_data) = data {
-            partial.frame.images.insert(
-                feature_name.to_string(),
-                ImageData {
-                    width,
-                    height,
-                    data: image_data,
-                    original_timestamp: timestamped_msg.log_time,
-                    is_encoded,
-                },
-            );
-            return;
+        // Check for JPEG magic bytes (FF D8)
+        if data[0] == 0xFF && data[1] == 0xD8 {
+            return Self::extract_jpeg_dimensions(data);
         }
 
-        // Try to extract float array (for state/action)
-        let mut values = Vec::new();
+        // Check for PNG magic bytes (89 50 4E 47 = \x89PNG)
+        if data[0] == 0x89 && &data[1..4] == b"PNG" {
+            return Self::extract_png_dimensions(data);
+        }
 
-        // Collect all numeric values from the message
-        for value in msg.values() {
-            match value {
-                CodecValue::Float32(n) => values.push(*n),
-                CodecValue::Float64(n) => values.push(*n as f32),
-                CodecValue::UInt8(n) => values.push(*n as f32),
-                CodecValue::UInt16(n) => values.push(*n as f32),
-                CodecValue::UInt32(n) => values.push(*n as f32),
-                CodecValue::UInt64(n) => values.push(*n as f32),
-                CodecValue::Int8(n) => values.push(*n as f32),
-                CodecValue::Int16(n) => values.push(*n as f32),
-                CodecValue::Int32(n) => values.push(*n as f32),
-                CodecValue::Int64(n) => values.push(*n as f32),
-                CodecValue::Array(arr) => {
-                    for v in arr.iter() {
-                        match v {
-                            CodecValue::Float32(n) => values.push(*n),
-                            CodecValue::Float64(n) => values.push(*n as f32),
-                            CodecValue::UInt8(n) => values.push(*n as f32),
-                            _ => {}
-                        }
-                    }
+        None
+    }
+
+    /// Extract dimensions from JPEG header.
+    fn extract_jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+        // JPEG format: FF C0 (SOF0 marker) followed by length, precision, height, width
+        // We need to find the SOF0 marker (FF C0 or FF C2 for progressive)
+        let mut i = 2;
+        while i < data.len().saturating_sub(8) {
+            // Find marker (FF xx)
+            if data[i] == 0xFF {
+                let marker = data[i + 1];
+
+                // SOF0 (baseline) or SOF2 (progressive) JPEG markers contain dimensions
+                if marker == 0xC0 || marker == 0xC2 {
+                    // Skip marker (FF xx), length (2 bytes), precision (1 byte)
+                    // Height and width are next (each 2 bytes, big-endian)
+                    let height = u16::from_be_bytes([data[i + 5], data[i + 6]]) as u32;
+                    let width = u16::from_be_bytes([data[i + 7], data[i + 8]]) as u32;
+                    return Some((width, height));
                 }
-                _ => {}
-            }
-        }
 
-        // Add as state or action based on feature name
-        if !values.is_empty() {
-            if feature_name.starts_with("action.") {
-                partial
-                    .frame
-                    .actions
-                    .insert(feature_name.to_string(), values);
+                // Skip to next marker: skip marker bytes plus the length field
+                if marker != 0xFF && marker != 0x00 {
+                    let length = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
+                    i += 2 + length;
+                } else {
+                    i += 1;
+                }
             } else {
-                partial
-                    .frame
-                    .states
-                    .insert(feature_name.to_string(), values);
+                i += 1;
             }
         }
+        None
+    }
+
+    /// Extract dimensions from PNG header.
+    fn extract_png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+        // PNG IHDR chunk starts at byte 8: 4 bytes length, 4 bytes "IHDR", then width and height
+        if data.len() < 24 {
+            return None;
+        }
+
+        // Bytes 8-11: chunk length (should be 13 for IHDR)
+        // Bytes 12-15: chunk type (should be "IHDR")
+        if &data[12..16] != b"IHDR" {
+            return None;
+        }
+
+        // Bytes 16-19: width (big-endian)
+        // Bytes 20-23: height (big-endian)
+        let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+        let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+
+        Some((width, height))
     }
 }
 

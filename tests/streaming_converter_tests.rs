@@ -46,11 +46,13 @@ fn test_lerobot_config() -> LerobotConfig {
                 topic: "/camera/image_raw".to_string(),
                 feature: "observation.images.camera".to_string(),
                 mapping_type: MappingType::Image,
+                camera_key: None,
             },
             Mapping {
                 topic: "/robot/state".to_string(),
                 feature: "observation.state".to_string(),
                 mapping_type: MappingType::State,
+                camera_key: None,
             },
         ],
         video: VideoConfig::default(),

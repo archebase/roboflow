@@ -31,8 +31,18 @@ pub mod lerobot;
 // Streaming conversion (bounded memory footprint)
 pub mod streaming;
 
+// Image decoding (JPEG/PNG with GPU support)
+pub mod image;
+
 // Re-export common types for convenience
 pub use common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats};
+
+// Re-export commonly used image types
+pub use image::{
+    decode_compressed_image, DecodedImage, ImageDecoderBackend, ImageDecoderConfig,
+    ImageDecoderFactory, ImageError, ImageFormat, ImageFormat as ImageDecoderBackendType,
+    MemoryStrategy,
+};
 
 /// Dataset format enumeration.
 ///

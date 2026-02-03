@@ -20,6 +20,9 @@ polars = { version = "0.41", features = ["parquet"] }
 # Depth images
 png = "0.17"
 
+# Image decoding (JPEG/PNG) - optional but always enabled by default
+image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png"] }
+
 # Video encoding (FFmpeg) - optional, requires system library
 ffmpeg-next = { version = "6.1", optional = true }
 
@@ -48,6 +51,15 @@ anyhow = "1.0"
 [features]
 # Enable video encoding via FFmpeg (requires ffmpeg installed on system)
 video = ["dep:ffmpeg-next"]
+
+# Image decoding (CPU-based, always available but can be explicitly enabled)
+image-decode = ["dep:image"]
+
+# GPU-accelerated decoding (Linux nvJPEG, macOS Apple hardware)
+gpu-decode = ["image-decode"]
+
+# CUDA pinned memory for zero-copy GPU transfers (requires cudarc)
+cuda-pinned = ["gpu-decode"]
 
 [dev-dependencies]
 pretty_assertions = "1.4"
