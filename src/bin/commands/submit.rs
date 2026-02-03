@@ -17,11 +17,26 @@
 //! roboflow submit --manifest jobs.json
 //! ```
 
+use roboflow_distributed::tikv::schema::ConfigRecord;
 use roboflow_distributed::{JobRecord, TikvClient};
 use roboflow_storage::StorageFactory;
 
 use crate::commands::jobs::{OutputFormat, print_job_output};
 use crate::commands::utils::{compute_file_hash, glob_match, parse_storage_url};
+
+use std::path::{Path, PathBuf};
+
+/// Maximum config file size (10MB) to prevent DoS.
+const MAX_CONFIG_SIZE: usize = 10 * 1024 * 1024;
+
+/// Maximum TOML nesting depth to prevent TOML bomb attacks.
+const MAX_TOML_NESTING_DEPTH: usize = 32;
+
+/// Maximum number of keys in TOML config.
+const MAX_TOML_KEYS: usize = 1000;
+
+/// Maximum array size in TOML config.
+const MAX_TOML_ARRAY_SIZE: usize = 10_000;
 
 /// Submit command options.
 #[derive(Debug, Clone)]
@@ -184,12 +199,8 @@ impl SubmitCommand {
                 .map_err(|e| format!("Failed to connect to TiKV: {}", e))?
         };
 
-        // Get config hash
-        let config_hash = self
-            .config_hash
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| "default".to_string());
+        // Load or store config in TiKV
+        let config_hash = self.load_or_store_config(&tikv).await?;
 
         // Create storage factory
         let factory = StorageFactory::from_env();
@@ -513,6 +524,221 @@ impl SubmitCommand {
 
         Ok(job)
     }
+
+    /// Load or store configuration in TiKV.
+    ///
+    /// If `config_hash` is a file path that exists, reads the file, computes SHA-256 hash,
+    /// stores in TiKV (if not already present), and returns the hash.
+    ///
+    /// If `config_hash` is already a 64-character hex string (SHA-256 hash), verifies
+    /// the config exists in TiKV before accepting it.
+    ///
+    /// Otherwise, treats it as-is (for backward compatibility with "default" hash).
+    async fn load_or_store_config(&self, tikv: &TikvClient) -> Result<String, String> {
+        let config_input = self
+            .config_hash
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| "default".to_string());
+
+        // Special case for "default" hash
+        if config_input == "default" {
+            tracing::debug!("Using default config hash");
+            return Ok(config_input);
+        }
+
+        // Check if it's already a 64-char hex string (SHA-256 hash)
+        if is_hex_hash(&config_input) {
+            // CRITICAL: Verify the hash actually exists in TiKV before accepting it
+            match tikv.get_config(&config_input).await {
+                Ok(Some(_)) => {
+                    tracing::debug!("Using existing config hash: {}", config_input);
+                    return Ok(config_input);
+                }
+                Ok(None) => {
+                    return Err(format!(
+                        "Config hash '{}' not found in TiKV. Provide a valid file path or ensure config is stored.",
+                        config_input
+                    ));
+                }
+                Err(e) => {
+                    return Err(format!("Failed to verify config in TiKV: {}", e));
+                }
+            }
+        }
+
+        // Check if it's a file path that exists
+        let config_path = validate_config_path(&config_input)?;
+        if config_path.exists() {
+            let filename = config_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("config");
+
+            tracing::info!("Reading config from file: {}", filename);
+            let content = read_config_with_limit(&config_path)?;
+
+            // Validate TOML structure to prevent TOML bomb attacks
+            SafeTomlValidator::validate_toml_str(&content)
+                .map_err(|e| format!("TOML validation failed in '{}': {}", filename, e))?;
+
+            // Validate as actual LeRobotConfig
+            if let Err(e) = roboflow_dataset::lerobot::LerobotConfig::from_toml(&content) {
+                return Err(format!("Invalid LeRobot config in '{}': {}", filename, e));
+            }
+
+            // Compute hash
+            let hash = ConfigRecord::compute_hash(&content);
+
+            // Check if already exists in TiKV (race condition check)
+            match tikv.get_config(&hash).await {
+                Ok(Some(_)) => {
+                    tracing::info!("Config already exists in TiKV: {}", hash);
+                    return Ok(hash);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    return Err(format!("Failed to check config in TiKV: {}", e));
+                }
+            }
+
+            // Store in TiKV (put_config is idempotent for same hash)
+            let record = ConfigRecord::new(content);
+            tikv.put_config(&record)
+                .await
+                .map_err(|e| format!("Failed to store config in TiKV: {}", e))?;
+            tracing::info!("Stored config in TiKV: {}", hash);
+            return Ok(hash);
+        }
+
+        // Not a hash, not a valid file - error
+        Err(format!(
+            "Config '{}' is not a valid hash (64 hex chars), existing .toml file, or 'default'",
+            config_input
+        ))
+    }
+}
+
+/// Validate config file path for security.
+///
+/// Rejects:
+/// - Absolute paths
+/// - Path traversal sequences (..)
+/// - Non-.toml files
+fn validate_config_path(config_input: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(config_input);
+
+    // Reject absolute paths for security
+    if path.is_absolute() {
+        return Err("Absolute paths are not allowed for config files".to_string());
+    }
+
+    // Reject path traversal
+    if config_input.contains("..") {
+        return Err("Path traversal sequences (..) are not allowed".to_string());
+    }
+
+    // Only allow .toml extension
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("toml") => {}
+        _ => {
+            return Err("Config files must have .toml extension".to_string());
+        }
+    }
+
+    Ok(path)
+}
+
+/// Read config file with size limit to prevent DoS.
+fn read_config_with_limit(path: &Path) -> Result<String, String> {
+    // Check file size first
+    let metadata =
+        std::fs::metadata(path).map_err(|e| format!("Cannot read file metadata: {}", e))?;
+
+    if metadata.len() > MAX_CONFIG_SIZE as u64 {
+        return Err(format!(
+            "Config file too large: {} bytes (max: {} bytes)",
+            metadata.len(),
+            MAX_CONFIG_SIZE
+        ));
+    }
+
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read config file: {}", e))?;
+
+    // Double-check content length
+    if content.len() > MAX_CONFIG_SIZE {
+        return Err("Config content exceeds maximum size".to_string());
+    }
+
+    Ok(content)
+}
+
+/// TOML validator to prevent TOML bomb attacks.
+struct SafeTomlValidator {
+    depth: usize,
+    key_count: usize,
+}
+
+impl SafeTomlValidator {
+    fn new() -> Self {
+        Self {
+            depth: 0,
+            key_count: 0,
+        }
+    }
+
+    /// Validate a TOML value for size and nesting limits.
+    fn validate(&mut self, value: &toml::Value) -> Result<(), String> {
+        match value {
+            toml::Value::Table(table) => {
+                if self.depth > MAX_TOML_NESTING_DEPTH {
+                    return Err(format!(
+                        "TOML nesting exceeds maximum depth of {}",
+                        MAX_TOML_NESTING_DEPTH
+                    ));
+                }
+                self.key_count += table.len();
+                if self.key_count > MAX_TOML_KEYS {
+                    return Err(format!(
+                        "TOML key count exceeds maximum of {}",
+                        MAX_TOML_KEYS
+                    ));
+                }
+                self.depth += 1;
+                for v in table.values() {
+                    self.validate(v)?;
+                }
+                self.depth -= 1;
+            }
+            toml::Value::Array(arr) => {
+                if arr.len() > MAX_TOML_ARRAY_SIZE {
+                    return Err(format!(
+                        "TOML array too large (max {} elements)",
+                        MAX_TOML_ARRAY_SIZE
+                    ));
+                }
+                for v in arr {
+                    self.validate(v)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Validate TOML string directly.
+    fn validate_toml_str(content: &str) -> Result<(), String> {
+        let parsed: toml::Value =
+            toml::from_str(content).map_err(|e| format!("Invalid TOML: {}", e))?;
+        let mut validator = Self::new();
+        validator.validate(&parsed)
+    }
+}
+
+/// Check if a string is a 64-character hex string (SHA-256 hash).
+fn is_hex_hash(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Run the submit command from raw args.
@@ -540,7 +766,9 @@ OPTIONS:
     -o, --output <PREFIX>   Output location for processed data
                             (default: $ROBOFLOW_OUTPUT_PREFIX or "output/")
     -m, --manifest <PATH>   Load jobs from a JSON manifest file
-    -c, --config <HASH>     Dataset configuration hash
+    -c, --config <PATH>     Dataset configuration file path or hash
+                            If a file path: reads file, stores in TiKV, uses hash
+                            If a 64-char hex string: uses as hash directly
                             (default: "default")
         --max-attempts <N>  Maximum retry attempts per job (default: 3)
         --dry-run           Show what would be submitted without submitting
@@ -584,12 +812,158 @@ EXAMPLES:
     # Dry run to see what would be submitted
     roboflow submit oss://bucket/*.mcap --dry-run
 
-    # Submit with custom config hash
-    roboflow submit file.mcap --config custom-config-v1
+    # Submit with config file (will be stored in TiKV)
+    roboflow submit file.mcap --config /path/to/config.toml
+
+    # Submit with existing config hash (already in TiKV)
+    roboflow submit file.mcap --config a3f5b...
 
 ENVIRONMENT VARIABLES:
     ROBOFLOW_OUTPUT_PREFIX    Default output location
     TIKV_PD_ENDPOINTS         TiKV PD endpoints (default: 127.0.0.1:2379)
 "#
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_hex_hash_valid() {
+        // Valid SHA-256 hash (64 hex characters)
+        assert!(is_hex_hash(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        ));
+        assert!(is_hex_hash(
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        ));
+        assert!(is_hex_hash(
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        ));
+    }
+
+    #[test]
+    fn test_is_hex_hash_invalid_characters() {
+        // Contains non-hex characters
+        assert!(!is_hex_hash(
+            "g123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        )); // 'g' is not hex
+        assert!(!is_hex_hash(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde"
+        )); // contains 'z'
+        assert!(!is_hex_hash(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdG"
+        )); // 'G' is not hex
+    }
+
+    #[test]
+    fn test_is_hex_hash_wrong_length() {
+        // Too short (63 chars)
+        assert!(!is_hex_hash(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde"
+        ));
+        // Too long (65 chars)
+        assert!(!is_hex_hash(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"
+        ));
+        // Empty
+        assert!(!is_hex_hash(""));
+        // Half length (32 chars)
+        assert!(!is_hex_hash("0123456789abcdef0123456789abcdef"));
+    }
+
+    #[test]
+    fn test_validate_config_path_valid() {
+        // Valid relative paths with .toml extension
+        assert!(validate_config_path("config.toml").is_ok());
+        assert!(validate_config_path("path/to/config.toml").is_ok());
+        assert!(validate_config_path("./config.toml").is_ok());
+        assert!(validate_config_path("a/b/c/config.toml").is_ok());
+    }
+
+    #[test]
+    fn test_validate_config_path_absolute_rejected() {
+        // Absolute paths should be rejected
+        assert!(validate_config_path("/etc/config.toml").is_err());
+        assert!(validate_config_path("/home/user/config.toml").is_err());
+        // Note: Windows paths like C:\ are relative paths on Unix, so skip that test
+    }
+
+    #[test]
+    fn test_validate_config_path_traversal_rejected() {
+        // Path traversal should be rejected
+        assert!(validate_config_path("../config.toml").is_err());
+        assert!(validate_config_path("path/../../config.toml").is_err());
+        assert!(validate_config_path("./../config.toml").is_err());
+        assert!(validate_config_path("path/../config.toml").is_err());
+    }
+
+    #[test]
+    fn test_validate_config_path_wrong_extension() {
+        // Non-.toml files should be rejected
+        assert!(validate_config_path("config.txt").is_err());
+        assert!(validate_config_path("config.json").is_err());
+        assert!(validate_config_path("config").is_err());
+        assert!(validate_config_path("config.toml.bak").is_err());
+    }
+
+    #[test]
+    fn test_safe_toml_validator_simple() {
+        let toml = r#"
+[dataset]
+name = "test"
+fps = 30
+"#;
+        assert!(SafeTomlValidator::validate_toml_str(toml).is_ok());
+    }
+
+    #[test]
+    fn test_safe_toml_validator_nesting_limit() {
+        // Create deeply nested TOML
+        let mut toml = String::from("[a]");
+        for _ in 0..MAX_TOML_NESTING_DEPTH + 1 {
+            toml = format!("[b.{}]", toml);
+        }
+        assert!(SafeTomlValidator::validate_toml_str(&toml).is_err());
+    }
+
+    #[test]
+    fn test_safe_toml_validator_key_limit() {
+        // Create TOML with too many keys
+        let mut toml = String::from("[dataset]\n");
+        for i in 0..=MAX_TOML_KEYS {
+            toml.push_str(&format!("key{} = \"value\"\n", i));
+        }
+        assert!(SafeTomlValidator::validate_toml_str(&toml).is_err());
+    }
+
+    #[test]
+    fn test_safe_toml_validator_array_limit() {
+        // Create TOML with huge array
+        let mut toml = String::from("[dataset]\nkeys = [");
+        for i in 0..MAX_TOML_ARRAY_SIZE + 1 {
+            if i > 0 {
+                toml.push(',');
+            }
+            toml.push_str(&format!("\"{}\"", i));
+        }
+        toml.push(']');
+        assert!(SafeTomlValidator::validate_toml_str(&toml).is_err());
+    }
+
+    #[test]
+    fn test_safe_toml_validator_valid_lerobot_config() {
+        let toml = r#"
+[dataset]
+name = "test_dataset"
+fps = 30
+
+[[mappings]]
+topic = "/cam_h/color"
+feature = "observation.images.cam_high"
+mapping_type = "image"
+"#;
+        assert!(SafeTomlValidator::validate_toml_str(toml).is_ok());
+    }
 }

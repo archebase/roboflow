@@ -57,15 +57,17 @@ use super::tikv::{
 };
 use roboflow_storage::Storage;
 use std::collections::HashMap;
-use tokio::sync::RwLock;
 use tokio::sync::broadcast;
+use tokio::sync::{Mutex, RwLock};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
+
+use lru::LruCache;
 
 // Dataset conversion imports
 use roboflow_dataset::{
     common::DatasetWriter,
-    lerobot::{DatasetConfig as LerobotDatasetConfig, LerobotConfig, VideoConfig},
+    lerobot::{LerobotConfig, VideoConfig},
     streaming::StreamingDatasetConverter,
 };
 
@@ -540,6 +542,10 @@ pub struct Worker {
 
     /// Job registry for batch cancellation monitoring.
     job_registry: Arc<RwLock<JobRegistry>>,
+
+    /// Config cache to reduce TiKV round-trips.
+    /// Maps config_hash -> LerobotConfig
+    config_cache: Arc<Mutex<LruCache<String, roboflow_dataset::lerobot::LerobotConfig>>>,
 }
 
 impl Worker {
@@ -571,6 +577,9 @@ impl Worker {
             shutdown_tx: None,
             cancellation_token: Arc::new(CancellationToken::new()),
             job_registry: Arc::new(RwLock::new(JobRegistry::default())),
+            config_cache: Arc::new(Mutex::new(LruCache::new(
+                std::num::NonZeroUsize::new(100).unwrap(), // Cache up to 100 configs
+            ))),
         })
     }
 
@@ -736,13 +745,29 @@ impl Worker {
         }
 
         // Build the full input path from source_key.
-        // Strip storage_prefix if present to avoid double-prefixing with LocalStorage.
-        let input_path =
-            if let Some(prefix) = job.source_key.strip_prefix(&self.config.storage_prefix) {
-                PathBuf::from(prefix)
+        // For cloud storage (S3/OSS), we need the full URL for the converter to download.
+        // For local storage, strip storage_prefix to avoid double-prefixing with LocalStorage.
+        let is_cloud_storage = job.source_bucket != "local";
+        let input_path = if is_cloud_storage {
+            // Build S3/OSS URL: s3://bucket/key or oss://bucket/key
+            // Note: output_prefix contains the full URL scheme, extract the scheme from it
+            let scheme = if job.output_prefix.starts_with("s3://") {
+                "s3://"
+            } else if job.output_prefix.starts_with("oss://") {
+                "oss://"
             } else {
-                PathBuf::from(&job.source_key)
+                // Default to s3 for compatibility
+                "s3://"
             };
+            PathBuf::from(format!(
+                "{}{}/{}",
+                scheme, job.source_bucket, job.source_key
+            ))
+        } else if let Some(prefix) = job.source_key.strip_prefix(&self.config.storage_prefix) {
+            PathBuf::from(prefix)
+        } else {
+            PathBuf::from(&job.source_key)
+        };
 
         // Build the output path for this job
         let output_path = self.build_output_path(job);
@@ -754,13 +779,31 @@ impl Worker {
         );
 
         // Create the LeRobot configuration
-        let lerobot_config = self.create_lerobot_config(job);
+        let lerobot_config = match self.create_lerobot_config(job).await {
+            Ok(config) => config,
+            Err(e) => {
+                let error_msg = format!("Failed to load config for job {}: {}", job.id, e);
+                tracing::error!(
+                    job_id = %job.id,
+                    original_error = %e,
+                    "Failed to load LeRobot config"
+                );
+                return ProcessingResult::Failed { error: error_msg };
+            }
+        };
 
         // Create streaming converter with storage backends
+        // For cloud storage inputs, pass None for input_storage to let converter
+        // download the file. For local storage, pass self.storage for fast path.
+        let input_storage = if job.source_bucket != "local" {
+            None
+        } else {
+            Some(self.storage.clone())
+        };
         let mut converter = match StreamingDatasetConverter::new_lerobot_with_storage(
             &output_path,
             lerobot_config,
-            Some(self.storage.clone()), // input storage for downloading
+            input_storage,
             Some(self.storage.clone()), // output storage for writing
         ) {
             Ok(c) => c,
@@ -946,26 +989,95 @@ impl Worker {
 
     /// Create a LeRobot configuration for processing a job.
     ///
-    /// This creates a default configuration that can be used when no
-    /// job-specific configuration is provided. In production, this would
-    /// be loaded from a config file or passed with the job.
-    fn create_lerobot_config(&self, _job: &JobRecord) -> LerobotConfig {
-        // Create a default LeRobot configuration
-        // In production, this would be loaded from:
-        // 1. A config file stored alongside the input file
-        // 2. Job metadata in TiKV
-        // 3. Default workspace configuration
-        LerobotConfig {
-            dataset: LerobotDatasetConfig {
-                name: format!("roboflow-episode-{}", _job.id),
-                fps: 30, // Default 30 FPS for robotics data
-                robot_type: Some("robot".to_string()),
-                env_type: None,
-            },
-            mappings: Vec::new(), // Empty mappings - messages will be processed as-is
-            video: VideoConfig::default(),
-            annotation_file: None,
+    /// Loads the configuration from TiKV using the config_hash stored in the job.
+    /// Uses an LRU cache to reduce TiKV round-trips for frequently used configs.
+    async fn create_lerobot_config(&self, job: &JobRecord) -> Result<LerobotConfig, TikvError> {
+        use roboflow_dataset::lerobot::config::DatasetConfig;
+
+        let config_hash = &job.config_hash;
+
+        // Skip empty hash (special case for "default" or legacy behavior)
+        if config_hash.is_empty() || config_hash == "default" {
+            tracing::warn!(
+                pod_id = %self.pod_id,
+                job_id = %job.id,
+                config_hash = %config_hash,
+                "Using default empty config (will produce no frames)"
+            );
+            return Ok(LerobotConfig {
+                dataset: DatasetConfig {
+                    name: format!("roboflow-episode-{}", job.id),
+                    fps: 30,
+                    robot_type: Some("robot".to_string()),
+                    env_type: None,
+                },
+                mappings: Vec::new(),
+                video: VideoConfig::default(),
+                annotation_file: None,
+            });
         }
+
+        // Check cache first
+        {
+            let mut cache = self.config_cache.lock().await;
+            if let Some(config) = cache.get(config_hash) {
+                tracing::debug!(
+                    pod_id = %self.pod_id,
+                    job_id = %job.id,
+                    config_hash = %config_hash,
+                    "Loaded config from cache"
+                );
+                return Ok(config.clone());
+            }
+        }
+
+        // Cache miss - fetch from TiKV
+        let config = match self.tikv.get_config(config_hash).await {
+            Ok(Some(record)) => {
+                tracing::info!(
+                    pod_id = %self.pod_id,
+                    job_id = %job.id,
+                    config_hash = %config_hash,
+                    "Loaded config from TiKV"
+                );
+                LerobotConfig::from_toml(&record.content)
+                    .map_err(|e| TikvError::Other(format!("Failed to parse config TOML: {}", e)))?
+            }
+            Ok(None) => {
+                // Config not found in TiKV - this is a critical error
+                tracing::error!(
+                    pod_id = %self.pod_id,
+                    job_id = %job.id,
+                    config_hash = %config_hash,
+                    "Config not found in TiKV"
+                );
+                return Err(TikvError::Other(format!(
+                    "Config '{}' not found in TiKV for job {}",
+                    config_hash, job.id
+                )));
+            }
+            Err(e) => {
+                tracing::error!(
+                    pod_id = %self.pod_id,
+                    job_id = %job.id,
+                    config_hash = %config_hash,
+                    error = %e,
+                    "Failed to fetch config from TiKV"
+                );
+                return Err(TikvError::Other(format!(
+                    "Failed to fetch config '{}' from TiKV: {}",
+                    config_hash, e
+                )));
+            }
+        };
+
+        // Store in cache for future use
+        {
+            let mut cache = self.config_cache.lock().await;
+            cache.put(config_hash.clone(), config.clone());
+        }
+
+        Ok(config)
     }
 
     /// Complete a job successfully.

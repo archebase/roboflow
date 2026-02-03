@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use crate::{
-    AsyncStorage, AsyncOssStorage, LocalStorage, OssConfig, OssStorage, RoboflowConfig,
+    AsyncOssStorage, AsyncStorage, LocalStorage, OssConfig, OssStorage, RoboflowConfig,
     SeekableStorage, Storage, StorageError, StorageResult as Result, url::StorageUrl,
 };
 
@@ -303,8 +303,12 @@ impl StorageFactory {
                     .or_else(|| self.config.aws_region.clone())
                     .unwrap_or_else(|| "us-east-1".to_string());
 
-                let mut oss_config = OssConfig::new(bucket, ep, key_id, key_secret);
+                let mut oss_config = OssConfig::new(bucket, ep.clone(), key_id, key_secret);
                 oss_config = oss_config.with_region(region);
+                // Enable HTTP if endpoint URL uses http:// (for MinIO, local testing)
+                if ep.starts_with("http://") {
+                    oss_config = oss_config.with_allow_http(true);
+                }
 
                 Ok(Arc::new(OssStorage::with_config(oss_config)?))
             }
@@ -343,10 +347,14 @@ impl StorageFactory {
                         )
                     })?;
 
-                let mut oss_config = OssConfig::new(bucket, ep, key_id, key_secret);
+                let mut oss_config = OssConfig::new(bucket, ep.clone(), key_id, key_secret);
 
                 if let Some(reg) = self.config.aws_region.clone() {
                     oss_config = oss_config.with_region(reg);
+                }
+                // Enable HTTP if endpoint URL uses http:// (for MinIO, local testing)
+                if ep.starts_with("http://") {
+                    oss_config = oss_config.with_allow_http(true);
                 }
 
                 Ok(Arc::new(OssStorage::with_config(oss_config)?))

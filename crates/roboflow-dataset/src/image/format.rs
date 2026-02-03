@@ -153,18 +153,8 @@ impl ImageFormat {
         }
 
         // Width (bytes 16-19) and height (bytes 20-23) are big-endian u32
-        let width = u32::from_be_bytes([
-            data[16],
-            data[17],
-            data[18],
-            data[19],
-        ]);
-        let height = u32::from_be_bytes([
-            data[20],
-            data[21],
-            data[22],
-            data[23],
-        ]);
+        let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+        let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
 
         // Validate dimensions (PNG allows up to 2^31-1)
         if width == 0 || height == 0 {
@@ -196,7 +186,10 @@ mod tests {
         assert_eq!(ImageFormat::from_ros_format("png"), ImageFormat::Png);
         assert_eq!(ImageFormat::from_ros_format("rgb8"), ImageFormat::Rgb8);
         assert_eq!(ImageFormat::from_ros_format("bgr8"), ImageFormat::Rgb8);
-        assert_eq!(ImageFormat::from_ros_format("unknown"), ImageFormat::Unknown);
+        assert_eq!(
+            ImageFormat::from_ros_format("unknown"),
+            ImageFormat::Unknown
+        );
         assert_eq!(ImageFormat::from_ros_format("avi"), ImageFormat::Jpeg);
     }
 
@@ -215,7 +208,10 @@ mod tests {
 
         // Unknown
         let unknown = [0x00, 0x00, 0x00, 0x00];
-        assert_eq!(ImageFormat::from_magic_bytes(&unknown), ImageFormat::Unknown);
+        assert_eq!(
+            ImageFormat::from_magic_bytes(&unknown),
+            ImageFormat::Unknown
+        );
     }
 
     #[test]
@@ -232,7 +228,10 @@ mod tests {
         assert_eq!(ImageFormat::detect(&png_data, "unknown"), ImageFormat::Png);
 
         // ROS format fallback when magic bytes don't match
-        assert_eq!(ImageFormat::detect(&[0xFF, 0xD8], "jpeg"), ImageFormat::Jpeg);
+        assert_eq!(
+            ImageFormat::detect(&[0xFF, 0xD8], "jpeg"),
+            ImageFormat::Jpeg
+        );
     }
 
     #[test]
@@ -242,14 +241,15 @@ mod tests {
         // FF C0 (SOF0) + length (00 11) + precision (08) + height (00 64) + width (00 48)
         // This represents 100x72 pixels
         let jpeg_with_sof = [
-            0xFF, 0xD8,             // SOI (Start of Image)
+            0xFF, 0xD8, // SOI (Start of Image)
             0xFF, 0xE0, 0x00, 0x10, // APP0 marker + length (16 bytes)
-            0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, // JFIF data
-            0xFF, 0xC0,             // SOF0 marker
-            0x00, 0x11,             // Length (17 bytes)
-            0x08,                   // Precision (8 bits)
-            0x00, 0x64,             // Height: 100
-            0x00, 0x48,             // Width: 72
+            0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+            0x00, // JFIF data
+            0xFF, 0xC0, // SOF0 marker
+            0x00, 0x11, // Length (17 bytes)
+            0x08, // Precision (8 bits)
+            0x00, 0x64, // Height: 100
+            0x00, 0x48, // Width: 72
             // Need padding to reach the required length
             0x01, 0x01, 0x01, 0x01,
         ];
@@ -287,14 +287,14 @@ mod tests {
     fn test_extract_dimensions_jpeg() {
         // JPEG with 500x200 dimensions (height x width)
         let jpeg_with_sof = [
-            0xFF, 0xD8,             // SOI
+            0xFF, 0xD8, // SOI
             0xFF, 0xE0, 0x00, 0x10, // APP0
             0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
-            0xFF, 0xC0,             // SOF0 marker
-            0x00, 0x11,             // Length
-            0x08,                   // Precision
-            0x01, 0xF4,             // Height: 500
-            0x00, 0xC8,             // Width: 200
+            0xFF, 0xC0, // SOF0 marker
+            0x00, 0x11, // Length
+            0x08, // Precision
+            0x01, 0xF4, // Height: 500
+            0x00, 0xC8, // Width: 200
             0x01, 0x01, 0x01, 0x01, // Padding
         ];
 

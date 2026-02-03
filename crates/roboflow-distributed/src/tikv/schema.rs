@@ -53,10 +53,45 @@ pub struct JobRecord {
     pub output_prefix: String,
 
     /// Hash of configuration used for this job.
+    /// Workers retrieve the actual config from TiKV using this hash.
     pub config_hash: String,
 
     /// Cancellation timestamp (if job was cancelled).
     pub cancelled_at: Option<DateTime<Utc>>,
+}
+
+/// Dataset configuration stored in TiKV.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigRecord {
+    /// Config hash (SHA-256 of content)
+    pub hash: String,
+
+    /// Serialized TOML configuration content
+    pub content: String,
+
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
+}
+
+impl ConfigRecord {
+    /// Create a new config record from TOML content.
+    pub fn new(content: String) -> Self {
+        let hash = Self::compute_hash(&content);
+        let now = Utc::now();
+        Self {
+            hash,
+            content,
+            created_at: now,
+        }
+    }
+
+    /// Compute SHA-256 hash of config content.
+    pub fn compute_hash(content: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(content.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
 }
 
 impl JobRecord {

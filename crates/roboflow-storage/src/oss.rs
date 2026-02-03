@@ -17,8 +17,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::{
-    AsyncStorage, ObjectMetadata, Storage, StorageError, StorageResult as Result,
-    StreamingConfig, StreamingRead,
+    AsyncStorage, ObjectMetadata, Storage, StorageError, StorageResult as Result, StreamingConfig,
+    StreamingRead,
 };
 
 // =============================================================================
@@ -109,9 +109,13 @@ impl OssConfig {
         }
 
         // Character set: lowercase letters, numbers, hyphens, dots only
-        if !bucket.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.') {
+        if !bucket
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
+        {
             return Err(StorageError::invalid_path(
-                "Bucket name can only contain lowercase letters, numbers, hyphens, and dots".to_string(),
+                "Bucket name can only contain lowercase letters, numbers, hyphens, and dots"
+                    .to_string(),
             ));
         }
 
@@ -322,7 +326,9 @@ impl AsyncStorage for AsyncOssStorage {
             .get(&key)
             .await
             .map_err(|e| match e {
-                object_store::Error::NotFound { .. } => StorageError::not_found(path.display().to_string()),
+                object_store::Error::NotFound { .. } => {
+                    StorageError::not_found(path.display().to_string())
+                }
                 _ => StorageError::Cloud(e.to_string()),
             })?
             .bytes()
@@ -347,27 +353,23 @@ impl AsyncStorage for AsyncOssStorage {
 
     async fn size(&self, path: &Path) -> Result<u64> {
         let key = self.path_to_key(path);
-        let meta = self
-            .store
-            .head(&key)
-            .await
-            .map_err(|e| match e {
-                object_store::Error::NotFound { .. } => StorageError::not_found(path.display().to_string()),
-                _ => StorageError::Cloud(e.to_string()),
-            })?;
+        let meta = self.store.head(&key).await.map_err(|e| match e {
+            object_store::Error::NotFound { .. } => {
+                StorageError::not_found(path.display().to_string())
+            }
+            _ => StorageError::Cloud(e.to_string()),
+        })?;
         Ok(meta.size as u64)
     }
 
     async fn metadata(&self, path: &Path) -> Result<ObjectMetadata> {
         let key = self.path_to_key(path);
-        let meta = self
-            .store
-            .head(&key)
-            .await
-            .map_err(|e| match e {
-                object_store::Error::NotFound { .. } => StorageError::not_found(path.display().to_string()),
-                _ => StorageError::Cloud(e.to_string()),
-            })?;
+        let meta = self.store.head(&key).await.map_err(|e| match e {
+            object_store::Error::NotFound { .. } => {
+                StorageError::not_found(path.display().to_string())
+            }
+            _ => StorageError::Cloud(e.to_string()),
+        })?;
         Ok(self.convert_metadata(&meta))
     }
 
@@ -417,13 +419,12 @@ impl AsyncStorage for AsyncOssStorage {
 
     async fn delete(&self, path: &Path) -> Result<()> {
         let key = self.path_to_key(path);
-        self.store
-            .delete(&key)
-            .await
-            .map_err(|e| match e {
-                object_store::Error::NotFound { .. } => StorageError::not_found(path.display().to_string()),
-                _ => StorageError::Cloud(e.to_string()),
-            })
+        self.store.delete(&key).await.map_err(|e| match e {
+            object_store::Error::NotFound { .. } => {
+                StorageError::not_found(path.display().to_string())
+            }
+            _ => StorageError::Cloud(e.to_string()),
+        })
     }
 
     async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
@@ -433,7 +434,9 @@ impl AsyncStorage for AsyncOssStorage {
             .copy(&from_key, &to_key)
             .await
             .map_err(|e| match e {
-                object_store::Error::NotFound { .. } => StorageError::not_found(from.display().to_string()),
+                object_store::Error::NotFound { .. } => {
+                    StorageError::not_found(from.display().to_string())
+                }
                 _ => StorageError::Cloud(e.to_string()),
             })
     }
@@ -488,7 +491,9 @@ impl AsyncStorage for AsyncOssStorage {
             .get_range(&key, start_usize..end_usize)
             .await
             .map_err(|e| match e {
-                object_store::Error::NotFound { .. } => StorageError::not_found(path.display().to_string()),
+                object_store::Error::NotFound { .. } => {
+                    StorageError::not_found(path.display().to_string())
+                }
                 _ => StorageError::Cloud(e.to_string()),
             })
     }
@@ -572,7 +577,9 @@ impl OssStorage {
                 tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
-                    .map_err(|e| StorageError::Other(format!("Failed to create tokio runtime: {}", e)))?
+                    .map_err(|e| {
+                        StorageError::Other(format!("Failed to create tokio runtime: {}", e))
+                    })?,
             )
         };
 
@@ -596,9 +603,7 @@ impl OssStorage {
             Some(rt) => rt.block_on(f),
             None => {
                 // We're inside a runtime - use block_in_place
-                tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(f)
-                })
+                tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(f))
             }
         }
     }
@@ -658,8 +663,15 @@ impl Storage for OssStorage {
         self.block_on(self.async_storage.create_dir_all(path))
     }
 
-    fn read_range(&self, path: &Path, start: u64, end: Option<u64>) -> Result<Box<dyn Read + Send + 'static>> {
-        let bytes = self.block_on(self.async_storage.read_range(path, start, end))?.to_vec();
+    fn read_range(
+        &self,
+        path: &Path,
+        start: u64,
+        end: Option<u64>,
+    ) -> Result<Box<dyn Read + Send + 'static>> {
+        let bytes = self
+            .block_on(self.async_storage.read_range(path, start, end))?
+            .to_vec();
         Ok(Box::new(Cursor::new(bytes)))
     }
 
@@ -931,15 +943,14 @@ mod tests {
 
     #[test]
     fn test_oss_config_allow_http() {
-        let config = OssConfig::new("bucket", "endpoint", "key", "secret")
-            .with_allow_http(true);
+        let config = OssConfig::new("bucket", "endpoint", "key", "secret").with_allow_http(true);
         assert!(config.allow_http);
     }
 
     #[test]
     fn test_oss_config_endpoint_http_when_allowed() {
-        let config = OssConfig::new("bucket", "localhost:9000", "key", "secret")
-            .with_allow_http(true);
+        let config =
+            OssConfig::new("bucket", "localhost:9000", "key", "secret").with_allow_http(true);
         assert_eq!(config.endpoint_url(), "http://localhost:9000");
     }
 
@@ -985,7 +996,7 @@ mod tests {
     async fn test_async_oss_storage_config_validation() {
         // Verify bucket name validation is called during creation
         let result = AsyncOssStorage::new(
-            "invalid-bucket-name!",  // Invalid character
+            "invalid-bucket-name!", // Invalid character
             "endpoint",
             "key",
             "secret",
@@ -996,10 +1007,8 @@ mod tests {
     #[tokio::test]
     async fn test_async_oss_storage_bucket_too_short() {
         let result = AsyncOssStorage::new(
-            "ab",  // Too short
-            "endpoint",
-            "key",
-            "secret",
+            "ab", // Too short
+            "endpoint", "key", "secret",
         );
         assert!(result.is_err());
     }
@@ -1018,8 +1027,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_async_storage_config_with_prefix() {
-        let config = OssConfig::new("bucket", "endpoint", "key", "secret")
-            .with_prefix("datasets");
+        let config = OssConfig::new("bucket", "endpoint", "key", "secret").with_prefix("datasets");
         assert_eq!(config.full_key(Path::new("test.txt")), "datasets/test.txt");
     }
 }

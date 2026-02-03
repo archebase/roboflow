@@ -8,10 +8,10 @@
 //! similar to `GpuCompressorFactory` in `roboflow-pipeline/gpu/factory.rs`.
 
 use super::{
+    ImageError, Result,
     backend::{CpuImageDecoder, ImageDecoderBackend},
     config::{DecoderBackendType, ImageDecoderConfig},
     memory::MemoryStrategy,
-    ImageError, Result,
 };
 
 /// Information about an available GPU device.
@@ -96,9 +96,7 @@ impl ImageDecoderFactory {
                 #[cfg(not(all(feature = "gpu-decode", target_os = "linux")))]
                 {
                     if self.config.auto_fallback {
-                        tracing::warn!(
-                            "GPU decoding not supported on this platform. Using CPU."
-                        );
+                        tracing::warn!("GPU decoding not supported on this platform. Using CPU.");
                         Ok(Box::new(CpuImageDecoder::new(
                             self.config.memory_strategy,
                             self.config.cpu_threads,
@@ -137,9 +135,7 @@ impl ImageDecoderFactory {
                 #[cfg(not(all(feature = "gpu-decode", target_os = "macos")))]
                 {
                     if self.config.auto_fallback {
-                        tracing::warn!(
-                            "Apple decoding not supported on this platform. Using CPU."
-                        );
+                        tracing::warn!("Apple decoding not supported on this platform. Using CPU.");
                         Ok(Box::new(CpuImageDecoder::new(
                             self.config.memory_strategy,
                             self.config.cpu_threads,
@@ -210,16 +206,16 @@ impl ImageDecoderFactory {
                 Err(e) => {
                     tracing::error!("Failed to create decoder: {}. Using fallback.", e);
                     // Create a basic CPU decoder as fallback
-                    self.cached_decoder = Some(Box::new(CpuImageDecoder::new(
-                        MemoryStrategy::Heap,
-                        1,
-                    )));
+                    self.cached_decoder =
+                        Some(Box::new(CpuImageDecoder::new(MemoryStrategy::Heap, 1)));
                 }
             }
         }
 
         // SAFETY: We just ensured cached_decoder is Some
-        self.cached_decoder.as_ref().expect("Decoder should be cached")
+        self.cached_decoder
+            .as_ref()
+            .expect("Decoder should be cached")
     }
 
     /// Check if GPU decoding is available on this system.
@@ -298,7 +294,8 @@ impl DecodeStats {
             self.gpu_used = true;
         }
 
-        self.decompression_ratio = Self::calculate_ratio(self.total_input_bytes, self.total_output_bytes);
+        self.decompression_ratio =
+            Self::calculate_ratio(self.total_input_bytes, self.total_output_bytes);
     }
 }
 

@@ -146,6 +146,42 @@ pub struct Mapping {
     /// Mapping type
     #[serde(default)]
     pub mapping_type: MappingType,
+
+    /// Camera key for video directory naming (optional).
+    ///
+    /// If not specified, derived from feature name by stripping "observation.images." prefix.
+    /// For example, feature="observation.images.cam_high" -> camera_key="cam_high".
+    ///
+    /// Use this when you want a different camera key than the feature name suggests.
+    #[serde(default)]
+    pub camera_key: Option<String>,
+}
+
+impl Mapping {
+    /// Get the camera key for this mapping.
+    ///
+    /// Returns the explicitly configured `camera_key` if set,
+    /// otherwise derives it from the feature name by stripping the "observation.images." prefix.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the mapping type is `Image` but no camera key can be determined.
+    pub fn camera_key(&self) -> String {
+        if let Some(key) = &self.camera_key {
+            return key.clone();
+        }
+        // Derive from feature name
+        self.feature
+            .strip_prefix("observation.images.")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                panic!(
+                    "Cannot derive camera key from feature '{}'. \
+                     Please specify camera_key explicitly in the mapping config.",
+                    self.feature
+                )
+            })
+    }
 }
 
 /// Type of data being mapped.
@@ -270,5 +306,40 @@ feature = "observation.state"
         let cameras = config.camera_mappings();
         assert_eq!(cameras.len(), 1);
         assert_eq!(cameras[0].feature, "observation.images.cam_high");
+    }
+
+    #[test]
+    fn test_camera_key_derivation() {
+        let toml = r#"
+[dataset]
+name = "test"
+fps = 30
+
+[[mappings]]
+topic = "/cam_h/color"
+feature = "observation.images.cam_high"
+mapping_type = "image"
+
+[[mappings]]
+topic = "/cam_l/color"
+feature = "observation.images.cam_left"
+mapping_type = "image"
+camera_key = "left_camera"
+
+[[mappings]]
+topic = "/joint_states"
+feature = "observation.state"
+"#;
+
+        let config: LerobotConfig = toml::from_str(toml).unwrap();
+        let cameras = config.camera_mappings();
+        assert_eq!(cameras.len(), 2);
+
+        // First camera: key derived from feature name
+        assert_eq!(cameras[0].camera_key(), "cam_high");
+
+        // Second camera: explicit camera_key
+        assert_eq!(cameras[1].camera_key(), "left_camera");
+        assert_eq!(cameras[1].feature, "observation.images.cam_left");
     }
 }

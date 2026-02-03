@@ -56,7 +56,7 @@ impl Default for ImageDecoderConfig {
             memory_strategy: MemoryStrategy::PageAligned,
             gpu_device: None,
             auto_fallback: true,
-            max_width: 7680,   // 8K resolution
+            max_width: 7680, // 8K resolution
             max_height: 4320,
             cpu_threads: rayon::current_num_threads().max(1),
         }

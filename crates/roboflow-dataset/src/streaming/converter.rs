@@ -18,8 +18,7 @@ use crate::streaming::{
 };
 use robocodec::RoboReader;
 use roboflow_core::Result;
-use roboflow_storage::LocalStorage;
-use roboflow_storage::Storage;
+use roboflow_storage::{LocalStorage, Storage};
 
 /// Progress callback for checkpoint saving during conversion.
 ///
@@ -213,6 +212,97 @@ impl StreamingDatasetConverter {
         self
     }
 
+    /// Extract the object key from a cloud storage URL.
+    ///
+    /// For example:
+    /// - `s3://my-bucket/path/to/file.bag` → `path/to/file.bag`
+    /// - `oss://my-bucket/file.bag` → `file.bag`
+    ///
+    /// Returns `None` if the URL is not a valid S3/OSS URL.
+    fn extract_cloud_key(url: &str) -> Option<&str> {
+        let rest = if let Some(r) = url.strip_prefix("s3://") {
+            r
+        } else if let Some(r) = url.strip_prefix("oss://") {
+            r
+        } else {
+            return None;
+        };
+
+        // Find the first '/' to split bucket/key
+        rest.find('/').map(|idx| &rest[idx + 1..])
+    }
+
+    /// Create cloud storage backend from URL for S3/OSS inputs.
+    ///
+    /// This is used when the converter receives an S3 or OSS URL directly
+    /// (without input_storage being set by the worker).
+    fn create_cloud_storage(&self, url: &str) -> Result<Arc<dyn Storage>> {
+        use roboflow_storage::{OssConfig, OssStorage};
+        use std::env;
+
+        // Parse URL to get bucket from the URL
+        let rest = if let Some(r) = url.strip_prefix("s3://") {
+            r
+        } else if let Some(r) = url.strip_prefix("oss://") {
+            r
+        } else {
+            return Err(roboflow_core::RoboflowError::other(format!(
+                "Unsupported cloud storage URL: {}",
+                url
+            )));
+        };
+
+        // Split bucket/key - we only need the bucket for storage creation
+        let (bucket, _key) = rest.split_once('/').ok_or_else(|| {
+            roboflow_core::RoboflowError::other(format!("Invalid cloud URL: {}", url))
+        })?;
+
+        // Get credentials from environment
+        let access_key_id = env::var("AWS_ACCESS_KEY_ID")
+            .or_else(|_| env::var("OSS_ACCESS_KEY_ID"))
+            .map_err(|_| roboflow_core::RoboflowError::other(
+                "Cloud storage credentials not found. Set AWS_ACCESS_KEY_ID or OSS_ACCESS_KEY_ID".to_string(),
+            ))?;
+
+        let access_key_secret = env::var("AWS_SECRET_ACCESS_KEY")
+            .or_else(|_| env::var("OSS_ACCESS_KEY_SECRET"))
+            .map_err(|_| roboflow_core::RoboflowError::other(
+                "Cloud storage credentials not found. Set AWS_SECRET_ACCESS_KEY or OSS_ACCESS_KEY_SECRET".to_string(),
+            ))?;
+
+        // Get endpoint from environment or construct from URL
+        let endpoint = env::var("AWS_ENDPOINT_URL")
+            .or_else(|_| env::var("OSS_ENDPOINT"))
+            .unwrap_or_else(|_| {
+                // For MinIO or local testing, default to localhost
+                if url.contains("127.0.0.1") || url.contains("localhost") {
+                    "http://127.0.0.1:9000".to_string()
+                } else {
+                    "https://s3.amazonaws.com".to_string()
+                }
+            });
+
+        let region = env::var("AWS_REGION").ok();
+
+        // Create OSS config
+        let mut oss_config =
+            OssConfig::new(bucket, endpoint.clone(), access_key_id, access_key_secret);
+        if let Some(reg) = region {
+            oss_config = oss_config.with_region(reg);
+        }
+        // Enable HTTP if endpoint uses http://
+        if endpoint.starts_with("http://") {
+            oss_config = oss_config.with_allow_http(true);
+        }
+
+        // Create OssStorage
+        let storage = OssStorage::with_config(oss_config).map_err(|e| {
+            roboflow_core::RoboflowError::other(format!("Failed to create cloud storage: {}", e))
+        })?;
+
+        Ok(Arc::new(storage) as Arc<dyn Storage>)
+    }
+
     /// Convert input file to dataset format.
     #[instrument(skip_all, fields(
         input = %input_path.as_ref().display(),
@@ -231,12 +321,23 @@ impl StreamingDatasetConverter {
 
         let start_time = Instant::now();
 
+        // Detect if input_path is a cloud storage URL (s3:// or oss://)
+        let input_path_str = input_path.to_string_lossy();
+        let is_cloud_url =
+            input_path_str.starts_with("s3://") || input_path_str.starts_with("oss://");
+
         // Handle cloud input: download to temp file if needed
-        let input_storage = self.input_storage.clone().unwrap_or_else(|| {
+        let input_storage = if let Some(storage) = &self.input_storage {
+            storage.clone()
+        } else if is_cloud_url {
+            // Create cloud storage for S3/OSS URLs
+            self.create_cloud_storage(&input_path_str)?
+        } else {
+            // Default to LocalStorage for local files
             Arc::new(LocalStorage::new(
                 input_path.parent().unwrap_or(Path::new(".")),
             )) as Arc<dyn Storage>
-        });
+        };
 
         let temp_dir = self
             .config
@@ -246,8 +347,14 @@ impl StreamingDatasetConverter {
 
         // For local storage, pass just the filename (not full path)
         // to avoid duplication when joining with the storage root
+        // For cloud storage (S3/OSS), extract just the object key from the URL
         let storage_path = if input_storage.as_any().is::<LocalStorage>() {
             input_path.file_name().unwrap_or(input_path.as_os_str())
+        } else if is_cloud_url {
+            // Extract just the key from s3://bucket/key or oss://bucket/key
+            Self::extract_cloud_key(&input_path_str)
+                .map(std::ffi::OsStr::new)
+                .unwrap_or(input_path.as_os_str())
         } else {
             input_path.as_os_str()
         };

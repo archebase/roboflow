@@ -20,7 +20,7 @@ roboflow-hdf5 = { path = "crates/roboflow-hdf5", version = "0.2.0" }
 roboflow-pipeline = { path = "crates/roboflow-pipeline", version = "0.2.0" }
 
 # External dependencies
-robocodec = { git = "https://github.com/archebase/robocodec", rev = "8adde9f" }
+robocodec = { git = "https://github.com/archebase/robocodec", branch = "main" }
 
 [package]
 name = "roboflow"
@@ -127,13 +127,14 @@ io-uring = { version = "0.7", optional = true }
 
 # Dataset features (optional, disabled by default)
 [features]
+default = ["distributed"]
 dataset-hdf5 = ["dep:hdf5"]
 dataset-parquet = ["dep:polars"]
 dataset-depth = ["dep:png"]
 dataset-all = ["dataset-hdf5", "dataset-parquet", "dataset-depth"]
 # Cloud storage support for Alibaba OSS and S3-compatible backends
 cloud-storage = ["dep:object_store", "dep:tokio", "dep:url", "dep:bytes"]
-# Distributed coordination via TiKV
+# Distributed coordination via TiKV (default feature)
 distributed = ["dep:roboflow-distributed", "dep:tikv-client", "dep:futures", "dep:tokio", "dep:bincode"]
 # Python bindings via PyO3 (extension-module mode to prevent libpython linking)
 python = ["pyo3", "robocodec/python"]
@@ -190,7 +191,6 @@ path = "src/bin/search.rs"
 [[bin]]
 name = "roboflow"
 path = "src/bin/roboflow.rs"
-required-features = ["distributed"]
 
 # Benchmarks
 [[bench]]

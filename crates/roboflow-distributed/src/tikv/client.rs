@@ -35,8 +35,10 @@ use std::time::Duration;
 
 use super::config::TikvConfig;
 use super::error::{Result, TikvError};
-use super::key::{HeartbeatKeys, JobKeys, LockKeys, StateKeys};
-use super::schema::{CheckpointState, HeartbeatRecord, JobRecord, JobStatus, LockRecord};
+use super::key::{ConfigKeys, HeartbeatKeys, JobKeys, LockKeys, StateKeys};
+use super::schema::{
+    CheckpointState, ConfigRecord, HeartbeatRecord, JobRecord, JobStatus, LockRecord,
+};
 
 use tokio::time::sleep;
 
@@ -335,10 +337,10 @@ impl TikvClient {
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
             // Create a proper prefix scan range using exclusive upper bound.
-            // To find the first key after the prefix, we append a null byte (0x00)
-            // which gives us the first key that doesn't match the prefix.
+            // We append 0xFF to ensure the scan range includes all keys with the prefix.
+            // Using 0xFF instead of 0x00 because null byte comes before regular ASCII chars.
             let mut scan_end = prefix.clone();
-            scan_end.push(0);
+            scan_end.push(0xFF);
 
             // Use exclusive range (..) instead of inclusive (..=) for correctness
             let iter = txn
@@ -1080,6 +1082,29 @@ impl TikvClient {
                 let state: CheckpointState = bincode::deserialize(&bytes)
                     .map_err(|e| TikvError::Deserialization(e.to_string()))?;
                 Ok(Some(state))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Store a dataset configuration in TiKV.
+    pub async fn put_config(&self, config: &ConfigRecord) -> Result<()> {
+        let key = ConfigKeys::config(&config.hash);
+        let data =
+            bincode::serialize(config).map_err(|e| TikvError::Serialization(e.to_string()))?;
+        self.put(key, data).await
+    }
+
+    /// Get a dataset configuration from TiKV.
+    pub async fn get_config(&self, hash: &str) -> Result<Option<ConfigRecord>> {
+        let key = ConfigKeys::config(hash);
+        let data = self.get(key).await?;
+
+        match data {
+            Some(bytes) => {
+                let config: ConfigRecord = bincode::deserialize(&bytes)
+                    .map_err(|e| TikvError::Deserialization(e.to_string()))?;
+                Ok(Some(config))
             }
             None => Ok(None),
         }

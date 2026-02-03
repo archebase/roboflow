@@ -11,9 +11,9 @@
 //! - Falls back to CPU decoder when hardware unavailable
 
 use super::{
+    ImageFormat, Result,
     backend::{DecoderType, ImageDecoderBackend},
     memory::MemoryStrategy,
-    ImageFormat, Result,
 };
 
 /// Apple hardware-accelerated image decoder.
@@ -42,11 +42,15 @@ impl ImageDecoderBackend for AppleImageDecoder {
         // Delegate to CPU decoder for now
         // TODO: Use libjpeg-turbo with hardware acceleration when available
         use super::backend::CpuImageDecoder;
-        let cpu_decoder = CpuImageDecoder::new(self.memory_strategy, rayon::current_num_threads().max(1));
+        let cpu_decoder =
+            CpuImageDecoder::new(self.memory_strategy, rayon::current_num_threads().max(1));
         cpu_decoder.decode(data, format)
     }
 
-    fn decode_batch(&self, images: &[(&[u8], ImageFormat)]) -> Result<Vec<super::backend::DecodedImage>> {
+    fn decode_batch(
+        &self,
+        images: &[(&[u8], ImageFormat)],
+    ) -> Result<Vec<super::backend::DecodedImage>> {
         // Apple Silicon can decode multiple images in parallel
         use rayon::prelude::*;
         images
@@ -68,9 +72,9 @@ impl ImageDecoderBackend for AppleImageDecoder {
 #[cfg(not(target_os = "macos"))]
 pub mod stub {
     use super::{
+        ImageError, ImageFormat, Result,
         backend::{DecoderType, ImageDecoderBackend},
         memory::MemoryStrategy,
-        ImageError, ImageFormat, Result,
     };
 
     /// Stub decoder for non-macOS platforms.
@@ -82,7 +86,7 @@ pub mod stub {
         /// Try to create a new Apple decoder (returns error on non-macOS).
         pub fn try_new(memory_strategy: MemoryStrategy) -> Result<super::AppleImageDecoder> {
             Err(ImageError::GpuUnavailable(
-                "Apple decoding only supported on macOS".to_string()
+                "Apple decoding only supported on macOS".to_string(),
             ))
         }
 
@@ -93,15 +97,22 @@ pub mod stub {
     }
 
     impl ImageDecoderBackend for super::AppleImageDecoder {
-        fn decode(&self, _data: &[u8], _format: ImageFormat) -> Result<super::backend::DecodedImage> {
+        fn decode(
+            &self,
+            _data: &[u8],
+            _format: ImageFormat,
+        ) -> Result<super::backend::DecodedImage> {
             Err(ImageError::GpuUnavailable(
-                "Apple decoding only supported on macOS".to_string()
+                "Apple decoding only supported on macOS".to_string(),
             ))
         }
 
-        fn decode_batch(&self, _images: &[(&[u8], ImageFormat)]) -> Result<Vec<super::backend::DecodedImage>> {
+        fn decode_batch(
+            &self,
+            _images: &[(&[u8], ImageFormat)],
+        ) -> Result<Vec<super::backend::DecodedImage>> {
             Err(ImageError::GpuUnavailable(
-                "Apple decoding only supported on macOS".to_string()
+                "Apple decoding only supported on macOS".to_string(),
             ))
         }
 

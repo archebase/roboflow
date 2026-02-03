@@ -183,7 +183,8 @@ impl FrameAlignmentBuffer {
         let (decoded_image, final_is_encoded) = if let Some(ref data) = image_data {
             if is_encoded {
                 // Extract dimensions from header if not provided
-                if width == 0 && height == 0
+                if width == 0
+                    && height == 0
                     && let Some((w, h)) = Self::extract_image_dimensions(data)
                 {
                     width = w;

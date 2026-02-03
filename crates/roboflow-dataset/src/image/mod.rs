@@ -59,7 +59,7 @@ pub mod gpu;
 pub mod memory;
 
 // Re-export commonly used types
-pub use backend::{DecoderType, ImageDecoderBackend, DecodedImage};
+pub use backend::{DecodedImage, DecoderType, ImageDecoderBackend};
 pub use config::{DecoderBackendType as ImageDecoderBackendType, ImageDecoderConfig};
 pub use factory::{DecodeStats, GpuDeviceInfo, ImageDecoderFactory};
 pub use format::ImageFormat;

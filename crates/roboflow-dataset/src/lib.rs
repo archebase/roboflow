@@ -39,9 +39,8 @@ pub use common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats}
 
 // Re-export commonly used image types
 pub use image::{
-    decode_compressed_image, DecodedImage, ImageDecoderBackend, ImageDecoderConfig,
-    ImageDecoderFactory, ImageError, ImageFormat, ImageFormat as ImageDecoderBackendType,
-    MemoryStrategy,
+    DecodedImage, ImageDecoderBackend, ImageDecoderConfig, ImageDecoderFactory, ImageError,
+    ImageFormat, ImageFormat as ImageDecoderBackendType, MemoryStrategy, decode_compressed_image,
 };
 
 /// Dataset format enumeration.

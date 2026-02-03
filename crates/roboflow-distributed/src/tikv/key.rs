@@ -16,6 +16,7 @@
 //! - `locks`: `/roboflow/v1/locks/{resource}` - Distributed locks
 //! - `state`: `/roboflow/v1/state/{file_hash}` - Checkpoint state
 //! - `heartbeat`: `/roboflow/v1/heartbeat/{pod_id}` - Worker heartbeats
+//! - `configs`: `/roboflow/v1/configs/{config_hash}` - Dataset configurations
 //! - `system`: `/roboflow/v1/system/scanner_lock` - Scanner leadership
 
 use super::config::KEY_PREFIX;
@@ -128,6 +129,21 @@ impl HeartbeatKeys {
     /// Create a prefix for scanning all heartbeats.
     pub fn prefix() -> Vec<u8> {
         format!("{KEY_PREFIX}heartbeat/").into_bytes()
+    }
+}
+
+/// Config keys.
+pub struct ConfigKeys;
+
+impl ConfigKeys {
+    /// Create a key for a configuration record.
+    pub fn config(config_hash: &str) -> Vec<u8> {
+        KeyBuilder::new().push("configs").push(config_hash).build()
+    }
+
+    /// Create a prefix for scanning all configs.
+    pub fn prefix() -> Vec<u8> {
+        format!("{KEY_PREFIX}configs/").into_bytes()
     }
 }
 

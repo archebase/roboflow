@@ -18,19 +18,19 @@
 //! - [ ] Add GPU memory pooling for performance
 
 use super::{
+    ImageError, ImageFormat, Result,
     backend::{DecoderType, ImageDecoderBackend},
     memory::MemoryStrategy,
-    ImageError, ImageFormat, Result,
 };
 
 /// GPU decoder using NVIDIA nvJPEG library.
 #[allow(dead_code)]
 pub struct GpuImageDecoder {
-    device_id: u32,  // TODO: will be used for CUDA context initialization
-    memory_strategy: MemoryStrategy,  // TODO: will be used for CUDA pinned memory
-    // TODO: Add CUDA context and nvJPEG handle when cudarc is integrated
-    // cuda_ctx: cudarc::driver::CudaDevice,
-    // nvjpeg_handle: cudarc::nvjpeg::NvJpeg,
+    device_id: u32, // TODO: will be used for CUDA context initialization
+    memory_strategy: MemoryStrategy, // TODO: will be used for CUDA pinned memory
+                    // TODO: Add CUDA context and nvJPEG handle when cudarc is integrated
+                    // cuda_ctx: cudarc::driver::CudaDevice,
+                    // nvjpeg_handle: cudarc::nvjpeg::NvJpeg,
 }
 
 impl GpuImageDecoder {
@@ -48,13 +48,13 @@ impl GpuImageDecoder {
             // TODO: Implement CUDA/nvJPEG initialization
             // For now, return an error indicating not yet implemented
             Err(ImageError::GpuUnavailable(
-                "GPU decoding not yet implemented. See TODO in image/gpu.rs".to_string()
+                "GPU decoding not yet implemented. See TODO in image/gpu.rs".to_string(),
             ))
         }
         #[cfg(not(all(feature = "gpu-decode", target_os = "linux")))]
         {
             Err(ImageError::GpuUnavailable(
-                "GPU decoding requires 'gpu-decode' feature on Linux".to_string()
+                "GPU decoding requires 'gpu-decode' feature on Linux".to_string(),
             ))
         }
     }
@@ -97,12 +97,15 @@ impl ImageDecoderBackend for GpuImageDecoder {
                 ))
             }
             ImageFormat::Unknown => Err(ImageError::UnsupportedFormat(
-                "Unknown format (cannot detect from magic bytes)".to_string()
+                "Unknown format (cannot detect from magic bytes)".to_string(),
             )),
         }
     }
 
-    fn decode_batch(&self, images: &[(&[u8], ImageFormat)]) -> Result<Vec<super::backend::DecodedImage>> {
+    fn decode_batch(
+        &self,
+        images: &[(&[u8], ImageFormat)],
+    ) -> Result<Vec<super::backend::DecodedImage>> {
         // TODO: Implement nvJPEG batch decoding for maximum throughput
         tracing::debug!("GPU batch decoding not yet implemented, using sequential");
         images
@@ -122,7 +125,11 @@ impl ImageDecoderBackend for GpuImageDecoder {
 
 impl GpuImageDecoder {
     /// Fallback to CPU decoding for unsupported formats.
-    fn decode_cpu_fallback(&self, data: &[u8], format: ImageFormat) -> Result<super::backend::DecodedImage> {
+    fn decode_cpu_fallback(
+        &self,
+        data: &[u8],
+        format: ImageFormat,
+    ) -> Result<super::backend::DecodedImage> {
         use super::backend::CpuImageDecoder;
 
         let cpu_decoder = CpuImageDecoder::new(self.memory_strategy, 1);
