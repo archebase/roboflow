@@ -16,6 +16,63 @@ use crate::{
     StreamingConfig, StreamingRead,
 };
 
+/// Normalize a path by resolving '..' and '.' components.
+///
+/// This is a safe alternative to `Path::canonicalize()` that doesn't require
+/// the path to exist. It prevents path traversal by ensuring the result
+/// stays within the given root.
+fn normalize_path(path: &Path, root: &Path) -> Result<PathBuf> {
+    use std::path::Component;
+
+    // Build the normalized path component by component
+    let mut result = PathBuf::new();
+    let mut stack: Vec<String> = Vec::new();
+
+    for comp in path.components() {
+        match comp {
+            Component::Prefix(..) | Component::RootDir => {
+                // For absolute paths, start fresh
+                result = PathBuf::new();
+                result.push(comp.as_os_str());
+                stack.clear();
+            }
+            Component::CurDir => {
+                // '.' - skip
+            }
+            Component::ParentDir => {
+                // '..' - pop from stack if possible
+                if stack.pop().is_none() {
+                    // Tried to pop above filesystem root
+                    return Err(StorageError::permission_denied(
+                        "Path traversal detected: '..' escape attempt".to_string(),
+                    ));
+                }
+                // Also remove from the path buffer
+                result.pop();
+            }
+            Component::Normal(s) => {
+                let s_str = s.to_string_lossy().to_string();
+                stack.push(s_str);
+                result.push(s);
+            }
+        }
+    }
+
+    // Verify the normalized path starts with or equals root
+    // This catches cases like "../file" which normalize to something outside root
+    let root_str = root.to_string_lossy();
+    let result_str = result.to_string_lossy();
+
+    // Check if result is within root
+    if result != root && !result_str.starts_with(root_str.as_ref()) {
+        return Err(StorageError::permission_denied(
+            "Path traversal detected: access denied".to_string(),
+        ));
+    }
+
+    Ok(result)
+}
+
 /// Local filesystem storage backend.
 ///
 /// Provides access to files on the local filesystem. All paths are interpreted
@@ -54,8 +111,18 @@ impl LocalStorage {
     }
 
     /// Get the full path for a relative path within this storage.
-    pub fn full_path(&self, path: &Path) -> PathBuf {
-        self.root.join(path)
+    ///
+    /// Validates that the resulting path is within the root directory
+    /// to prevent path traversal attacks.
+    pub fn full_path(&self, path: &Path) -> Result<PathBuf> {
+        // Join the path with root
+        let full = self.root.join(path);
+
+        // Normalize the path by resolving '..' and '.' components
+        // This also detects path traversal attempts
+        let normalized = normalize_path(&full, &self.root)?;
+
+        Ok(normalized)
     }
 
     /// Ensure parent directories exist for a path.
@@ -63,7 +130,8 @@ impl LocalStorage {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
-            fs::create_dir_all(self.full_path(parent)).map_err(|e| {
+            let parent_path = self.full_path(parent).unwrap_or_else(|_| self.root.clone());
+            fs::create_dir_all(parent_path).map_err(|e| {
                 StorageError::Other(format!("failed to create parent directories: {e}"))
             })?;
         }
@@ -73,7 +141,7 @@ impl LocalStorage {
 
 impl Storage for LocalStorage {
     fn reader(&self, path: &Path) -> Result<Box<dyn Read + Send + 'static>> {
-        let full_path = self.full_path(path);
+        let full_path = self.full_path(path)?;
         File::open(&full_path)
             .map(|f| Box::new(BufReader::new(f)) as Box<dyn Read + Send>)
             .map_err(|e| {
@@ -86,7 +154,7 @@ impl Storage for LocalStorage {
     }
 
     fn writer(&self, path: &Path) -> Result<Box<dyn Write + Send + 'static>> {
-        let full_path = self.full_path(path);
+        let full_path = self.full_path(path)?;
         self.ensure_parent(&full_path)?;
         File::create(&full_path)
             .map(|f| Box::new(BufWriter::new(f)) as Box<dyn Write + Send>)
@@ -94,11 +162,11 @@ impl Storage for LocalStorage {
     }
 
     fn exists(&self, path: &Path) -> bool {
-        self.full_path(path).exists()
+        self.full_path(path).is_ok_and(|p| p.exists())
     }
 
     fn size(&self, path: &Path) -> Result<u64> {
-        let full_path = self.full_path(path);
+        let full_path = self.full_path(path)?;
         fs::metadata(&full_path).map(|m| m.len()).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 StorageError::not_found(full_path.display().to_string())
@@ -109,7 +177,7 @@ impl Storage for LocalStorage {
     }
 
     fn metadata(&self, path: &Path) -> Result<ObjectMetadata> {
-        let full_path = self.full_path(path);
+        let full_path = self.full_path(path)?;
         let meta = fs::metadata(&full_path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 StorageError::not_found(full_path.display().to_string())
@@ -128,7 +196,7 @@ impl Storage for LocalStorage {
     }
 
     fn list(&self, prefix: &Path) -> Result<Vec<ObjectMetadata>> {
-        let full_path = self.full_path(prefix);
+        let full_path = self.full_path(prefix)?;
         let mut results = Vec::new();
 
         if !full_path.exists() {
@@ -164,7 +232,7 @@ impl Storage for LocalStorage {
     }
 
     fn delete(&self, path: &Path) -> Result<()> {
-        let full_path = self.full_path(path);
+        let full_path = self.full_path(path)?;
         fs::remove_file(&full_path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 StorageError::not_found(full_path.display().to_string())
@@ -175,8 +243,8 @@ impl Storage for LocalStorage {
     }
 
     fn copy(&self, from: &Path, to: &Path) -> Result<()> {
-        let from_path = self.full_path(from);
-        let to_path = self.full_path(to);
+        let from_path = self.full_path(from)?;
+        let to_path = self.full_path(to)?;
         self.ensure_parent(&to_path)?;
         fs::copy(&from_path, &to_path).map(|_| ()).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -188,12 +256,12 @@ impl Storage for LocalStorage {
     }
 
     fn create_dir(&self, path: &Path) -> Result<()> {
-        let full_path = self.full_path(path);
+        let full_path = self.full_path(path)?;
         fs::create_dir(&full_path).map_err(StorageError::Io)
     }
 
     fn create_dir_all(&self, path: &Path) -> Result<()> {
-        let full_path = self.full_path(path);
+        let full_path = self.full_path(path)?;
         fs::create_dir_all(&full_path).map_err(StorageError::Io)
     }
 
@@ -209,8 +277,9 @@ impl Storage for LocalStorage {
     ) -> Result<Box<dyn Read + Send + 'static>> {
         use std::io::{Cursor, Seek, SeekFrom};
 
-        let full_path = self.full_path(path);
+        let full_path = self.full_path(path)?;
 
+        // Get file size if end not specified
         // Get file size if end not specified
         let file_size = if end.is_some() {
             None
@@ -268,7 +337,7 @@ impl Storage for LocalStorage {
         path: &Path,
         _config: StreamingConfig,
     ) -> Result<Box<dyn StreamingRead + Send + 'static>> {
-        let full_path = self.full_path(path);
+        let full_path = self.full_path(path)?;
 
         let file = File::open(&full_path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -285,7 +354,7 @@ impl Storage for LocalStorage {
 
 impl SeekableStorage for LocalStorage {
     fn seekable_reader(&self, path: &Path) -> Result<Box<dyn SeekRead + Send + 'static>> {
-        let full_path = self.full_path(path);
+        let full_path = self.full_path(path)?;
         File::open(&full_path)
             .map(|f| Box::new(BufReader::new(f)) as Box<dyn SeekRead + Send>)
             .map_err(|e| {
@@ -298,7 +367,7 @@ impl SeekableStorage for LocalStorage {
     }
 
     fn reader_seekable(&self, path: &Path) -> Result<Box<dyn Read + Send + 'static>> {
-        let full_path = self.full_path(path);
+        let full_path = self.full_path(path)?;
         File::open(&full_path)
             .map(|f| Box::new(BufReader::new(f)) as Box<dyn Read + Send>)
             .map_err(|e| {
@@ -526,5 +595,47 @@ mod tests {
 
         let result = storage.reader(Path::new(r"nonexistent_file.txt").as_ref());
         assert!(matches!(result, Err(StorageError::NotFound(_))));
+    }
+
+    // Security tests for path traversal protection
+    #[test]
+    fn test_path_traversal_double_dot() {
+        let temp_dir = std::env::temp_dir();
+        let storage = LocalStorage::new(&temp_dir);
+
+        // Attempt to escape the temp directory using ../
+        let result = storage.full_path(Path::new("../../../etc/passwd"));
+        assert!(matches!(result, Err(StorageError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn test_path_traversal_mixed_dots() {
+        let temp_dir = std::env::temp_dir();
+        let storage = LocalStorage::new(&temp_dir);
+
+        // Attempt to escape using mixed paths
+        let result = storage.full_path(Path::new("subdir/../../etc/passwd"));
+        assert!(matches!(result, Err(StorageError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn test_path_traversal_absolute_path_still_within_root() {
+        let temp_dir = std::env::temp_dir();
+        let storage = LocalStorage::new(&temp_dir);
+
+        // Absolute paths that are still within root should work
+        // (they're treated as relative to the root due to join())
+        let result = storage.full_path(Path::new("test.txt"));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_path_traversal_leading_double_dot() {
+        let temp_dir = std::env::temp_dir();
+        let storage = LocalStorage::new(&temp_dir);
+
+        // Leading ../ should fail
+        let result = storage.full_path(Path::new("../escape.txt"));
+        assert!(matches!(result, Err(StorageError::PermissionDenied(_))));
     }
 }

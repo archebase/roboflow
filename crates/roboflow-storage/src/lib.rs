@@ -31,6 +31,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+pub mod async_storage;
 pub mod cached;
 pub mod config_file;
 pub mod factory;
@@ -43,6 +44,7 @@ pub mod streaming;
 pub mod url;
 
 // Re-export public types
+pub use async_storage::AsyncStorage;
 pub use cached::{CacheConfig, CacheStats, CachedStorage, EvictionPolicy};
 pub use config_file::{ConfigError, RoboflowConfig};
 pub use factory::{StorageConfig, StorageFactory};
@@ -54,7 +56,7 @@ pub use multipart_parallel::{
     ParallelMultipartStats, ParallelMultipartUploader, ParallelUploadConfig, UploadedPart,
     is_upload_expired, upload_multipart_parallel,
 };
-pub use oss::{OssConfig, OssStorage};
+pub use oss::{AsyncOssStorage, OssConfig, OssStorage};
 pub use retry::{RetryConfig, RetryingStorage, retry_with_backoff};
 pub use url::StorageUrl;
 
