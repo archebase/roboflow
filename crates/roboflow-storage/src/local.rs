@@ -26,7 +26,6 @@ fn normalize_path(path: &Path, root: &Path) -> Result<PathBuf> {
 
     // Build the normalized path component by component
     let mut result = PathBuf::new();
-    let mut stack: Vec<String> = Vec::new();
 
     for comp in path.components() {
         match comp {
@@ -34,43 +33,71 @@ fn normalize_path(path: &Path, root: &Path) -> Result<PathBuf> {
                 // For absolute paths, start fresh
                 result = PathBuf::new();
                 result.push(comp.as_os_str());
-                stack.clear();
             }
             Component::CurDir => {
                 // '.' - skip
             }
             Component::ParentDir => {
-                // '..' - pop from stack if possible
-                if stack.pop().is_none() {
+                // '..' - try to go up one directory
+                if !result.pop() {
                     // Tried to pop above filesystem root
                     return Err(StorageError::permission_denied(
                         "Path traversal detected: '..' escape attempt".to_string(),
                     ));
                 }
-                // Also remove from the path buffer
-                result.pop();
             }
             Component::Normal(s) => {
-                let s_str = s.to_string_lossy().to_string();
-                stack.push(s_str);
                 result.push(s);
             }
         }
     }
 
-    // Verify the normalized path starts with or equals root
-    // This catches cases like "../file" which normalize to something outside root
-    let root_str = root.to_string_lossy();
-    let result_str = result.to_string_lossy();
+    // Also normalize root for comparison (strip leading ./ if present)
+    let normalized_root = normalize_root(root);
 
-    // Check if result is within root
-    if result != root && !result_str.starts_with(root_str.as_ref()) {
+    // Verify the normalized path starts with normalized root using Path::starts_with
+    if result != normalized_root && !result.starts_with(&normalized_root) {
         return Err(StorageError::permission_denied(
             "Path traversal detected: access denied".to_string(),
         ));
     }
 
     Ok(result)
+}
+
+/// Normalize root path for comparison by stripping leading '.' if present.
+/// This ensures that "./tests/fixtures" and "tests/fixtures" are treated as equivalent.
+fn normalize_root(root: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut result = PathBuf::new();
+    let mut skip_first_curdir = true;
+
+    for comp in root.components() {
+        match comp {
+            Component::Prefix(..) | Component::RootDir => {
+                result.push(comp.as_os_str());
+                skip_first_curdir = false;
+            }
+            Component::CurDir => {
+                // Skip the first leading '.' (if present at the start)
+                if !skip_first_curdir || !result.as_os_str().is_empty() {
+                    result.push(comp.as_os_str());
+                }
+            }
+            Component::ParentDir | Component::Normal(_) => {
+                result.push(comp.as_os_str());
+                skip_first_curdir = false;
+            }
+        }
+    }
+
+    // If result is empty, return "."
+    if result.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        result
+    }
 }
 
 /// Local filesystem storage backend.

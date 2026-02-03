@@ -166,9 +166,9 @@ mod tests {
 
     #[test]
     fn test_parse_storage_url_file() {
-        let (bucket, key) = parse_storage_url("file://./data/file.mcap").unwrap();
+        let (bucket, key) = parse_storage_url("file://data/file.mcap").unwrap();
         assert_eq!(bucket, "local");
-        assert_eq!(key, "./data/file.mcap");
+        assert_eq!(key, "data/file.mcap");
     }
 
     #[test]

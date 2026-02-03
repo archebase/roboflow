@@ -244,7 +244,16 @@ impl StreamingDatasetConverter {
             .clone()
             .unwrap_or_else(std::env::temp_dir);
 
-        let _temp_manager = match TempFileManager::new(input_storage, input_path, &temp_dir) {
+        // For local storage, pass just the filename (not full path)
+        // to avoid duplication when joining with the storage root
+        let storage_path = if input_storage.as_any().is::<LocalStorage>() {
+            input_path.file_name().unwrap_or(input_path.as_os_str())
+        } else {
+            input_path.as_os_str()
+        };
+        let storage_path = Path::new(storage_path);
+
+        let _temp_manager = match TempFileManager::new(input_storage, storage_path, &temp_dir) {
             Ok(manager) => manager,
             Err(e) => {
                 return Err(roboflow_core::RoboflowError::other(format!(
