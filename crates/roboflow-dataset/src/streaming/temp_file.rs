@@ -77,7 +77,7 @@ impl TempFileManager {
     ) -> Result<Self, StorageError> {
         // Fast path for local storage: use original path directly
         if let Some(local_storage) = input_storage.as_any().downcast_ref::<LocalStorage>() {
-            let full_path = local_storage.full_path(input_path);
+            let full_path = local_storage.full_path(input_path)?;
             return Ok(Self {
                 process_path: full_path,
                 temp_path: None,
