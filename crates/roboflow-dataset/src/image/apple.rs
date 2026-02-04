@@ -12,7 +12,7 @@
 
 use crate::image::{
     ImageFormat, Result,
-    backend::{DecoderType, DecodedImage, ImageDecoderBackend},
+    backend::{DecodedImage, DecoderType, ImageDecoderBackend},
     memory::MemoryStrategy,
 };
 
@@ -82,10 +82,7 @@ impl ImageDecoderBackend for AppleImageDecoder {
     }
 
     #[cfg(target_os = "macos")]
-    fn decode_batch(
-        &self,
-        images: &[(&[u8], ImageFormat)],
-    ) -> Result<Vec<DecodedImage>> {
+    fn decode_batch(&self, images: &[(&[u8], ImageFormat)]) -> Result<Vec<DecodedImage>> {
         // Apple Silicon can decode multiple images in parallel
         use rayon::prelude::*;
         images
@@ -95,10 +92,7 @@ impl ImageDecoderBackend for AppleImageDecoder {
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn decode_batch(
-        &self,
-        _images: &[(&[u8], ImageFormat)],
-    ) -> Result<Vec<DecodedImage>> {
+    fn decode_batch(&self, _images: &[(&[u8], ImageFormat)]) -> Result<Vec<DecodedImage>> {
         Err(ImageError::GpuUnavailable(
             "Apple decoding only supported on macOS".to_string(),
         ))
