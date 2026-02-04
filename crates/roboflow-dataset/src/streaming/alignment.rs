@@ -255,15 +255,12 @@ impl FrameAlignmentBuffer {
 
             // Try decoding if we have compressed data and a decoder
             if is_encoded {
-                if self.decoder.is_some() {
+                if let Some(decoder) = &mut self.decoder {
                     let format = ImageFormat::from_magic_bytes(data);
                     if format != ImageFormat::Unknown {
                         // SAFETY: We're in &mut self context, so we can call get_decoder
                         // We need to explicitly reborrow to get mutable access
-                        match self
-                            .decoder
-                            .as_mut()
-                            .unwrap()
+                        match decoder
                             .get_decoder()
                             .decode(data, format)
                         {
