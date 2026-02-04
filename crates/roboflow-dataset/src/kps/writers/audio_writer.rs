@@ -22,8 +22,7 @@ pub struct AudioWriter {
     output_dir: PathBuf,
 
     /// Episode ID.
-    #[allow(dead_code)]
-    episode_id: String,
+    _episode_id: String,
 }
 
 impl AudioWriter {
@@ -31,7 +30,7 @@ impl AudioWriter {
     pub fn new(output_dir: impl AsRef<Path>, episode_id: &str) -> Self {
         Self {
             output_dir: output_dir.as_ref().to_path_buf(),
-            episode_id: episode_id.to_string(),
+            _episode_id: episode_id.to_string(),
         }
     }
 

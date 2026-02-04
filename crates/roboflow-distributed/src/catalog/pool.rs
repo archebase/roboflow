@@ -19,8 +19,7 @@ pub struct TiKVPool {
     /// The TiKV transaction client.
     client: Arc<TransactionClient>,
     /// Configuration (stored for potential reconnection scenarios).
-    #[allow(dead_code)]
-    config: TiKVConfig,
+    _config: TiKVConfig,
 }
 
 impl TiKVPool {
@@ -56,7 +55,7 @@ impl TiKVPool {
 
         Ok(Self {
             client: Arc::new(client),
-            config,
+            _config: config,
         })
     }
 

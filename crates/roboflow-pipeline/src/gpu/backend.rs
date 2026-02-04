@@ -98,7 +98,6 @@ impl CpuCompressor {
     }
 
     /// Create a CPU compressor with default settings.
-    #[allow(dead_code)]
     pub fn default_config() -> Self {
         Self {
             compression_level: 3,

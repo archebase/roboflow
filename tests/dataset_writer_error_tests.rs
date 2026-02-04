@@ -113,7 +113,6 @@ fn test_lerobot_zero_fps() {
     config.dataset.fps = 0; // Invalid FPS
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     // Should still allow writing with zero FPS (may result in NaN timestamps)
     writer.start_episode(Some(0));
@@ -134,11 +133,10 @@ fn test_lerobot_empty_dataset_name() {
     config.dataset.name = "".to_string();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
 
-    let stats = writer.finalize_with_config(&config).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
     // Should complete even with empty name
     assert_eq!(stats.frames_written, 0);
 }
@@ -150,11 +148,10 @@ fn test_lerobot_very_long_dataset_name() {
     config.dataset.name = "a".repeat(1000);
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
 
-    let stats = writer.finalize_with_config(&config).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
     // Should handle long names
     assert_eq!(stats.frames_written, 0);
 }
@@ -165,7 +162,6 @@ fn test_lerobot_invalid_image_dimensions() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     writer.start_episode(Some(0));
 
     // Add image with zero dimensions
@@ -185,7 +181,6 @@ fn test_lerobot_inconsistent_image_dimensions() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     writer.start_episode(Some(0));
 
     // Add images with different dimensions for the same camera
@@ -209,7 +204,6 @@ fn test_lerobot_duplicate_camera_names() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     writer.start_episode(Some(0));
 
     // Add same image twice to same camera
@@ -228,7 +222,6 @@ fn test_lerobot_many_cameras() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     writer.start_episode(Some(0));
 
     // Add images for many cameras (stress test)
@@ -250,7 +243,6 @@ fn test_lerobot_no_images_in_episode() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     // Start episode without adding any images
     writer.start_episode(Some(0));
@@ -266,10 +258,9 @@ fn test_lerobot_finalize_without_starting_episode() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     // Try to finalize without starting an episode
-    let stats = writer.finalize_with_config(&config).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
 
     // Should complete with zero frames
     assert_eq!(stats.frames_written, 0);
@@ -281,15 +272,14 @@ fn test_lerobot_double_finalize() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
 
     // First finalize
-    let stats1 = writer.finalize_with_config(&config).unwrap();
+    let stats1 = writer.finalize_with_config().unwrap();
 
     // Second finalize - should handle gracefully
-    let stats2 = writer.finalize_with_config(&config).unwrap();
+    let stats2 = writer.finalize_with_config().unwrap();
 
     assert_eq!(stats1.frames_written, stats2.frames_written);
 }
@@ -316,7 +306,6 @@ fn test_lerobot_unmatched_start_finish() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     // Start episode with one index, finish with another
     writer.start_episode(Some(0));
@@ -332,7 +321,6 @@ fn test_lerobot_multiple_episodes_same_task() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     // Multiple episodes with same task index
     for _ in 0..3 {
@@ -344,7 +332,7 @@ fn test_lerobot_multiple_episodes_same_task() {
         writer.finish_episode(Some(0)).unwrap();
     }
 
-    let stats = writer.finalize_with_config(&config).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
     // Should have 0 frames since no state/action data was added
     assert_eq!(stats.frames_written, 0);
 }
@@ -359,7 +347,6 @@ fn test_lerobot_empty_feature_names() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     writer.start_episode(Some(0));
 
     // Try to add image with empty feature name
@@ -377,7 +364,6 @@ fn test_lerobot_special_characters_in_feature_names() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     writer.start_episode(Some(0));
 
     // Feature names with special characters
@@ -407,7 +393,6 @@ fn test_lerobot_mismatched_image_data_size() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     writer.start_episode(Some(0));
 
     // Create image data that doesn't match claimed dimensions
@@ -427,7 +412,6 @@ fn test_lerobot_single_pixel_image() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     writer.start_episode(Some(0));
 
     // 1x1 image
@@ -445,7 +429,6 @@ fn test_lerobot_non_rgb_image_data() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     writer.start_episode(Some(0));
 
     // Image data with size not divisible by 3 (not RGB)
@@ -470,10 +453,9 @@ fn test_lerobot_metadata_files_created() {
     config.dataset.name = "metadata_validation".to_string();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
-    let _stats = writer.finalize_with_config(&config).unwrap();
+    let _stats = writer.finalize_with_config().unwrap();
 
     // Check that expected metadata files exist
     let output_path = output_dir.path();
@@ -495,7 +477,6 @@ fn test_lerobot_episode_count_in_metadata() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     // Create 3 episodes
     for i in 0..3 {
@@ -510,7 +491,7 @@ fn test_lerobot_episode_count_in_metadata() {
         writer.finish_episode(Some(i)).unwrap();
     }
 
-    let stats = writer.finalize_with_config(&config).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
 
     // Stats should reflect total frames written (0 since no state/action frames added)
     assert_eq!(stats.frames_written, 0);
@@ -561,11 +542,10 @@ fn test_lerobot_nested_output_directory() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(&nested_dir, config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
 
-    let stats = writer.finalize_with_config(&config).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
     assert_eq!(stats.frames_written, 0);
 }
 
@@ -579,7 +559,6 @@ fn test_lerobot_writer_stats_accuracy() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     let expected_frames = 5;
     writer.start_episode(Some(0));
@@ -592,7 +571,7 @@ fn test_lerobot_writer_stats_accuracy() {
     }
 
     writer.finish_episode(Some(0)).unwrap();
-    let stats = writer.finalize_with_config(&config).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
 
     // Stats should be valid (no data written without state/action frames)
     assert!(stats.duration_sec >= 0.0);
@@ -612,7 +591,6 @@ fn test_lerobot_frame_count_increment() {
 
     // After initialization
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
     assert_eq!(writer.frame_count(), 0);
 
     // After starting episode

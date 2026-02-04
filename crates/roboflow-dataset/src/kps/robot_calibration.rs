@@ -43,8 +43,7 @@ pub struct RobotCalibration {
 #[derive(Debug, Clone)]
 struct UrdfJoint {
     name: String,
-    #[allow(dead_code)]
-    joint_type: String,
+    _joint_type: String,
     limit: Option<JointLimit>,
 }
 
@@ -158,7 +157,7 @@ impl RobotCalibrationGenerator {
 
             joints.push(UrdfJoint {
                 name,
-                joint_type,
+                _joint_type: joint_type,
                 limit,
             });
 

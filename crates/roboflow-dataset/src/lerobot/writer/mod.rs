@@ -33,16 +33,13 @@ use encoding::{EncodeStats, encode_videos};
 /// LeRobot v2.1 dataset writer.
 pub struct LerobotWriter {
     /// Storage backend for writing data (only available with cloud-storage feature)
-    #[allow(dead_code)]
     storage: std::sync::Arc<dyn roboflow_storage::Storage>,
 
     /// Output prefix within storage (empty for local filesystem root)
-    #[allow(dead_code)]
     output_prefix: String,
 
     /// Local buffer directory for temporary files (Parquet, video encoding)
-    #[allow(dead_code)]
-    local_buffer: PathBuf,
+    _local_buffer: PathBuf,
 
     /// Output directory (deprecated, kept for backward compatibility)
     output_dir: PathBuf,
@@ -84,7 +81,6 @@ pub struct LerobotWriter {
     failed_encodings: usize,
 
     /// Whether to use cloud storage (detected from storage type)
-    #[allow(dead_code)]
     use_cloud_storage: bool,
 
     /// Upload coordinator for cloud uploads (optional).
@@ -133,7 +129,7 @@ impl LerobotWriter {
         Ok(Self {
             storage,
             output_prefix,
-            local_buffer,
+            _local_buffer: local_buffer,
             output_dir: output_dir.to_path_buf(),
             config,
             episode_index: 0,
@@ -143,7 +139,7 @@ impl LerobotWriter {
             total_frames: 0,
             images_encoded: 0,
             skipped_frames: 0,
-            initialized: false,
+            initialized: true, // new_local creates a fully initialized writer
             start_time: None,
             output_bytes: 0,
             failed_encodings: 0,
@@ -274,7 +270,7 @@ impl LerobotWriter {
         Ok(Self {
             storage,
             output_prefix,
-            local_buffer: local_buffer.to_path_buf(),
+            _local_buffer: local_buffer.to_path_buf(),
             output_dir: local_buffer.to_path_buf(),
             config,
             episode_index: 0,
@@ -284,7 +280,7 @@ impl LerobotWriter {
             total_frames: 0,
             images_encoded: 0,
             skipped_frames: 0,
-            initialized: false,
+            initialized: true, // new() creates a fully initialized writer
             start_time: None,
             output_bytes: 0,
             failed_encodings: 0,
@@ -568,20 +564,11 @@ impl LerobotWriter {
 
 /// Implement the core DatasetWriter trait for LerobotWriter.
 impl DatasetWriter for LerobotWriter {
-    fn initialize(&mut self, config: &dyn std::any::Any) -> Result<()> {
-        if let Some(lerobot_config) = config.downcast_ref::<LerobotConfig>() {
-            self.config = lerobot_config.clone();
-        }
-        self.initialized = true;
-        self.start_time = Some(std::time::Instant::now());
-        Ok(())
-    }
-
     fn write_frame(&mut self, frame: &AlignedFrame) -> Result<()> {
         if !self.initialized {
             return Err(roboflow_core::RoboflowError::encode(
                 "LerobotWriter",
-                "Writer not initialized. Call initialize() before write_frame().",
+                "Writer not initialized. Use builder().build() to create an initialized writer.",
             ));
         }
 
@@ -599,12 +586,7 @@ impl DatasetWriter for LerobotWriter {
         Ok(())
     }
 
-    fn finalize(&mut self, config: &dyn std::any::Any) -> Result<WriterStats> {
-        // Update config if provided
-        if let Some(lerobot_config) = config.downcast_ref::<LerobotConfig>() {
-            self.config = lerobot_config.clone();
-        }
-
+    fn finalize(&mut self) -> Result<WriterStats> {
         // Finish any remaining episode
         if !self.frame_data.is_empty() {
             self.finish_episode(None)?;
@@ -669,10 +651,6 @@ impl DatasetWriter for LerobotWriter {
 
     fn frame_count(&self) -> usize {
         self.total_frames + self.frame_data.len()
-    }
-
-    fn is_initialized(&self) -> bool {
-        self.initialized
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -755,5 +733,212 @@ impl FromAlignedFrame for LerobotFrame {
             task_index: None,
             image_frames,
         }
+    }
+}
+
+/// Builder for creating [`LerobotWriter`] instances.
+///
+/// # Example
+///
+/// ```ignore
+/// use roboflow::dataset::lerobot::{LerobotWriter, LerobotConfig};
+///
+/// let config = LerobotConfig::default();
+/// let writer = LerobotWriter::builder()
+///     .output_dir("/output")
+///     .config(config)
+///     .build()?;
+/// ```
+pub struct LerobotWriterBuilder {
+    output_dir: Option<PathBuf>,
+    storage: Option<std::sync::Arc<dyn roboflow_storage::Storage>>,
+    output_prefix: Option<String>,
+    local_buffer: Option<PathBuf>,
+    config: Option<LerobotConfig>,
+}
+
+impl Default for LerobotWriterBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LerobotWriterBuilder {
+    /// Create a new builder with default settings.
+    pub fn new() -> Self {
+        Self {
+            output_dir: None,
+            storage: None,
+            output_prefix: None,
+            local_buffer: None,
+            config: None,
+        }
+    }
+
+    /// Set the output directory for local filesystem output.
+    ///
+    /// When this is set without `storage`, the writer uses LocalStorage.
+    pub fn output_dir(mut self, path: impl AsRef<Path>) -> Self {
+        self.output_dir = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Set the storage backend for cloud storage support.
+    ///
+    /// When set, the writer will use this storage backend for writing data.
+    /// The `output_dir` is still used as a local buffer for temporary files.
+    pub fn storage(mut self, storage: std::sync::Arc<dyn roboflow_storage::Storage>) -> Self {
+        self.storage = Some(storage);
+        self
+    }
+
+    /// Set the output prefix within storage.
+    ///
+    /// This is used as a prefix for all files written to cloud storage.
+    /// For example, "datasets/my_dataset" would result in files at
+    /// "datasets/my_dataset/data/chunk-000/...".
+    pub fn output_prefix(mut self, prefix: String) -> Self {
+        self.output_prefix = Some(prefix);
+        self
+    }
+
+    /// Set the local buffer directory for temporary files.
+    ///
+    /// This is where Parquet files and videos are created before being
+    /// uploaded to cloud storage (if a storage backend is configured).
+    pub fn local_buffer(mut self, path: impl AsRef<Path>) -> Self {
+        self.local_buffer = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Set the LeRobot configuration.
+    pub fn config(mut self, config: LerobotConfig) -> Self {
+        self.config = Some(config);
+        self
+    }
+
+    /// Build the writer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if required fields are not set.
+    pub fn build(self) -> Result<LerobotWriter> {
+        let config = self.config.ok_or_else(|| {
+            roboflow_core::RoboflowError::parse("LerobotWriterBuilder", "config is required")
+        })?;
+
+        // Determine if we're using cloud storage
+        let use_cloud_storage = self.storage.is_some();
+
+        let (storage, output_prefix, local_buffer, _output_dir) =
+            if let Some(storage) = self.storage {
+                let local_buffer = self.local_buffer.ok_or_else(|| {
+                    roboflow_core::RoboflowError::parse(
+                        "LerobotWriterBuilder",
+                        "local_buffer is required when using cloud storage",
+                    )
+                })?;
+                let output_dir = local_buffer.clone();
+                let output_prefix = self.output_prefix.unwrap_or_default();
+                (storage, output_prefix, local_buffer, output_dir)
+            } else {
+                // Local storage mode
+                let output_dir = self.output_dir.ok_or_else(|| {
+                    roboflow_core::RoboflowError::parse(
+                        "LerobotWriterBuilder",
+                        "output_dir is required (or use storage() for cloud storage)",
+                    )
+                })?;
+                let storage =
+                    std::sync::Arc::new(roboflow_storage::LocalStorage::new(&output_dir)) as _;
+                let local_buffer = output_dir.clone();
+                let output_prefix = self.output_prefix.unwrap_or_default();
+                (storage, output_prefix, local_buffer, output_dir)
+            };
+
+        LerobotWriter::new_internal(
+            storage,
+            output_prefix,
+            local_buffer,
+            config,
+            use_cloud_storage,
+        )
+    }
+}
+
+impl LerobotWriter {
+    /// Create a builder for configuring a LeRobot writer.
+    pub fn builder() -> LerobotWriterBuilder {
+        LerobotWriterBuilder::new()
+    }
+
+    /// Internal constructor used by the builder.
+    fn new_internal(
+        storage: std::sync::Arc<dyn roboflow_storage::Storage>,
+        output_prefix: String,
+        local_buffer: PathBuf,
+        config: LerobotConfig,
+        use_cloud_storage: bool,
+    ) -> Result<Self> {
+        let local_buffer_path = local_buffer.clone();
+
+        // Create local buffer directory structure
+        let data_dir = local_buffer.join("data/chunk-000");
+        let videos_dir = local_buffer.join("videos/chunk-000");
+        let meta_dir = local_buffer.join("meta");
+
+        fs::create_dir_all(&data_dir)?;
+        fs::create_dir_all(&videos_dir)?;
+        fs::create_dir_all(&meta_dir)?;
+
+        // Detect if this is cloud storage
+        use roboflow_storage::LocalStorage;
+        let is_local = storage.as_any().is::<LocalStorage>();
+
+        // Create upload coordinator for cloud storage
+        let upload_coordinator = if use_cloud_storage && !is_local {
+            let upload_config = crate::lerobot::upload::UploadConfig {
+                show_progress: false,
+                ..Default::default()
+            };
+
+            match crate::lerobot::upload::EpisodeUploadCoordinator::new(
+                std::sync::Arc::clone(&storage),
+                upload_config,
+                None,
+            ) {
+                Ok(coordinator) => Some(std::sync::Arc::new(coordinator)),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to create upload coordinator, uploads will be done synchronously"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        Ok(Self {
+            storage,
+            output_prefix,
+            _local_buffer: local_buffer_path,
+            output_dir: local_buffer,
+            config,
+            episode_index: 0,
+            frame_data: Vec::new(),
+            image_buffers: HashMap::new(),
+            metadata: MetadataCollector::new(),
+            total_frames: 0,
+            images_encoded: 0,
+            skipped_frames: 0,
+            initialized: true,
+            start_time: Some(std::time::Instant::now()),
+            output_bytes: 0,
+            failed_encodings: 0,
+            use_cloud_storage,
+            upload_coordinator,
+        })
     }
 }

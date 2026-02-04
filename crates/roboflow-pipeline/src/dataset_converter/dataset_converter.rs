@@ -130,16 +130,13 @@ impl DatasetConverter {
         // Use the FPS from config if available
         let fps = kps_config.dataset.fps;
 
-        // Create the dataset writer
+        // Create the dataset writer (already initialized via builder)
         let config = roboflow_dataset::DatasetConfig::Kps(kps_config.clone());
         let mut writer = create_writer(&self.output_dir, None, None, &config).map_err(
             |e: roboflow_core::RoboflowError| {
                 RoboflowError::encode("DatasetConverter", e.to_string())
             },
         )?;
-
-        // Initialize the writer
-        writer.initialize(kps_config)?;
 
         // Open input file
         let path_str = input_path
@@ -257,7 +254,7 @@ impl DatasetConverter {
         }
 
         // Finalize and get stats
-        let stats = writer.finalize(kps_config)?;
+        let stats = writer.finalize()?;
         let duration = start_time.elapsed();
 
         info!(
@@ -294,9 +291,6 @@ impl DatasetConverter {
                 RoboflowError::encode("DatasetConverter", e.to_string())
             },
         )?;
-
-        // Initialize the writer
-        writer.initialize(lerobot_config)?;
 
         // Open input file
         let path_str = input_path
@@ -413,7 +407,7 @@ impl DatasetConverter {
         }
 
         // Finalize and get stats
-        let stats = writer.finalize(lerobot_config)?;
+        let stats = writer.finalize()?;
         let duration = start_time.elapsed();
 
         info!(

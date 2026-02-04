@@ -218,7 +218,6 @@ impl CheckpointManager {
     ///
     /// Spawns a background task to save the checkpoint without blocking
     /// the current execution. Errors are logged but not returned.
-    #[allow(dead_code)]
     pub fn save_async(&self, checkpoint: CheckpointState) {
         if !self.config.checkpoint_async {
             // If async mode is disabled, do synchronous save
@@ -256,24 +255,24 @@ impl CheckpointManager {
 // Tests
 // =============================================================================
 
-// Helper functions for testing without a real client
-#[allow(dead_code)]
-fn should_checkpoint_impl(
-    frames_since_last: u64,
-    time_since_last: Duration,
-    config: &CheckpointConfig,
-) -> bool {
-    frames_since_last >= config.checkpoint_interval_frames
-        || time_since_last.as_secs() >= config.checkpoint_interval_seconds
-}
-
-#[allow(dead_code)]
-fn next_checkpoint_frame_impl(current_frame: u64, config: &CheckpointConfig) -> u64 {
-    ((current_frame / config.checkpoint_interval_frames) + 1) * config.checkpoint_interval_frames
-}
-
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    // Helper functions for testing without a real client
+    fn should_checkpoint_impl(
+        frames_since_last: u64,
+        time_since_last: Duration,
+        config: &CheckpointConfig,
+    ) -> bool {
+        frames_since_last >= config.checkpoint_interval_frames
+            || time_since_last.as_secs() >= config.checkpoint_interval_seconds
+    }
+
+    fn next_checkpoint_frame_impl(current_frame: u64, config: &CheckpointConfig) -> u64 {
+        ((current_frame / config.checkpoint_interval_frames) + 1)
+            * config.checkpoint_interval_frames
+    }
     use super::*;
 
     #[test]

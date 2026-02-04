@@ -56,14 +56,11 @@ pub struct ReaderStage {
     /// Input file path
     input_path: String,
     /// File format
-    #[allow(dead_code)]
-    format: FileFormat,
+    _format: FileFormat,
     /// Channel information
-    #[allow(dead_code)]
-    channels: HashMap<u16, robocodec::io::metadata::ChannelInfo>,
+    _channels: HashMap<u16, robocodec::io::metadata::ChannelInfo>,
     /// Channel for sending chunks to compression stage
-    #[allow(dead_code)]
-    chunks_sender: Sender<MessageChunkData>,
+    _chunks_sender: Sender<MessageChunkData>,
 }
 
 impl ReaderStage {
@@ -78,9 +75,9 @@ impl ReaderStage {
         Self {
             config,
             input_path: input_path.to_string_lossy().to_string(),
-            format,
-            channels,
-            chunks_sender,
+            _format: format,
+            _channels: channels,
+            _chunks_sender: chunks_sender,
         }
     }
 

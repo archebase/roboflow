@@ -206,10 +206,9 @@ impl DecodedImage {
 ///
 /// This decoder is always available and serves as the fallback
 /// when GPU or hardware-accelerated decoders are unavailable.
-#[allow(dead_code)]
 pub struct CpuImageDecoder {
     memory_strategy: MemoryStrategy,
-    threads: usize, // Stored for future rayon thread pool configuration
+    _threads: usize, // Stored for future rayon thread pool configuration
 }
 
 impl CpuImageDecoder {
@@ -217,7 +216,7 @@ impl CpuImageDecoder {
     pub fn new(memory_strategy: MemoryStrategy, threads: usize) -> Self {
         Self {
             memory_strategy,
-            threads: threads.max(1),
+            _threads: threads.max(1),
         }
     }
 
@@ -225,7 +224,7 @@ impl CpuImageDecoder {
     pub fn default_config() -> Self {
         Self {
             memory_strategy: MemoryStrategy::default(),
-            threads: rayon::current_num_threads().max(1),
+            _threads: rayon::current_num_threads().max(1),
         }
     }
 }

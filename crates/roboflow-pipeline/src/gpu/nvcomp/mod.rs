@@ -30,10 +30,8 @@ use super::{GpuCompressionError, GpuResult};
 /// Wraps NVIDIA's nvCOMP library for GPU-accelerated compression.
 pub struct NvComCompressor {
     compression_level: u32,
-    #[allow(dead_code)]
-    device_id: u32,
-    #[allow(dead_code)]
-    max_chunk_size: usize,
+    _device_id: u32,
+    _max_chunk_size: usize,
     is_available: bool,
 }
 
@@ -58,8 +56,8 @@ impl NvComCompressor {
 
         Ok(Self {
             compression_level,
-            device_id,
-            max_chunk_size,
+            _device_id: device_id,
+            _max_chunk_size: max_chunk_size,
             is_available: true,
         })
     }

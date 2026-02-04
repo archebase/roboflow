@@ -45,8 +45,8 @@ fn test_lerobot_writer_basic_flow() {
     };
 
     // Create a LeRobot writer directly to verify output
+    // The writer is already initialized via new_local()
     let mut writer = LerobotWriter::new_local(output_path, lerobot_config.clone()).unwrap();
-    writer.initialize(&lerobot_config).unwrap();
 
     // Create test image data
     let img_data = ImageData::new(64, 48, vec![128u8; 64 * 48 * 3]);
@@ -58,7 +58,7 @@ fn test_lerobot_writer_basic_flow() {
 
     // Finalize and get stats - use DatasetWriter trait method
     use roboflow_dataset::common::DatasetWriter;
-    let _stats = DatasetWriter::finalize(&mut writer, &lerobot_config).unwrap();
+    let _stats = DatasetWriter::finalize(&mut writer).unwrap();
 
     // Verify output directory structure exists
     assert!(output_path.join("data/chunk-000").exists());

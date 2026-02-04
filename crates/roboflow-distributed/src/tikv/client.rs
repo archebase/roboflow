@@ -1364,7 +1364,6 @@ impl TikvClient {
 impl TikvClient {
     /// Create a no-op client for testing checkpoint manager logic.
     /// This client is not connected to TiKV and will fail on actual operations.
-    #[allow(dead_code)]
     pub(crate) fn no_op_for_testing() -> Self {
         Self {
             config: TikvConfig::default(),

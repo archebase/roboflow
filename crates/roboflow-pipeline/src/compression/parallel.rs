@@ -90,9 +90,9 @@ struct ThreadLocalCompressor {
     compressor: zstd::bulk::Compressor<'static>,
 }
 
-#[allow(dead_code)]
 impl ThreadLocalCompressor {
     /// Create a new thread-local compressor.
+    #[allow(dead_code)]
     fn new(level: CompressionLevel) -> Result<Self> {
         let compressor = zstd::bulk::Compressor::new(level).map_err(|e| {
             RoboflowError::encode("Compressor", format!("Failed to create compressor: {e}"))
@@ -101,6 +101,7 @@ impl ThreadLocalCompressor {
     }
 
     /// Compress data.
+    #[allow(dead_code)]
     fn compress(&mut self, input: &[u8]) -> Result<Vec<u8>> {
         self.compressor
             .compress(input)
@@ -109,6 +110,7 @@ impl ThreadLocalCompressor {
     }
 
     /// Compress directly into a buffer.
+    #[allow(dead_code)]
     fn compress_into(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<()> {
         output.clear();
         let compressed = self

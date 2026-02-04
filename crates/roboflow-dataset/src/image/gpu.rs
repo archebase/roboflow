@@ -30,13 +30,12 @@ use super::{
 };
 
 /// GPU decoder using NVIDIA nvJPEG library.
-#[allow(dead_code)]
 pub struct GpuImageDecoder {
-    device_id: u32, // For CUDA context initialization
-    memory_strategy: MemoryStrategy, // For CUDA pinned memory allocation
-                    // Future fields (when cudarc is integrated):
-                    // cuda_ctx: cudarc::driver::CudaDevice,
-                    // nvjpeg_handle: cudarc::nvjpeg::NvJpeg,
+    _device_id: u32, // For CUDA context initialization
+    _memory_strategy: MemoryStrategy, // For CUDA pinned memory allocation
+                     // Future fields (when cudarc is integrated):
+                     // cuda_ctx: cudarc::driver::CudaDevice,
+                     // nvjpeg_handle: cudarc::nvjpeg::NvJpeg,
 }
 
 impl GpuImageDecoder {
@@ -121,7 +120,7 @@ impl ImageDecoderBackend for GpuImageDecoder {
     }
 
     fn memory_strategy(&self) -> MemoryStrategy {
-        self.memory_strategy
+        MemoryStrategy::default()
     }
 }
 
@@ -134,7 +133,7 @@ impl GpuImageDecoder {
     ) -> Result<super::backend::DecodedImage> {
         use super::backend::CpuImageDecoder;
 
-        let cpu_decoder = CpuImageDecoder::new(self.memory_strategy, 1);
+        let cpu_decoder = CpuImageDecoder::new(self.memory_strategy(), 1);
         cpu_decoder.decode(data, format)
     }
 }

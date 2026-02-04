@@ -146,8 +146,7 @@ impl CacheConfig {
 #[derive(Debug)]
 struct CacheEntry {
     /// Relative path within cache.
-    #[allow(dead_code)]
-    path: PathBuf,
+    _path: PathBuf,
     /// File size in bytes.
     size: u64,
     /// Last access time (for LRU).
@@ -164,7 +163,7 @@ impl CacheEntry {
     fn new(path: PathBuf, size: u64) -> Self {
         let now = SystemTime::now();
         Self {
-            path,
+            _path: path,
             size,
             last_accessed: now,
             created_at: now,
@@ -933,8 +932,7 @@ pub struct CachedWriter {
     /// Maximum buffer size before triggering upload.
     max_buffer_size: usize,
     /// Whether to delete after upload.
-    #[allow(dead_code)]
-    delete_after_upload: bool,
+    _delete_after_upload: bool,
     /// Whether data has been uploaded.
     uploaded: bool,
     /// Whether writer has been flushed.
@@ -966,7 +964,7 @@ impl CachedWriter {
             remote_path,
             upload_sender,
             max_buffer_size,
-            delete_after_upload,
+            _delete_after_upload: delete_after_upload,
             uploaded: false,
             flushed: false,
         })

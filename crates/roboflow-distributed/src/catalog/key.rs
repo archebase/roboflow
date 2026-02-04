@@ -39,7 +39,6 @@ impl KeyNamespace {
     }
 
     /// Get the byte prefix for this namespace.
-    #[allow(dead_code)]
     pub const fn byte_prefix(self) -> u8 {
         self as u8
     }

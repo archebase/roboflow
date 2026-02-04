@@ -399,9 +399,8 @@ impl StreamingDatasetConverter {
             "Processing input file"
         );
 
-        // Create the dataset writer
+        // Create the dataset writer (already initialized via builder)
         let mut writer = self.create_writer()?;
-        writer.initialize(self.get_config_any()?)?;
 
         // Create alignment buffer
         let mut aligner = FrameAlignmentBuffer::new(self.config.clone());
@@ -543,7 +542,7 @@ impl StreamingDatasetConverter {
         }
 
         // Finalize writer
-        let writer_stats = writer.finalize(self.get_config_any()?)?;
+        let writer_stats = writer.finalize()?;
 
         // Compile final statistics
         stats.duration_sec = start_time.elapsed().as_secs_f64();
@@ -613,6 +612,7 @@ impl StreamingDatasetConverter {
     }
 
     /// Get the config as `dyn Any` for passing to writer.
+    #[allow(dead_code)]
     fn get_config_any(&self) -> Result<&dyn std::any::Any> {
         if let Some(kps_config) = &self.kps_config {
             Ok(kps_config)
@@ -638,7 +638,7 @@ impl StreamingDatasetConverter {
                             mapping.topic.clone(),
                             Mapping {
                                 feature: mapping.feature.clone(),
-                                mapping_type: match mapping.mapping_type {
+                                _mapping_type: match mapping.mapping_type {
                                     crate::kps::MappingType::Image => "image",
                                     crate::kps::MappingType::State => "state",
                                     crate::kps::MappingType::Action => "action",
@@ -656,7 +656,7 @@ impl StreamingDatasetConverter {
                             mapping.topic.clone(),
                             Mapping {
                                 feature: mapping.feature.clone(),
-                                mapping_type: match mapping.mapping_type {
+                                _mapping_type: match mapping.mapping_type {
                                     crate::lerobot::config::MappingType::Image => "image",
                                     crate::lerobot::config::MappingType::State => "state",
                                     crate::lerobot::config::MappingType::Action => "action",
@@ -682,8 +682,7 @@ struct Mapping {
     feature: String,
     /// Data type for validation/routing (reserved for future use)
     /// Values: "image", "state", "action", "timestamp"
-    #[allow(dead_code)]
-    mapping_type: &'static str,
+    _mapping_type: &'static str,
 }
 
 #[cfg(test)]

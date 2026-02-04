@@ -18,28 +18,23 @@ use super::config::Mapping;
 use std::io::Write;
 
 // Row structures for Parquet data
-// Note: Marked dead_code because they're used in methods that may not be
-// active in all compilation configurations. These are used by the
-// ParquetKpsWriter implementation.
-#[allow(dead_code)]
+// These are used by the ParquetKpsWriter implementation.
 #[derive(Debug, Clone)]
 struct ObservationRow {
-    timestamp: i64,
+    _timestamp: i64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct ActionRow {
-    timestamp: i64,
+    _timestamp: i64,
 }
 
 /// Image frame for buffering.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct ImageFrame {
-    timestamp: i64,
-    width: usize,
-    height: usize,
+    _timestamp: i64,
+    _width: usize,
+    _height: usize,
     data: Vec<u8>,
 }
 
@@ -48,9 +43,8 @@ struct ImageFrame {
 /// Creates Kps datasets compatible with v3.0 format:
 /// - `data/` directory with Parquet shards
 /// - `videos/` directory with MP4 shards
-#[allow(dead_code)] // Fields are used when dataset-parquet feature is enabled
 pub struct ParquetKpsWriter {
-    episode_id: usize,
+    _episode_id: usize,
     output_dir: std::path::PathBuf,
     frame_count: usize,
     image_shapes: HashMap<String, (usize, usize)>,
@@ -76,7 +70,7 @@ impl ParquetKpsWriter {
         std::fs::create_dir_all(output_dir.join("meta/episodes"))?;
 
         Ok(Self {
-            episode_id,
+            _episode_id: episode_id,
             output_dir: output_dir.to_path_buf(),
             frame_count: 0,
             image_shapes: HashMap::new(),
@@ -234,9 +228,9 @@ impl ParquetKpsWriter {
             let buffers = image_buffers.entry(mapping.feature.clone()).or_default();
 
             buffers.push(ImageFrame {
-                timestamp: self.timestamps.last().copied().unwrap_or(0),
-                width: w,
-                height: h,
+                _timestamp: self.timestamps.last().copied().unwrap_or(0),
+                _width: w,
+                _height: h,
                 data: img_data.to_vec(),
             });
         }
@@ -252,7 +246,9 @@ impl ParquetKpsWriter {
     ) {
         // Add to observation data
         // For now, just track the timestamp
-        self.observation_data.push(ObservationRow { timestamp });
+        self.observation_data.push(ObservationRow {
+            _timestamp: timestamp,
+        });
     }
 
     fn process_action(
@@ -262,7 +258,9 @@ impl ParquetKpsWriter {
         timestamp: i64,
     ) {
         // Add to action data
-        self.action_data.push(ActionRow { timestamp });
+        self.action_data.push(ActionRow {
+            _timestamp: timestamp,
+        });
     }
 
     fn write_parquet(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -306,7 +304,8 @@ impl ParquetKpsWriter {
             }
 
             let _video_dir = self.output_dir.join("videos");
-            let _video_path = _video_dir.join(format!("video-{:06}-of-00001.mp4", self.episode_id));
+            let _video_path =
+                _video_dir.join(format!("video-{:06}-of-00001.mp4", self._episode_id));
 
             println!("  Encoding video: {} ({} frames)", feature, frames.len());
 
@@ -341,7 +340,6 @@ impl ParquetKpsWriter {
     }
 
     /// Record the shape of an image topic.
-    #[allow(dead_code)]
     fn record_image_shape(&mut self, topic: String, width: usize, height: usize) {
         self.image_shapes.insert(topic, (width, height));
     }
