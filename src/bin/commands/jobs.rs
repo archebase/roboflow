@@ -165,9 +165,8 @@ impl JobsCommand {
                 Ok(None)
             }
             unknown => Err(format!(
-                "unknown jobs command: {}\n\n{}",
-                unknown,
-                get_jobs_help_summary()
+                "unknown jobs command: {}\n\nAvailable commands: list, get, retry, cancel, delete, stats\n\nRun 'roboflow jobs <command> --help' for more information.",
+                unknown
             )),
         }
     }
@@ -1276,12 +1275,6 @@ fn format_status_csv(status: JobStatus) -> String {
     }
 }
 
-/// Print job output in the specified format.
-#[allow(dead_code)]
-pub fn print_job_output(jobs: &[JobRecord], format: OutputFormat) {
-    print_job_table(jobs, format);
-}
-
 /// Job detail with checkpoint for JSON output.
 #[derive(Serialize)]
 struct JobDetail {
@@ -1311,16 +1304,6 @@ pub async fn run_jobs_command(args: &[String]) -> Result<(), String> {
         Some(command) => command.run().await,
         None => Ok(()), // Help was printed
     }
-}
-
-/// Add Cancelled status to JobStatus (from schema)
-/// This is needed since the schema doesn't include Cancelled yet
-#[allow(dead_code)]
-fn get_jobs_help_summary() -> String {
-    r#"Available commands: list, get, retry, cancel, delete, stats
-
-Run 'roboflow jobs <command> --help' for more information."#
-        .to_string()
 }
 
 fn print_jobs_help() {

@@ -57,7 +57,6 @@ fn test_lerobot_end_to_end_conversion() {
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
-
     // Write a simple episode
     writer.start_episode(Some(0));
 

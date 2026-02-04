@@ -31,7 +31,6 @@
 //! `KeyBuilder` or `*Keys` types to construct proper prefix-based keys.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use super::config::TikvConfig;
 use super::error::{Result, TikvError};
@@ -39,8 +38,6 @@ use super::key::{ConfigKeys, HeartbeatKeys, JobKeys, LockKeys, StateKeys};
 use super::schema::{
     CheckpointState, ConfigRecord, HeartbeatRecord, JobRecord, JobStatus, LockRecord,
 };
-
-use tokio::time::sleep;
 
 /// TiKV client wrapper with connection pooling and circuit breaker.
 #[derive(Clone)]
@@ -96,83 +93,6 @@ impl TikvClient {
     /// Create a new client with default configuration from environment.
     pub async fn from_env() -> Result<Self> {
         Self::new(TikvConfig::default()).await
-    }
-
-    /// Retry helper with exponential backoff for write conflicts.
-    ///
-    /// This helper automatically retries operations that fail with write conflicts,
-    /// using exponential backoff between retries.
-    #[allow(dead_code)]
-    async fn retry_with_backoff<F, Fut, T>(&self, operation_name: &str, operation: F) -> Result<T>
-    where
-        F: Fn() -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
-    {
-        let max_retries = self.config.max_retries;
-        let base_delay = Duration::from_millis(self.config.retry_base_delay_ms);
-
-        for attempt in 0..max_retries {
-            match operation().await {
-                Ok(value) => {
-                    if attempt > 0 {
-                        tracing::debug!(
-                            operation = operation_name,
-                            attempts = attempt + 1,
-                            "Operation succeeded after retries"
-                        );
-                    }
-                    return Ok(value);
-                }
-                Err(err) if err.is_write_conflict() || err.is_retryable() => {
-                    if attempt >= max_retries - 1 {
-                        tracing::warn!(
-                            operation = operation_name,
-                            attempts = attempt + 1,
-                            max_retries,
-                            "Operation failed after max retries"
-                        );
-                        return Err(TikvError::retryable(
-                            attempt + 1,
-                            max_retries,
-                            err.to_string(),
-                        ));
-                    }
-
-                    let delay = base_delay * 2_u32.pow(attempt);
-                    tracing::debug!(
-                        operation = operation_name,
-                        attempt = attempt + 1,
-                        delay_ms = delay.as_millis(),
-                        error = %err,
-                        "Retrying operation after write conflict"
-                    );
-                    sleep(delay).await;
-                }
-                Err(err) => return Err(err),
-            }
-        }
-
-        // This should never be reached, but the compiler doesn't know that
-        Err(TikvError::retryable(
-            max_retries,
-            max_retries,
-            "Unexpected loop exit",
-        ))
-    }
-
-    /// Execute an operation with circuit breaker protection.
-    ///
-    /// This method wraps the operation with circuit breaker logic, which will
-    /// fail fast if the circuit is open (TiKV service is experiencing issues).
-    /// This prevents cascading failures by rejecting requests quickly when
-    /// the service is down.
-    #[allow(dead_code)]
-    async fn with_circuit_breaker<F, Fut, T>(&self, operation: F) -> Result<T>
-    where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
-    {
-        self.circuit_breaker.call(operation).await
     }
 
     /// Get the circuit breaker state (for monitoring).

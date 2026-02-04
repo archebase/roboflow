@@ -127,26 +127,6 @@ pub fn compute_file_hash(key: &str, size: u64) -> String {
     format!("{:016x}", hasher.finish())
 }
 
-/// Check if a file path matches a glob pattern.
-#[allow(dead_code)]
-pub fn glob_match(pattern: &str, text: &str) -> bool {
-    use regex::Regex;
-
-    // Convert glob pattern to regex
-    let regex_pattern = pattern
-        .replace('.', "\\.") // Escape dots
-        .replace('?', ".") // ? -> any single char
-        .replace('*', ".*"); // * -> any chars
-
-    // Anchor the pattern to match the entire string
-    let full_pattern = format!("^{}$", regex_pattern);
-
-    match Regex::new(&full_pattern) {
-        Ok(re) => re.is_match(text),
-        Err(_) => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,16 +159,5 @@ mod tests {
         let hash3 = compute_file_hash("test-key", 2048);
         assert_eq!(hash1, hash2);
         assert_ne!(hash1, hash3);
-    }
-
-    #[test]
-    fn test_glob_match() {
-        assert!(glob_match("*.mcap", "file.mcap"));
-        assert!(!glob_match("*.mcap", "file.txt"));
-        assert!(glob_match("test*", "test123"));
-        assert!(glob_match("test?file", "test1file"));
-        assert!(!glob_match("test?file", "test12file"));
-        assert!(glob_match("*file*", "mydata/file.csv"));
-        assert!(glob_match("data/*.mcap", "data/file.mcap"));
     }
 }

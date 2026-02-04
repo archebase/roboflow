@@ -89,13 +89,6 @@ impl AuditContext {
         self.extra.push((key.into(), value.into()));
         self
     }
-
-    /// Set the source of the operation.
-    #[allow(dead_code)]
-    pub fn with_source(mut self, source: impl Into<String>) -> Self {
-        self.source = Some(source.into());
-        self
-    }
 }
 
 impl Default for AuditContext {
@@ -203,10 +196,9 @@ mod tests {
     fn test_audit_context_builder() {
         let context = AuditContext::new()
             .add("key1", "value1")
-            .add("key2", "value2")
-            .with_source("127.0.0.1");
+            .add("key2", "value2");
 
-        assert_eq!(context.source, Some("127.0.0.1".to_string()));
+        assert_eq!(context.source, None);
         assert_eq!(context.extra.len(), 2);
     }
 }

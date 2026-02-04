@@ -292,31 +292,6 @@ impl ParquetKpsWriter {
         self.write_videos_images(image_buffers)
     }
 
-    #[allow(dead_code)]
-    fn write_videos_ffmpeg(
-        &self,
-        image_buffers: &HashMap<String, Vec<ImageFrame>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // Create video directory per camera/topic
-        for (feature, frames) in image_buffers {
-            if frames.is_empty() {
-                continue;
-            }
-
-            let _video_dir = self.output_dir.join("videos");
-            let _video_path =
-                _video_dir.join(format!("video-{:06}-of-00001.mp4", self._episode_id));
-
-            println!("  Encoding video: {} ({} frames)", feature, frames.len());
-
-            // MP4 encoding via ffmpeg is a future enhancement.
-            // The current implementation saves raw RGB data instead.
-            println!("    (MP4 encoding requires full ffmpeg-next integration)");
-        }
-
-        Ok(())
-    }
-
     fn write_videos_images(
         &self,
         image_buffers: &HashMap<String, Vec<ImageFrame>>,
@@ -345,7 +320,9 @@ impl ParquetKpsWriter {
     }
 
     /// Record the dimension of a state topic.
-    #[allow(dead_code)]
+    // TODO: This method is used in tests but not in production code yet.
+    // It will be used when state data processing is fully implemented.
+    #[expect(dead_code)]
     fn record_state_dimension(&mut self, topic: String, dim: usize) {
         self.state_shapes.insert(topic, dim);
     }
