@@ -160,9 +160,13 @@ pub mod python;
 // =============================================================================
 
 // Simplified type aliases for the unified API
-// TODO: Re-add high-level reader/writer type aliases once API is stabilized
-// pub type Reader = io::RoboReader;
-// pub type Writer = io::RoboWriter;
+//
+// High-level reader/writer type aliases are intentionally not provided at this time.
+// The unified I/O API is still evolving. Users should import the specific types
+// they need (e.g., `roboflow::io::RoboReader`) rather than relying on opaque
+// type aliases that may change in future versions.
+//
+// See https://github.com/archebase/roboflow/issues/[TBD] for API stabilization progress.
 
 /// Decoder trait for generic decoding operations.
 pub trait Decoder: Send + Sync {

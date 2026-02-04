@@ -655,7 +655,9 @@ impl FileResult {
         }
     }
 
-    // TODO: Remove hyper_report alias in next breaking release
+    /// Deprecated: Use [`report()`](Self::report) instead.
+    ///
+    /// This method will be removed in the next breaking release.
     #[deprecated(since = "0.2.0", note = "Use report() instead")]
     pub fn hyper_report(&self) -> Option<&HyperPipelineReport> {
         self.report()

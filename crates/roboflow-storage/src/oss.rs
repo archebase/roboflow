@@ -740,13 +740,6 @@ impl SyncOssWriter {
         }
     }
 
-    /// Set the maximum buffer size.
-    #[allow(dead_code)]
-    pub fn with_max_buffer_size(mut self, size: usize) -> Self {
-        self.max_buffer_size = size;
-        self
-    }
-
     /// Upload the buffer to OSS.
     fn upload(&mut self) -> Result<()> {
         if self.uploaded {

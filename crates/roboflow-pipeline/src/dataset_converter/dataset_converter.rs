@@ -569,7 +569,8 @@ mod tests {
             ]),
         );
 
-        let result = DatasetConverter::extract_float_array(&msg).unwrap();
+        let result = DatasetConverter::extract_float_array(&msg)
+            .expect("float array extraction should succeed with valid input");
         assert_eq!(result, vec![1.0, 2.0, 3.0]);
     }
 
@@ -583,7 +584,8 @@ mod tests {
         msg.insert("data".to_string(), CodecValue::Bytes(vec![1, 2, 3, 4]));
         msg.insert("format".to_string(), CodecValue::String("rgb8".to_string()));
 
-        let image = DatasetConverter::extract_image(&msg).unwrap();
+        let image = DatasetConverter::extract_image(&msg)
+            .expect("image extraction should succeed with valid input");
         assert_eq!(image.width, 640);
         assert_eq!(image.height, 480);
         assert_eq!(image.data, vec![1, 2, 3, 4]);

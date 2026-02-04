@@ -93,7 +93,6 @@ impl LerobotWriter {
     /// # Deprecated
     ///
     /// Use `new_local` instead for clarity. This method will be removed in a future version.
-    #[allow(unused_variables)]
     #[deprecated(since = "0.2.0", note = "Use new_local() instead")]
     pub fn create(output_dir: impl AsRef<Path>, config: LerobotConfig) -> Result<Self> {
         Self::new_local(output_dir, config)

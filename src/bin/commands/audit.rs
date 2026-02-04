@@ -36,9 +36,12 @@ pub struct AuditEntry {
 }
 
 /// Types of audited operations.
+///
+/// This enum defines all possible operation types that can be recorded in the audit log.
+/// Some variants may not currently be used but are reserved for future API expansion.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
-#[allow(dead_code)]
+#[allow(dead_code)] // Public API with variants reserved for future use
 pub enum AuditOperation {
     /// Job was cancelled.
     JobCancel,

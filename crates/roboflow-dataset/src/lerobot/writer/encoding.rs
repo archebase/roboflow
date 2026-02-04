@@ -289,13 +289,6 @@ fn encode_videos_parallel(
     Ok((files, stats))
 }
 
-/// Build a frame buffer from image data.
-#[allow(dead_code)]
-pub fn build_frame_buffer(images: &[ImageData]) -> Result<VideoFrameBuffer> {
-    let (buffer, _) = build_frame_buffer_static(images)?;
-    Ok(buffer)
-}
-
 /// Static version of build_frame_buffer for use in parallel context.
 ///
 /// Returns (buffer, skipped_frame_count) where skipped frames are those

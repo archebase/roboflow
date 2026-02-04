@@ -198,8 +198,7 @@ impl ImageDecoderFactory {
     ///
     /// This is useful for maintaining decoder state (e.g., CUDA context)
     /// across multiple decode operations.
-    #[allow(clippy::borrowed_box)]
-    pub fn get_decoder(&mut self) -> &Box<dyn ImageDecoderBackend> {
+    pub fn get_decoder(&mut self) -> &dyn ImageDecoderBackend {
         if self.cached_decoder.is_none() {
             match self.create_decoder() {
                 Ok(decoder) => self.cached_decoder = Some(decoder),
@@ -214,7 +213,7 @@ impl ImageDecoderFactory {
 
         // SAFETY: We just ensured cached_decoder is Some
         self.cached_decoder
-            .as_ref()
+            .as_deref()
             .expect("Decoder should be cached")
     }
 

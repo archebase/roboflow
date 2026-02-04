@@ -476,9 +476,15 @@ impl CachedStorage {
     fn add_to_cache(&self, path: &Path, size: u64) {
         let cache_path = self.cache_path(path);
 
-        // Note: Mutex poisoning here indicates a serious bug (panic in another thread)
-        // We unwrap to surface the error rather than silently continuing
-        let mut entries = self.entries.lock().expect("entries mutex poisoned");
+        // Handle poisoned mutex: recover the guard and continue
+        // A poisoned mutex means another thread panicked while holding the lock
+        let mut entries = match self.entries.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!("Cache entries mutex is poisoned, recovering guard");
+                poisoned.into_inner()
+            }
+        };
         entries.insert(path.to_path_buf(), CacheEntry::new(cache_path, size));
 
         let old_size = self.cache_size.fetch_add(size, Ordering::Relaxed);

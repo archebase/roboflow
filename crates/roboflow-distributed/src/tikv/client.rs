@@ -269,6 +269,8 @@ impl TikvClient {
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
             // Collect the iterator into a Vec
+            // Note: The .into() conversion from Key to Vec<u8> is necessary but triggers
+            // clippy::useless_conversion as a false positive. The allow attribute is justified.
             let result: Vec<(Vec<u8>, Vec<u8>)> = iter
                 .map(|pair| {
                     #[allow(clippy::useless_conversion)]
@@ -1276,19 +1278,6 @@ impl TikvClient {
         #[cfg(not(feature = "distributed"))]
         {
             false
-        }
-    }
-}
-
-#[cfg(test)]
-impl TikvClient {
-    /// Create a no-op client for testing checkpoint manager logic.
-    /// This client is not connected to TiKV and will fail on actual operations.
-    pub(crate) fn no_op_for_testing() -> Self {
-        Self {
-            config: TikvConfig::default(),
-            inner: None,
-            circuit_breaker: Arc::new(super::circuit::CircuitBreaker::new()),
         }
     }
 }

@@ -182,10 +182,7 @@ fn allocate_cuda_pinned(size: usize) -> Result<AlignedImageBuffer, std::io::Erro
     // True CUDA pinned memory requires cudarc integration
     // which is deferred to Phase 2 of GPU decoding
 
-    #[allow(clippy::let_and_return)]
-    let aligned = AlignedImageBuffer::page_aligned(size);
-
-    Ok(aligned)
+    Ok(AlignedImageBuffer::page_aligned(size))
 }
 
 #[cfg(test)]

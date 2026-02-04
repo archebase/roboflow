@@ -611,21 +611,6 @@ impl StreamingDatasetConverter {
         }
     }
 
-    /// Get the config as `dyn Any` for passing to writer.
-    #[allow(dead_code)]
-    fn get_config_any(&self) -> Result<&dyn std::any::Any> {
-        if let Some(kps_config) = &self.kps_config {
-            Ok(kps_config)
-        } else if let Some(lerobot_config) = &self.lerobot_config {
-            Ok(lerobot_config)
-        } else {
-            Err(roboflow_core::RoboflowError::parse(
-                "StreamingConverter",
-                "No config available",
-            ))
-        }
-    }
-
     /// Build topic -> feature mapping lookup.
     fn build_topic_mappings(&self) -> Result<MappingMap> {
         let mut map = HashMap::new();

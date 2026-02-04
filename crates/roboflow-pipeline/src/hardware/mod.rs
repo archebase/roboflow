@@ -215,6 +215,27 @@ impl HardwareInfo {
 }
 
 /// Detect system memory on macOS using sysctl.
+///
+/// # Safety
+///
+/// This function calls the macOS `sysctlbyname` system call to retrieve
+/// the total physical memory size. The unsafe block is safe because:
+///
+/// 1. **Valid pointer**: `name` is a compile-time C string literal (`c"hw.memsize"`)
+///    with a null terminator, valid for the `'static` lifetime.
+///
+/// 2. **Correct type alignment**: `memory: u64` is aligned and sized correctly
+///    for the `hw.memsize` sysctl, which returns a 64-bit unsigned integer.
+///
+/// 3. **Size parameter**: The `len` parameter correctly specifies the size of
+///    the destination buffer (8 bytes for `u64`). The first call queries the
+///    required size; the second call retrieves the actual value.
+///
+/// 4. **Null parameters**: `oldp` is null in the first call (query-only), and
+///    `newp` and `newlen` are null (we only read, never write to sysctl).
+///
+/// 5. **Error handling**: Return values are checked; errors (non-zero return)
+///    result in a conservative fallback value (8GB).
 #[cfg(target_os = "macos")]
 fn detect_memory_macos() -> u64 {
     unsafe {

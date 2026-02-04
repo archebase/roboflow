@@ -100,7 +100,6 @@ impl ReaderStage {
         let mut messages_read = 0u64;
         let mut chunks_processed = 0u64;
         let total_bytes = 0u64;
-        #[allow(unused_mut)]
         let mut current_chunk_size = 0usize;
         let mut current_chunk_messages = 0usize;
 

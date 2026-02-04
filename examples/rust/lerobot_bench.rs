@@ -230,16 +230,6 @@ impl TimedLerobotWriter {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn frame_count(&self) -> usize {
-        self.inner.frame_count()
-    }
-
-    #[allow(dead_code)]
-    fn is_initialized(&self) -> bool {
-        self.inner.is_initialized()
-    }
-
     fn into_inner(self) -> LerobotWriter {
         self.inner
     }
