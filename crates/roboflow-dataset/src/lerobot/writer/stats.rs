@@ -4,9 +4,9 @@
 
 //! Statistics calculation and tracking for LeRobot writer.
 
-use std::collections::HashMap;
 use crate::common::parquet_base::calculate_stats;
 use crate::lerobot::metadata::MetadataCollector;
+use std::collections::HashMap;
 
 /// Calculate episode statistics from frame data.
 pub fn calculate_episode_stats(

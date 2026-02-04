@@ -332,9 +332,9 @@ mod tests {
         let valid = DecodedImage::new(2, 2, vec![0u8; 12]);
         assert!(valid.validate().is_ok());
 
-        // Invalid size
-        let invalid = DecodedImage::new(2, 2, vec![0u8; 10]);
-        assert!(invalid.validate().is_err());
+        // Invalid size - use from_rgb8 which returns Result instead of panicking
+        let result = DecodedImage::from_rgb8(2, 2, vec![0u8; 10]);
+        assert!(result.is_err());
     }
 
     #[test]

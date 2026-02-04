@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use polars::prelude::*;
 
-use roboflow_core::RoboflowError;
 use roboflow_core::Result;
+use roboflow_core::RoboflowError;
 
 use super::frame::LerobotFrame;
 
@@ -174,9 +174,8 @@ pub fn write_episode_parquet(
     }
 
     // Create DataFrame and write
-    let df = DataFrame::new(series_vec).map_err(|e| {
-        RoboflowError::parse("Parquet", format!("DataFrame error: {}", e))
-    })?;
+    let df = DataFrame::new(series_vec)
+        .map_err(|e| RoboflowError::parse("Parquet", format!("DataFrame error: {}", e)))?;
 
     let parquet_path = output_dir.join(format!(
         "data/chunk-000/episode_{:06}.parquet",

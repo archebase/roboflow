@@ -55,11 +55,17 @@ fn create_test_frame(frame_index: usize, image: ImageData) -> AlignedFrame {
 
     // Add state observation (joint positions)
     let mut states = std::collections::HashMap::new();
-    states.insert("observation.state".to_string(), vec![0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6]);
+    states.insert(
+        "observation.state".to_string(),
+        vec![0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6],
+    );
 
     // Add action (target joint positions)
     let mut actions = std::collections::HashMap::new();
-    actions.insert("action".to_string(), vec![0.15f32, 0.25, 0.35, 0.45, 0.55, 0.65]);
+    actions.insert(
+        "action".to_string(),
+        vec![0.15f32, 0.25, 0.35, 0.45, 0.55, 0.65],
+    );
 
     AlignedFrame {
         frame_index,

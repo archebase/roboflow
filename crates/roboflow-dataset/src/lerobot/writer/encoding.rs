@@ -6,11 +6,11 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use crate::common::video::{Mp4Encoder, VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
 use crate::common::ImageData;
+use crate::common::video::{Mp4Encoder, VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
 use crate::kps::video_encoder::VideoEncoderError;
 use crate::lerobot::video_profiles::ResolvedConfig;
 use roboflow_core::Result;
@@ -276,11 +276,14 @@ fn encode_videos_parallel(
         output_bytes: output_bytes.load(Ordering::Relaxed),
     };
 
-    let files = video_files.lock()
-        .map_err(|e| roboflow_core::RoboflowError::encode(
-            "VideoEncoder",
-            format!("Video files mutex poisoned during upload: {}", e),
-        ))?
+    let files = video_files
+        .lock()
+        .map_err(|e| {
+            roboflow_core::RoboflowError::encode(
+                "VideoEncoder",
+                format!("Video files mutex poisoned during upload: {}", e),
+            )
+        })?
         .clone();
 
     Ok((files, stats))
@@ -297,9 +300,7 @@ pub fn build_frame_buffer(images: &[ImageData]) -> Result<VideoFrameBuffer> {
 ///
 /// Returns (buffer, skipped_frame_count) where skipped frames are those
 /// that had dimension mismatches.
-pub fn build_frame_buffer_static(
-    images: &[ImageData],
-) -> Result<(VideoFrameBuffer, usize)> {
+pub fn build_frame_buffer_static(images: &[ImageData]) -> Result<(VideoFrameBuffer, usize)> {
     let mut buffer = VideoFrameBuffer::new();
     let mut skipped = 0usize;
 

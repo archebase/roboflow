@@ -28,7 +28,7 @@ use roboflow_core::Result;
 
 pub use frame::LerobotFrame;
 
-use encoding::{encode_videos, EncodeStats};
+use encoding::{EncodeStats, encode_videos};
 
 /// LeRobot v2.1 dataset writer.
 pub struct LerobotWriter {
@@ -216,7 +216,10 @@ impl LerobotWriter {
                 .map_err(|e| {
                     roboflow_core::RoboflowError::encode(
                         "Storage",
-                        format!("Failed to create remote data directory '{}': {}", data_prefix, e),
+                        format!(
+                            "Failed to create remote data directory '{}': {}",
+                            data_prefix, e
+                        ),
                     )
                 })?;
             storage
@@ -235,7 +238,10 @@ impl LerobotWriter {
                 .map_err(|e| {
                     roboflow_core::RoboflowError::encode(
                         "Storage",
-                        format!("Failed to create remote meta directory '{}': {}", meta_prefix, e),
+                        format!(
+                            "Failed to create remote meta directory '{}': {}",
+                            meta_prefix, e
+                        ),
                     )
                 })?;
         }
@@ -405,16 +411,16 @@ impl LerobotWriter {
 
     /// Write current episode to Parquet file.
     fn write_episode_parquet(&mut self) -> Result<(PathBuf, usize)> {
-        let (parquet_path, size) = parquet::write_episode_parquet(
-            &self.frame_data,
-            self.episode_index,
-            &self.output_dir,
-        )?;
+        let (parquet_path, size) =
+            parquet::write_episode_parquet(&self.frame_data, self.episode_index, &self.output_dir)?;
 
         self.output_bytes += size as u64;
 
         // Upload to cloud storage if enabled (without upload coordinator)
-        if self.use_cloud_storage && self.upload_coordinator.is_none() && !parquet_path.as_os_str().is_empty() {
+        if self.use_cloud_storage
+            && self.upload_coordinator.is_none()
+            && !parquet_path.as_os_str().is_empty()
+        {
             upload::upload_parquet_file(self.storage.as_ref(), &parquet_path, &self.output_prefix)?;
         }
 
@@ -497,11 +503,8 @@ impl LerobotWriter {
 
         // Write metadata files
         if self.use_cloud_storage {
-            self.metadata.write_all_to_storage(
-                &self.storage,
-                &self.output_prefix,
-                &self.config,
-            )?;
+            self.metadata
+                .write_all_to_storage(&self.storage, &self.output_prefix, &self.config)?;
         }
         self.metadata.write_all(&self.output_dir, &self.config)?;
 
@@ -609,11 +612,8 @@ impl DatasetWriter for LerobotWriter {
 
         // Write metadata files
         if self.use_cloud_storage {
-            self.metadata.write_all_to_storage(
-                &self.storage,
-                &self.output_prefix,
-                &self.config,
-            )?;
+            self.metadata
+                .write_all_to_storage(&self.storage, &self.output_prefix, &self.config)?;
         }
         self.metadata.write_all(&self.output_dir, &self.config)?;
 

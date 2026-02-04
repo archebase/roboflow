@@ -3,62 +3,36 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 
 //! Worker actor for claiming and processing jobs from TiKV queue.
-//!
-//! The worker implements a distributed job processing model:
-//! - Claims jobs using optimistic concurrency (CAS in TiKV)
-//! - Processes jobs with checkpoint support
-//! - Updates job status (Complete/Failed) based on results
-//! - Sends heartbeats to indicate liveness
-//!
-//! # Architecture
-//!
-//! - **Job Claiming**: Query pending jobs → CAS claim → Process → Complete/Fail
-//! - **Concurrency**: Multiple workers run in parallel, each claims different jobs
-//! - **Checkpoints**: Frame-level progress tracking for resume capability
-//! - **Heartbeats**: Regular liveness signals with status
-//!
-//! # Example
-//!
-//! ```ignore
-//! use roboflow_distributed::{Worker, WorkerConfig};
-//! use std::sync::Arc;
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let tikv = Arc::new(TikvClient::from_env().await?);
-//!     let storage = Arc::new(StorageFactory::create_from_url("s3://bucket")?);
-//!     let config = WorkerConfig::default();
-//!
-//!     let mut worker = Worker::new(
-//!         "worker-1",
-//!         tikv,
-//!         storage,
-//!         config,
-//!     )?;
-//!
-//!     // Run until shutdown signal
-//!     worker.run().await?;
-//!
-//!     Ok(())
-//! }
-//! ```
+
+mod checkpoint;
+mod config;
+mod heartbeat;
+mod metrics;
+mod registry;
+
+pub use config::{
+    DEFAULT_CHECKPOINT_INTERVAL_FRAMES, DEFAULT_CHECKPOINT_INTERVAL_SECS,
+    DEFAULT_HEARTBEAT_INTERVAL_SECS, DEFAULT_JOB_TIMEOUT_SECS, DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_MAX_CONCURRENT_JOBS, DEFAULT_POLL_INTERVAL_SECS, WorkerConfig,
+};
+pub use metrics::{ProcessingResult, WorkerMetrics, WorkerMetricsSnapshot};
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use super::batch::{BatchController, WorkUnit};
 use super::merge::MergeCoordinator;
-use super::shutdown::{ShutdownHandler, ShutdownInterrupted};
+use super::shutdown::ShutdownHandler;
 use super::tikv::{
     TikvError,
     checkpoint::{CheckpointConfig, CheckpointManager},
     client::TikvClient,
-    schema::{CheckpointState, HeartbeatRecord, JobRecord, JobStatus, WorkerStatus},
+    key::{HeartbeatKeys, StateKeys},
+    schema::{HeartbeatRecord, JobRecord, JobStatus, WorkerStatus},
 };
 use roboflow_storage::{Storage, StorageFactory};
-use std::collections::HashMap;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
@@ -67,548 +41,38 @@ use lru::LruCache;
 
 // Dataset conversion imports
 use roboflow_dataset::{
-    common::DatasetWriter,
     lerobot::{LerobotConfig, VideoConfig},
     streaming::StreamingDatasetConverter,
 };
 
-/// Default job poll interval in seconds.
-pub const DEFAULT_POLL_INTERVAL_SECS: u64 = 5;
-
-/// Default maximum concurrent jobs per worker.
-pub const DEFAULT_MAX_CONCURRENT_JOBS: usize = 1;
-
-/// Default maximum attempts per job.
-pub const DEFAULT_MAX_ATTEMPTS: u32 = 3;
-
-/// Default job timeout in seconds.
-pub const DEFAULT_JOB_TIMEOUT_SECS: u64 = 3600; // 1 hour
-
-/// Default heartbeat interval in seconds.
-pub const DEFAULT_HEARTBEAT_INTERVAL_SECS: u64 = 30;
-
-/// Default checkpoint interval in frames.
-pub const DEFAULT_CHECKPOINT_INTERVAL_FRAMES: u64 = 100;
-
-/// Default checkpoint interval in seconds.
-pub const DEFAULT_CHECKPOINT_INTERVAL_SECS: u64 = 10;
+// Re-export module items for use within the worker module
+pub use checkpoint::WorkerCheckpointCallback;
+pub use heartbeat::send_heartbeat_inner;
+pub use registry::JobRegistry;
 
 /// Default cancellation check interval in seconds.
 pub const DEFAULT_CANCELLATION_CHECK_INTERVAL_SECS: u64 = 5;
 
-/// Registry for tracking active jobs and their cancellation tokens.
-///
-/// # Architecture
-///
-/// This implements a **batch cancellation monitoring** pattern that addresses
-/// the scalability issues of per-job monitoring:
-///
-/// - **Before (Per-Job Monitoring)**: Each job spawned a monitor task → O(n) tasks
-/// - **After (Batch Monitoring)**: Single monitor per worker → O(1) task
-///
-/// # Performance Impact
-///
-/// For 1000 concurrent jobs:
-/// - Per-job: 1000 monitor tasks × 5s interval = 200 QPS to TiKV
-/// - Batch: 1 monitor task × 5s interval = 0.2 QPS to TiKV (1000× reduction)
-///
-/// # Extension Points
-///
-/// To implement alternative monitoring strategies (e.g., push-based notifications),
-/// the JobRegistry can be extended to:
-/// - Support different backends (in-memory, Redis, etc.)
-/// - Implement different polling strategies
-/// - Add event-driven notification mechanisms
-///
-/// The current implementation prioritizes simplicity and immediate scalability
-/// improvements over full abstraction.
-#[derive(Debug, Default)]
-struct JobRegistry {
-    /// Map of job_id -> cancellation_token for active jobs.
-    active_jobs: HashMap<String, Arc<CancellationToken>>,
-}
-
-impl JobRegistry {
-    /// Register a job for cancellation monitoring.
-    fn register(&mut self, job_id: String, token: Arc<CancellationToken>) {
-        self.active_jobs.insert(job_id, token);
-    }
-
-    /// Unregister a job from cancellation monitoring.
-    fn unregister(&mut self, job_id: &str) {
-        self.active_jobs.remove(job_id);
-    }
-
-    /// Get all registered job IDs.
-    fn job_ids(&self) -> Vec<String> {
-        self.active_jobs.keys().cloned().collect()
-    }
-
-    /// Cancel a specific job by ID.
-    fn cancel_job(&mut self, job_id: &str) {
-        if let Some(token) = self.active_jobs.get(job_id) {
-            token.cancel();
-        }
-    }
-}
-
-/// Worker configuration.
-#[derive(Debug, Clone)]
-pub struct WorkerConfig {
-    /// Maximum number of concurrent jobs to process.
-    pub max_concurrent_jobs: usize,
-
-    /// Interval between job polls.
-    pub poll_interval: Duration,
-
-    /// Maximum attempts per job before marking as Dead.
-    pub max_attempts: u32,
-
-    /// Timeout for individual job processing.
-    pub job_timeout: Duration,
-
-    /// Heartbeat interval.
-    pub heartbeat_interval: Duration,
-
-    /// Checkpoint interval in frames.
-    pub checkpoint_interval_frames: u64,
-
-    /// Checkpoint interval in seconds.
-    pub checkpoint_interval_seconds: u64,
-
-    /// Whether to use async checkpointing.
-    pub checkpoint_async: bool,
-
-    /// Storage bucket/prefix for reading source files.
-    pub storage_prefix: String,
-
-    /// Local output prefix for writing files (used when output_storage_url is not set).
-    pub output_prefix: String,
-
-    /// Cloud storage URL for output files (e.g., "s3://bucket/datasets" or "oss://bucket/datasets").
-    ///
-    /// When set, workers write to staging paths in cloud storage using a Staging + Merge pattern:
-    /// - Staging: `{output_storage_url}/staging/{job_id}/worker_{pod_id}/`
-    /// - After merge: `{output_storage_url}/{dataset_path}/`
-    ///
-    /// If None, output goes to local filesystem at `output_prefix`.
-    pub output_storage_url: Option<String>,
-
-    /// Number of workers expected for distributed merge coordination.
-    ///
-    /// Used to determine when all workers have completed staging
-    /// so merge can proceed.
-    pub expected_workers: usize,
-
-    /// Final output path for the merged dataset (relative to output_storage_url).
-    ///
-    /// After merge completes, the final dataset will be at:
-    /// `{output_storage_url}/{merge_output_path}/`
-    pub merge_output_path: String,
-}
-
-impl Default for WorkerConfig {
-    fn default() -> Self {
-        Self {
-            max_concurrent_jobs: DEFAULT_MAX_CONCURRENT_JOBS,
-            poll_interval: Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS),
-            max_attempts: DEFAULT_MAX_ATTEMPTS,
-            job_timeout: Duration::from_secs(DEFAULT_JOB_TIMEOUT_SECS),
-            heartbeat_interval: Duration::from_secs(DEFAULT_HEARTBEAT_INTERVAL_SECS),
-            checkpoint_interval_frames: DEFAULT_CHECKPOINT_INTERVAL_FRAMES,
-            checkpoint_interval_seconds: DEFAULT_CHECKPOINT_INTERVAL_SECS,
-            checkpoint_async: true,
-            storage_prefix: String::from("input/"),
-            output_prefix: String::from("output/"),
-            output_storage_url: None,
-            expected_workers: 1,
-            merge_output_path: String::from("datasets/merged"),
-        }
-    }
-}
-
-impl WorkerConfig {
-    /// Create a new worker configuration.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Set the maximum concurrent jobs.
-    pub fn with_max_concurrent_jobs(mut self, max: usize) -> Self {
-        self.max_concurrent_jobs = max;
-        self
-    }
-
-    /// Set the poll interval.
-    pub fn with_poll_interval(mut self, interval: Duration) -> Self {
-        self.poll_interval = interval;
-        self
-    }
-
-    /// Set the maximum attempts.
-    pub fn with_max_attempts(mut self, max: u32) -> Self {
-        self.max_attempts = max;
-        self
-    }
-
-    /// Set the job timeout.
-    pub fn with_job_timeout(mut self, timeout: Duration) -> Self {
-        self.job_timeout = timeout;
-        self
-    }
-
-    /// Set the heartbeat interval.
-    pub fn with_heartbeat_interval(mut self, interval: Duration) -> Self {
-        self.heartbeat_interval = interval;
-        self
-    }
-
-    /// Set the storage prefix.
-    pub fn with_storage_prefix(mut self, prefix: impl Into<String>) -> Self {
-        self.storage_prefix = prefix.into();
-        self
-    }
-
-    /// Set the output prefix.
-    pub fn with_output_prefix(mut self, prefix: impl Into<String>) -> Self {
-        self.output_prefix = prefix.into();
-        self
-    }
-
-    /// Set the cloud storage URL for output files.
-    ///
-    /// When set, workers write to staging paths in cloud storage using a Staging + Merge pattern.
-    /// Example: "s3://my-bucket/datasets" or "oss://my-bucket/datasets"
-    pub fn with_output_storage_url(mut self, url: impl Into<String>) -> Self {
-        self.output_storage_url = Some(url.into());
-        self
-    }
-
-    /// Set the checkpoint interval in frames.
-    pub fn with_checkpoint_interval_frames(mut self, interval: u64) -> Self {
-        self.checkpoint_interval_frames = interval;
-        self
-    }
-
-    /// Set the checkpoint interval in seconds.
-    pub fn with_checkpoint_interval_seconds(mut self, interval: u64) -> Self {
-        self.checkpoint_interval_seconds = interval;
-        self
-    }
-
-    /// Enable or disable async checkpointing.
-    pub fn with_checkpoint_async(mut self, async_mode: bool) -> Self {
-        self.checkpoint_async = async_mode;
-        self
-    }
-}
-
-/// Worker metrics.
-#[derive(Debug, Default)]
-pub struct WorkerMetrics {
-    /// Total jobs claimed.
-    pub jobs_claimed: AtomicU64,
-
-    /// Total jobs completed successfully.
-    pub jobs_completed: AtomicU64,
-
-    /// Total jobs failed.
-    pub jobs_failed: AtomicU64,
-
-    /// Total jobs marked as dead.
-    pub jobs_dead: AtomicU64,
-
-    /// Current active jobs.
-    pub active_jobs: AtomicU64,
-
-    /// Total processing errors.
-    pub processing_errors: AtomicU64,
-
-    /// Total heartbeat errors.
-    pub heartbeat_errors: AtomicU64,
-}
-
-impl WorkerMetrics {
-    /// Create new metrics.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Increment jobs claimed.
-    pub fn inc_jobs_claimed(&self) {
-        self.jobs_claimed.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Increment jobs completed.
-    pub fn inc_jobs_completed(&self) {
-        self.jobs_completed.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Increment jobs failed.
-    pub fn inc_jobs_failed(&self) {
-        self.jobs_failed.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Increment jobs dead.
-    pub fn inc_jobs_dead(&self) {
-        self.jobs_dead.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Increment active jobs.
-    pub fn inc_active_jobs(&self) {
-        self.active_jobs.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Decrement active jobs.
-    pub fn dec_active_jobs(&self) {
-        self.active_jobs.fetch_sub(1, Ordering::Relaxed);
-    }
-
-    /// Increment processing errors.
-    pub fn inc_processing_errors(&self) {
-        self.processing_errors.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Increment heartbeat errors.
-    pub fn inc_heartbeat_errors(&self) {
-        self.heartbeat_errors.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Get all current metric values.
-    pub fn snapshot(&self) -> WorkerMetricsSnapshot {
-        WorkerMetricsSnapshot {
-            jobs_claimed: self.jobs_claimed.load(Ordering::Relaxed),
-            jobs_completed: self.jobs_completed.load(Ordering::Relaxed),
-            jobs_failed: self.jobs_failed.load(Ordering::Relaxed),
-            jobs_dead: self.jobs_dead.load(Ordering::Relaxed),
-            active_jobs: self.active_jobs.load(Ordering::Relaxed),
-            processing_errors: self.processing_errors.load(Ordering::Relaxed),
-            heartbeat_errors: self.heartbeat_errors.load(Ordering::Relaxed),
-        }
-    }
-}
-
-/// Snapshot of worker metrics.
-#[derive(Debug, Clone)]
-pub struct WorkerMetricsSnapshot {
-    /// Total jobs claimed.
-    pub jobs_claimed: u64,
-
-    /// Total jobs completed successfully.
-    pub jobs_completed: u64,
-
-    /// Total jobs failed.
-    pub jobs_failed: u64,
-
-    /// Total jobs marked as dead.
-    pub jobs_dead: u64,
-
-    /// Current active jobs.
-    pub active_jobs: u64,
-
-    /// Total processing errors.
-    pub processing_errors: u64,
-
-    /// Total heartbeat errors.
-    pub heartbeat_errors: u64,
-}
-
-/// Processing result for a job.
-pub enum ProcessingResult {
-    /// Job completed successfully.
-    Success,
-    /// Job failed with retryable error.
-    Failed { error: String },
-    /// Job was cancelled by user request.
-    Cancelled,
-}
-
 /// Work item that can be processed by a worker.
-///
-/// This enum wraps both individual JobRecords and batch WorkUnits,
-/// allowing the worker to process both types uniformly.
 enum WorkItem {
-    /// Individual job from the job queue.
     Job(JobRecord),
-    /// Work unit from a batch job.
     WorkUnit(WorkUnit),
-}
-
-/// Progress callback for saving checkpoints during conversion.
-struct WorkerCheckpointCallback {
-    /// Job ID for this conversion
-    job_id: String,
-    /// Pod ID of the worker
-    pod_id: String,
-    /// Total frames (estimated)
-    total_frames: u64,
-    /// Reference to checkpoint manager
-    checkpoint_manager: CheckpointManager,
-    /// Last checkpoint frame number
-    last_checkpoint_frame: Arc<std::sync::atomic::AtomicU64>,
-    /// Last checkpoint time
-    last_checkpoint_time: Arc<std::sync::Mutex<std::time::Instant>>,
-    /// Shutdown flag for graceful interruption
-    shutdown_flag: Arc<AtomicBool>,
-    /// Cancellation token for job cancellation
-    cancellation_token: Option<Arc<CancellationToken>>,
-}
-
-impl roboflow_dataset::streaming::converter::ProgressCallback for WorkerCheckpointCallback {
-    fn on_frame_written(
-        &self,
-        frames_written: u64,
-        messages_processed: u64,
-        writer: &dyn std::any::Any,
-    ) -> std::result::Result<(), String> {
-        // Check for shutdown signal first
-        if self.shutdown_flag.load(std::sync::atomic::Ordering::SeqCst) {
-            tracing::info!(
-                job_id = %self.job_id,
-                frames_written = frames_written,
-                "Shutdown requested, interrupting conversion at checkpoint boundary"
-            );
-            return Err(ShutdownInterrupted.to_string());
-        }
-
-        // Check for job cancellation via token
-        if let Some(token) = &self.cancellation_token
-            && token.is_cancelled()
-        {
-            tracing::info!(
-                job_id = %self.job_id,
-                frames_written = frames_written,
-                "Job cancellation detected, interrupting conversion at checkpoint boundary"
-            );
-            return Err("Job cancelled by user request".to_string());
-        }
-
-        let last_frame = self
-            .last_checkpoint_frame
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let frames_since_last = frames_written.saturating_sub(last_frame);
-
-        // Scope the lock tightly to avoid holding it during expensive operations
-        let time_since_last = {
-            let last_time = self
-                .last_checkpoint_time
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            last_time.elapsed()
-        };
-
-        // Check if we should save a checkpoint
-        if self
-            .checkpoint_manager
-            .should_checkpoint(frames_since_last, time_since_last)
-        {
-            // Extract episode index from writer if it's a LeRobotWriter
-            use roboflow_dataset::lerobot::writer::LerobotWriter;
-            let episode_idx = writer
-                .downcast_ref::<LerobotWriter>()
-                .and_then(|w| w.episode_index())
-                .unwrap_or(0) as u64;
-
-            // NOTE: Using messages_processed as byte_offset proxy.
-            // Actual byte offset tracking requires robocodec modifications.
-            // Resume works by re-reading from start and skipping messages.
-            //
-            // NOTE: Upload state tracking requires episode-level checkpointing.
-            // Current frame-level checkpoints don't capture upload state because:
-            // 1. Uploads happen after finish_episode(), not during frame processing
-            // 2. The coordinator tracks completion, not in-progress multipart state
-            // 3. Resume should check which episodes exist in cloud storage
-            //
-            // Episode-level upload state tracking is a future enhancement that would:
-            // - Save episode completion to TiKV after each episode finishes
-            // - Query cloud storage for completed episodes on resume
-            // - Skip re-uploading episodes that already exist
-            //
-            // For now, the frame-level checkpoint is sufficient for resume
-            // as episodes are written atomically and can be detected via
-            // existence checks in the output storage.
-            let checkpoint = CheckpointState {
-                job_id: self.job_id.clone(),
-                pod_id: self.pod_id.clone(),
-                byte_offset: messages_processed,
-                last_frame: frames_written,
-                episode_idx,
-                total_frames: self.total_frames,
-                video_uploads: Vec::new(),
-                parquet_upload: None,
-                updated_at: chrono::Utc::now(),
-                version: 1,
-            };
-
-            // Use save_async which respects checkpoint_async config:
-            // - When async=true: spawns background task, non-blocking
-            // - When async=false: falls back to synchronous save
-            self.checkpoint_manager.save_async(checkpoint.clone());
-            tracing::debug!(
-                job_id = %self.job_id,
-                last_frame = frames_written,
-                progress = %checkpoint.progress_percent(),
-                "Checkpoint save initiated"
-            );
-            self.last_checkpoint_frame
-                .store(frames_written, std::sync::atomic::Ordering::Relaxed);
-            // Re-acquire lock only for the instant update
-            // Use poison recovery to handle panics gracefully
-            *self
-                .last_checkpoint_time
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = std::time::Instant::now();
-        }
-
-        std::result::Result::Ok(())
-    }
 }
 
 /// Worker actor for claiming and processing jobs.
 pub struct Worker {
-    /// Pod ID for this worker instance.
     pod_id: String,
-
-    /// TiKV client for job operations.
     tikv: Arc<TikvClient>,
-
-    /// Checkpoint manager for progress tracking.
     checkpoint_manager: CheckpointManager,
-
-    /// Storage backend for reading/writing files.
-    ///
-    /// Used by the dataset conversion pipeline to download input files
-    /// and write output datasets via StreamingDatasetConverter.
     storage: Arc<dyn Storage>,
-
-    /// Storage factory for creating storage backends from URLs.
-    ///
-    /// Used to create output storage from output_storage_url config.
     storage_factory: StorageFactory,
-
-    /// Worker configuration.
     config: WorkerConfig,
-
-    /// Worker metrics.
     metrics: Arc<WorkerMetrics>,
-
-    /// Shutdown handler for graceful termination.
     shutdown_handler: ShutdownHandler,
-
-    /// Cancellation token for aborting conversion tasks.
     cancellation_token: Arc<CancellationToken>,
-
-    /// Job registry for batch cancellation monitoring.
     job_registry: Arc<RwLock<JobRegistry>>,
-
-    /// Config cache to reduce TiKV round-trips.
-    /// Maps config_hash -> LerobotConfig
     config_cache: Arc<Mutex<LruCache<String, roboflow_dataset::lerobot::LerobotConfig>>>,
-
-    /// Merge coordinator for distributed dataset merge operations.
     merge_coordinator: MergeCoordinator,
-
-    /// Batch controller for claiming and processing work units from batch jobs.
     batch_controller: BatchController,
 }
 
@@ -993,7 +457,9 @@ impl Worker {
             }
         }
     }
+}
 
+impl Worker {
     /// Process a job.
     ///
     /// This implementation integrates the LerobotWriter with the distributed worker
@@ -1190,7 +656,7 @@ impl Worker {
             pod_id: self.pod_id.clone(),
             total_frames,
             checkpoint_manager: self.checkpoint_manager.clone(),
-            last_checkpoint_frame: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            last_checkpoint_frame: Arc::new(AtomicU64::new(0)),
             last_checkpoint_time: Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
             shutdown_flag: self.shutdown_handler.flag_clone(),
             cancellation_token: Some(cancel_token_for_callback),
@@ -1532,7 +998,7 @@ impl Worker {
         }
 
         // Delete checkpoint if exists
-        let checkpoint_key = super::tikv::key::StateKeys::checkpoint(job_id);
+        let checkpoint_key = StateKeys::checkpoint(job_id);
         match self.tikv.delete(checkpoint_key).await {
             Ok(()) => {
                 tracing::debug!(
@@ -1693,6 +1159,19 @@ impl Worker {
         Ok(())
     }
 
+    /// Shutdown the worker gracefully.
+    pub fn shutdown(&self) -> Result<(), TikvError> {
+        self.shutdown_handler.shutdown();
+        Ok(())
+    }
+
+    /// Check if shutdown has been requested.
+    pub fn is_shutdown_requested(&self) -> bool {
+        self.shutdown_handler.is_requested()
+    }
+}
+
+impl Worker {
     /// Run the worker loop.
     ///
     /// This will continuously:
@@ -2084,7 +1563,7 @@ impl Worker {
         }
 
         // Delete heartbeat key to prevent false zombie detection
-        let heartbeat_key = super::tikv::key::HeartbeatKeys::heartbeat(&self.pod_id);
+        let heartbeat_key = HeartbeatKeys::heartbeat(&self.pod_id);
         match self.tikv.delete(heartbeat_key).await {
             Ok(()) => {
                 tracing::info!(
@@ -2114,43 +1593,6 @@ impl Worker {
 
         Ok(())
     }
-
-    /// Shutdown the worker gracefully.
-    pub fn shutdown(&self) -> Result<(), TikvError> {
-        self.shutdown_handler.shutdown();
-        Ok(())
-    }
-
-    /// Check if shutdown has been requested.
-    pub fn is_shutdown_requested(&self) -> bool {
-        self.shutdown_handler.is_requested()
-    }
-}
-
-/// Helper function for sending heartbeat (used in spawned task).
-async fn send_heartbeat_inner(
-    tikv: &TikvClient,
-    pod_id: &str,
-    metrics: &WorkerMetrics,
-) -> Result<(), TikvError> {
-    let active = metrics.active_jobs.load(Ordering::Relaxed) as u32;
-    let total_processed = metrics.jobs_completed.load(Ordering::Relaxed);
-
-    let mut heartbeat = tikv
-        .get_heartbeat(pod_id)
-        .await?
-        .unwrap_or_else(|| HeartbeatRecord::new(pod_id.to_string()));
-
-    heartbeat.beat();
-    heartbeat.active_jobs = active;
-    heartbeat.total_processed = total_processed;
-    heartbeat.status = if active > 0 {
-        WorkerStatus::Busy
-    } else {
-        WorkerStatus::Idle
-    };
-
-    tikv.update_heartbeat(pod_id, &heartbeat).await
 }
 
 // =============================================================================
@@ -2164,22 +1606,13 @@ mod tests {
     #[test]
     fn test_worker_config_default() {
         let config = WorkerConfig::default();
-        assert_eq!(config.max_concurrent_jobs, DEFAULT_MAX_CONCURRENT_JOBS);
-        assert_eq!(config.poll_interval.as_secs(), DEFAULT_POLL_INTERVAL_SECS);
-        assert_eq!(config.max_attempts, DEFAULT_MAX_ATTEMPTS);
-        assert_eq!(config.job_timeout.as_secs(), DEFAULT_JOB_TIMEOUT_SECS);
-        assert_eq!(
-            config.heartbeat_interval.as_secs(),
-            DEFAULT_HEARTBEAT_INTERVAL_SECS
-        );
-        assert_eq!(
-            config.checkpoint_interval_frames,
-            DEFAULT_CHECKPOINT_INTERVAL_FRAMES
-        );
-        assert_eq!(
-            config.checkpoint_interval_seconds,
-            DEFAULT_CHECKPOINT_INTERVAL_SECS
-        );
+        assert_eq!(config.max_concurrent_jobs, 1);
+        assert_eq!(config.poll_interval.as_secs(), 5);
+        assert_eq!(config.max_attempts, 3);
+        assert_eq!(config.job_timeout.as_secs(), 3600);
+        assert_eq!(config.heartbeat_interval.as_secs(), 30);
+        assert_eq!(config.checkpoint_interval_frames, 100);
+        assert_eq!(config.checkpoint_interval_seconds, 10);
         assert!(config.checkpoint_async);
         assert_eq!(config.storage_prefix, "input/");
         assert_eq!(config.output_prefix, "output/");
@@ -2233,16 +1666,5 @@ mod tests {
         assert!(!pod_id.is_empty());
         // Should contain a UUID
         assert!(pod_id.len() > 20);
-    }
-
-    #[test]
-    fn test_constants() {
-        assert_eq!(DEFAULT_POLL_INTERVAL_SECS, 5);
-        assert_eq!(DEFAULT_MAX_CONCURRENT_JOBS, 1);
-        assert_eq!(DEFAULT_MAX_ATTEMPTS, 3);
-        assert_eq!(DEFAULT_JOB_TIMEOUT_SECS, 3600);
-        assert_eq!(DEFAULT_HEARTBEAT_INTERVAL_SECS, 30);
-        assert_eq!(DEFAULT_CHECKPOINT_INTERVAL_FRAMES, 100);
-        assert_eq!(DEFAULT_CHECKPOINT_INTERVAL_SECS, 10);
     }
 }

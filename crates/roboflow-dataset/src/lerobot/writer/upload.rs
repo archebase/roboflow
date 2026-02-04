@@ -100,18 +100,12 @@ fn upload_file(
 ) -> Result<usize> {
     // Read local file
     let mut file = fs::File::open(local_path).map_err(|e| {
-        roboflow_core::RoboflowError::encode(
-            "Storage",
-            format!("Failed to open local file: {}", e),
-        )
+        roboflow_core::RoboflowError::encode("Storage", format!("Failed to open local file: {}", e))
     })?;
 
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).map_err(|e| {
-        roboflow_core::RoboflowError::encode(
-            "Storage",
-            format!("Failed to read local file: {}", e),
-        )
+        roboflow_core::RoboflowError::encode("Storage", format!("Failed to read local file: {}", e))
     })?;
 
     let size = buffer.len();
