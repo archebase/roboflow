@@ -16,15 +16,27 @@
 //! # Submit from manifest file
 //! roboflow submit --manifest jobs.json
 //! ```
+//!
+//! **Note:** Jobs are internally implemented as single-file batch jobs.
+//! This provides a unified architecture where all work goes through the batch system.
 
+use roboflow_distributed::batch::{
+    BatchController, BatchJobSpec, BatchMetadata, BatchPhase, BatchSpec, BatchSummary,
+    SourceUrl, WorkUnitConfig,
+};
 use roboflow_distributed::tikv::schema::ConfigRecord;
-use roboflow_distributed::{JobRecord, TikvClient};
-use roboflow_storage::StorageFactory;
-
-use crate::commands::jobs::{OutputFormat, print_job_output};
-use crate::commands::utils::{compute_file_hash, glob_match, parse_storage_url};
-
+use roboflow_distributed::TikvClient;
 use std::path::{Path, PathBuf};
+
+use crate::commands::utils::parse_storage_url;
+
+/// Output format for submit command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    Table,
+    Json,
+    Csv,
+}
 
 /// Maximum config file size (10MB) to prevent DoS.
 const MAX_CONFIG_SIZE: usize = 10 * 1024 * 1024;
@@ -202,21 +214,22 @@ impl SubmitCommand {
         // Load or store config in TiKV
         let config_hash = self.load_or_store_config(&tikv).await?;
 
-        // Create storage factory
-        let factory = StorageFactory::from_env();
+        // Wrap in Arc for BatchController
+        let tikv_arc = std::sync::Arc::new(tikv.clone());
 
-        // Track submitted jobs
-        let mut submitted_jobs: Vec<JobRecord> = Vec::new();
+        // Create batch controller
+        let controller = BatchController::with_client(tikv_arc);
+
+        // Track submitted batches
+        let mut submitted_batches: Vec<BatchSummary> = Vec::new();
         let mut error_count = 0;
 
         // Process each input
         for input in &self.inputs {
-            match self
-                .submit_input(input, &output, &config_hash, &factory, &tikv)
-                .await
+            match self.submit_batch(input, &output, &config_hash, &controller).await
             {
-                Ok(job) => {
-                    submitted_jobs.push(job);
+                Ok(batch) => {
+                    submitted_batches.push(batch);
                 }
                 Err(e) => {
                     eprintln!("Error processing '{}': {}", input, e);
@@ -228,26 +241,177 @@ impl SubmitCommand {
         // Print results
         if self.dry_run {
             println!(
-                "Dry run complete. Would submit {} jobs:",
-                submitted_jobs.len()
+                "Dry run complete. Would submit {} batch jobs:",
+                submitted_batches.len()
             );
         } else {
             println!(
-                "Submitted {} jobs, errors {}",
-                submitted_jobs.len(),
+                "Submitted {} batch jobs, errors {}",
+                submitted_batches.len(),
                 error_count
             );
         }
 
-        if !submitted_jobs.is_empty() {
-            print_job_output(&submitted_jobs, self.output_format);
+        if !submitted_batches.is_empty() {
+            print_batch_summaries(&submitted_batches, self.output_format);
         }
 
         if error_count > 0 {
-            return Err(format!("{} jobs failed to submit", error_count));
+            return Err(format!("{} batch jobs failed to submit", error_count));
         }
 
         Ok(())
+    }
+
+    /// Submit a single file as a batch job.
+    ///
+    /// Jobs are internally implemented as single-file batch jobs.
+    async fn submit_batch(
+        &self,
+        source: &str,
+        output: &str,
+        config_hash: &str,
+        controller: &BatchController,
+    ) -> Result<BatchSummary, String> {
+        // Generate a unique batch name from the source
+        let batch_name = self.batch_name_from_source(source)?;
+
+        // Get submitter identity
+        let submitter = std::env::var("ROBOFLOW_USER")
+            .or_else(|_| std::env::var("USER"))
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| {
+                tracing::warn!("No user identity env vars (ROBOFLOW_USER, USER, USERNAME) set, using 'unknown'");
+                "unknown".to_string()
+            });
+
+        // Create batch metadata
+        let metadata = BatchMetadata {
+            name: batch_name.clone(),
+            namespace: "jobs".to_string(),
+            submitted_by: Some(submitter),
+            labels: std::collections::HashMap::new(),
+            annotations: std::collections::HashMap::new(),
+            created_at: chrono::Utc::now(),
+        };
+
+        // Create source URL
+        let source_url = SourceUrl {
+            url: source.to_string(),
+            filter: None,
+            max_size: None,
+        };
+
+        // Create batch spec
+        let spec = BatchJobSpec {
+            sources: vec![source_url],
+            output: output.to_string(),
+            config: config_hash.to_string(),
+            parallelism: 1,
+            completions: None,
+            max_retries: self.max_attempts.unwrap_or(3),
+            backoff_limit: 1,
+            ttl_seconds: 86400, // 24 hours
+            priority: 0,
+            work_unit_config: WorkUnitConfig::default(),
+        };
+
+        let batch_spec = BatchSpec {
+            api_version: "v1".to_string(),
+            kind: "BatchJob".to_string(),
+            metadata,
+            spec,
+        };
+
+        if self.dry_run {
+            if self.verbose {
+                println!("Would submit batch: {}", batch_name);
+            }
+            // Return a mock summary for dry run
+            return Ok(BatchSummary {
+                id: batch_name,
+                name: batch_spec.metadata.name,
+                namespace: batch_spec.metadata.namespace,
+                phase: BatchPhase::Pending,
+                files_total: 1,
+                files_completed: 0,
+                files_failed: 0,
+                created_at: batch_spec.metadata.created_at,
+                started_at: None,
+                completed_at: None,
+            });
+        }
+
+        // Submit the batch
+        let batch_id = controller
+            .submit_batch(&batch_spec)
+            .await
+            .map_err(|e| format!("Failed to submit batch: {}", e))?;
+
+        // Get the spec and status to create summary
+        let spec = controller
+            .get_batch_spec(&batch_id)
+            .await
+            .map_err(|e| format!("Failed to get batch spec: {}", e))?
+            .ok_or_else(|| "Batch spec not found after submission".to_string())?;
+
+        let status = controller
+            .get_batch_status(&batch_id)
+            .await
+            .map_err(|e| format!("Failed to get batch status: {}", e))?
+            .ok_or_else(|| "Batch status not found after submission".to_string())?;
+
+        if self.verbose {
+            println!("Submitted batch: {} ({})", batch_name, batch_id);
+        }
+
+        Ok(BatchSummary {
+            id: batch_id,
+            name: spec.metadata.name,
+            namespace: spec.metadata.namespace,
+            phase: status.phase,
+            files_total: status.files_total,
+            files_completed: status.files_completed,
+            files_failed: status.files_failed,
+            created_at: spec.metadata.created_at,
+            started_at: status.started_at,
+            completed_at: status.completed_at,
+        })
+    }
+
+    /// Generate a unique batch name from a source URL.
+    fn batch_name_from_source(&self, source: &str) -> Result<String, String> {
+        use std::path::Path;
+
+        // Parse the source URL to get the key
+        let (_bucket, key) = parse_storage_url(source)?;
+
+        // Get the file name
+        let file_name = Path::new(&key)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| "Invalid source path".to_string())?;
+
+        // Hash the full source path for uniqueness
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        source.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        // Create a DNS-compliant name: file-hash
+        let name_base = file_name
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect::<String>();
+
+        // Truncate if too long and add hash suffix
+        let name = if name_base.len() > 50 {
+            format!("{}-{:x}", &name_base[..50], hash)
+        } else {
+            format!("{}-{:x}", name_base, hash)
+        };
+
+        Ok(name)
     }
 
     /// Submit jobs from a manifest file.
@@ -278,7 +442,7 @@ impl SubmitCommand {
             return Ok(());
         }
 
-        // Initialize TiKV client
+        // Initialize TiKV client and batch controller
         let tikv = if let Some(endpoints) = &self.tikv_endpoints {
             TikvClient::new(roboflow_distributed::TikvConfig::with_pd_endpoints(
                 endpoints,
@@ -291,6 +455,10 @@ impl SubmitCommand {
                 .map_err(|e| format!("Failed to connect to TiKV: {}", e))?
         };
 
+        // Wrap in Arc for BatchController
+        let tikv_arc = std::sync::Arc::new(tikv.clone());
+        let controller = BatchController::with_client(tikv_arc);
+
         // Get default output from command line or env
         let default_output = self
             .output
@@ -299,20 +467,51 @@ impl SubmitCommand {
             .or_else(|| std::env::var("ROBOFLOW_OUTPUT_PREFIX").ok())
             .unwrap_or_else(|| "output/".to_string());
 
-        let default_config_hash = self
-            .config_hash
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| "default".to_string());
+        // Load or store config
+        let config_hash = self.load_or_store_config(&tikv).await?;
 
-        let default_max_attempts = self.max_attempts.unwrap_or(3);
+        // Track submitted batches
+        let mut submitted_batches = Vec::new();
 
-        // Track submitted jobs
-        let mut submitted_jobs = Vec::new();
+        // Handle dry run mode for manifest
+        if self.dry_run {
+            for job_spec in &manifest.jobs {
+                let batch_name = match self.batch_name_from_source(&job_spec.source) {
+                    Ok(name) => name,
+                    Err(e) => {
+                        eprintln!("Error processing '{}': {}", job_spec.source, e);
+                        continue;
+                    }
+                };
+
+                submitted_batches.push(BatchSummary {
+                    id: batch_name.clone(),
+                    name: batch_name,
+                    namespace: "jobs".to_string(),
+                    phase: BatchPhase::Pending,
+                    files_total: 1,
+                    files_completed: 0,
+                    files_failed: 0,
+                    created_at: chrono::Utc::now(),
+                    started_at: None,
+                    completed_at: None,
+                });
+            }
+
+            println!(
+                "Dry run complete. Would submit {} batch jobs from manifest:",
+                submitted_batches.len()
+            );
+
+            if !submitted_batches.is_empty() {
+                print_batch_summaries(&submitted_batches, self.output_format);
+            }
+
+            return Ok(());
+        }
+
+        // Track errors for actual submission
         let mut error_count = 0;
-
-        // Create storage factory
-        let factory = StorageFactory::from_env();
 
         // Process each job in manifest
         for job_spec in &manifest.jobs {
@@ -322,27 +521,119 @@ impl SubmitCommand {
                 .cloned()
                 .unwrap_or_else(|| default_output.clone());
 
-            let config_hash = job_spec
+            let config = job_spec
                 .config_hash
                 .as_ref()
                 .cloned()
-                .unwrap_or_else(|| default_config_hash.clone());
+                .unwrap_or_else(|| config_hash.clone());
 
-            let max_attempts = job_spec.max_attempts.unwrap_or(default_max_attempts);
+            // For manifest jobs, create a batch with job-specific max_attempts
+            // We'll create the batch spec directly here instead of using submit_batch
+            let batch_name = self.batch_name_from_source(&job_spec.source)?;
 
-            match self
-                .submit_job_spec(
-                    &job_spec.source,
-                    &output,
-                    &config_hash,
-                    max_attempts,
-                    &factory,
-                    &tikv,
-                )
-                .await
-            {
-                Ok(job) => {
-                    submitted_jobs.push(job);
+            let submitter = std::env::var("ROBOFLOW_USER")
+                .or_else(|_| std::env::var("USER"))
+                .or_else(|_| std::env::var("USERNAME"))
+                .unwrap_or_else(|_| {
+                    tracing::warn!("No user identity env vars (ROBOFLOW_USER, USER, USERNAME) set, using 'unknown'");
+                    "unknown".to_string()
+                });
+
+            let metadata = BatchMetadata {
+                name: batch_name.clone(),
+                namespace: "jobs".to_string(),
+                submitted_by: Some(submitter),
+                labels: std::collections::HashMap::new(),
+                annotations: std::collections::HashMap::new(),
+                created_at: chrono::Utc::now(),
+            };
+
+            let source_url = SourceUrl {
+                url: job_spec.source.clone(),
+                filter: None,
+                max_size: None,
+            };
+
+            let max_attempts_override = job_spec.max_attempts.or(self.max_attempts).unwrap_or(3);
+
+            let batch_spec_inner = BatchJobSpec {
+                sources: vec![source_url],
+                output: output.clone(),
+                config: config.clone(),
+                parallelism: 1,
+                completions: None,
+                max_retries: max_attempts_override,
+                backoff_limit: 1,
+                ttl_seconds: 86400,
+                priority: 0,
+                work_unit_config: WorkUnitConfig::default(),
+            };
+
+            let batch_spec = BatchSpec {
+                api_version: "v1".to_string(),
+                kind: "BatchJob".to_string(),
+                metadata,
+                spec: batch_spec_inner,
+            };
+
+            match controller.submit_batch(&batch_spec).await {
+                Ok(batch_id) => {
+                    // Get the spec and status to create summary
+                    match (controller.get_batch_spec(&batch_id).await, controller.get_batch_status(&batch_id).await) {
+                        (Ok(Some(spec)), Ok(Some(status))) => {
+                            submitted_batches.push(BatchSummary {
+                                id: batch_id,
+                                name: spec.metadata.name,
+                                namespace: spec.metadata.namespace,
+                                phase: status.phase,
+                                files_total: status.files_total,
+                                files_completed: status.files_completed,
+                                files_failed: status.files_failed,
+                                created_at: spec.metadata.created_at,
+                                started_at: status.started_at,
+                                completed_at: status.completed_at,
+                            });
+                        }
+                        (spec_result, status_result) => {
+                            // Log why we're using fallback
+                            let spec_ok = spec_result.is_ok() && spec_result.as_ref().map(|s| s.is_some()).unwrap_or(false);
+                            let status_ok = status_result.is_ok() && status_result.as_ref().map(|s| s.is_some()).unwrap_or(false);
+
+                            let spec_err = if !spec_ok {
+                                spec_result.err().map(|e| format!("{:?}", e))
+                                    .or_else(|| Some("not found".to_string()))
+                            } else {
+                                None
+                            };
+                            let status_err = if !status_ok {
+                                status_result.err().map(|e| format!("{:?}", e))
+                                    .or_else(|| Some("not found".to_string()))
+                            } else {
+                                None
+                            };
+
+                            eprintln!(
+                                "Warning: Could not retrieve spec/status for batch {}: spec={}, status={}. Using fallback summary.",
+                                batch_id,
+                                spec_err.unwrap_or_else(|| "ok".to_string()),
+                                status_err.unwrap_or_else(|| "ok".to_string())
+                            );
+
+                            // Fallback: create minimal summary
+                            submitted_batches.push(BatchSummary {
+                                id: batch_id.clone(),
+                                name: batch_name,
+                                namespace: "jobs".to_string(),
+                                phase: BatchPhase::Pending,
+                                files_total: 1,
+                                files_completed: 0,
+                                files_failed: 0,
+                                created_at: chrono::Utc::now(),
+                                started_at: None,
+                                completed_at: None,
+                            });
+                        }
+                    }
                 }
                 Err(e) => {
                     eprintln!("Error processing '{}': {}", job_spec.source, e);
@@ -353,176 +644,20 @@ impl SubmitCommand {
 
         // Print results
         println!(
-            "Submitted {}/{} jobs from manifest",
-            submitted_jobs.len(),
+            "Submitted {}/{} batches from manifest",
+            submitted_batches.len(),
             manifest.jobs.len()
         );
 
-        if !submitted_jobs.is_empty() {
-            print_job_output(&submitted_jobs, self.output_format);
+        if !submitted_batches.is_empty() {
+            print_batch_summaries(&submitted_batches, self.output_format);
         }
 
         if error_count > 0 {
-            return Err(format!("{} jobs failed to submit", error_count));
+            return Err(format!("{} batches failed to submit", error_count));
         }
 
         Ok(())
-    }
-
-    /// Submit a single input (file or glob pattern).
-    async fn submit_input(
-        &self,
-        input: &str,
-        output: &str,
-        config_hash: &str,
-        factory: &StorageFactory,
-        tikv: &TikvClient,
-    ) -> Result<JobRecord, String> {
-        let max_attempts = self.max_attempts.unwrap_or(3);
-
-        // Check if input contains a glob pattern
-        if input.contains('*') || input.contains('?') || input.contains('[') {
-            // Expand glob pattern
-            let storage_url = input
-                .split('/')
-                .take(3) // scheme://bucket/
-                .collect::<Vec<_>>()
-                .join("/");
-            let pattern = input.split('/').skip(3).collect::<Vec<_>>().join("/");
-
-            let storage = factory
-                .create(&storage_url)
-                .map_err(|e| format!("Failed to create storage: {}", e))?;
-
-            // List files matching pattern
-            let prefix = pattern.split('*').next().unwrap_or("");
-            use std::path::Path;
-            let files = storage
-                .list(Path::new(prefix))
-                .map_err(|e| format!("Failed to list files: {}", e))?;
-
-            let mut matched_files = Vec::new();
-            for meta in files {
-                if glob_match(&pattern, &meta.path) {
-                    matched_files.push(meta.path);
-                }
-            }
-
-            if matched_files.is_empty() {
-                return Err(format!("No files found matching pattern: {}", pattern));
-            }
-
-            if self.verbose {
-                println!(
-                    "Found {} files matching pattern: {}",
-                    matched_files.len(),
-                    input
-                );
-            }
-
-            // Submit each matched file and track the first job
-            let mut first_job = None;
-            for file_path in &matched_files {
-                let full_url = format!("{}/{}", storage_url.trim_end_matches('/'), file_path);
-                let job = self
-                    .submit_job_spec(&full_url, output, config_hash, max_attempts, factory, tikv)
-                    .await?;
-                if first_job.is_none() {
-                    first_job = Some(job);
-                }
-            }
-
-            // Return the first job as representative
-            first_job.ok_or_else(|| "No files matched pattern".to_string())
-        } else {
-            // Single file
-            self.submit_job_spec(input, output, config_hash, max_attempts, factory, tikv)
-                .await
-        }
-    }
-
-    /// Submit a job specification to TiKV.
-    async fn submit_job_spec(
-        &self,
-        source: &str,
-        output: &str,
-        config_hash: &str,
-        max_attempts: u32,
-        factory: &StorageFactory,
-        tikv: &TikvClient,
-    ) -> Result<JobRecord, String> {
-        // Parse source URL
-        let (bucket, key) = parse_storage_url(source)?;
-
-        // Create storage backend to get file size
-        let storage = factory
-            .create(source)
-            .map_err(|e| format!("Failed to create storage: {}", e))?;
-
-        // Get file size and compute hash
-        use std::path::Path;
-        let metadata = storage
-            .metadata(Path::new(&key))
-            .map_err(|e| format!("Failed to get file metadata: {}", e))?;
-
-        let source_size = metadata.size;
-        let job_id = compute_file_hash(&key, source_size);
-
-        if self.verbose {
-            println!(
-                "Processing: {} (size: {} bytes, hash: {})",
-                source, source_size, job_id
-            );
-        }
-
-        // Check if job already exists
-        if let Ok(Some(existing)) = tikv.get_job(&job_id).await {
-            if existing.is_terminal() {
-                println!(
-                    "Job {} already exists with status: {:?}",
-                    job_id, existing.status
-                );
-                return Ok(existing);
-            }
-            return Err(format!(
-                "Job {} already exists with status: {:?}",
-                job_id, existing.status
-            ));
-        }
-
-        // Get submitter identity for authorization
-        let submitter = std::env::var("ROBOFLOW_USER")
-            .or_else(|_| std::env::var("USER"))
-            .or_else(|_| std::env::var("USERNAME"))
-            .unwrap_or_else(|_| "unknown".to_string());
-
-        // Create job record
-        let job = JobRecord::new(
-            job_id.clone(),
-            key,
-            bucket,
-            source_size,
-            output.to_string(),
-            config_hash.to_string(),
-        );
-
-        let mut job = job;
-        job.max_attempts = max_attempts;
-        job.submitted_by = Some(submitter);
-
-        if self.dry_run {
-            println!("Would submit job: {}", job_id);
-            return Ok(job);
-        }
-
-        // Submit job to TiKV
-        tikv.put_job(&job)
-            .await
-            .map_err(|e| format!("Failed to submit job: {}", e))?;
-
-        println!("Submitted job: {}", job_id);
-
-        Ok(job)
     }
 
     /// Load or store configuration in TiKV.
@@ -739,6 +874,100 @@ impl SafeTomlValidator {
 /// Check if a string is a 64-character hex string (SHA-256 hash).
 fn is_hex_hash(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Print batch summaries in the specified format.
+fn print_batch_summaries(batches: &[BatchSummary], format: OutputFormat) {
+    match format {
+        OutputFormat::Json => {
+            let json = serde_json::to_string_pretty(batches).unwrap_or_else(|_| "[]".to_string());
+            println!("{}", json);
+        }
+        OutputFormat::Csv => {
+            println!(
+                "id,name,namespace,phase,files_total,files_completed,files_failed,created_at"
+            );
+            for batch in batches {
+                println!(
+                    "{},{},{},{},{},{},{},{}",
+                    batch.id,
+                    batch.name,
+                    batch.namespace,
+                    format_phase(batch.phase),
+                    batch.files_total,
+                    batch.files_completed,
+                    batch.files_failed,
+                    batch.created_at.format("%Y-%m-%d %H:%M:%S")
+                );
+            }
+        }
+        OutputFormat::Table => {
+            if batches.is_empty() {
+                println!("No batches to display");
+                return;
+            }
+
+            // Calculate column widths
+            let id_width = batches.iter().map(|b| b.id.len()).max().unwrap_or(8).min(20);
+            let name_width = batches.iter().map(|b| b.name.len()).max().unwrap_or(4).min(30);
+            let phase_width = 12;
+
+            // Print header
+            println!(
+                "{:<id_width$} {:<name_width$} {:<phase_width$} {:>10} {:>10} {:>10}",
+                "ID", "NAME", "PHASE", "TOTAL", "DONE", "FAILED",
+                id_width = id_width,
+                name_width = name_width,
+                phase_width = phase_width
+            );
+            println!(
+                "{:-<id_width$} {:-<name_width$} {:-<phase_width$} {:>10} {:>10} {:>10}",
+                "", "", "", "", "", "",
+                id_width = id_width,
+                name_width = name_width,
+                phase_width = phase_width
+            );
+
+            // Print rows
+            for batch in batches {
+                println!(
+                    "{:<id_width$} {:<name_width$} {:<phase_width$} {:>10} {:>10} {:>10}",
+                    truncate(&batch.id, id_width),
+                    truncate(&batch.name, name_width),
+                    format_phase(batch.phase),
+                    batch.files_total,
+                    batch.files_completed,
+                    batch.files_failed,
+                    id_width = id_width,
+                    name_width = name_width,
+                    phase_width = phase_width
+                );
+            }
+        }
+    }
+}
+
+/// Format batch phase for display.
+fn format_phase(phase: BatchPhase) -> String {
+    match phase {
+        BatchPhase::Pending => "Pending".to_string(),
+        BatchPhase::Discovering => "Discovering".to_string(),
+        BatchPhase::Running => "Running".to_string(),
+        BatchPhase::Complete => "Complete".to_string(),
+        BatchPhase::Failed => "Failed".to_string(),
+        BatchPhase::Cancelled => "Cancelled".to_string(),
+        BatchPhase::Suspending => "Suspending".to_string(),
+        BatchPhase::Suspended => "Suspended".to_string(),
+    }
+}
+
+/// Truncate string to fit width.
+fn truncate(s: &str, width: usize) -> String {
+    if s.len() <= width {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..width - 3])
+    }
 }
 
 /// Run the submit command from raw args.

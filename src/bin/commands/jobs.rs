@@ -1277,6 +1277,7 @@ fn format_status_csv(status: JobStatus) -> String {
 }
 
 /// Print job output in the specified format.
+#[allow(dead_code)]
 pub fn print_job_output(jobs: &[JobRecord], format: OutputFormat) {
     print_job_table(jobs, format);
 }

@@ -128,6 +128,7 @@ pub fn compute_file_hash(key: &str, size: u64) -> String {
 }
 
 /// Check if a file path matches a glob pattern.
+#[allow(dead_code)]
 pub fn glob_match(pattern: &str, text: &str) -> bool {
     use regex::Regex;
 

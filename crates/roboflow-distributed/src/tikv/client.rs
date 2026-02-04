@@ -823,6 +823,87 @@ impl TikvClient {
         }
     }
 
+    /// Transactional claim operation for work units.
+    ///
+    /// This atomically claims a work unit using a callback that processes
+    /// the raw work unit data. The callback should return:
+    /// - Some(new_data) if the work unit was successfully claimed
+    /// - None if the work unit couldn't be claimed
+    ///
+    /// All operations happen in a single transaction for atomicity.
+    pub async fn transactional_claim<F>(
+        &self,
+        work_unit_key: Vec<u8>,
+        pending_key: Vec<u8>,
+        _worker_id: &str,
+        claim_processor: F,
+    ) -> Result<Option<Vec<u8>>>
+    where
+        F: FnOnce(&[u8]) -> std::result::Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>>,
+    {
+        let inner = self.inner.as_ref().ok_or_else(|| {
+            TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+        })?;
+
+        let mut txn = inner
+            .begin_optimistic()
+            .await
+            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+        // Read work unit in transaction
+        let claimed_data = match txn
+            .get(work_unit_key.clone())
+            .await
+            .map_err(|e| TikvError::ClientError(e.to_string()))?
+        {
+            Some(data) => {
+                // Call the claim processor to check and update the work unit
+                match claim_processor(&data) {
+                    Ok(Some(new_data)) => {
+                        let data_clone = new_data.clone();
+                        txn.put(work_unit_key, new_data)
+                            .await
+                            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+                        // Remove from pending queue in same transaction
+                        txn.delete(pending_key)
+                            .await
+                            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+                        txn.commit()
+                            .await
+                            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+                        Some(data_clone)
+                    }
+                    Ok(None) => {
+                        // Not claimable - commit transaction with no changes
+                        txn.commit()
+                            .await
+                            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                        None
+                    }
+                    Err(e) => {
+                        // Claim processor failed
+                        return Err(TikvError::Other(format!("Claim processor failed: {}", e)));
+                    }
+                }
+            }
+            None => {
+                // Work unit doesn't exist, clean up pending index
+                txn.delete(pending_key)
+                    .await
+                    .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                txn.commit()
+                    .await
+                    .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                None
+            }
+        };
+
+        Ok(claimed_data)
+    }
+
     /// Acquire a distributed lock (atomic operation within a single transaction).
     ///
     /// This uses a single transaction to read the lock, check if it's available,

@@ -16,6 +16,7 @@
 //! TiKV is the production coordination layer for distributed workloads.
 //! All coordination features are **always available** (no feature flags).
 
+pub mod batch;
 pub mod catalog;
 pub mod heartbeat;
 pub mod merge;
@@ -32,6 +33,15 @@ pub use tikv::{
     HeartbeatRecord, JobRecord, JobStatus, LockGuard, LockManager, LockManagerConfig, LockRecord,
     ParquetUploadState, TikvClient, TikvConfig, TikvError, UploadedPart, VideoUploadState,
     WorkerStatus,
+};
+
+// Re-export public types from batch (declarative batch processing)
+pub use batch::{
+    BatchController, BatchKeys, BatchIndexKeys, BatchMetadata, BatchPhase, BatchSpec,
+    BatchSpecError, BatchSummary, ControllerConfig,
+    BatchStatus, DiscoveryStatus, FailedWorkUnit, PartitionStrategy, SourceUrl, WorkFile,
+    WorkUnit, WorkUnitConfig, WorkUnitError, WorkUnitStatus, WorkUnitSummary,
+    API_VERSION, KIND_BATCH_JOB,
 };
 
 // Re-export public types from catalog (metadata storage)

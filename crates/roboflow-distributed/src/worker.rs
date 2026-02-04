@@ -56,6 +56,7 @@ use super::tikv::{
     client::TikvClient,
     schema::{CheckpointState, HeartbeatRecord, JobRecord, JobStatus, WorkerStatus},
 };
+use super::batch::{BatchController, WorkUnit};
 use roboflow_storage::{Storage, StorageFactory};
 use std::collections::HashMap;
 use tokio::sync::{Mutex, RwLock};
@@ -422,6 +423,17 @@ pub enum ProcessingResult {
     Cancelled,
 }
 
+/// Work item that can be processed by a worker.
+///
+/// This enum wraps both individual JobRecords and batch WorkUnits,
+/// allowing the worker to process both types uniformly.
+enum WorkItem {
+    /// Individual job from the job queue.
+    Job(JobRecord),
+    /// Work unit from a batch job.
+    WorkUnit(WorkUnit),
+}
+
 /// Progress callback for saving checkpoints during conversion.
 struct WorkerCheckpointCallback {
     /// Job ID for this conversion
@@ -595,6 +607,9 @@ pub struct Worker {
 
     /// Merge coordinator for distributed dataset merge operations.
     merge_coordinator: MergeCoordinator,
+
+    /// Batch controller for claiming and processing work units from batch jobs.
+    batch_controller: BatchController,
 }
 
 impl Worker {
@@ -622,6 +637,9 @@ impl Worker {
         use super::merge::MergeCoordinator;
         let merge_coordinator = MergeCoordinator::new(tikv.clone(), pod_id.clone());
 
+        // Create batch controller for work unit processing
+        let batch_controller = BatchController::with_client(tikv.clone());
+
         Ok(Self {
             pod_id,
             tikv,
@@ -637,6 +655,7 @@ impl Worker {
                 std::num::NonZeroUsize::new(100).unwrap(), // Cache up to 100 configs
             ))),
             merge_coordinator,
+            batch_controller,
         })
     }
 
@@ -748,6 +767,212 @@ impl Worker {
         }
 
         Ok(None)
+    }
+
+    /// Find and claim a work unit from batch jobs.
+    ///
+    /// This allows workers to process work units from batch job submissions.
+    /// Returns the claimed work unit or None if no work units are available.
+    async fn find_and_claim_work_unit(&self) -> Result<Option<WorkUnit>, TikvError> {
+        match self.batch_controller.claim_work_unit(&self.pod_id).await {
+            Ok(Some(unit)) => {
+                self.metrics.inc_jobs_claimed();
+                self.metrics.inc_active_jobs();
+                tracing::info!(
+                    pod_id = %self.pod_id,
+                    unit_id = %unit.id,
+                    batch_id = %unit.batch_id,
+                    files = unit.files.len(),
+                    "Work unit claimed successfully"
+                );
+                Ok(Some(unit))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => {
+                tracing::warn!(
+                    pod_id = %self.pod_id,
+                    error = %e,
+                    "Failed to claim work unit"
+                );
+                Err(e)
+            }
+        }
+    }
+
+    /// Process a work unit from a batch job.
+    ///
+    /// This processes files from a batch work unit, converting them to the output format.
+    async fn process_work_unit(&self, unit: &WorkUnit) -> ProcessingResult {
+        tracing::info!(
+            pod_id = %self.pod_id,
+            unit_id = %unit.id,
+            batch_id = %unit.batch_id,
+            files = unit.files.len(),
+            "Processing work unit"
+        );
+
+        // For single-file work units, use the existing job processing logic
+        if let Some(_source_url) = unit.primary_source() {
+            // Create a synthetic JobRecord for processing
+            // This allows us to reuse the existing conversion pipeline
+            let synthetic_job = self.create_synthetic_job_for_work_unit(unit);
+
+            // Process using the existing job processing pipeline
+            let result = self.process_job(&synthetic_job).await;
+
+            // Update the work unit status based on processing result
+            match &result {
+                ProcessingResult::Success => {
+                    tracing::info!(
+                        unit_id = %unit.id,
+                        "Work unit completed successfully"
+                    );
+                }
+                ProcessingResult::Failed { error } => {
+                    tracing::error!(
+                        unit_id = %unit.id,
+                        error = %error,
+                        "Work unit failed"
+                    );
+                }
+                ProcessingResult::Cancelled => {
+                    tracing::info!(
+                        unit_id = %unit.id,
+                        "Work unit was cancelled"
+                    );
+                }
+            }
+
+            result
+        } else {
+            // Multi-file work units - process each file
+            tracing::warn!(
+                unit_id = %unit.id,
+                file_count = unit.files.len(),
+                "Multi-file work units not yet supported"
+            );
+            ProcessingResult::Failed {
+                error: "Multi-file work units not yet supported".to_string(),
+            }
+        }
+    }
+
+    /// Create a synthetic JobRecord for processing a WorkUnit.
+    ///
+    /// This bridges the gap between WorkUnits and the existing JobRecord-based
+    /// processing pipeline.
+    fn create_synthetic_job_for_work_unit(&self, unit: &WorkUnit) -> JobRecord {
+        let source_url = unit.primary_source().unwrap_or("");
+
+        // Parse the source URL to extract bucket and key
+        let (source_bucket, source_key) = if source_url.starts_with("s3://") {
+            let url = source_url.strip_prefix("s3://").unwrap_or("");
+            let parts: Vec<&str> = url.splitn(2, '/').collect();
+            let bucket = parts.first().map(|s| s.to_string()).unwrap_or_else(|| "local".to_string());
+            let key = parts.get(1).map(|s| s.to_string()).unwrap_or_default();
+            (bucket, key)
+        } else if source_url.starts_with("oss://") {
+            let url = source_url.strip_prefix("oss://").unwrap_or("");
+            let parts: Vec<&str> = url.splitn(2, '/').collect();
+            let bucket = parts.first().map(|s| s.to_string()).unwrap_or_else(|| "local".to_string());
+            let key = parts.get(1).map(|s| s.to_string()).unwrap_or_default();
+            (bucket, key)
+        } else {
+            ("local".to_string(), source_url.to_string())
+        };
+
+        JobRecord {
+            id: unit.id.clone(),
+            source_bucket,
+            source_key,
+            source_size: unit.total_size(),
+            config_hash: unit.config_hash.clone(),
+            output_prefix: unit.output_path.clone(),
+            status: JobStatus::Processing,
+            owner: Some(self.pod_id.clone()),
+            submitted_by: None,
+            attempts: unit.attempts,
+            max_attempts: unit.max_attempts,
+            created_at: unit.created_at,
+            updated_at: unit.updated_at,
+            error: None,
+            cancelled_at: None,
+        }
+    }
+
+    /// Complete a work unit.
+    async fn complete_work_unit(&self, batch_id: &str, unit_id: &str) -> Result<(), TikvError> {
+        match self.batch_controller.complete_work_unit(batch_id, unit_id).await {
+            Ok(true) => {
+                self.metrics.inc_jobs_completed();
+                self.metrics.dec_active_jobs();
+                tracing::info!(
+                    pod_id = %self.pod_id,
+                    unit_id = %unit_id,
+                    batch_id = %batch_id,
+                    "Work unit completed successfully"
+                );
+                Ok(())
+            }
+            Ok(false) => {
+                tracing::warn!(
+                    pod_id = %self.pod_id,
+                    unit_id = %unit_id,
+                    batch_id = %batch_id,
+                    "Work unit not found for completion"
+                );
+                self.metrics.dec_active_jobs();
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!(
+                    pod_id = %self.pod_id,
+                    unit_id = %unit_id,
+                    batch_id = %batch_id,
+                    error = %e,
+                    "Failed to complete work unit"
+                );
+                Err(e)
+            }
+        }
+    }
+
+    /// Fail a work unit with an error message.
+    async fn fail_work_unit(&self, batch_id: &str, unit_id: &str, error: String) -> Result<(), TikvError> {
+        match self.batch_controller.fail_work_unit(batch_id, unit_id, error.clone()).await {
+            Ok(true) => {
+                self.metrics.inc_jobs_failed();
+                self.metrics.dec_active_jobs();
+                tracing::warn!(
+                    pod_id = %self.pod_id,
+                    unit_id = %unit_id,
+                    batch_id = %batch_id,
+                    error = %error,
+                    "Work unit failed"
+                );
+                Ok(())
+            }
+            Ok(false) => {
+                tracing::warn!(
+                    pod_id = %self.pod_id,
+                    unit_id = %unit_id,
+                    batch_id = %batch_id,
+                    "Work unit not found for failure"
+                );
+                self.metrics.dec_active_jobs();
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!(
+                    pod_id = %self.pod_id,
+                    unit_id = %unit_id,
+                    batch_id = %batch_id,
+                    error = %e,
+                    "Failed to mark work unit as failed"
+                );
+                Err(e)
+            }
+        }
     }
 
     /// Process a job.
@@ -1095,11 +1320,14 @@ impl Worker {
                 )
                 .await
             {
-                tracing::warn!(
+                tracing::error!(
                     job_id = %job_id,
                     error = %e,
-                    "Failed to register staging completion, merge may not proceed"
+                    "Failed to register staging completion - data may be orphaned in staging"
                 );
+                return ProcessingResult::Failed {
+                    error: format!("Staging registration failed: {}", e),
+                };
             } else {
                 // Try to claim the merge task
                 tracing::info!(
@@ -1578,94 +1806,23 @@ impl Worker {
             let active_count = self.metrics.active_jobs.load(Ordering::Relaxed) as usize;
 
             if active_count < self.config.max_concurrent_jobs {
-                // Try to claim and process a job
-                match self.find_and_claim_job().await {
+                // First, try to claim a regular job
+                let claimed_work = match self.find_and_claim_job().await {
                     Ok(Some(job)) => {
-                        let job_id = job.id.clone();
-
-                        // Check if shutdown was requested before processing
-                        if self.shutdown_handler.is_requested() {
-                            tracing::info!(
-                                pod_id = %self.pod_id,
-                                "Shutdown requested, not processing new job"
-                            );
-                            // Release the job back to Pending
-                            if let Err(e) = self.release_job(&job_id).await {
-                                tracing::error!(
-                                    pod_id = %self.pod_id,
-                                    job_id = %job_id,
-                                    error = %e,
-                                    "CRITICAL: Failed to release job during shutdown - job may be stuck in Processing state"
-                                );
-                            }
-                            break;
-                        }
-
-                        // Process the job
-                        let result = self.process_job(&job).await;
-
-                        match result {
-                            ProcessingResult::Success => {
-                                if let Err(e) = self.complete_job(&job_id).await {
-                                    tracing::error!(
-                                        pod_id = %self.pod_id,
-                                        job_id = %job_id,
-                                        error = %e,
-                                        "Failed to complete job"
-                                    );
-                                    self.metrics.inc_processing_errors();
-                                }
-                            }
-                            ProcessingResult::Failed { error } => {
-                                // Check if this was a shutdown interrupt
-                                if error.contains("Job interrupted by shutdown") {
-                                    tracing::info!(
-                                        pod_id = %self.pod_id,
-                                        job_id = %job_id,
-                                        "Job interrupted by shutdown, releasing back to Pending"
-                                    );
-                                    let _ = self.release_job(&job_id).await;
-                                    break;
-                                }
-
-                                if let Err(e) = self.fail_job(&job_id, error).await {
-                                    tracing::error!(
-                                        pod_id = %self.pod_id,
-                                        job_id = %job_id,
-                                        error = %e,
-                                        "Failed to mark job as failed"
-                                    );
-                                    self.metrics.inc_processing_errors();
-                                }
-                            }
-                            ProcessingResult::Cancelled => {
-                                tracing::info!(
-                                    pod_id = %self.pod_id,
-                                    job_id = %job_id,
-                                    "Job was cancelled by user, keeping in Cancelled state"
-                                );
-                                // Job is already marked as Cancelled in TiKV by the cancel command
-                                // Do NOT release back to Pending - cancelled jobs should not be re-claimed
-                                self.metrics.dec_active_jobs();
-                                // Don't break the loop - continue processing other jobs
-                            }
-                        }
+                        Some(WorkItem::Job(job))
                     }
                     Ok(None) => {
-                        // No jobs available - use tokio::select! to race shutdown against sleep
-                        tokio::select! {
-                            _ = sleep(self.config.poll_interval) => {
-                                tracing::debug!(
+                        // No regular jobs, try to claim a work unit from batch jobs
+                        match self.find_and_claim_work_unit().await {
+                            Ok(Some(unit)) => Some(WorkItem::WorkUnit(unit)),
+                            Ok(None) => None,
+                            Err(e) => {
+                                tracing::error!(
                                     pod_id = %self.pod_id,
-                                    "No jobs available, retrying"
+                                    error = %e,
+                                    "Failed to claim work unit"
                                 );
-                            }
-                            _ = shutdown_rx.recv() => {
-                                tracing::info!(
-                                    pod_id = %self.pod_id,
-                                    "Worker shutdown requested while idle"
-                                );
-                                break;
+                                None
                             }
                         }
                     }
@@ -1673,19 +1830,193 @@ impl Worker {
                         tracing::error!(
                             pod_id = %self.pod_id,
                             error = %e,
-                            "Failed to find/claim job - backing off before retry"
+                            "Failed to find/claim job"
                         );
-                        self.metrics.inc_processing_errors();
-                        // Add backoff to prevent tight loop on persistent errors
-                        tokio::select! {
-                            _ = sleep(self.config.poll_interval) => {}
-                            _ = shutdown_rx.recv() => {
+                        None
+                    }
+                };
+
+                if let Some(work_item) = claimed_work {
+                    match work_item {
+                        WorkItem::Job(job) => {
+                            let job_id = job.id.clone();
+
+                            // Check if shutdown was requested before processing
+                            if self.shutdown_handler.is_requested() {
                                 tracing::info!(
                                     pod_id = %self.pod_id,
-                                    "Worker shutdown requested during error backoff"
+                                    "Shutdown requested, not processing new job"
                                 );
+                                // Release the job back to Pending
+                                if let Err(e) = self.release_job(&job_id).await {
+                                    tracing::error!(
+                                        pod_id = %self.pod_id,
+                                        job_id = %job_id,
+                                        error = %e,
+                                        "CRITICAL: Failed to release job during shutdown - job may be stuck in Processing state"
+                                    );
+                                }
                                 break;
                             }
+
+                            // Process the job
+                            let result = self.process_job(&job).await;
+
+                            match result {
+                                ProcessingResult::Success => {
+                                    if let Err(e) = self.complete_job(&job_id).await {
+                                        tracing::error!(
+                                            pod_id = %self.pod_id,
+                                            job_id = %job_id,
+                                            error = %e,
+                                            "Failed to complete job"
+                                        );
+                                        self.metrics.inc_processing_errors();
+                                    }
+                                }
+                                ProcessingResult::Failed { error } => {
+                                    // Check if this was a shutdown interrupt
+                                    if error.contains("Job interrupted by shutdown") {
+                                        tracing::info!(
+                                            pod_id = %self.pod_id,
+                                            job_id = %job_id,
+                                            "Job interrupted by shutdown, releasing back to Pending"
+                                        );
+                                        if let Err(e) = self.release_job(&job_id).await {
+                                            tracing::error!(
+                                                pod_id = %self.pod_id,
+                                                job_id = %job_id,
+                                                error = %e,
+                                                "Failed to release job during shutdown - job may be stuck"
+                                            );
+                                        }
+                                        break;
+                                    }
+
+                                    if let Err(e) = self.fail_job(&job_id, error).await {
+                                        tracing::error!(
+                                            pod_id = %self.pod_id,
+                                            job_id = %job_id,
+                                            error = %e,
+                                            "Failed to mark job as failed"
+                                        );
+                                        self.metrics.inc_processing_errors();
+                                    }
+                                    self.metrics.dec_active_jobs();
+                                }
+                                ProcessingResult::Cancelled => {
+                                    tracing::info!(
+                                        pod_id = %self.pod_id,
+                                        job_id = %job_id,
+                                        "Job was cancelled by user, keeping in Cancelled state"
+                                    );
+                                    // Job is already marked as Cancelled in TiKV by the cancel command
+                                    // Do NOT release back to Pending - cancelled jobs should not be re-claimed
+                                    self.metrics.dec_active_jobs();
+                                    // Don't break the loop - continue processing other jobs
+                                }
+                            }
+                        }
+                        WorkItem::WorkUnit(unit) => {
+                            let unit_id = unit.id.clone();
+                            let batch_id = unit.batch_id.clone();
+
+                            // Check if shutdown was requested before processing
+                            if self.shutdown_handler.is_requested() {
+                                tracing::info!(
+                                    pod_id = %self.pod_id,
+                                    "Shutdown requested, not processing new work unit"
+                                );
+                                // Release the work unit back to Pending
+                                let _ = self.batch_controller.fail_work_unit(
+                                    &batch_id,
+                                    &unit_id,
+                                    "Shutdown requested, releasing back to Pending".to_string()
+                                ).await;
+                                self.metrics.dec_active_jobs();
+                                break;
+                            }
+
+                            // Process the work unit
+                            let result = self.process_work_unit(&unit).await;
+
+                            match result {
+                                ProcessingResult::Success => {
+                                    if let Err(e) = self.complete_work_unit(&batch_id, &unit_id).await {
+                                        tracing::error!(
+                                            pod_id = %self.pod_id,
+                                            unit_id = %unit_id,
+                                            error = %e,
+                                            "Failed to complete work unit"
+                                        );
+                                        self.metrics.inc_processing_errors();
+                                    }
+                                    self.metrics.dec_active_jobs();
+                                }
+                                ProcessingResult::Failed { error } => {
+                                    // Check if this was a shutdown interrupt
+                                    if error.contains("Job interrupted by shutdown") {
+                                        tracing::info!(
+                                            pod_id = %self.pod_id,
+                                            unit_id = %unit_id,
+                                            "Work unit interrupted by shutdown, releasing back to Pending"
+                                        );
+                                        if let Err(e) = self.batch_controller.fail_work_unit(
+                                            &batch_id,
+                                            &unit_id,
+                                            "Shutdown interrupted, releasing back to Pending".to_string()
+                                        ).await {
+                                            tracing::error!(
+                                                pod_id = %self.pod_id,
+                                                unit_id = %unit_id,
+                                                error = %e,
+                                                "Failed to release work unit during shutdown - unit may be stuck"
+                                            );
+                                        }
+                                        self.metrics.dec_active_jobs();
+                                        break;
+                                    }
+
+                                    if let Err(e) = self.fail_work_unit(&batch_id, &unit_id, error).await {
+                                        tracing::error!(
+                                            pod_id = %self.pod_id,
+                                            unit_id = %unit_id,
+                                            error = %e,
+                                            "Failed to mark work unit as failed"
+                                        );
+                                        self.metrics.inc_processing_errors();
+                                    }
+                                    self.metrics.dec_active_jobs();
+                                }
+                                ProcessingResult::Cancelled => {
+                                    tracing::info!(
+                                        pod_id = %self.pod_id,
+                                        unit_id = %unit_id,
+                                        "Work unit was cancelled by user, keeping in Cancelled state"
+                                    );
+                                    // Work unit is already marked as Cancelled in TiKV by the cancel command
+                                    // Do NOT release back to Pending - cancelled work units should not be re-claimed
+                                    self.metrics.dec_active_jobs();
+                                    // Don't break the loop - continue processing other work units
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // No jobs or work units available - use tokio::select! to race shutdown against sleep
+                    tokio::select! {
+                        _ = sleep(self.config.poll_interval) => {
+                            tracing::debug!(
+                                pod_id = %self.pod_id,
+                                "No jobs available, retrying"
+                            );
+                        }
+                        _ = shutdown_rx.recv() => {
+                            tracing::info!(
+                                pod_id = %self.pod_id,
+                                "Worker shutdown requested while idle"
+                            );
+                            break;
                         }
                     }
                 }
