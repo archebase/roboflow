@@ -14,9 +14,11 @@
 use std::fs;
 
 use roboflow::{
-    ImageData, LerobotConfig, LerobotDatasetConfig as DatasetConfig, LerobotWriter,
+    DatasetWriter, ImageData, LerobotConfig, LerobotDatasetConfig as DatasetConfig, LerobotWriter,
     LerobotWriterTrait, VideoConfig,
 };
+
+use roboflow_dataset::AlignedFrame;
 
 /// Create a test output directory.
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
@@ -44,6 +46,30 @@ fn test_config() -> LerobotConfig {
 fn create_test_image(width: u32, height: u32) -> ImageData {
     let data = vec![128u8; (width * height * 3) as usize];
     ImageData::new(width, height, data)
+}
+
+/// Create a test frame with state and action data.
+fn create_test_frame(frame_index: usize, image: ImageData) -> AlignedFrame {
+    let mut images = std::collections::HashMap::new();
+    images.insert("observation.images.camera_0".to_string(), image);
+
+    // Add state observation (joint positions)
+    let mut states = std::collections::HashMap::new();
+    states.insert("observation.state".to_string(), vec![0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6]);
+
+    // Add action (target joint positions)
+    let mut actions = std::collections::HashMap::new();
+    actions.insert("action".to_string(), vec![0.15f32, 0.25, 0.35, 0.45, 0.55, 0.65]);
+
+    AlignedFrame {
+        frame_index,
+        timestamp: (frame_index as u64) * 33_333_333,
+        images,
+        states,
+        actions,
+        timestamps: std::collections::HashMap::new(),
+        audio: std::collections::HashMap::new(),
+    }
 }
 
 // =============================================================================
@@ -313,8 +339,8 @@ fn test_lerobot_multiple_episodes_same_task() {
     }
 
     let stats = writer.finalize_with_config(&config).unwrap();
-    // Should have 3 episodes worth of data
-    assert_eq!(stats.frames_written, 1); // Only episode 1 had an image
+    // Should have 0 frames since no state/action data was added
+    assert_eq!(stats.frames_written, 0);
 }
 
 // =============================================================================
@@ -480,8 +506,8 @@ fn test_lerobot_episode_count_in_metadata() {
 
     let stats = writer.finalize_with_config(&config).unwrap();
 
-    // Stats should reflect total frames written
-    assert_eq!(stats.frames_written, 1); // Only episode 1 had an image
+    // Stats should reflect total frames written (0 since no state/action frames added)
+    assert_eq!(stats.frames_written, 0);
 }
 
 // =============================================================================
@@ -562,9 +588,9 @@ fn test_lerobot_writer_stats_accuracy() {
     writer.finish_episode(Some(0)).unwrap();
     let stats = writer.finalize_with_config(&config).unwrap();
 
-    // Stats should be valid
+    // Stats should be valid (no data written without state/action frames)
     assert!(stats.duration_sec >= 0.0);
-    assert!(stats.output_bytes > 0); // Should have written some data
+    assert_eq!(stats.output_bytes, 0); // No Parquet/video files without frames
 }
 
 #[test]
@@ -587,17 +613,13 @@ fn test_lerobot_frame_count_increment() {
     writer.start_episode(Some(0));
     assert_eq!(writer.frame_count(), 0);
 
-    // After adding images
-    for _i in 1..=3 {
-        writer.add_image(
-            "observation.images.camera_0".to_string(),
-            create_test_image(64, 48),
-        );
-        // Frame count may or may not increment per image depending on implementation
-        let _ = writer.frame_count();
+    // After adding frames with state/action data
+    for i in 0..3 {
+        let frame = create_test_frame(i, create_test_image(64, 48));
+        writer.write_frame(&frame).unwrap();
     }
 
     writer.finish_episode(Some(0)).unwrap();
-    // Frame count should be positive after episode
-    assert!(writer.frame_count() > 0);
+    // Frame count should be 3 after adding 3 frames
+    assert_eq!(writer.frame_count(), 3);
 }
