@@ -115,7 +115,8 @@ impl ParquetKpsWriter {
         let max_frames = config.output.max_frames;
 
         // Open MCAP file
-        let reader = robocodec::RoboReader::open(mcap_path_ref)?;
+        let path_str = mcap_path_ref.to_str().ok_or("Invalid UTF-8 path")?;
+        let reader = robocodec::RoboReader::open(path_str)?;
 
         // Buffer image data by topic for MP4 encoding
         let mut image_buffers: HashMap<String, Vec<ImageFrame>> = HashMap::new();

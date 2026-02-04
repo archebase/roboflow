@@ -142,7 +142,10 @@ impl DatasetConverter {
         writer.initialize(kps_config)?;
 
         // Open input file
-        let reader = RoboReader::open(input_path)?;
+        let path_str = input_path.to_str().ok_or_else(|| {
+            RoboflowError::parse("Path", "Invalid UTF-8 path")
+        })?;
+        let reader = RoboReader::open(path_str)?;
 
         // Build topic -> mapping lookup
         let topic_mappings: HashMap<String, KpsMapping> = kps_config
@@ -296,7 +299,10 @@ impl DatasetConverter {
         writer.initialize(lerobot_config)?;
 
         // Open input file
-        let reader = RoboReader::open(input_path)?;
+        let path_str = input_path.to_str().ok_or_else(|| {
+            RoboflowError::parse("Path", "Invalid UTF-8 path")
+        })?;
+        let reader = RoboReader::open(path_str)?;
 
         // Build topic -> mapping lookup
         let topic_mappings: HashMap<String, LerobotMapping> = lerobot_config

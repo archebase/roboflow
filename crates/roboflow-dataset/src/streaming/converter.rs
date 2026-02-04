@@ -396,7 +396,10 @@ impl StreamingDatasetConverter {
         // NOTE: RoboReader decodes BAG/MCAP files directly to TimestampedDecodedMessage.
         // There is NO intermediate MCAP conversion - neither in memory nor on disk.
         // BAG format is parsed natively, messages are decoded directly to HashMap<String, CodecValue>.
-        let reader = RoboReader::open(process_path)?;
+        let path_str = process_path.to_str().ok_or_else(|| {
+            roboflow_core::RoboflowError::parse("Path", "Invalid UTF-8 path")
+        })?;
+        let reader = RoboReader::open(path_str)?;
 
         info!(
             mappings = topic_mappings.len(),
