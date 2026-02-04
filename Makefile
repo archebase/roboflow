@@ -162,11 +162,12 @@ dev-restart: ## Restart development services
 	docker compose restart
 	@echo "✓ Services restarted"
 
-dev-clean: ## Stop and remove all development containers, volumes, and networks
+dev-clean: ## Stop and remove all development containers, volumes, networks, and local data
 	@echo "Cleaning up development environment..."
 	docker compose down -v --remove-orphans
+	rm -rf output/ lerobot_config*.toml
 	@echo "✓ Development environment cleaned"
-	@echo "  Containers, volumes, and networks removed"
+	@echo "  Containers, volumes, networks, and local data removed"
 
 # ============================================================================
 # Utilities
