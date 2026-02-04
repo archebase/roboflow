@@ -48,6 +48,10 @@ ENV/
 *.log
 tests/output/
 
+# Dataset output
+/output/
+*.toml.bak
+
 # ignore pyo3
 python/robocodec-0.1.0.data/
 
