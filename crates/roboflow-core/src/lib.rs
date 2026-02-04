@@ -20,6 +20,7 @@
 pub mod error;
 pub mod logging;
 pub mod registry;
+pub mod retry;
 pub mod trace;
 pub mod value;
 
@@ -27,6 +28,7 @@ pub mod value;
 pub use error::{ErrorCategory, Result, RoboflowError};
 pub use logging::{LogFormat, LoggingConfig, init_logging, init_logging_with};
 pub use registry::{Encoding, SchemaProvider, TypeAccessor, TypeRegistry};
+pub use retry::{IsRetryableRef, RetryConfig, retry_with_backoff};
 pub use trace::{
     generate_job_request_id, generate_request_id, with_dataset_span, with_job_span, with_request_id,
 };
