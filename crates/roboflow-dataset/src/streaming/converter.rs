@@ -67,7 +67,7 @@ impl ProgressCallback for NoOpCallback {
 /// - **Input storage**: Downloads cloud files to temp directory before processing
 /// - **Output storage**: Writes output files directly to the configured backend
 pub struct StreamingDatasetConverter {
-    /// Output directory
+    /// Output directory (local buffer for temporary files)
     output_dir: PathBuf,
 
     /// Dataset format
@@ -86,10 +86,10 @@ pub struct StreamingDatasetConverter {
     input_storage: Option<Arc<dyn Storage>>,
 
     /// Output storage backend for writing output files
-    ///
-    /// NOTE: Currently unused - reserved for future cloud output support.
-    /// Writing to cloud storage requires changes to DatasetWriter trait.
     output_storage: Option<Arc<dyn Storage>>,
+
+    /// Output prefix within storage (e.g., "datasets/my_dataset")
+    output_prefix: Option<String>,
 
     /// Optional progress callback for checkpointing
     progress_callback: Option<Arc<dyn ProgressCallback>>,
@@ -110,6 +110,7 @@ impl StreamingDatasetConverter {
             config,
             input_storage: None,
             output_storage: None,
+            output_prefix: None,
             progress_callback: None,
         })
     }
@@ -130,6 +131,7 @@ impl StreamingDatasetConverter {
             config,
             input_storage,
             output_storage,
+            output_prefix: None,
             progress_callback: None,
         })
     }
@@ -150,6 +152,7 @@ impl StreamingDatasetConverter {
             config,
             input_storage: None,
             output_storage: None,
+            output_prefix: None,
             progress_callback: None,
         })
     }
@@ -172,6 +175,7 @@ impl StreamingDatasetConverter {
             config,
             input_storage,
             output_storage,
+            output_prefix: None,
             progress_callback: None,
         })
     }
@@ -185,6 +189,17 @@ impl StreamingDatasetConverter {
     /// Set the output storage backend.
     pub fn with_output_storage(mut self, storage: Arc<dyn Storage>) -> Self {
         self.output_storage = Some(storage);
+        self
+    }
+
+    /// Set the output prefix within storage.
+    ///
+    /// This is the path prefix within the storage backend where output files will be written.
+    /// For example, with prefix "datasets/my_dataset", files will be written to:
+    /// - "datasets/my_dataset/data/chunk-000/episode_000000.parquet"
+    /// - "datasets/my_dataset/videos/chunk-000/..."
+    pub fn with_output_prefix(mut self, prefix: String) -> Self {
+        self.output_prefix = Some(prefix);
         self
     }
 
@@ -296,8 +311,13 @@ impl StreamingDatasetConverter {
         }
 
         // Create OssStorage
-        let storage = OssStorage::with_config(oss_config).map_err(|e| {
-            roboflow_core::RoboflowError::other(format!("Failed to create cloud storage: {}", e))
+        let storage = OssStorage::with_config(oss_config.clone()).map_err(|e| {
+            roboflow_core::RoboflowError::other(format!(
+                "Failed to create cloud storage for bucket '{}' with endpoint '{}': {}",
+                bucket,
+                oss_config.endpoint_url(),
+                e
+            ))
         })?;
 
         Ok(Arc::new(storage) as Arc<dyn Storage>)
@@ -555,7 +575,8 @@ impl StreamingDatasetConverter {
                     )
                 })?;
                 let config = DatasetConfig::Kps(kps_config.clone());
-                create_writer(&self.output_dir, &config).map_err(|e| {
+                // KPS doesn't support cloud storage yet
+                create_writer(&self.output_dir, None, None, &config).map_err(|e| {
                     roboflow_core::RoboflowError::encode(
                         "StreamingConverter",
                         format!(
@@ -574,7 +595,10 @@ impl StreamingDatasetConverter {
                     )
                 })?;
                 let config = DatasetConfig::Lerobot(lerobot_config.clone());
-                create_writer(&self.output_dir, &config).map_err(|e| {
+                // Use cloud storage if available
+                let storage_ref = self.output_storage.as_ref();
+                let prefix_ref = self.output_prefix.as_deref();
+                create_writer(&self.output_dir, storage_ref, prefix_ref, &config).map_err(|e| {
                     roboflow_core::RoboflowError::encode(
                         "StreamingConverter",
                         format!(

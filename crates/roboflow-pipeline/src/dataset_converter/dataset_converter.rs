@@ -132,7 +132,7 @@ impl DatasetConverter {
 
         // Create the dataset writer
         let config = roboflow_dataset::DatasetConfig::Kps(kps_config.clone());
-        let mut writer = create_writer(&self.output_dir, &config).map_err(
+        let mut writer = create_writer(&self.output_dir, None, None, &config).map_err(
             |e: roboflow_core::RoboflowError| {
                 RoboflowError::encode("DatasetConverter", e.to_string())
             },
@@ -289,7 +289,7 @@ impl DatasetConverter {
 
         // Create the dataset writer
         let config = roboflow_dataset::DatasetConfig::Lerobot(lerobot_config.clone());
-        let mut writer = create_writer(&self.output_dir, &config).map_err(
+        let mut writer = create_writer(&self.output_dir, None, None, &config).map_err(
             |e: roboflow_core::RoboflowError| {
                 RoboflowError::encode("DatasetConverter", e.to_string())
             },

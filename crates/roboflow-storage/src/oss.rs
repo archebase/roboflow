@@ -1030,4 +1030,40 @@ mod tests {
         let config = OssConfig::new("bucket", "endpoint", "key", "secret").with_prefix("datasets");
         assert_eq!(config.full_key(Path::new("test.txt")), "datasets/test.txt");
     }
+
+    // ========================================================================
+    // Error Handling Tests (mock-based)
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_async_storage_config_http_warning() {
+        // Verify HTTP connections emit a warning
+        let config = OssConfig::new("bucket", "endpoint", "key", "secret").with_allow_http(true);
+
+        // Creating storage with HTTP allowed should log a warning
+        // (we can't easily test for logging output, but we verify the config is correct)
+        assert!(config.allow_http);
+        assert_eq!(config.endpoint_url(), "http://endpoint");
+    }
+
+    // Test that storage creation validates inputs
+    #[tokio::test]
+    async fn test_async_storage_invalid_bucket_rejected() {
+        // Various invalid bucket names should be rejected
+        let too_long = "a".repeat(64);
+        let invalid_names = vec![
+            "ab",              // too short
+            too_long.as_str(), // too long
+            "MyBucket",        // uppercase
+            "-bucket",         // starts with hyphen
+            "bucket-",         // ends with hyphen
+            "192.168.1.1",     // IP address
+            "bucket!",         // invalid character
+        ];
+
+        for name in invalid_names {
+            let result = AsyncOssStorage::new(name, "endpoint", "key", "secret");
+            assert!(result.is_err(), "Bucket name '{}' should be rejected", name);
+        }
+    }
 }

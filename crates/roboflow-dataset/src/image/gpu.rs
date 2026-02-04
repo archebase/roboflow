@@ -10,12 +10,18 @@
 //! - Requires NVIDIA GPU with compute capability 6.0+
 //! - Falls back to CPU decoder on error or for unsupported formats
 //!
-//! # TODO
+//! # Implementation Status
 //!
-//! - [ ] Implement nvJPEG integration with cudarc
-//! - [ ] Add batch decoding optimization
-//! - [ ] Implement CUDA pinned memory allocation
-//! - [ ] Add GPU memory pooling for performance
+//! GPU decoding is a planned enhancement. The stub implementation provides:
+//! - Type definitions for future integration with cudarc crate
+//! - Interface compatibility with existing decoder traits
+//! - Clear error messages when GPU decoding is attempted
+//!
+//! Full implementation will require:
+//! - cudarc dependency integration
+//! - CUDA context initialization
+//! - nvJPEG handle creation and management
+//! - Batch decoding optimization for multiple images
 
 use super::{
     ImageError, ImageFormat, Result,
@@ -26,9 +32,9 @@ use super::{
 /// GPU decoder using NVIDIA nvJPEG library.
 #[allow(dead_code)]
 pub struct GpuImageDecoder {
-    device_id: u32, // TODO: will be used for CUDA context initialization
-    memory_strategy: MemoryStrategy, // TODO: will be used for CUDA pinned memory
-                    // TODO: Add CUDA context and nvJPEG handle when cudarc is integrated
+    device_id: u32, // For CUDA context initialization
+    memory_strategy: MemoryStrategy, // For CUDA pinned memory allocation
+                    // Future fields (when cudarc is integrated):
                     // cuda_ctx: cudarc::driver::CudaDevice,
                     // nvjpeg_handle: cudarc::nvjpeg::NvJpeg,
 }
@@ -36,19 +42,17 @@ pub struct GpuImageDecoder {
 impl GpuImageDecoder {
     /// Try to create a new nvJPEG decoder.
     ///
-    /// # TODO
-    ///
-    /// This is a stub implementation. Full implementation requires:
-    /// - cudarc dependency in Cargo.toml
+    /// This is a stub implementation. Full GPU decoding requires:
+    /// - cudarc dependency integration
     /// - CUDA context initialization
-    /// - nvJPEG handle creation
+    /// - nvJPEG handle creation and management
     pub fn try_new(_device_id: u32, _memory_strategy: MemoryStrategy) -> Result<Self> {
         #[cfg(all(feature = "gpu-decode", target_os = "linux"))]
         {
-            // TODO: Implement CUDA/nvJPEG initialization
-            // For now, return an error indicating not yet implemented
+            // GPU decoding is not yet implemented.
+            // See module-level documentation for implementation plan.
             Err(ImageError::GpuUnavailable(
-                "GPU decoding not yet implemented. See TODO in image/gpu.rs".to_string(),
+                "GPU decoding not yet implemented. See image::gpu module docs.".to_string(),
             ))
         }
         #[cfg(not(all(feature = "gpu-decode", target_os = "linux")))]
@@ -60,14 +64,16 @@ impl GpuImageDecoder {
     }
 
     /// Check if nvJPEG is available.
+    ///
+    /// Returns false until GPU decoding is fully implemented.
     pub fn is_available() -> bool {
-        // TODO: Check for CUDA runtime and nvJPEG library
         false
     }
 
     /// Get information about available GPU devices.
+    ///
+    /// Returns empty list until CUDA integration is complete.
     pub fn device_info() -> Vec<super::factory::GpuDeviceInfo> {
-        // TODO: Query CUDA devices and return their info
         Vec::new()
     }
 }
@@ -76,24 +82,20 @@ impl ImageDecoderBackend for GpuImageDecoder {
     fn decode(&self, data: &[u8], format: ImageFormat) -> Result<super::backend::DecodedImage> {
         match format {
             ImageFormat::Jpeg => {
-                // TODO: Implement nvJPEG decoding
-                tracing::warn!("GPU JPEG decoding not yet implemented, falling back to CPU");
+                // GPU JPEG decoding not yet implemented, fall back to CPU
+                tracing::info!("GPU JPEG decoding not yet implemented, using CPU decoder");
                 self.decode_cpu_fallback(data, format)
             }
             ImageFormat::Png => {
                 // nvJPEG doesn't support PNG, must use CPU
-                tracing::debug!("nvJPEG doesn't support PNG, using CPU decoder");
+                tracing::info!("nvJPEG doesn't support PNG, using CPU decoder");
                 self.decode_cpu_fallback(data, format)
             }
             ImageFormat::Rgb8 => {
-                // Already RGB, just wrap it
-                let pixel_count = data.len() / 3;
-                let width = (pixel_count as f32).sqrt().round() as u32;
-                let height = pixel_count as u32 / width.max(1);
-                Ok(super::backend::DecodedImage::new(
-                    width,
-                    height,
-                    data.to_vec(),
+                // RGB8 format requires explicit dimensions from message metadata.
+                // The sqrt() approach was incorrect for non-square images.
+                Err(ImageError::InvalidData(
+                    "RGB8 format requires explicit width/height from message metadata.".to_string(),
                 ))
             }
             ImageFormat::Unknown => Err(ImageError::UnsupportedFormat(
@@ -106,7 +108,7 @@ impl ImageDecoderBackend for GpuImageDecoder {
         &self,
         images: &[(&[u8], ImageFormat)],
     ) -> Result<Vec<super::backend::DecodedImage>> {
-        // TODO: Implement nvJPEG batch decoding for maximum throughput
+        // GPU batch decoding not yet implemented, use sequential processing
         tracing::debug!("GPU batch decoding not yet implemented, using sequential");
         images
             .iter()

@@ -18,6 +18,7 @@
 
 pub mod catalog;
 pub mod heartbeat;
+pub mod merge;
 pub mod reaper;
 pub mod scanner;
 pub mod shutdown;

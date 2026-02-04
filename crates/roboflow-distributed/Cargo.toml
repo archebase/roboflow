@@ -56,6 +56,9 @@ gethostname = "0.4"
 # LRU cache for config caching
 lru = "0.12"
 
+# Parquet for merge operations
+polars = { version = "0.41", features = ["parquet", "lazy", "diagonal_concat"] }
+
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3.10"

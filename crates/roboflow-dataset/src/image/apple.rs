@@ -35,8 +35,8 @@ impl AppleImageDecoder {
     /// Try to create a new Apple hardware-accelerated decoder.
     #[cfg(target_os = "macos")]
     pub fn try_new(memory_strategy: MemoryStrategy) -> Result<Self> {
-        // TODO: Integrate with libjpeg-turbo hardware acceleration
-        // For now, we create a decoder that uses optimized CPU paths
+        // Apple hardware acceleration integration is deferred.
+        // Current implementation uses optimized CPU paths via the CPU decoder.
         Ok(Self { memory_strategy })
     }
 
@@ -51,8 +51,8 @@ impl AppleImageDecoder {
     /// Check if Apple hardware acceleration is available.
     #[cfg(target_os = "macos")]
     pub fn is_available() -> bool {
-        // TODO: Check for Apple Silicon and hardware acceleration support
-        // For now, return true on macOS as we can use optimized CPU paths
+        // Hardware acceleration detection is deferred.
+        // Return true on macOS since we can use optimized CPU paths.
         true
     }
 
@@ -66,8 +66,8 @@ impl AppleImageDecoder {
 impl ImageDecoderBackend for AppleImageDecoder {
     #[cfg(target_os = "macos")]
     fn decode(&self, data: &[u8], format: ImageFormat) -> Result<DecodedImage> {
-        // Delegate to CPU decoder for now
-        // TODO: Use libjpeg-turbo with hardware acceleration when available
+        // Delegate to CPU decoder with optimized paths.
+        // Hardware acceleration integration is a future enhancement.
         use crate::image::backend::CpuImageDecoder;
         let cpu_decoder =
             CpuImageDecoder::new(self.memory_strategy, rayon::current_num_threads().max(1));

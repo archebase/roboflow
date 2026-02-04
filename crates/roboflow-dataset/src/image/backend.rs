@@ -94,12 +94,76 @@ pub struct DecodedImage {
 
 impl DecodedImage {
     /// Create a new decoded image.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug mode if data size doesn't match expected size for RGB.
     pub fn new(width: u32, height: u32, data: Vec<u8>) -> Self {
+        #[cfg(debug_assertions)]
+        {
+            let expected = (width as usize) * (height as usize) * 3;
+            assert_eq!(
+                data.len(),
+                expected,
+                "Data size {} doesn't match expected {} for {}x{} RGB image",
+                data.len(),
+                expected,
+                width,
+                height
+            );
+        }
         Self {
             width,
             height,
             data,
         }
+    }
+
+    /// Create a new decoded image from RGB8 data with explicit dimensions.
+    ///
+    /// This is the preferred way to create DecodedImage from raw RGB8 data
+    /// where dimensions come from message metadata rather than being derived.
+    ///
+    /// # Arguments
+    ///
+    /// * `width` - Image width in pixels (from metadata)
+    /// * `height` - Image height in pixels (from metadata)
+    /// * `data` - RGB pixel data (must be width * height * 3 bytes)
+    ///
+    /// # Returns
+    ///
+    /// Returns an error if the data size doesn't match the expected size.
+    pub fn from_rgb8(width: u32, height: u32, data: Vec<u8>) -> Result<Self> {
+        let expected_size = (width as usize) * (height as usize) * 3;
+        if data.len() != expected_size {
+            return Err(ImageError::InvalidData(format!(
+                "RGB8 data size {} doesn't match expected {} for {}x{} image",
+                data.len(),
+                expected_size,
+                width,
+                height
+            )));
+        }
+        Ok(Self {
+            width,
+            height,
+            data,
+        })
+    }
+
+    /// Get the image width in pixels.
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Get the image height in pixels.
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Get a reference to the RGB pixel data.
+    pub fn data(&self) -> &[u8] {
+        &self.data
     }
 
     /// Get the total number of pixels.
@@ -174,15 +238,13 @@ impl ImageDecoderBackend for CpuImageDecoder {
                 ImageFormat::Jpeg => self.decode_jpeg(data),
                 ImageFormat::Png => self.decode_png(data),
                 ImageFormat::Rgb8 => {
-                    // Already RGB, just validate dimensions
-                    let pixel_count = data.len() / 3;
-                    let width = (pixel_count as f32).sqrt() as u32;
-                    let height = pixel_count as u32 / width;
-                    Ok(DecodedImage {
-                        width,
-                        height,
-                        data: data.to_vec(),
-                    })
+                    // Already RGB, but we need explicit dimensions from metadata.
+                    // The previous sqrt() approach was incorrect for non-square images.
+                    // Return an error directing the caller to provide dimensions explicitly.
+                    Err(ImageError::InvalidData(
+                        "RGB8 format requires explicit width/height from message metadata. \
+                         Use DecodedImage::new_with_dimensions() or extract dimensions from the ROS message.".to_string()
+                    ))
                 }
                 ImageFormat::Unknown => Err(ImageError::UnsupportedFormat(
                     "Unknown format (cannot detect from magic bytes)".to_string(),
@@ -314,5 +376,73 @@ mod tests {
     #[test]
     fn test_memory_strategy_default() {
         assert_eq!(MemoryStrategy::default(), MemoryStrategy::Heap);
+    }
+
+    #[test]
+    fn test_decoded_image_from_rgb8_valid() {
+        let result = DecodedImage::from_rgb8(100, 50, vec![0u8; 100 * 50 * 3]);
+        assert!(result.is_ok());
+        let img = result.unwrap();
+        assert_eq!(img.width, 100);
+        assert_eq!(img.height, 50);
+        assert_eq!(img.data.len(), 100 * 50 * 3);
+    }
+
+    #[test]
+    fn test_decoded_image_from_rgb8_invalid_size() {
+        // Data size doesn't match dimensions
+        let result = DecodedImage::from_rgb8(100, 50, vec![0u8; 100]);
+        assert!(result.is_err());
+        match result {
+            Err(ImageError::InvalidData(msg)) => {
+                assert!(msg.contains("doesn't match expected"));
+            }
+            _ => panic!("Expected InvalidData error"),
+        }
+    }
+
+    #[cfg(feature = "image-decode")]
+    #[test]
+    fn test_decode_jpeg_truncated() {
+        let decoder = CpuImageDecoder::default_config();
+
+        // Truncated JPEG (missing EOI marker and most of the file)
+        let truncated_jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+
+        let result = decoder.decode(&truncated_jpeg, ImageFormat::Jpeg);
+        // Should return an error, not panic
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "image-decode")]
+    #[test]
+    fn test_decode_invalid_jpeg_magic_bytes() {
+        let decoder = CpuImageDecoder::default_config();
+
+        // Invalid JPEG data (wrong magic bytes)
+        let invalid_jpeg = [0x00, 0x00, 0x00, 0x00];
+
+        let result = decoder.decode(&invalid_jpeg, ImageFormat::Jpeg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decode_unknown_format_returns_error() {
+        let decoder = CpuImageDecoder::default_config();
+
+        // Empty data with unknown format
+        let result = decoder.decode(&[], ImageFormat::Unknown);
+        assert!(matches!(result, Err(ImageError::UnsupportedFormat(_))));
+    }
+
+    #[test]
+    fn test_decode_rgb8_requires_explicit_dimensions() {
+        let decoder = CpuImageDecoder::default_config();
+
+        // RGB8 data without explicit dimensions should fail
+        let rgb_data = vec![0u8; 300]; // 10x10 RGB image
+
+        let result = decoder.decode(&rgb_data, ImageFormat::Rgb8);
+        assert!(matches!(result, Err(ImageError::InvalidData(_))));
     }
 }

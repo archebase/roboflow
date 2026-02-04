@@ -191,19 +191,40 @@ impl DatasetConfig {
 }
 
 /// Create a dataset writer from a unified configuration.
+///
+/// # Arguments
+///
+/// * `output_dir` - Output directory path (used for local storage or as base path)
+/// * `storage` - Optional storage backend for cloud output (S3, OSS, etc.)
+/// * `output_prefix` - Output prefix within storage (required when using cloud storage)
+/// * `config` - Dataset configuration
 pub fn create_writer(
     output_dir: impl AsRef<Path>,
+    storage: Option<&std::sync::Arc<dyn roboflow_storage::Storage>>,
+    output_prefix: Option<&str>,
     config: &DatasetConfig,
 ) -> Result<Box<dyn DatasetWriter>> {
     match config {
         DatasetConfig::Kps(kps_config) => {
             use crate::kps::writers::create_kps_writer;
+            // KPS writer uses local storage for now
             create_kps_writer(output_dir, 0, kps_config)
         }
         DatasetConfig::Lerobot(lerobot_config) => {
             use crate::lerobot::LerobotWriter;
-            let writer = LerobotWriter::new_local(output_dir, lerobot_config.clone())?;
-            Ok(Box::new(writer))
+            // Use cloud storage if provided, otherwise use local storage
+            if let (Some(storage), Some(prefix)) = (storage, output_prefix) {
+                let writer = LerobotWriter::new(
+                    std::sync::Arc::clone(storage),
+                    prefix.to_string(),
+                    output_dir,
+                    lerobot_config.clone(),
+                )?;
+                Ok(Box::new(writer))
+            } else {
+                let writer = LerobotWriter::new_local(output_dir, lerobot_config.clone())?;
+                Ok(Box::new(writer))
+            }
         }
     }
 }

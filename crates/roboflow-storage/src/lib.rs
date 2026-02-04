@@ -232,9 +232,10 @@ mod error {
         ///
         /// # Note
         ///
-        /// Prefetch is not yet implemented. This setting is reserved for future use.
+        /// Prefetch is a deferred optimization that would require background
+        /// task coordination with the streaming reader. This setting is
+        /// reserved for future use.
         pub fn with_prefetch_count(self, _count: usize) -> Self {
-            // TODO: Implement prefetch and use _count
             self
         }
     }

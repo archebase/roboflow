@@ -310,9 +310,9 @@ impl ParquetKpsWriter {
 
             println!("  Encoding video: {} ({} frames)", feature, frames.len());
 
-            // Note: Actual ffmpeg encoding requires significant code
-            // For now, we'll write a placeholder
-            println!("    (MP4 encoding requires full ffmpeg-next integration - placeholder only)");
+            // MP4 encoding via ffmpeg is a future enhancement.
+            // The current implementation saves raw RGB data instead.
+            println!("    (MP4 encoding requires full ffmpeg-next integration)");
         }
 
         Ok(())

@@ -83,8 +83,8 @@ impl AlignedImageBuffer {
     pub fn with_alignment(size: usize, alignment: usize) -> Self {
         let aligned_size = size.div_ceil(alignment) * alignment;
         // Initialize with zeros for safety.
-        // TODO: For performance, consider using MaybeUninit for zero-copy
-        // allocation when the decoder will overwrite all bytes.
+        // Note: Could use MaybeUninit for zero-copy when decoder overwrites all bytes,
+        // but current implementation prioritizes safety over micro-optimization.
         let mut vec = vec![0u8; aligned_size];
         vec.truncate(size);
 
