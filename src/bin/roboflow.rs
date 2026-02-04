@@ -100,6 +100,11 @@ enum Command {
         /// Remaining arguments for jobs command
         args: Vec<String>,
     },
+    /// Manage batch jobs
+    Batch {
+        /// Remaining arguments for batch command
+        args: Vec<String>,
+    },
     /// Run the worker loop
     Worker {
         /// Pod ID for this worker
@@ -141,6 +146,11 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
             // Collect remaining args for jobs command
             let jobs_args: Vec<String> = args[2..].to_vec();
             Ok(Command::Jobs { args: jobs_args })
+        }
+        "batch" => {
+            // Collect remaining args for batch command
+            let batch_args: Vec<String> = args[2..].to_vec();
+            Ok(Command::Batch { args: batch_args })
         }
         "worker" => {
             let mut pod_id = None;
@@ -279,6 +289,7 @@ USAGE:
 COMMANDS:
     submit       Submit jobs to the distributed queue
     jobs         Manage jobs (list, get, retry, cancel, delete, stats)
+    batch        Manage batch jobs (submit, status, list, cancel)
     worker       Run a worker that claims and processes jobs from TiKV
     scanner      Run a scanner that discovers files and creates jobs
     health       Run a standalone health check server
@@ -347,6 +358,15 @@ EXAMPLES:
 
     # Get job details
     roboflow jobs get <job-id>
+
+    # Submit a batch job
+    roboflow batch submit batch.yaml
+
+    # List batch jobs
+    roboflow batch list
+
+    # Get batch status
+    roboflow batch status default:my-batch
 
     # Run worker with default settings
     roboflow worker
@@ -933,6 +953,9 @@ fn main() {
                 Command::Jobs { args } => crate::commands::run_jobs_command(&args)
                     .await
                     .map_err(|e| e.into()),
+                Command::Batch { args } => crate::commands::run_batch_command(&args)
+                    .await
+                    .map_err(|e| e.into()),
                 Command::Worker {
                     pod_id,
                     storage_url,
@@ -968,11 +991,13 @@ fn main() {
                 };
                 rt.block_on(run_health_command(host, port))
             }
-            Command::Submit { .. } | Command::Jobs { .. } => {
-                // Error for submit/jobs commands without distributed feature
-                Err("Submit and Jobs commands require 'distributed' feature. \
+            Command::Submit { .. } | Command::Jobs { .. } | Command::Batch { .. } => {
+                // Error for submit/jobs/batch commands without distributed feature
+                Err(
+                    "Submit, Jobs, and Batch commands require 'distributed' feature. \
                      Please rebuild with: cargo build --features distributed"
-                    .into())
+                        .into(),
+                )
             }
             _ => {
                 // Error for other commands without distributed feature

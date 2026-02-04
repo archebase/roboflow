@@ -7,14 +7,14 @@
 //! The controller implements the reconciliation loop that drives the actual state
 //! to match the desired state (BatchSpec). This is similar to Kubernetes controllers.
 
-use super::key::{BatchKeys, BatchIndexKeys, WorkUnitKeys};
+use super::key::{BatchIndexKeys, BatchKeys, WorkUnitKeys};
 use super::spec::BatchSpec;
 use super::status::{BatchPhase, BatchStatus, DiscoveryStatus};
 use super::work_unit::{WorkFile, WorkUnit, WorkUnitStatus};
 use crate::tikv::{TikvClient, TikvError};
 
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 /// Controller configuration.
 #[derive(Debug, Clone)]
@@ -96,7 +96,10 @@ impl BatchController {
     pub async fn reconcile_all(&self) -> Result<(), TikvError> {
         // Scan for all batch specs
         let prefix = BatchKeys::specs_prefix();
-        let specs = self.client.scan(prefix, self.config.max_batches_per_loop as u32).await?;
+        let specs = self
+            .client
+            .scan(prefix, self.config.max_batches_per_loop as u32)
+            .await?;
 
         tracing::debug!(count = specs.len(), "Found batch specs to reconcile");
 
@@ -177,9 +180,8 @@ impl BatchController {
                 }
 
                 status.transition_to(BatchPhase::Discovering);
-                status.discovery_status = Some(DiscoveryStatus::new(
-                    spec.spec.sources.len() as u32,
-                ));
+                status.discovery_status =
+                    Some(DiscoveryStatus::new(spec.spec.sources.len() as u32));
 
                 Ok(status)
             }
@@ -228,7 +230,9 @@ impl BatchController {
                 break;
             }
 
-            let files = self.discover_files(&source.url, &spec.metadata.namespace, &spec.metadata.name).await?;
+            let files = self
+                .discover_files(&source.url, &spec.metadata.namespace, &spec.metadata.name)
+                .await?;
 
             // Create work units for discovered files
             for file_url in files {
@@ -295,14 +299,12 @@ impl BatchController {
 
         for (key, value) in work_units {
             match bincode::deserialize::<WorkUnit>(&value) {
-                Ok(unit) => {
-                    match unit.status {
-                        WorkUnitStatus::Complete => completed += 1,
-                        WorkUnitStatus::Failed | WorkUnitStatus::Dead => failed += 1,
-                        WorkUnitStatus::Processing => processing += 1,
-                        _ => {}
-                    }
-                }
+                Ok(unit) => match unit.status {
+                    WorkUnitStatus::Complete => completed += 1,
+                    WorkUnitStatus::Failed | WorkUnitStatus::Dead => failed += 1,
+                    WorkUnitStatus::Processing => processing += 1,
+                    _ => {}
+                },
                 Err(e) => {
                     // Log corrupted work units for investigation
                     tracing::error!(
@@ -380,8 +382,8 @@ impl BatchController {
     /// Save batch status to TiKV.
     async fn save_status(&self, batch_id: &str, status: &BatchStatus) -> Result<(), TikvError> {
         let key = BatchKeys::status(batch_id);
-        let data = bincode::serialize(status)
-            .map_err(|e| TikvError::Serialization(e.to_string()))?;
+        let data =
+            bincode::serialize(status).map_err(|e| TikvError::Serialization(e.to_string()))?;
         self.client.put(key, data).await
     }
 
@@ -392,7 +394,8 @@ impl BatchController {
         let batch_id = super::batch_id_from_spec(spec);
 
         // Validate spec
-        spec.validate().map_err(|e| TikvError::Other(format!("Validation failed: {}", e)))?;
+        spec.validate()
+            .map_err(|e| TikvError::Other(format!("Validation failed: {}", e)))?;
 
         // Create initial status
         let status = BatchStatus::new();
@@ -404,17 +407,19 @@ impl BatchController {
             .into_bytes();
 
         let status_key = BatchKeys::status(&batch_id);
-        let status_data = bincode::serialize(&status)
-            .map_err(|e| TikvError::Serialization(e.to_string()))?;
+        let status_data =
+            bincode::serialize(&status).map_err(|e| TikvError::Serialization(e.to_string()))?;
 
         // Include phase index in the same transaction for atomicity
         let phase_key = BatchIndexKeys::phase(BatchPhase::Pending, &batch_id);
 
-        self.client.batch_put(vec![
-            (spec_key, spec_data),
-            (status_key, status_data),
-            (phase_key, vec![]),
-        ]).await?;
+        self.client
+            .batch_put(vec![
+                (spec_key, spec_data),
+                (status_key, status_data),
+                (phase_key, vec![]),
+            ])
+            .await?;
 
         tracing::info!(
             batch_id = %batch_id,
@@ -523,10 +528,7 @@ impl BatchController {
     ///
     /// This atomically claims a pending work unit and returns it.
     /// Uses a transaction to prevent race conditions.
-    pub async fn claim_work_unit(
-        &self,
-        worker_id: &str,
-    ) -> Result<Option<WorkUnit>, TikvError> {
+    pub async fn claim_work_unit(&self, worker_id: &str) -> Result<Option<WorkUnit>, TikvError> {
         use bincode::{deserialize, serialize};
 
         // First, get a pending work unit key (outside transaction for scan)
@@ -559,27 +561,33 @@ impl BatchController {
         let work_unit_key = WorkUnitKeys::unit(&batch_id, unit_id);
 
         // Use transaction helper for atomic claim operation
-        let result = self.client.transactional_claim(
-            work_unit_key.clone(),
-            pending_key.clone(),
-            worker_id,
-            |data: &[u8]| -> std::result::Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>> {
-                // Deserialize the work unit
-                let mut unit: WorkUnit = deserialize(data)
-                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        let result = self
+            .client
+            .transactional_claim(
+                work_unit_key.clone(),
+                pending_key.clone(),
+                worker_id,
+                |data: &[u8]| -> std::result::Result<
+                    Option<Vec<u8>>,
+                    Box<dyn std::error::Error + Send + Sync>,
+                > {
+                    // Deserialize the work unit
+                    let mut unit: WorkUnit = deserialize(data)
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
-                // Try to claim the work unit
-                if unit.claim(worker_id.to_string()).is_err() {
-                    return Ok(None);
-                }
+                    // Try to claim the work unit
+                    if unit.claim(worker_id.to_string()).is_err() {
+                        return Ok(None);
+                    }
 
-                // Reserialize with updated state
-                let new_data = serialize(&unit)
-                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+                    // Reserialize with updated state
+                    let new_data = serialize(&unit)
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
-                Ok(Some(new_data))
-            },
-        ).await?;
+                    Ok(Some(new_data))
+                },
+            )
+            .await?;
 
         if result.is_none() {
             return Ok(None);
@@ -600,7 +608,11 @@ impl BatchController {
     }
 
     /// Complete a work unit.
-    pub async fn complete_work_unit(&self, batch_id: &str, unit_id: &str) -> Result<bool, TikvError> {
+    pub async fn complete_work_unit(
+        &self,
+        batch_id: &str,
+        unit_id: &str,
+    ) -> Result<bool, TikvError> {
         let key = WorkUnitKeys::unit(batch_id, unit_id);
         let data = self.client.get(key.clone()).await?;
 
@@ -609,13 +621,13 @@ impl BatchController {
             None => return Ok(false),
         };
 
-        let mut unit: WorkUnit = bincode::deserialize(&data)
-            .map_err(|e| TikvError::Deserialization(e.to_string()))?;
+        let mut unit: WorkUnit =
+            bincode::deserialize(&data).map_err(|e| TikvError::Deserialization(e.to_string()))?;
 
         unit.complete();
 
-        let new_data = bincode::serialize(&unit)
-            .map_err(|e| TikvError::Serialization(e.to_string()))?;
+        let new_data =
+            bincode::serialize(&unit).map_err(|e| TikvError::Serialization(e.to_string()))?;
         self.client.put(key, new_data).await?;
 
         Ok(true)
@@ -640,16 +652,16 @@ impl BatchController {
             None => return Ok(false),
         };
 
-        let mut unit: WorkUnit = bincode::deserialize(&data)
-            .map_err(|e| TikvError::Deserialization(e.to_string()))?;
+        let mut unit: WorkUnit =
+            bincode::deserialize(&data).map_err(|e| TikvError::Deserialization(e.to_string()))?;
 
         unit.fail(error);
 
         // Save work unit state first (before adding to pending queue)
         // This prevents race condition where another worker claims from pending
         // before the failed state is persisted
-        let new_data = bincode::serialize(&unit)
-            .map_err(|e| TikvError::Serialization(e.to_string()))?;
+        let new_data =
+            bincode::serialize(&unit).map_err(|e| TikvError::Serialization(e.to_string()))?;
         self.client.put(key.clone(), new_data).await?;
 
         // If retryable, add back to pending queue AFTER saving

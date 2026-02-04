@@ -48,6 +48,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
+use super::batch::{BatchController, WorkUnit};
 use super::merge::MergeCoordinator;
 use super::shutdown::{ShutdownHandler, ShutdownInterrupted};
 use super::tikv::{
@@ -56,7 +57,6 @@ use super::tikv::{
     client::TikvClient,
     schema::{CheckpointState, HeartbeatRecord, JobRecord, JobStatus, WorkerStatus},
 };
-use super::batch::{BatchController, WorkUnit};
 use roboflow_storage::{Storage, StorageFactory};
 use std::collections::HashMap;
 use tokio::sync::{Mutex, RwLock};
@@ -868,13 +868,19 @@ impl Worker {
         let (source_bucket, source_key) = if source_url.starts_with("s3://") {
             let url = source_url.strip_prefix("s3://").unwrap_or("");
             let parts: Vec<&str> = url.splitn(2, '/').collect();
-            let bucket = parts.first().map(|s| s.to_string()).unwrap_or_else(|| "local".to_string());
+            let bucket = parts
+                .first()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "local".to_string());
             let key = parts.get(1).map(|s| s.to_string()).unwrap_or_default();
             (bucket, key)
         } else if source_url.starts_with("oss://") {
             let url = source_url.strip_prefix("oss://").unwrap_or("");
             let parts: Vec<&str> = url.splitn(2, '/').collect();
-            let bucket = parts.first().map(|s| s.to_string()).unwrap_or_else(|| "local".to_string());
+            let bucket = parts
+                .first()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "local".to_string());
             let key = parts.get(1).map(|s| s.to_string()).unwrap_or_default();
             (bucket, key)
         } else {
@@ -902,7 +908,11 @@ impl Worker {
 
     /// Complete a work unit.
     async fn complete_work_unit(&self, batch_id: &str, unit_id: &str) -> Result<(), TikvError> {
-        match self.batch_controller.complete_work_unit(batch_id, unit_id).await {
+        match self
+            .batch_controller
+            .complete_work_unit(batch_id, unit_id)
+            .await
+        {
             Ok(true) => {
                 self.metrics.inc_jobs_completed();
                 self.metrics.dec_active_jobs();
@@ -938,8 +948,17 @@ impl Worker {
     }
 
     /// Fail a work unit with an error message.
-    async fn fail_work_unit(&self, batch_id: &str, unit_id: &str, error: String) -> Result<(), TikvError> {
-        match self.batch_controller.fail_work_unit(batch_id, unit_id, error.clone()).await {
+    async fn fail_work_unit(
+        &self,
+        batch_id: &str,
+        unit_id: &str,
+        error: String,
+    ) -> Result<(), TikvError> {
+        match self
+            .batch_controller
+            .fail_work_unit(batch_id, unit_id, error.clone())
+            .await
+        {
             Ok(true) => {
                 self.metrics.inc_jobs_failed();
                 self.metrics.dec_active_jobs();
@@ -1808,9 +1827,7 @@ impl Worker {
             if active_count < self.config.max_concurrent_jobs {
                 // First, try to claim a regular job
                 let claimed_work = match self.find_and_claim_job().await {
-                    Ok(Some(job)) => {
-                        Some(WorkItem::Job(job))
-                    }
+                    Ok(Some(job)) => Some(WorkItem::Job(job)),
                     Ok(None) => {
                         // No regular jobs, try to claim a work unit from batch jobs
                         match self.find_and_claim_work_unit().await {
@@ -1928,11 +1945,14 @@ impl Worker {
                                     "Shutdown requested, not processing new work unit"
                                 );
                                 // Release the work unit back to Pending
-                                let _ = self.batch_controller.fail_work_unit(
-                                    &batch_id,
-                                    &unit_id,
-                                    "Shutdown requested, releasing back to Pending".to_string()
-                                ).await;
+                                let _ = self
+                                    .batch_controller
+                                    .fail_work_unit(
+                                        &batch_id,
+                                        &unit_id,
+                                        "Shutdown requested, releasing back to Pending".to_string(),
+                                    )
+                                    .await;
                                 self.metrics.dec_active_jobs();
                                 break;
                             }
@@ -1942,7 +1962,9 @@ impl Worker {
 
                             match result {
                                 ProcessingResult::Success => {
-                                    if let Err(e) = self.complete_work_unit(&batch_id, &unit_id).await {
+                                    if let Err(e) =
+                                        self.complete_work_unit(&batch_id, &unit_id).await
+                                    {
                                         tracing::error!(
                                             pod_id = %self.pod_id,
                                             unit_id = %unit_id,
@@ -1961,11 +1983,16 @@ impl Worker {
                                             unit_id = %unit_id,
                                             "Work unit interrupted by shutdown, releasing back to Pending"
                                         );
-                                        if let Err(e) = self.batch_controller.fail_work_unit(
-                                            &batch_id,
-                                            &unit_id,
-                                            "Shutdown interrupted, releasing back to Pending".to_string()
-                                        ).await {
+                                        if let Err(e) = self
+                                            .batch_controller
+                                            .fail_work_unit(
+                                                &batch_id,
+                                                &unit_id,
+                                                "Shutdown interrupted, releasing back to Pending"
+                                                    .to_string(),
+                                            )
+                                            .await
+                                        {
                                             tracing::error!(
                                                 pod_id = %self.pod_id,
                                                 unit_id = %unit_id,
@@ -1977,7 +2004,9 @@ impl Worker {
                                         break;
                                     }
 
-                                    if let Err(e) = self.fail_work_unit(&batch_id, &unit_id, error).await {
+                                    if let Err(e) =
+                                        self.fail_work_unit(&batch_id, &unit_id, error).await
+                                    {
                                         tracing::error!(
                                             pod_id = %self.pod_id,
                                             unit_id = %unit_id,

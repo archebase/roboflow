@@ -20,12 +20,12 @@
 //! **Note:** Jobs are internally implemented as single-file batch jobs.
 //! This provides a unified architecture where all work goes through the batch system.
 
+use roboflow_distributed::TikvClient;
 use roboflow_distributed::batch::{
-    BatchController, BatchJobSpec, BatchMetadata, BatchPhase, BatchSpec, BatchSummary,
-    SourceUrl, WorkUnitConfig,
+    BatchController, BatchJobSpec, BatchMetadata, BatchPhase, BatchSpec, BatchSummary, SourceUrl,
+    WorkUnitConfig,
 };
 use roboflow_distributed::tikv::schema::ConfigRecord;
-use roboflow_distributed::TikvClient;
 use std::path::{Path, PathBuf};
 
 use crate::commands::utils::parse_storage_url;
@@ -226,7 +226,9 @@ impl SubmitCommand {
 
         // Process each input
         for input in &self.inputs {
-            match self.submit_batch(input, &output, &config_hash, &controller).await
+            match self
+                .submit_batch(input, &output, &config_hash, &controller)
+                .await
             {
                 Ok(batch) => {
                     submitted_batches.push(batch);
@@ -281,7 +283,9 @@ impl SubmitCommand {
             .or_else(|_| std::env::var("USER"))
             .or_else(|_| std::env::var("USERNAME"))
             .unwrap_or_else(|_| {
-                tracing::warn!("No user identity env vars (ROBOFLOW_USER, USER, USERNAME) set, using 'unknown'");
+                tracing::warn!(
+                    "No user identity env vars (ROBOFLOW_USER, USER, USERNAME) set, using 'unknown'"
+                );
                 "unknown".to_string()
             });
 
@@ -579,7 +583,10 @@ impl SubmitCommand {
             match controller.submit_batch(&batch_spec).await {
                 Ok(batch_id) => {
                     // Get the spec and status to create summary
-                    match (controller.get_batch_spec(&batch_id).await, controller.get_batch_status(&batch_id).await) {
+                    match (
+                        controller.get_batch_spec(&batch_id).await,
+                        controller.get_batch_status(&batch_id).await,
+                    ) {
                         (Ok(Some(spec)), Ok(Some(status))) => {
                             submitted_batches.push(BatchSummary {
                                 id: batch_id,
@@ -596,17 +603,23 @@ impl SubmitCommand {
                         }
                         (spec_result, status_result) => {
                             // Log why we're using fallback
-                            let spec_ok = spec_result.is_ok() && spec_result.as_ref().map(|s| s.is_some()).unwrap_or(false);
-                            let status_ok = status_result.is_ok() && status_result.as_ref().map(|s| s.is_some()).unwrap_or(false);
+                            let spec_ok = spec_result.is_ok()
+                                && spec_result.as_ref().map(|s| s.is_some()).unwrap_or(false);
+                            let status_ok = status_result.is_ok()
+                                && status_result.as_ref().map(|s| s.is_some()).unwrap_or(false);
 
                             let spec_err = if !spec_ok {
-                                spec_result.err().map(|e| format!("{:?}", e))
+                                spec_result
+                                    .err()
+                                    .map(|e| format!("{:?}", e))
                                     .or_else(|| Some("not found".to_string()))
                             } else {
                                 None
                             };
                             let status_err = if !status_ok {
-                                status_result.err().map(|e| format!("{:?}", e))
+                                status_result
+                                    .err()
+                                    .map(|e| format!("{:?}", e))
                                     .or_else(|| Some("not found".to_string()))
                             } else {
                                 None
@@ -884,9 +897,7 @@ fn print_batch_summaries(batches: &[BatchSummary], format: OutputFormat) {
             println!("{}", json);
         }
         OutputFormat::Csv => {
-            println!(
-                "id,name,namespace,phase,files_total,files_completed,files_failed,created_at"
-            );
+            println!("id,name,namespace,phase,files_total,files_completed,files_failed,created_at");
             for batch in batches {
                 println!(
                     "{},{},{},{},{},{},{},{}",
@@ -908,21 +919,41 @@ fn print_batch_summaries(batches: &[BatchSummary], format: OutputFormat) {
             }
 
             // Calculate column widths
-            let id_width = batches.iter().map(|b| b.id.len()).max().unwrap_or(8).min(20);
-            let name_width = batches.iter().map(|b| b.name.len()).max().unwrap_or(4).min(30);
+            let id_width = batches
+                .iter()
+                .map(|b| b.id.len())
+                .max()
+                .unwrap_or(8)
+                .min(20);
+            let name_width = batches
+                .iter()
+                .map(|b| b.name.len())
+                .max()
+                .unwrap_or(4)
+                .min(30);
             let phase_width = 12;
 
             // Print header
             println!(
                 "{:<id_width$} {:<name_width$} {:<phase_width$} {:>10} {:>10} {:>10}",
-                "ID", "NAME", "PHASE", "TOTAL", "DONE", "FAILED",
+                "ID",
+                "NAME",
+                "PHASE",
+                "TOTAL",
+                "DONE",
+                "FAILED",
                 id_width = id_width,
                 name_width = name_width,
                 phase_width = phase_width
             );
             println!(
                 "{:-<id_width$} {:-<name_width$} {:-<phase_width$} {:>10} {:>10} {:>10}",
-                "", "", "", "", "", "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
                 id_width = id_width,
                 name_width = name_width,
                 phase_width = phase_width

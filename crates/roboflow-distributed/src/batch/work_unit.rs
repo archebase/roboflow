@@ -286,9 +286,7 @@ pub enum WorkUnitError {
     #[error("work unit {id} is not claimable (status: {status:?})")]
     NotClaimable { id: String, status: WorkUnitStatus },
 
-    #[error(
-        "work unit {id} exceeded max attempts ({max_attempts})"
-    )]
+    #[error("work unit {id} exceeded max attempts ({max_attempts})")]
     MaxAttemptsExceeded { id: String, max_attempts: u32 },
 
     #[error("work unit serialization error: {0}")]

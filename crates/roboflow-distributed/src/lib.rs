@@ -37,11 +37,10 @@ pub use tikv::{
 
 // Re-export public types from batch (declarative batch processing)
 pub use batch::{
-    BatchController, BatchKeys, BatchIndexKeys, BatchMetadata, BatchPhase, BatchSpec,
-    BatchSpecError, BatchSummary, ControllerConfig,
-    BatchStatus, DiscoveryStatus, FailedWorkUnit, PartitionStrategy, SourceUrl, WorkFile,
-    WorkUnit, WorkUnitConfig, WorkUnitError, WorkUnitStatus, WorkUnitSummary,
-    API_VERSION, KIND_BATCH_JOB,
+    API_VERSION, BatchController, BatchIndexKeys, BatchKeys, BatchMetadata, BatchPhase, BatchSpec,
+    BatchSpecError, BatchStatus, BatchSummary, ControllerConfig, DiscoveryStatus, FailedWorkUnit,
+    KIND_BATCH_JOB, PartitionStrategy, SourceUrl, WorkFile, WorkUnit, WorkUnitConfig,
+    WorkUnitError, WorkUnitStatus, WorkUnitSummary,
 };
 
 // Re-export public types from catalog (metadata storage)

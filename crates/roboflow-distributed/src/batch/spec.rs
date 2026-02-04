@@ -294,10 +294,7 @@ impl BatchSpec {
     }
 
     fn validate_source_url(&self, url: &str) -> Result<(), BatchSpecError> {
-        if !url.starts_with("s3://")
-            && !url.starts_with("oss://")
-            && !url.starts_with("file://")
-        {
+        if !url.starts_with("s3://") && !url.starts_with("oss://") && !url.starts_with("file://") {
             return Err(BatchSpecError::InvalidUrl {
                 url: url.to_string(),
                 reason: "invalid scheme (must be s3://, oss://, or file://)".to_string(),
@@ -307,10 +304,7 @@ impl BatchSpec {
     }
 
     fn validate_output_url(&self, url: &str) -> Result<(), BatchSpecError> {
-        if !url.starts_with("s3://")
-            && !url.starts_with("oss://")
-            && !url.starts_with("file://")
-        {
+        if !url.starts_with("s3://") && !url.starts_with("oss://") && !url.starts_with("file://") {
             return Err(BatchSpecError::InvalidUrl {
                 url: url.to_string(),
                 reason: "invalid scheme (must be s3://, oss://, or file://)".to_string(),
@@ -498,10 +492,15 @@ mod tests {
         );
 
         spec.metadata.submitted_by = Some("user1".to_string());
-        spec.metadata.labels.insert("project".to_string(), "robot-car".to_string());
+        spec.metadata
+            .labels
+            .insert("project".to_string(), "robot-car".to_string());
 
         assert_eq!(spec.metadata.submitted_by, Some("user1".to_string()));
-        assert_eq!(spec.metadata.labels.get("project"), Some(&"robot-car".to_string()));
+        assert_eq!(
+            spec.metadata.labels.get("project"),
+            Some(&"robot-car".to_string())
+        );
     }
 
     #[test]

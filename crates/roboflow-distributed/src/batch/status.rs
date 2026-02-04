@@ -110,10 +110,7 @@ pub enum BatchPhase {
 impl BatchPhase {
     /// Check if phase is terminal (job won't transition further).
     pub fn is_terminal(&self) -> bool {
-        matches!(
-            self,
-            Self::Complete | Self::Failed | Self::Cancelled
-        )
+        matches!(self, Self::Complete | Self::Failed | Self::Cancelled)
     }
 
     /// Check if phase is active (work can progress).

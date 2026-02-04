@@ -1379,6 +1379,24 @@ impl DatasetWriter for LerobotWriter {
             );
         }
 
+        // Flush pending uploads to cloud storage before completing
+        // This ensures all staged files are uploaded before finalize returns
+        if let Some(coordinator) = &self.upload_coordinator {
+            tracing::info!("Waiting for pending cloud uploads to complete before finalize...");
+            match coordinator.flush() {
+                Ok(()) => {
+                    tracing::info!("All cloud uploads completed successfully");
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Some cloud uploads may not have completed before finalize. \
+                         Background uploads will continue after finalize returns."
+                    );
+                }
+            }
+        }
+
         Ok(WriterStats {
             frames_written: self.total_frames,
             images_encoded: self.images_encoded,

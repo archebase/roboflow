@@ -839,7 +839,10 @@ impl TikvClient {
         claim_processor: F,
     ) -> Result<Option<Vec<u8>>>
     where
-        F: FnOnce(&[u8]) -> std::result::Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>>,
+        F: FnOnce(
+            &[u8],
+        )
+            -> std::result::Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>>,
     {
         let inner = self.inner.as_ref().ok_or_else(|| {
             TikvError::ConnectionFailed("TiKV client not initialized".to_string())

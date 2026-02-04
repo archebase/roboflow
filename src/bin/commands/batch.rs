@@ -79,9 +79,8 @@ fn validate_batch_id(batch_id: &str) -> Result<(), String> {
         if s.is_empty() {
             return false;
         }
-        s.chars().all(|c| {
-            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.'
-        })
+        s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
     };
 
     if !is_valid_label(namespace) {
@@ -399,18 +398,33 @@ impl BatchCommand {
     /// Run the batch command.
     pub async fn run(&self) -> Result<(), String> {
         match self {
-            BatchCommand::Submit { spec_file, tikv_endpoints } => {
-                self.run_submit(spec_file, tikv_endpoints).await
+            BatchCommand::Submit {
+                spec_file,
+                tikv_endpoints,
+            } => self.run_submit(spec_file, tikv_endpoints).await,
+            BatchCommand::Status {
+                batch_id,
+                format,
+                watch,
+                tikv_endpoints,
+            } => {
+                self.run_status(batch_id, *format, *watch, tikv_endpoints)
+                    .await
             }
-            BatchCommand::Status { batch_id, format, watch, tikv_endpoints } => {
-                self.run_status(batch_id, *format, *watch, tikv_endpoints).await
+            BatchCommand::List {
+                phase,
+                namespace,
+                limit,
+                format,
+                tikv_endpoints,
+            } => {
+                self.run_list(*phase, namespace.as_ref(), *limit, *format, tikv_endpoints)
+                    .await
             }
-            BatchCommand::List { phase, namespace, limit, format, tikv_endpoints } => {
-                self.run_list(*phase, namespace.as_ref(), *limit, *format, tikv_endpoints).await
-            }
-            BatchCommand::Cancel { batch_id, tikv_endpoints } => {
-                self.run_cancel(batch_id, tikv_endpoints).await
-            }
+            BatchCommand::Cancel {
+                batch_id,
+                tikv_endpoints,
+            } => self.run_cancel(batch_id, tikv_endpoints).await,
         }
     }
 
@@ -474,7 +488,8 @@ impl BatchCommand {
         validate_batch_id(batch_id)?;
 
         if watch {
-            self.run_status_watch(batch_id, format, tikv_endpoints).await
+            self.run_status_watch(batch_id, format, tikv_endpoints)
+                .await
         } else {
             self.run_status_once(batch_id, format, tikv_endpoints).await
         }
@@ -532,7 +547,10 @@ impl BatchCommand {
         let mut last_phase = None;
 
         loop {
-            let status = controller.get_batch_status(batch_id).await.map_err(|e| e.to_string())?;
+            let status = controller
+                .get_batch_status(batch_id)
+                .await
+                .map_err(|e| e.to_string())?;
 
             match &status {
                 Some(s) => {
@@ -604,10 +622,14 @@ impl BatchCommand {
         let batches: Vec<_> = batches
             .into_iter()
             .filter(|b| {
-                if let Some(p) = phase && b.phase != p {
+                if let Some(p) = phase
+                    && b.phase != p
+                {
                     return false;
                 }
-                if let Some(ns) = namespace && &b.namespace != ns {
+                if let Some(ns) = namespace
+                    && &b.namespace != ns
+                {
                     return false;
                 }
                 true
@@ -620,7 +642,9 @@ impl BatchCommand {
                 println!("{}", serde_json::to_string_pretty(&batches).unwrap());
             }
             OutputFormat::Csv => {
-                println!("id,name,namespace,phase,files_total,files_completed,files_failed,created_at");
+                println!(
+                    "id,name,namespace,phase,files_total,files_completed,files_failed,created_at"
+                );
                 for b in &batches {
                     println!(
                         "{},{},{},{},{},{},{},{}",
@@ -683,7 +707,9 @@ impl BatchCommand {
 }
 
 /// Create a TiKV client from endpoints.
-async fn create_client(tikv_endpoints: &Option<String>) -> Result<std::sync::Arc<TikvClient>, String> {
+async fn create_client(
+    tikv_endpoints: &Option<String>,
+) -> Result<std::sync::Arc<TikvClient>, String> {
     let config = if let Some(eps) = tikv_endpoints {
         roboflow_distributed::TikvConfig::with_pd_endpoints(eps)
     } else {
@@ -773,13 +799,15 @@ fn print_batches_table(batches: &[BatchSummary]) {
         return;
     }
 
-    println!("{:<20} {:<15} {:<12} {:>10} {:>10} {:>10} {:>10}",
+    println!(
+        "{:<20} {:<15} {:<12} {:>10} {:>10} {:>10} {:>10}",
         "ID", "NAME", "PHASE", "TOTAL", "DONE", "FAILED", "CREATED"
     );
     println!("{}", "-".repeat(100));
 
     for b in batches {
-        println!("{:<20} {:<15} {:<12} {:>10} {:>10} {:>10} {:>10}",
+        println!(
+            "{:<20} {:<15} {:<12} {:>10} {:>10} {:>10} {:>10}",
             truncate_id(&b.id, 20),
             truncate(&b.name, 15),
             format!("{:?}", b.phase),
@@ -1035,7 +1063,10 @@ mod tests {
     #[test]
     fn test_truncate_id() {
         assert_eq!(truncate_id("default:my-batch", 20), "default:my-batch");
-        assert_eq!(truncate_id("production:very-long-batch-name", 20), "producti:very-lon...");
+        assert_eq!(
+            truncate_id("production:very-long-batch-name", 20),
+            "producti:very-lon..."
+        );
     }
 
     #[test]

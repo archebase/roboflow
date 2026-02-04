@@ -6,8 +6,8 @@
 //!
 //! Extends the existing key namespace for batch job coordination.
 
-use crate::tikv::key::KeyBuilder;
 use super::status::BatchPhase;
+use crate::tikv::key::KeyBuilder;
 
 /// Batch job keys for TiKV storage.
 pub struct BatchKeys;
@@ -46,10 +46,7 @@ impl BatchKeys {
     ///
     /// Format: `/roboflow/v1/batch/statuses/`
     pub fn statuses_prefix() -> Vec<u8> {
-        KeyBuilder::new()
-            .push("batch")
-            .push("statuses")
-            .build()
+        KeyBuilder::new().push("batch").push("statuses").build()
     }
 }
 

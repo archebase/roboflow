@@ -54,6 +54,15 @@ pub enum AuditOperation {
 
     /// Admin action performed.
     AdminAction,
+
+    /// Batch job was submitted.
+    BatchSubmit,
+
+    /// Batch job was queried.
+    BatchQuery,
+
+    /// Batch job was cancelled.
+    BatchCancel,
 }
 
 /// Additional context for audit entries.

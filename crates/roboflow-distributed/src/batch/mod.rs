@@ -59,19 +59,14 @@ mod status;
 mod work_unit;
 
 // Re-export public types
-pub use controller::{
-    BatchController, BatchSummary, ControllerConfig,
-};
+pub use controller::{BatchController, BatchSummary, ControllerConfig};
+pub use key::{BatchIndexKeys, BatchKeys, WorkUnitKeys};
 pub use spec::{
-    BatchSpec, BatchMetadata, BatchJobSpec, BatchSpecError, SourceUrl,
-    WorkUnitConfig, PartitionStrategy, API_VERSION, KIND_BATCH_JOB,
+    API_VERSION, BatchJobSpec, BatchMetadata, BatchSpec, BatchSpecError, KIND_BATCH_JOB,
+    PartitionStrategy, SourceUrl, WorkUnitConfig,
 };
-pub use status::{
-    BatchStatus, BatchPhase, DiscoveryStatus, FailedWorkUnit,
-};
-pub use work_unit::{WorkFile, WorkUnit, WorkUnitStatus, WorkUnitError, WorkUnitSummary};
-pub use key::{BatchKeys, WorkUnitKeys, BatchIndexKeys};
-
+pub use status::{BatchPhase, BatchStatus, DiscoveryStatus, FailedWorkUnit};
+pub use work_unit::{WorkFile, WorkUnit, WorkUnitError, WorkUnitStatus, WorkUnitSummary};
 
 /// Create a batch ID from a spec.
 ///
@@ -101,7 +96,11 @@ mod tests {
 
     #[test]
     fn test_batch_id_from_spec() {
-        let spec = BatchSpec::new("my-batch", vec!["s3://bucket/*.bag".to_string()], "output/".to_string());
+        let spec = BatchSpec::new(
+            "my-batch",
+            vec!["s3://bucket/*.bag".to_string()],
+            "output/".to_string(),
+        );
         assert_eq!(batch_id_from_spec(&spec), "default:my-batch");
     }
 
