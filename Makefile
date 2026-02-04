@@ -1,4 +1,4 @@
-.PHONY: all build build-release test test-rust test-python test-all coverage coverage-rust coverage-python clippy fmt lint clean publish publish-pypi publish-crates check-license help
+.PHONY: all build build-release test test-rust test-python test-all coverage coverage-rust coverage-python clippy fmt lint clean publish publish-pypi publish-crates check-license dev-up dev-down dev-logs dev-ps help
 
 # Default target
 all: build
@@ -134,6 +134,33 @@ check-license: ## Check REUSE license compliance
 		echo "⚠ reuse tool not found. Install with: pip install reuse"; \
 		exit 1; \
 	fi
+
+# ============================================================================
+# Development (docker-compose)
+# ============================================================================
+
+dev-up: ## Start development services with docker-compose
+	@echo "Starting development services..."
+	docker compose up -d
+	@echo "✓ Services started"
+	@echo "  Use 'make dev-logs' to view logs"
+	@echo "  Use 'make dev-ps' to view service status"
+
+dev-down: ## Stop development services
+	@echo "Stopping development services..."
+	docker compose down
+	@echo "✓ Services stopped"
+
+dev-logs: ## View logs from development services
+	docker compose logs -f
+
+dev-ps: ## Show status of development services
+	docker compose ps
+
+dev-restart: ## Restart development services
+	@echo "Restarting development services..."
+	docker compose restart
+	@echo "✓ Services restarted"
 
 # ============================================================================
 # Utilities
