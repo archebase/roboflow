@@ -247,8 +247,8 @@ mod tests {
     #[test]
     fn test_split_rgb() {
         let mut data = vec![0u8; 9];
-        for i in 0..9 {
-            data[i] = i as u8;
+        for (i, item) in data.iter_mut().enumerate() {
+            *item = i as u8;
         }
         let buffer = AlignedImageBuffer::from_vec(data);
 

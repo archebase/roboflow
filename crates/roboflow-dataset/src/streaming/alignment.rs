@@ -260,10 +260,7 @@ impl FrameAlignmentBuffer {
                     if format != ImageFormat::Unknown {
                         // SAFETY: We're in &mut self context, so we can call get_decoder
                         // We need to explicitly reborrow to get mutable access
-                        match decoder
-                            .get_decoder()
-                            .decode(data, format)
-                        {
+                        match decoder.get_decoder().decode(data, format) {
                             Ok(decoded) => {
                                 tracing::debug!(
                                     width = decoded.width,
