@@ -1,4 +1,4 @@
-.PHONY: all build build-release test test-rust test-python test-all coverage coverage-rust coverage-python clippy fmt lint clean publish publish-pypi publish-crates check-license dev-up dev-down dev-logs dev-ps help
+.PHONY: all build build-release test test-rust test-python test-all coverage coverage-rust coverage-python clippy fmt lint clean publish publish-pypi publish-crates check-license dev-up dev-down dev-logs dev-ps dev-restart dev-clean help
 
 # Default target
 all: build
@@ -161,6 +161,12 @@ dev-restart: ## Restart development services
 	@echo "Restarting development services..."
 	docker compose restart
 	@echo "✓ Services restarted"
+
+dev-clean: ## Stop and remove all development containers, volumes, and networks
+	@echo "Cleaning up development environment..."
+	docker compose down -v --remove-orphans
+	@echo "✓ Development environment cleaned"
+	@echo "  Containers, volumes, and networks removed"
 
 # ============================================================================
 # Utilities
