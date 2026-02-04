@@ -50,6 +50,9 @@ pub struct StreamingConfig {
 
 impl Default for StreamingConfig {
     fn default() -> Self {
+        #[cfg(feature = "image-decode")]
+        use crate::image::ImageDecoderConfig;
+
         Self {
             fps: 30,
             completion_window_frames: 5, // Wait for 5 frames (166ms at 30fps)
@@ -58,6 +61,9 @@ impl Default for StreamingConfig {
             late_message_strategy: LateMessageStrategy::WarnAndDrop,
             feature_requirements: HashMap::new(),
             temp_dir: None,
+            #[cfg(feature = "image-decode")]
+            decoder_config: Some(ImageDecoderConfig::new()),
+            #[cfg(not(feature = "image-decode"))]
             decoder_config: None,
         }
     }

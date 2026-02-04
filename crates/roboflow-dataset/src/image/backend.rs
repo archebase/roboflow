@@ -14,7 +14,12 @@
 //! - `CpuImageDecoder` for CPU-based decoding (always available)
 //! - GPU and Apple decoders (platform-specific, feature-gated)
 
-use super::{ImageError, Result, format::ImageFormat, memory::MemoryStrategy};
+use super::{
+    ImageError, Result,
+    format::ImageFormat,
+    memory::{MemoryStrategy, allocate},
+};
+use std::io::Cursor;
 
 /// Decoder type enumeration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,7 +211,8 @@ impl CpuImageDecoder {
     fn decode_jpeg(&self, data: &[u8]) -> Result<DecodedImage> {
         use image::ImageDecoder;
 
-        let decoder = image::codecs::jpeg::JpegDecoder::new(data)
+        let cursor = Cursor::new(data);
+        let decoder = image::codecs::jpeg::JpegDecoder::new(cursor)
             .map_err(|e| ImageError::DecodeFailed(format!("JPEG decoder init: {}", e)))?;
 
         let dimensions = decoder.dimensions();
@@ -227,7 +233,8 @@ impl CpuImageDecoder {
     fn decode_png(&self, data: &[u8]) -> Result<DecodedImage> {
         use image::ImageDecoder;
 
-        let decoder = image::codecs::png::PngDecoder::new(data)
+        let cursor = Cursor::new(data);
+        let decoder = image::codecs::png::PngDecoder::new(cursor)
             .map_err(|e| ImageError::DecodeFailed(format!("PNG decoder init: {}", e)))?;
 
         let dimensions = decoder.dimensions();

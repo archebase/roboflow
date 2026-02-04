@@ -718,7 +718,7 @@ impl EpisodeUploadCoordinator {
             files.push((
                 path.clone(),
                 format!(
-                    "{}/videos/chunk-000/observation.images.{}/{}",
+                    "{}/videos/chunk-000/{}/{}",
                     episode.remote_prefix, camera, filename
                 ),
                 UploadFileType::Video(camera.clone()),

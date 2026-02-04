@@ -129,9 +129,11 @@ pub fn decode_compressed_image(data: &[u8], format: ImageFormat) -> Result<Decod
 #[cfg(feature = "image-decode")]
 fn decode_jpeg(data: &[u8]) -> Result<DecodedImage> {
     use image::ImageDecoder;
+    use std::io::Cursor;
 
-    // Create JPEG decoder
-    let decoder = image::codecs::jpeg::JpegDecoder::new(data)
+    // Create JPEG decoder with cursor for seekable input
+    let cursor = Cursor::new(data);
+    let decoder = image::codecs::jpeg::JpegDecoder::new(cursor)
         .map_err(|e| ImageError::DecodeFailed(format!("JPEG decoder init: {}", e)))?;
 
     let dimensions = decoder.dimensions();
@@ -152,9 +154,11 @@ fn decode_jpeg(data: &[u8]) -> Result<DecodedImage> {
 #[cfg(feature = "image-decode")]
 fn decode_png(data: &[u8]) -> Result<DecodedImage> {
     use image::ImageDecoder;
+    use std::io::Cursor;
 
-    // Create PNG decoder
-    let decoder = image::codecs::png::PngDecoder::new(data)
+    // Create PNG decoder with cursor for seekable input
+    let cursor = Cursor::new(data);
+    let decoder = image::codecs::png::PngDecoder::new(cursor)
         .map_err(|e| ImageError::DecodeFailed(format!("PNG decoder init: {}", e)))?;
 
     let dimensions = decoder.dimensions();

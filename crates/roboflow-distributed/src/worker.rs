@@ -57,7 +57,6 @@ use super::tikv::{
 };
 use roboflow_storage::Storage;
 use std::collections::HashMap;
-use tokio::sync::broadcast;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
@@ -534,9 +533,6 @@ pub struct Worker {
     /// Shutdown handler for graceful termination.
     shutdown_handler: ShutdownHandler,
 
-    /// Shutdown sender.
-    shutdown_tx: Option<broadcast::Sender<()>>,
-
     /// Cancellation token for aborting conversion tasks.
     cancellation_token: Arc<CancellationToken>,
 
@@ -574,7 +570,6 @@ impl Worker {
             config,
             metrics: Arc::new(WorkerMetrics::new()),
             shutdown_handler: ShutdownHandler::new(),
-            shutdown_tx: None,
             cancellation_token: Arc::new(CancellationToken::new()),
             job_registry: Arc::new(RwLock::new(JobRegistry::default())),
             config_cache: Arc::new(Mutex::new(LruCache::new(
@@ -1268,10 +1263,8 @@ impl Worker {
     /// 6. Repeat until shutdown
     pub async fn run(&mut self) -> Result<(), TikvError> {
         // Start signal handler for SIGTERM/SIGINT
-        let _signal_rx = self.shutdown_handler.start_signal_handler();
-
-        let (shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
-        self.shutdown_tx = Some(shutdown_tx.clone());
+        let mut shutdown_rx = self.shutdown_handler.start_signal_handler();
+        let shutdown_tx = self.shutdown_handler.sender();
 
         // Start heartbeat task
         let tikv = self.tikv.clone();

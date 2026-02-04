@@ -493,8 +493,9 @@ impl LerobotWriter {
                     }
                 } else {
                     // Default path if image not available
+                    // camera already contains full feature path
                     let path = format!(
-                        "videos/chunk-000/observation.images.{}/episode_{:06}.mp4",
+                        "videos/chunk-000/{}/episode_{:06}.mp4",
                         camera, self.episode_index
                     );
                     if let Some(paths) = image_paths.get_mut(camera) {
@@ -545,16 +546,16 @@ impl LerobotWriter {
 
         // Add image frame references
         for camera in &cameras {
-            let feature_name = format!("observation.images.{}", camera);
+            // camera key already contains the full feature path (e.g., "observation.images.cam_high")
             if let Some(paths) = image_paths.get(camera) {
                 series_vec.push(Series::new(
-                    format!("{}_path", feature_name).as_str(),
+                    format!("{}_path", camera).as_str(),
                     paths.clone(),
                 ));
             }
             if let Some(timestamps) = image_timestamps.get(camera) {
                 series_vec.push(Series::new(
-                    format!("{}_timestamp", feature_name).as_str(),
+                    format!("{}_timestamp", camera).as_str(),
                     timestamps.clone(),
                 ));
             }
@@ -687,15 +688,13 @@ impl LerobotWriter {
             .file_name()
             .ok_or_else(|| roboflow_core::RoboflowError::parse("Path", "Invalid file name"))?;
 
-        let feature_name = format!("observation.images.{}", camera);
+        // camera key already contains the full feature path (e.g., "observation.images.cam_high")
         let remote_path = if self.output_prefix.is_empty() {
-            Path::new("videos/chunk-000")
-                .join(&feature_name)
-                .join(filename)
+            Path::new("videos/chunk-000").join(camera).join(filename)
         } else {
             Path::new(&self.output_prefix)
                 .join("videos/chunk-000")
-                .join(&feature_name)
+                .join(camera)
                 .join(filename)
         };
 
@@ -901,8 +900,8 @@ impl LerobotWriter {
             buffer_time += b_start.elapsed();
 
             if !buffer.is_empty() {
-                let feature_name = format!("observation.images.{}", camera);
-                let camera_dir = videos_dir.join(&feature_name);
+                // camera key already contains the full feature path (e.g., "observation.images.cam_high")
+                let camera_dir = videos_dir.join(&camera);
                 fs::create_dir_all(&camera_dir)?;
 
                 let video_path = camera_dir.join(format!("episode_{:06}.mp4", self.episode_index));
@@ -991,8 +990,8 @@ impl LerobotWriter {
 
         // Create all camera directories before parallel encoding to avoid race
         for (camera, _) in &camera_data {
-            let feature_name = format!("observation.images.{}", camera);
-            let camera_dir = videos_dir.join(&feature_name);
+            // camera key already contains the full feature path (e.g., "observation.images.cam_high")
+            let camera_dir = videos_dir.join(camera);
             fs::create_dir_all(&camera_dir).map_err(|e| {
                 roboflow_core::RoboflowError::encode(
                     "VideoEncoder",
@@ -1030,8 +1029,8 @@ impl LerobotWriter {
                 }
 
                 if !buffer.is_empty() {
-                    let feature_name = format!("observation.images.{}", camera);
-                    let camera_dir = videos_dir.join(&feature_name);
+                    // camera key already contains the full feature path (e.g., "observation.images.cam_high")
+                    let camera_dir = videos_dir.join(camera);
                     let video_path = camera_dir.join(format!("episode_{:06}.mp4", self.episode_index));
 
                     let encoder = Mp4Encoder::with_config(encoder_config.clone());
@@ -1451,10 +1450,10 @@ impl LerobotWriterTrait for LerobotWriter {
                         .is_some_and(|v| !v.is_empty())
                 })
                 .map(|camera| {
-                    let feature_name = format!("observation.images.{}", camera);
+                    // camera key already contains the full feature path (e.g., "observation.images.cam_high")
                     let video_path = self.output_dir.join(format!(
                         "videos/chunk-000/{}/episode_{:06}.mp4",
-                        feature_name, self.episode_index
+                        camera, self.episode_index
                     ));
                     (camera.clone(), video_path)
                 })
@@ -1531,10 +1530,11 @@ impl FromAlignedFrame for LerobotFrame {
         let action = frame.actions.values().next().cloned();
 
         // Build image frame references
+        // camera already contains full feature path
         let mut image_frames = HashMap::new();
         for camera in frame.images.keys() {
             let path = format!(
-                "videos/chunk-000/observation.images.{}/episode_{:06}.mp4",
+                "videos/chunk-000/{}/episode_{:06}.mp4",
                 camera, episode_index
             );
             image_frames.insert(camera.clone(), (path, frame.timestamp_sec()));

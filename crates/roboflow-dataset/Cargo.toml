@@ -49,6 +49,8 @@ rayon = "1.10"
 anyhow = "1.0"
 
 [features]
+default = ["image-decode"]
+
 # Enable video encoding via FFmpeg (requires ffmpeg installed on system)
 video = ["dep:ffmpeg-next"]
 

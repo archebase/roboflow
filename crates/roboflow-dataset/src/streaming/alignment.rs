@@ -166,17 +166,78 @@ impl FrameAlignmentBuffer {
                     }
                 }
                 "data" => {
-                    if let CodecValue::Bytes(b) = value {
-                        image_data = Some(b.clone());
+                    match value {
+                        CodecValue::Bytes(b) => {
+                            image_data = Some(b.clone());
+                            tracing::debug!(
+                                feature = %feature_name,
+                                data_type = "Bytes",
+                                data_len = b.len(),
+                                data_size_mb = b.len() as f64 / (1024.0 * 1024.0),
+                                "Found image data field"
+                            );
+                        }
+                        CodecValue::Array(arr) => {
+                            // Handle encoded image data stored as UInt8 array
+                            let bytes: Vec<u8> = arr
+                                .iter()
+                                .filter_map(|v| {
+                                    if let CodecValue::UInt8(b) = v {
+                                        Some(*b)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            if !bytes.is_empty() {
+                                image_data = Some(bytes);
+                                tracing::debug!(
+                                    feature = %feature_name,
+                                    data_type = "Array<UInt8>",
+                                    data_len = image_data.as_ref().unwrap().len(),
+                                    data_size_mb = image_data.as_ref().unwrap().len() as f64 / (1024.0 * 1024.0),
+                                    "Found image data field in Array format"
+                                );
+                            } else {
+                                tracing::warn!(
+                                    feature = %feature_name,
+                                    "Image 'data' is Array but not UInt8 elements"
+                                );
+                            }
+                        }
+                        other => {
+                            tracing::warn!(
+                                feature = %feature_name,
+                                value_type = std::any::type_name_of_val(other),
+                                "Image 'data' field found but not Bytes/Array type"
+                            );
+                        }
                     }
                 }
                 "format" => {
                     if let CodecValue::String(f) = value {
                         is_encoded = f != "rgb8";
+                        tracing::debug!(
+                            feature = %feature_name,
+                            format = %f,
+                            is_encoded,
+                            "Found image format field"
+                        );
                     }
                 }
                 _ => {}
             }
+        }
+
+        // Log if we expected image data but didn't find it
+        if (feature_name.contains("image") || feature_name.contains("cam")) && image_data.is_none()
+        {
+            tracing::debug!(
+                feature = %feature_name,
+                num_fields = msg.iter().count(),
+                available_fields = ?msg.keys().cloned().collect::<Vec<_>>(),
+                "Image feature but no data field found"
+            );
         }
 
         // Decode compressed image if decoder available and data is present
