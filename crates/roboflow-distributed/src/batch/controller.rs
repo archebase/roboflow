@@ -236,11 +236,22 @@ impl BatchController {
 
             // Create work units for discovered files
             for file_url in files {
+                tracing::info!(
+                    file_url = %file_url,
+                    "Creating WorkFile with URL"
+                );
+
                 let work_unit = WorkUnit::new(
                     super::batch_id_from_spec(spec),
                     vec![WorkFile::new(file_url.clone(), 0)], // Size fetched during processing
                     spec.spec.output.clone(),
                     spec.spec.config.clone(),
+                );
+
+                tracing::info!(
+                    work_unit_id = %work_unit.id,
+                    work_unit_url = %work_unit.primary_source().unwrap_or(""),
+                    "WorkUnit created - verify URL stored correctly"
                 );
 
                 // Save work unit
@@ -357,6 +368,11 @@ impl BatchController {
         _namespace: &str,
         _name: &str,
     ) -> Result<Vec<String>, TikvError> {
+        tracing::info!(
+            url = %url,
+            "discover_files called with URL"
+        );
+
         // For now, return a single file if not a glob
         // Full glob expansion will be handled by the CLI before submission
         let files = if url.contains('*') {
@@ -370,10 +386,10 @@ impl BatchController {
             vec![url.to_string()]
         };
 
-        tracing::debug!(
-            url = %url,
-            count = files.len(),
-            "Discovered files"
+        tracing::info!(
+            original_url = %url,
+            discovered_files = ?files,
+            "Discovered files to be stored"
         );
 
         Ok(files)
@@ -488,7 +504,11 @@ impl BatchController {
 
                 summaries.push(BatchSummary {
                     id: batch_id.to_string(),
-                    name: spec.metadata.display_name.clone().unwrap_or(spec.metadata.name.clone()),
+                    name: spec
+                        .metadata
+                        .display_name
+                        .clone()
+                        .unwrap_or(spec.metadata.name.clone()),
                     namespace: spec.metadata.namespace,
                     phase: status.phase,
                     files_total: status.files_total,

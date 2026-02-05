@@ -163,8 +163,20 @@ impl Worker {
     async fn find_pending_jobs(&self, limit: usize) -> Result<Vec<JobRecord>, TikvError> {
         use super::tikv::key::JobKeys;
 
+        tracing::debug!(
+            pod_id = %self.pod_id,
+            limit,
+            "Scanning TiKV for pending jobs"
+        );
+
         let prefix = JobKeys::prefix();
         let results = self.tikv.scan(prefix, limit as u32).await?;
+
+        tracing::debug!(
+            pod_id = %self.pod_id,
+            raw_results = results.len(),
+            "TiKV scan returned results"
+        );
 
         let mut pending_jobs = Vec::new();
 
@@ -179,10 +191,10 @@ impl Worker {
         // Sort by created_at for FIFO processing
         pending_jobs.sort_by(|a, b| a.created_at.cmp(&b.created_at));
 
-        tracing::debug!(
+        tracing::info!(
             pod_id = %self.pod_id,
             found = pending_jobs.len(),
-            "Found pending jobs"
+            "Found claimable pending jobs"
         );
 
         Ok(pending_jobs)
@@ -221,13 +233,35 @@ impl Worker {
     ///
     /// Queries pending jobs and attempts to claim one using CAS.
     async fn find_and_claim_job(&self) -> Result<Option<JobRecord>, TikvError> {
+        tracing::debug!(
+            pod_id = %self.pod_id,
+            "Polling for pending jobs"
+        );
         let pending = self.find_pending_jobs(100).await?;
+
+        if pending.is_empty() {
+            tracing::debug!(
+                pod_id = %self.pod_id,
+                "No pending jobs found"
+            );
+        } else {
+            tracing::debug!(
+                pod_id = %self.pod_id,
+                count = pending.len(),
+                "Found pending jobs, attempting to claim"
+            );
+        }
 
         for job in pending {
             if let Some(claimed_job) = self.try_claim_job(&job.id).await? {
                 return Ok(Some(claimed_job));
             }
             // Continue to next job if claim failed (race with another worker)
+            tracing::debug!(
+                pod_id = %self.pod_id,
+                job_id = %job.id,
+                "Failed to claim job (likely claimed by another worker)"
+            );
         }
 
         Ok(None)
@@ -486,17 +520,41 @@ impl Worker {
             }
         }
 
+        // Determine if input is cloud storage based on source_url scheme
+        let is_cloud_storage =
+            job.source_url.starts_with("s3://") || job.source_url.starts_with("oss://");
+
         // Use source_url directly - jobs are self-contained.
+        // For cloud storage (S3/OSS), pass the full URL so the converter can detect it.
         // For local storage paths, strip storage_prefix to avoid double-prefixing.
-        let input_path = if let Some(prefix) = job.source_url.strip_prefix(&self.config.storage_prefix) {
+        tracing::info!(
+            pod_id = %self.pod_id,
+            job_id = %job.id,
+            source_url = %job.source_url,
+            is_cloud_storage,
+            "Processing job with source URL"
+        );
+
+        let input_path = if is_cloud_storage {
+            // Pass full S3/OSS URL - converter will parse it and create cloud storage backend
+            tracing::info!(
+                pod_id = %self.pod_id,
+                job_id = %job.id,
+                input_url = %job.source_url,
+                "Using full cloud URL for input"
+            );
+            PathBuf::from(&job.source_url)
+        } else if let Some(prefix) = job.source_url.strip_prefix(&self.config.storage_prefix) {
+            tracing::info!(
+                pod_id = %self.pod_id,
+                job_id = %job.id,
+                stripped_path = %prefix,
+                "Using stripped local path for input"
+            );
             PathBuf::from(prefix)
         } else {
             PathBuf::from(&job.source_url)
         };
-
-        // Determine if input is cloud storage based on source_url scheme
-        let is_cloud_storage =
-            job.source_url.starts_with("s3://") || job.source_url.starts_with("oss://");
 
         // Build the output path for this job
         let output_path = self.build_output_path(job);
@@ -1474,11 +1532,16 @@ impl Worker {
                     }
                 } else {
                     // No jobs or work units available - use tokio::select! to race shutdown against sleep
+                    tracing::info!(
+                        pod_id = %self.pod_id,
+                        interval_secs = self.config.poll_interval.as_secs(),
+                        "No jobs available, waiting before next poll"
+                    );
                     tokio::select! {
                         _ = sleep(self.config.poll_interval) => {
                             tracing::debug!(
                                 pod_id = %self.pod_id,
-                                "No jobs available, retrying"
+                                "Waking up to poll for jobs"
                             );
                         }
                         _ = shutdown_rx.recv() => {

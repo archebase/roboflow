@@ -606,7 +606,13 @@ impl Scanner {
                     let job_pairs: Vec<(Vec<u8>, Vec<u8>)> = chunk
                         .iter()
                         .map(|(metadata, hash)| {
-                            let job = self.create_job(source_url, metadata, hash, output_prefix, config_hash);
+                            let job = self.create_job(
+                                source_url,
+                                metadata,
+                                hash,
+                                output_prefix,
+                                config_hash,
+                            );
                             use super::tikv::key::JobKeys;
                             let key = JobKeys::record(&job.id);
                             let data = bincode::serialize(&job)

@@ -332,7 +332,11 @@ impl SubmitCommand {
             // Return a mock summary for dry run
             return Ok(BatchSummary {
                 id: format!("jobs:{}", batch_id),
-                name: batch_spec.metadata.display_name.clone().unwrap_or(batch_spec.metadata.name.clone()),
+                name: batch_spec
+                    .metadata
+                    .display_name
+                    .clone()
+                    .unwrap_or(batch_spec.metadata.name.clone()),
                 namespace: batch_spec.metadata.namespace,
                 phase: BatchPhase::Pending,
                 files_total: 1,
@@ -369,7 +373,11 @@ impl SubmitCommand {
 
         Ok(BatchSummary {
             id: returned_batch_id,
-            name: spec.metadata.display_name.clone().unwrap_or(spec.metadata.name.clone()),
+            name: spec
+                .metadata
+                .display_name
+                .clone()
+                .unwrap_or(spec.metadata.name.clone()),
             namespace: spec.metadata.namespace,
             phase: status.phase,
             files_total: status.files_total,
@@ -395,7 +403,13 @@ impl SubmitCommand {
             .trim_end_matches(".mcap")
             .trim_end_matches(".bag")
             .chars()
-            .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+            .map(|c| {
+                if c.is_alphanumeric() {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
             .collect::<String>()
     }
 
@@ -573,7 +587,11 @@ impl SubmitCommand {
                         (Ok(Some(spec)), Ok(Some(status))) => {
                             submitted_batches.push(BatchSummary {
                                 id: batch_id.clone(),
-                                name: spec.metadata.display_name.clone().unwrap_or(spec.metadata.name.clone()),
+                                name: spec
+                                    .metadata
+                                    .display_name
+                                    .clone()
+                                    .unwrap_or(spec.metadata.name.clone()),
                                 namespace: spec.metadata.namespace,
                                 phase: status.phase,
                                 files_total: status.files_total,

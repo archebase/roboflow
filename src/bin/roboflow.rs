@@ -476,7 +476,6 @@ fn load_worker_config() -> WorkerConfig {
 // =============================================================================
 
 async fn run_scanner(pod_id: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
-
     // Initialize TiKV client from environment
     let tikv = Arc::new(roboflow_distributed::TikvClient::from_env().await?);
 
@@ -513,16 +512,14 @@ fn load_scanner_config() -> ScannerConfig {
     use std::env;
 
     // Get batch namespace (default "jobs")
-    let batch_namespace = env::var("SCANNER_NAMESPACE")
-        .unwrap_or_else(|_| "jobs".to_string());
+    let batch_namespace = env::var("SCANNER_NAMESPACE").unwrap_or_else(|_| "jobs".to_string());
 
     let scan_interval = env::var("SCANNER_SCAN_INTERVAL_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(60);
 
-    ScannerConfig::new(batch_namespace)
-        .with_scan_interval(Duration::from_secs(scan_interval))
+    ScannerConfig::new(batch_namespace).with_scan_interval(Duration::from_secs(scan_interval))
 }
 
 // =============================================================================
