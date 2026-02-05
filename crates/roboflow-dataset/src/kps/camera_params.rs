@@ -266,18 +266,23 @@ impl CameraParamCollector {
             // Check if this is a camera_info topic
             if let Some(camera_name) =
                 self.find_camera_for_topic(&timestamped_msg.channel.topic, &camera_topics)
-                && let Some(intrinsics) = self.extract_camera_info(&timestamped_msg.message, &camera_name)
+                && let Some(intrinsics) =
+                    self.extract_camera_info(&timestamped_msg.message, &camera_name)
             {
                 self.update_intrinsics(&camera_name, intrinsics);
 
                 // Try to extract the frame_id from camera_info header
-                if let Some(frame_id) = self.get_nested_string(&timestamped_msg.message, &["header", "frame_id"]) {
+                if let Some(frame_id) =
+                    self.get_nested_string(&timestamped_msg.message, &["header", "frame_id"])
+                {
                     camera_frames.insert(camera_name.clone(), frame_id);
                 }
             }
 
             // Check if this is a TF topic
-            if timestamped_msg.channel.topic == "/tf" || timestamped_msg.channel.topic == "/tf_static" {
+            if timestamped_msg.channel.topic == "/tf"
+                || timestamped_msg.channel.topic == "/tf_static"
+            {
                 self.collect_tf_transforms(&timestamped_msg.message, &mut transforms);
             }
         }
