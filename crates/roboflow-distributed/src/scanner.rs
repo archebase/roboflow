@@ -49,9 +49,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
+use super::batch::{BatchKeys, BatchPhase, BatchSpec, BatchStatus, DiscoveryStatus};
 use super::tikv::{TikvError, client::TikvClient, locks::LockManager, schema::JobRecord};
-use super::batch::{BatchKeys, BatchSpec, BatchPhase, BatchStatus, DiscoveryStatus};
-use roboflow_storage::{ObjectMetadata, StorageFactory, StorageError};
+use roboflow_storage::{ObjectMetadata, StorageError, StorageFactory};
 use tokio::sync::broadcast;
 use tokio::time::sleep;
 
@@ -272,11 +272,7 @@ impl Scanner {
         // Use a TTL longer than the scan interval to prevent lock expiration during scan
         let scan_interval_secs = self.config.scan_interval.as_secs() as i64;
         let ttl = Duration::from_secs((scan_interval_secs * 3).max(60) as u64);
-        match self
-            .lock_manager
-            .try_acquire("scanner_lock", ttl)
-            .await
-        {
+        match self.lock_manager.try_acquire("scanner_lock", ttl).await {
             Ok(Some(guard)) => {
                 tracing::info!(
                     pod_id = %self.pod_id,
@@ -348,7 +344,13 @@ impl Scanner {
     }
 
     /// Create a job record for a file.
-    fn create_job(&self, metadata: &ObjectMetadata, hash: &str, output_prefix: &str, config_hash: &str) -> JobRecord {
+    fn create_job(
+        &self,
+        metadata: &ObjectMetadata,
+        hash: &str,
+        output_prefix: &str,
+        config_hash: &str,
+    ) -> JobRecord {
         JobRecord::new(
             hash.to_string(),
             metadata.path.clone(),
@@ -359,7 +361,9 @@ impl Scanner {
     }
 
     /// Get pending batches from TiKV.
-    async fn get_pending_batches(&self) -> Result<Vec<(String, BatchSpec, BatchStatus)>, TikvError> {
+    async fn get_pending_batches(
+        &self,
+    ) -> Result<Vec<(String, BatchSpec, BatchStatus)>, TikvError> {
         let mut batches = Vec::new();
 
         // Scan all batch specs
@@ -413,7 +417,7 @@ impl Scanner {
     /// 1. Direct file URLs (e.g., s3://bucket/file.mcap) - returns that single file
     /// 2. Directory/prefix URLs (e.g., s3://bucket/path/) - lists all files in that directory
     async fn scan_source_url(&self, source_url: &str) -> Result<Vec<ObjectMetadata>, StorageError> {
-        tracing::debug!(
+        tracing::info!(
             source_url = %source_url,
             "Scanning source URL"
         );
@@ -421,25 +425,26 @@ impl Scanner {
         // Create storage backend from URL
         let storage = self.storage_factory.create(source_url)?;
 
-        // Extract path from URL for listing
-        // URLs are like: s3://bucket/path or oss://bucket/path
-        // We need to get just the path part (everything after the bucket)
-        let path_for_list = if let Some(first_slash) = source_url.find('/') {
-            // Find the second slash (after ://) by searching in substring after first slash
-            if let Some(second_slash) = source_url[first_slash + 1..].find('/') {
-                // second_slash is relative to the substring, so add the offset
-                let bucket_end = first_slash + 1 + second_slash;
-                &source_url[bucket_end..]
+        // Extract the path after the bucket name.
+        // URLs are like: s3://bucket/path/to/file or oss://bucket/file.mcap
+        // The format is: scheme://bucket/path
+        // We need to skip past :// to find the slash after the bucket name.
+        let path_for_list = if let Some(protocol_end) = source_url.find("://") {
+            // Start looking after :// (3 characters)
+            let after_protocol = &source_url[protocol_end + 3..];
+            if let Some(slash_after_bucket) = after_protocol.find('/') {
+                // Return everything after the slash following the bucket
+                &source_url[protocol_end + 3 + slash_after_bucket + 1..]
             } else {
-                // No second slash, means no path after bucket
-                "/"
+                // No path after bucket, return empty to list entire bucket
+                ""
             }
         } else {
-            // No slash at all, list root
-            "/"
+            // No protocol found, use URL as-is (shouldn't happen with valid URLs)
+            source_url
         };
 
-        tracing::debug!(
+        tracing::info!(
             source_url = %source_url,
             path_for_list = %path_for_list,
             "Extracted path for listing"
@@ -450,7 +455,7 @@ impl Scanner {
         // First try to list the path (directory case)
         let files = storage.list(path)?;
 
-        tracing::debug!(
+        tracing::info!(
             source_url = %source_url,
             files_found = files.len(),
             "List operation completed"
@@ -469,7 +474,7 @@ impl Scanner {
         match storage.metadata(path) {
             Ok(metadata) => {
                 // It's a file, return it as a single-element list
-                tracing::debug!(
+                tracing::info!(
                     source_url = %source_url,
                     file_path = %metadata.path,
                     file_size = %metadata.size,
@@ -522,7 +527,8 @@ impl Scanner {
         }
 
         // Track which sources we've already processed
-        let sources_processed = status.discovery_status
+        let sources_processed = status
+            .discovery_status
             .as_ref()
             .map(|d| d.sources_scanned as usize)
             .unwrap_or(0);
@@ -639,7 +645,8 @@ impl Scanner {
 
         // Check if all sources are processed
         let total_sources = spec.spec.sources.len() as u32;
-        let processed = status.discovery_status
+        let processed = status
+            .discovery_status
             .as_ref()
             .map(|d| d.sources_scanned)
             .unwrap_or(0);
@@ -662,10 +669,14 @@ impl Scanner {
     }
 
     /// Save batch status to TiKV.
-    async fn save_batch_status(&self, batch_id: &str, status: &BatchStatus) -> Result<(), TikvError> {
+    async fn save_batch_status(
+        &self,
+        batch_id: &str,
+        status: &BatchStatus,
+    ) -> Result<(), TikvError> {
         let key = BatchKeys::status(batch_id);
-        let data = bincode::serialize(status)
-            .map_err(|e| TikvError::Serialization(e.to_string()))?;
+        let data =
+            bincode::serialize(status).map_err(|e| TikvError::Serialization(e.to_string()))?;
         self.tikv.put(key, data).await
     }
 
@@ -947,5 +958,62 @@ mod tests {
         assert_eq!(stats.files_discovered, 0);
         assert_eq!(stats.jobs_created, 0);
         assert_eq!(stats.duplicates_skipped, 0);
+    }
+
+    #[test]
+    fn test_extract_path_from_source_url() {
+        // Helper function to extract path matching scan_source_url logic
+        // URLs are like: scheme://bucket/path - we need everything after the bucket
+        let extract_path = |url: &str| -> String {
+            if let Some(protocol_end) = url.find("://") {
+                let after_protocol = &url[protocol_end + 3..];
+                if let Some(slash_after_bucket) = after_protocol.find('/') {
+                    url[protocol_end + 3 + slash_after_bucket + 1..].to_string()
+                } else {
+                    "".to_string()
+                }
+            } else {
+                url.to_string()
+            }
+        };
+
+        // Single file in root
+        assert_eq!(extract_path("s3://bucket/file.mcap"), "file.mcap");
+        assert_eq!(extract_path("oss://bucket/file.bag"), "file.bag");
+
+        // File with nested path
+        assert_eq!(
+            extract_path("s3://bucket/data/file.mcap"),
+            "data/file.mcap"
+        );
+        assert_eq!(
+            extract_path("oss://bucket/data/subdir/file.bag"),
+            "data/subdir/file.bag"
+        );
+
+        // Deeply nested path
+        assert_eq!(
+            extract_path("s3://bucket/data/2025/01/31/file.mcap"),
+            "data/2025/01/31/file.mcap"
+        );
+        assert_eq!(
+            extract_path("s3://bucket/a/b/c/d/e/file.mcap"),
+            "a/b/c/d/e/file.mcap"
+        );
+
+        // Directory path
+        assert_eq!(extract_path("s3://bucket/data/"), "data/");
+        assert_eq!(extract_path("s3://bucket/data/subdir/"), "data/subdir/");
+        assert_eq!(extract_path("s3://bucket/a/b/c/"), "a/b/c/");
+
+        // Root (no path after bucket)
+        assert_eq!(extract_path("s3://bucket/"), "");
+        assert_eq!(extract_path("oss://bucket/"), "");
+
+        // Complex filename with underscores, dates, etc.
+        assert_eq!(
+            extract_path("s3://roboflow-raw/Rubbish_sorting_P4-278_20250830101558.bag"),
+            "Rubbish_sorting_P4-278_20250830101558.bag"
+        );
     }
 }
