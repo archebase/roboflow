@@ -97,7 +97,9 @@ pub fn write_episode_parquet(
             // No action available yet, use zeros with correct dimension
             let dim = observation_state
                 .last()
-                .map_or(DEFAULT_ACTION_DIMENSION, |s| s.len().min(DEFAULT_ACTION_DIMENSION));
+                .map_or(DEFAULT_ACTION_DIMENSION, |s| {
+                    s.len().min(DEFAULT_ACTION_DIMENSION)
+                });
             action.push(vec![0.0; dim]);
         }
 
