@@ -118,7 +118,7 @@ impl ReaderStage {
                         "Unsupported file format: {:?}. Only MCAP and BAG are supported.",
                         self._format
                     ),
-                ))
+                ));
             }
         };
 
@@ -139,20 +139,14 @@ impl ReaderStage {
         info!("Opening MCAP file with parallel reader");
 
         let reader = ParallelMcapReader::open(&self.input_path).map_err(|e| {
-            RoboflowError::parse(
-                "ReaderStage",
-                format!("Failed to open MCAP file: {}", e),
-            )
+            RoboflowError::parse("ReaderStage", format!("Failed to open MCAP file: {}", e))
         })?;
 
         // Run parallel reading - this sends chunks to our channel
         let parallel_stats = reader
             .read_parallel(config, self.chunks_sender.clone())
             .map_err(|e| {
-                RoboflowError::parse(
-                    "ReaderStage",
-                    format!("Parallel reading failed: {}", e),
-                )
+                RoboflowError::parse("ReaderStage", format!("Parallel reading failed: {}", e))
             })?;
 
         Ok(ReaderStats {
@@ -167,20 +161,14 @@ impl ReaderStage {
         info!("Opening BAG file with parallel reader");
 
         let reader = ParallelBagReader::open(&self.input_path).map_err(|e| {
-            RoboflowError::parse(
-                "ReaderStage",
-                format!("Failed to open BAG file: {}", e),
-            )
+            RoboflowError::parse("ReaderStage", format!("Failed to open BAG file: {}", e))
         })?;
 
         // Run parallel reading
         let parallel_stats = reader
             .read_parallel(config, self.chunks_sender.clone())
             .map_err(|e| {
-                RoboflowError::parse(
-                    "ReaderStage",
-                    format!("Parallel reading failed: {}", e),
-                )
+                RoboflowError::parse("ReaderStage", format!("Parallel reading failed: {}", e))
             })?;
 
         Ok(ReaderStats {
