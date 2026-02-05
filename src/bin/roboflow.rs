@@ -61,9 +61,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-#[cfg(feature = "distributed")]
 use roboflow_distributed::{Scanner, ScannerConfig, Worker, WorkerConfig};
-#[cfg(feature = "distributed")]
 use roboflow_storage::StorageFactory;
 
 // Include CLI commands module
@@ -74,7 +72,6 @@ mod commands;
 // =============================================================================
 
 /// Generate a pod ID from environment or hostname + UUID.
-#[cfg(feature = "distributed")]
 fn generate_pod_id(prefix: &str) -> String {
     match env::var("POD_NAME") {
         Ok(name) => name,
@@ -390,7 +387,6 @@ EXAMPLES:
 // Worker Command
 // =============================================================================
 
-#[cfg(feature = "distributed")]
 async fn run_worker(
     pod_id: Option<String>,
     storage_url: Option<String>,
@@ -429,8 +425,8 @@ async fn run_worker(
     // Create worker
     let mut worker = Worker::new(pod_id, tikv, storage, config)?;
 
-    // Start health server in background
-    let health_handle = start_health_server_background().await?;
+    // Start health server in background (worker uses 8081 to avoid conflict with scanner)
+    let health_handle = start_health_server_background_with_default(8081).await?;
 
     // Run worker loop (this blocks until shutdown)
     worker.run().await?;
@@ -441,7 +437,6 @@ async fn run_worker(
     Ok(())
 }
 
-#[cfg(feature = "distributed")]
 fn load_worker_config() -> WorkerConfig {
     use std::env;
 
@@ -496,19 +491,10 @@ fn load_worker_config() -> WorkerConfig {
         .with_output_prefix(output_prefix)
 }
 
-#[cfg(not(feature = "distributed"))]
-async fn run_worker(
-    _pod_id: Option<String>,
-    _storage_url: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    Err("Worker requires 'distributed' feature to be enabled".into())
-}
-
 // =============================================================================
 // Scanner Command
 // =============================================================================
 
-#[cfg(feature = "distributed")]
 async fn run_scanner(
     pod_id: Option<String>,
     storage_url: Option<String>,
@@ -559,7 +545,6 @@ async fn run_scanner(
     Ok(())
 }
 
-#[cfg(feature = "distributed")]
 fn load_scanner_config() -> ScannerConfig {
     use std::env;
 
@@ -597,14 +582,6 @@ fn load_scanner_config() -> ScannerConfig {
     config
 }
 
-#[cfg(not(feature = "distributed"))]
-async fn run_scanner(
-    _pod_id: Option<String>,
-    _storage_url: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    Err("Scanner requires 'distributed' feature to be enabled".into())
-}
-
 // =============================================================================
 // Health Server
 // =============================================================================
@@ -632,18 +609,18 @@ enum HealthServerStartup {
     Failed(String),
 }
 
-/// Start the health server in the background.
+/// Start the health server in the background with a specific default port.
 /// Returns error if the server fails to bind within a short timeout.
-#[cfg(feature = "distributed")]
-async fn start_health_server_background() -> Result<HealthServerHandle, Box<dyn std::error::Error>>
-{
+async fn start_health_server_background_with_default(
+    default_port: u16,
+) -> Result<HealthServerHandle, Box<dyn std::error::Error>> {
     use std::env;
 
     let host = env::var("HEALTH_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = env::var("HEALTH_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(8080);
+        .unwrap_or(default_port);
 
     let addr = format!("{}:{}", host, port);
     let addr_for_log = addr.clone();
@@ -681,6 +658,12 @@ async fn start_health_server_background() -> Result<HealthServerHandle, Box<dyn 
         shutdown_tx: Some(shutdown_tx),
         _server_task: server_task,
     })
+}
+
+/// Start the health server in the background with default port 8080.
+/// Returns error if the server fails to bind within a short timeout.
+async fn start_health_server_background() -> Result<HealthServerHandle, Box<dyn std::error::Error>> {
+    start_health_server_background_with_default(8080).await
 }
 
 /// Run the health check server.
@@ -835,11 +818,6 @@ fn handle_health_request(request: &str, ready: &AtomicBool) -> String {
     response.to_string()
 }
 
-#[cfg(not(feature = "distributed"))]
-fn start_health_server_background() -> Result<HealthServerHandle, Box<dyn std::error::Error>> {
-    Err("Health server requires 'distributed' feature to be enabled".into())
-}
-
 // =============================================================================
 // Standalone Health Command
 // =============================================================================
@@ -863,8 +841,7 @@ async fn run_health_command(
 
     let addr = format!("{}:{}", host, port);
 
-    #[cfg(feature = "distributed")]
-    {
+        {
         let ready = Arc::new(AtomicBool::new(true));
         let listener = tokio::net::TcpListener::bind(&addr).await?;
 
@@ -900,15 +877,6 @@ async fn run_health_command(
             });
         }
     }
-
-    #[cfg(not(feature = "distributed"))]
-    {
-        return Err(
-            "Health command requires 'distributed' feature to be enabled. \
-                    Please rebuild with: cargo build --features distributed"
-                .into(),
-        );
-    }
 }
 
 // =============================================================================
@@ -932,8 +900,7 @@ fn main() {
     };
 
     // Create Tokio runtime for async commands
-    #[cfg(feature = "distributed")]
-    {
+        {
         let rt = match tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -967,47 +934,6 @@ fn main() {
                 Command::Health { host, port } => run_health_command(host, port).await,
             }
         });
-
-        if let Err(e) = result {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
-        }
-    }
-
-    #[cfg(not(feature = "distributed"))]
-    {
-        let result = match command {
-            Command::Health { host, port } => {
-                // Still allow health command without distributed feature
-                let rt = match tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(rt) => rt,
-                    Err(e) => {
-                        eprintln!("Failed to create tokio runtime: {}", e);
-                        std::process::exit(1);
-                    }
-                };
-                rt.block_on(run_health_command(host, port))
-            }
-            Command::Submit { .. } | Command::Jobs { .. } | Command::Batch { .. } => {
-                // Error for submit/jobs/batch commands without distributed feature
-                Err(
-                    "Submit, Jobs, and Batch commands require 'distributed' feature. \
-                     Please rebuild with: cargo build --features distributed"
-                        .into(),
-                )
-            }
-            _ => {
-                // Error for other commands without distributed feature
-                Err(
-                    "Worker and scanner commands require 'distributed' feature. \
-                     Please rebuild with: cargo build --features distributed"
-                        .into(),
-                )
-            }
-        };
 
         if let Err(e) = result {
             eprintln!("Error: {e}");

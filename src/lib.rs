@@ -124,7 +124,6 @@ pub use roboflow_storage::{
 // =============================================================================
 // Distributed coordination (TiKV backend)
 // =============================================================================
-#[cfg(feature = "distributed")]
 pub use roboflow_distributed::{
     DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_PD_ENDPOINTS, KEY_PREFIX,
     tikv::{

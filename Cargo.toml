@@ -40,7 +40,7 @@ roboflow-core = { workspace = true }
 roboflow-storage = { workspace = true }
 roboflow-dataset = { workspace = true }
 roboflow-pipeline = { workspace = true }
-roboflow-distributed = { workspace = true, optional = true }
+roboflow-distributed = { workspace = true }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -94,14 +94,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Cloud storage support (optional, gated by "cloud-storage" feature)
 object_store = { version = "0.11", optional = true, features = ["aws"] }
-tokio = { version = "1.40", optional = true, features = ["rt-multi-thread", "sync"] }
+# Async runtime (always enabled for distributed processing)
+tokio = { version = "1.40", features = ["rt-multi-thread", "sync"] }
 url = { version = "2.5", optional = true }
 bytes = { version = "1.7", optional = true }
 
-# TiKV distributed coordination (optional, gated by "distributed" feature)
-tikv-client = { version = "0.3", optional = true }
-futures = { version = "0.3", optional = true }
-bincode = { version = "1.3", optional = true }
+# TiKV distributed coordination (always enabled for distributed processing)
+tikv-client = { version = "0.3" }
+futures = { version = "0.3" }
+bincode = { version = "1.3" }
 
 # KPS support (optional dependencies)
 hdf5 = { git = "https://github.com/archebase/hdf5-rs", optional = true }
@@ -128,15 +129,15 @@ io-uring = { version = "0.7", optional = true }
 
 # Dataset features (optional, disabled by default)
 [features]
-default = ["distributed"]
+default = []
 dataset-hdf5 = ["dep:hdf5"]
 dataset-parquet = ["dep:polars"]
 dataset-depth = ["dep:png"]
 dataset-all = ["dataset-hdf5", "dataset-parquet", "dataset-depth"]
 # Cloud storage support for Alibaba OSS and S3-compatible backends
-cloud-storage = ["dep:object_store", "dep:tokio", "dep:url", "dep:bytes"]
-# Distributed coordination via TiKV (default feature)
-distributed = ["dep:roboflow-distributed", "dep:tikv-client", "dep:futures", "dep:tokio", "dep:bincode"]
+cloud-storage = ["dep:object_store", "dep:url", "dep:bytes"]
+# Distributed coordination via TiKV (always enabled)
+# The following dependencies are always included: roboflow-distributed, tikv-client, futures, tokio, bincode
 # Python bindings via PyO3 (extension-module mode to prevent libpython linking)
 python = ["pyo3", "robocodec/python"]
 # Python extension module (alias for python, since extension-module is now default)
@@ -157,8 +158,8 @@ cpuid = ["dep:raw-cpuid"]
 # io_uring support for Linux (high-performance async I/O)
 # Requires: Linux 5.6+ kernel
 io-uring-io = ["dep:io-uring"]
-# Distributed tests (requires TiKV dependencies)
-test-distributed = ["dep:roboflow-distributed"]
+# Distributed tests (distributed is always enabled)
+test-distributed = []
 
 [dev-dependencies]
 pretty_assertions = "1.4"
