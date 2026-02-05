@@ -206,6 +206,11 @@ Automated review tools (e.g., Greptile) may provide feedback on PRs. When addres
 - Must rebuild with `maturin develop` after changes
 - Cannot run Rust and Python tests in same invocation
 
+### Dead Code
+- **Remove unused code** rather than marking it as `#[allow(dead_code)]`
+- Compiler warnings about unused functions/imports indicate code that should be removed
+- Keep the codebase lean - only add `#[allow(dead_code)]` when explicitly requested
+
 ## External Dependencies
 
 - `robocodec`: https://github.com/archebase/robocodec (I/O, codecs, arena)

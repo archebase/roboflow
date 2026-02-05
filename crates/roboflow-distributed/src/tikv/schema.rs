@@ -16,11 +16,9 @@ pub struct JobRecord {
     /// Unique identifier (UUID).
     pub id: String,
 
-    /// Source object key in S3/OSS.
-    pub source_key: String,
-
-    /// Source bucket name.
-    pub source_bucket: String,
+    /// Full source URL (s3://bucket/key, oss://bucket/key, or local file path).
+    /// This makes jobs self-contained - workers don't need external storage config.
+    pub source_url: String,
 
     /// Source file size in bytes.
     pub source_size: u64,
@@ -96,10 +94,12 @@ impl ConfigRecord {
 
 impl JobRecord {
     /// Create a new job record.
+    ///
+    /// The source_url makes the job self-contained - workers can process
+    /// the job without needing external storage configuration.
     pub fn new(
         id: String,
-        source_key: String,
-        source_bucket: String,
+        source_url: String,
         source_size: u64,
         output_prefix: String,
         config_hash: String,
@@ -107,8 +107,7 @@ impl JobRecord {
         let now = Utc::now();
         Self {
             id,
-            source_key,
-            source_bucket,
+            source_url,
             source_size,
             status: JobStatus::Pending,
             owner: None,
@@ -122,6 +121,11 @@ impl JobRecord {
             output_prefix,
             config_hash,
         }
+    }
+
+    /// Get the input path for processing this job.
+    pub fn input_path(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from(&self.source_url)
     }
 
     /// Check if this job is terminal (completed, dead, or cancelled).
@@ -679,8 +683,7 @@ mod tests {
     fn test_job_record_new() {
         let job = JobRecord::new(
             "test-id".to_string(),
-            "test-key".to_string(),
-            "test-bucket".to_string(),
+            "s3://test-bucket/test-key".to_string(),
             1024,
             "output/".to_string(),
             "config-hash".to_string(),
@@ -688,14 +691,14 @@ mod tests {
         assert_eq!(job.status, JobStatus::Pending);
         assert_eq!(job.attempts, 0);
         assert!(job.owner.is_none());
+        assert_eq!(job.source_url, "s3://test-bucket/test-key");
     }
 
     #[test]
     fn test_job_record_claim() {
         let mut job = JobRecord::new(
             "test-id".to_string(),
-            "test-key".to_string(),
-            "test-bucket".to_string(),
+            "s3://test-bucket/test-key".to_string(),
             1024,
             "output/".to_string(),
             "config-hash".to_string(),
@@ -710,8 +713,7 @@ mod tests {
     fn test_job_record_complete() {
         let mut job = JobRecord::new(
             "test-id".to_string(),
-            "test-key".to_string(),
-            "test-bucket".to_string(),
+            "s3://test-bucket/test-key".to_string(),
             1024,
             "output/".to_string(),
             "config-hash".to_string(),
@@ -726,8 +728,7 @@ mod tests {
     fn test_job_record_fail() {
         let mut job = JobRecord::new(
             "test-id".to_string(),
-            "test-key".to_string(),
-            "test-bucket".to_string(),
+            "s3://test-bucket/test-key".to_string(),
             1024,
             "output/".to_string(),
             "config-hash".to_string(),
@@ -742,6 +743,21 @@ mod tests {
         job.claim("pod-2".to_string()).unwrap();
         job.fail("test error".to_string());
         assert_eq!(job.status, JobStatus::Dead);
+    }
+
+    #[test]
+    fn test_job_record_input_path() {
+        let job = JobRecord::new(
+            "test-id".to_string(),
+            "s3://my-bucket/input/file.mcap".to_string(),
+            1024,
+            "s3://output-bucket/output/".to_string(),
+            "config-hash".to_string(),
+        );
+        assert_eq!(
+            job.input_path(),
+            std::path::PathBuf::from("s3://my-bucket/input/file.mcap")
+        );
     }
 
     #[test]

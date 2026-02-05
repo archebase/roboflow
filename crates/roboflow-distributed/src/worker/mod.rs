@@ -201,7 +201,7 @@ impl Worker {
                 tracing::info!(
                     pod_id = %self.pod_id,
                     job_id = %job_id,
-                    source_key = %job.source_key,
+                    source_url = %job.source_url,
                     "Job claimed successfully"
                 );
                 return Ok(Some(job));
@@ -323,38 +323,13 @@ impl Worker {
 
     /// Create a synthetic JobRecord for processing a WorkUnit.
     ///
-    /// This bridges the gap between WorkUnits and the existing JobRecord-based
-    /// processing pipeline.
+    /// This bridges the gap between WorkUnits and the JobRecord-based processing pipeline.
     fn create_synthetic_job_for_work_unit(&self, unit: &WorkUnit) -> JobRecord {
-        let source_url = unit.primary_source().unwrap_or("");
-
-        // Parse the source URL to extract bucket and key
-        let (source_bucket, source_key) = if source_url.starts_with("s3://") {
-            let url = source_url.strip_prefix("s3://").unwrap_or("");
-            let parts: Vec<&str> = url.splitn(2, '/').collect();
-            let bucket = parts
-                .first()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "local".to_string());
-            let key = parts.get(1).map(|s| s.to_string()).unwrap_or_default();
-            (bucket, key)
-        } else if source_url.starts_with("oss://") {
-            let url = source_url.strip_prefix("oss://").unwrap_or("");
-            let parts: Vec<&str> = url.splitn(2, '/').collect();
-            let bucket = parts
-                .first()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "local".to_string());
-            let key = parts.get(1).map(|s| s.to_string()).unwrap_or_default();
-            (bucket, key)
-        } else {
-            ("local".to_string(), source_url.to_string())
-        };
+        let source_url = unit.primary_source().unwrap_or("").to_string();
 
         JobRecord {
             id: unit.id.clone(),
-            source_bucket,
-            source_key,
+            source_url,
             source_size: unit.total_size(),
             config_hash: unit.config_hash.clone(),
             output_prefix: unit.output_path.clone(),
@@ -476,7 +451,7 @@ impl Worker {
         tracing::info!(
             pod_id = %self.pod_id,
             job_id = %job.id,
-            source_key = %job.source_key,
+            source_url = %job.source_url,
             "Processing job"
         );
 
@@ -511,30 +486,17 @@ impl Worker {
             }
         }
 
-        // Build the full input path from source_key.
-        // For cloud storage (S3/OSS), we need the full URL for the converter to download.
-        // For local storage, strip storage_prefix to avoid double-prefixing with LocalStorage.
-        let is_cloud_storage = job.source_bucket != "local";
-        let input_path = if is_cloud_storage {
-            // Build S3/OSS URL: s3://bucket/key or oss://bucket/key
-            // Note: output_prefix contains the full URL scheme, extract the scheme from it
-            let scheme = if job.output_prefix.starts_with("s3://") {
-                "s3://"
-            } else if job.output_prefix.starts_with("oss://") {
-                "oss://"
-            } else {
-                // Default to s3 for compatibility
-                "s3://"
-            };
-            PathBuf::from(format!(
-                "{}{}/{}",
-                scheme, job.source_bucket, job.source_key
-            ))
-        } else if let Some(prefix) = job.source_key.strip_prefix(&self.config.storage_prefix) {
+        // Use source_url directly - jobs are self-contained.
+        // For local storage paths, strip storage_prefix to avoid double-prefixing.
+        let input_path = if let Some(prefix) = job.source_url.strip_prefix(&self.config.storage_prefix) {
             PathBuf::from(prefix)
         } else {
-            PathBuf::from(&job.source_key)
+            PathBuf::from(&job.source_url)
         };
+
+        // Determine if input is cloud storage based on source_url scheme
+        let is_cloud_storage =
+            job.source_url.starts_with("s3://") || job.source_url.starts_with("oss://");
 
         // Build the output path for this job
         let output_path = self.build_output_path(job);
@@ -593,7 +555,7 @@ impl Worker {
         // Create streaming converter with storage backends
         // For cloud storage inputs, pass None for input_storage to let converter
         // download the file. For local storage, pass self.storage for fast path.
-        let input_storage = if job.source_bucket != "local" {
+        let input_storage = if is_cloud_storage {
             None
         } else {
             Some(self.storage.clone())

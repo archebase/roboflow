@@ -113,8 +113,6 @@ enum Command {
     Scanner {
         /// Pod ID for this scanner
         pod_id: Option<String>,
-        /// Storage URL for scanning files
-        storage_url: Option<String>,
     },
     /// Run a standalone health check server
     Health {
@@ -190,7 +188,6 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
         }
         "scanner" => {
             let mut pod_id = None;
-            let mut storage_url = None;
 
             let mut i = 2;
             while i < args.len() {
@@ -202,18 +199,8 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                         }
                         pod_id = Some(args[i].clone());
                     }
-                    "--storage-url" | "-s" => {
-                        i += 1;
-                        if i >= args.len() {
-                            return Err("--storage-url requires a value".to_string());
-                        }
-                        storage_url = Some(args[i].clone());
-                    }
                     "--help" | "-h" => {
-                        return Ok(Command::Scanner {
-                            pod_id: None,
-                            storage_url: None,
-                        });
+                        return Ok(Command::Scanner { pod_id: None });
                     }
                     unknown => {
                         return Err(format!("unknown flag for scanner: {}", unknown));
@@ -222,10 +209,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                 i += 1;
             }
 
-            Ok(Command::Scanner {
-                pod_id,
-                storage_url,
-            })
+            Ok(Command::Scanner { pod_id })
         }
         "health" => {
             let mut host = None;
@@ -290,14 +274,12 @@ COMMANDS:
     worker       Run a worker that claims and processes jobs from TiKV
     scanner      Run a scanner that discovers files and creates jobs
     health       Run a standalone health check server
-
 WORKER OPTIONS:
     -p, --pod-id <ID>           Pod ID for this worker (default: POD_NAME env var or hostname+UUID)
     -s, --storage-url <URL>     Storage URL for input/output files (default: auto-detected)
 
 SCANNER OPTIONS:
     -p, --pod-id <ID>           Pod ID for this scanner (default: POD_NAME env var or hostname+UUID)
-    -s, --storage-url <URL>     Storage URL for scanning files (default: auto-detected)
 
 HEALTH OPTIONS:
         --host <HOST>           Host to bind to (default: 0.0.0.0 or HEALTH env var)
@@ -329,10 +311,8 @@ ENVIRONMENT VARIABLES:
         WORKER_OUTPUT_PREFIX             Output storage prefix (default: output/)
 
     Scanner Configuration:
-        SCANNER_INPUT_PREFIX              Input prefix to scan (default: input/)
-        SCANNER_SCAN_INTERVAL_SECS       Scan interval (default: 60)
-        SCANNER_OUTPUT_PREFIX            Output prefix for jobs (default: output/)
-        SCANNER_FILE_PATTERN             Glob pattern for filtering files
+        SCANNER_NAMESPACE                 Namespace for batches (default: jobs)
+        SCANNER_SCAN_INTERVAL_SECS        Scan interval (default: 60)
 
     Health Server Configuration:
         HEALTH_PORT                       Health server port (default: 8080)
@@ -371,8 +351,8 @@ EXAMPLES:
     # Run worker with custom pod ID
     roboflow worker --pod-id worker-1
 
-    # Run scanner with custom storage
-    roboflow scanner --storage-url s3://my-bucket
+    # Run scanner
+    roboflow scanner
 
     # Run health server on custom port
     roboflow health --port 9090
@@ -495,30 +475,15 @@ fn load_worker_config() -> WorkerConfig {
 // Scanner Command
 // =============================================================================
 
-async fn run_scanner(
-    pod_id: Option<String>,
-    storage_url: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use std::env;
+async fn run_scanner(pod_id: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize TiKV client from environment
     let tikv = Arc::new(roboflow_distributed::TikvClient::from_env().await?);
 
-    // Determine storage URL
-    let storage_url = storage_url
-        .unwrap_or_else(|| env::var("STORAGE_URL").unwrap_or_else(|_| "file://./data".to_string()));
-
-    // Create storage backend using factory from environment
+    // Create storage factory from environment
     let factory = StorageFactory::from_env();
-    let storage = factory.create(&storage_url).map_err(|e| {
-        anyhow::anyhow!(
-            "Failed to create storage backend for URL '{}': {}",
-            storage_url,
-            e
-        )
-    })?;
 
-    // Load scanner configuration from environment
+    // Load scanner configuration
     let config = load_scanner_config();
 
     // Generate or use provided pod ID
@@ -526,12 +491,11 @@ async fn run_scanner(
 
     tracing::info!(
         pod_id = %pod_id,
-        storage_url = %storage_url,
         "Starting scanner"
     );
 
     // Create scanner
-    let mut scanner = Scanner::new(pod_id, tikv, storage, config)?;
+    let mut scanner = Scanner::new(pod_id, tikv, Arc::new(factory), config)?;
 
     // Start health server in background
     let health_handle = start_health_server_background().await?;
@@ -548,38 +512,17 @@ async fn run_scanner(
 fn load_scanner_config() -> ScannerConfig {
     use std::env;
 
-    let input_prefix = env::var("SCANNER_INPUT_PREFIX").unwrap_or_else(|_| "input/".to_string());
+    // Get batch namespace (default "jobs")
+    let batch_namespace = env::var("SCANNER_NAMESPACE")
+        .unwrap_or_else(|_| "jobs".to_string());
 
     let scan_interval = env::var("SCANNER_SCAN_INTERVAL_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(60);
 
-    let output_prefix = env::var("SCANNER_OUTPUT_PREFIX").unwrap_or_else(|_| "output/".to_string());
-
-    let config_hash = env::var("SCANNER_CONFIG_HASH").unwrap_or_else(|_| "default".to_string());
-
-    let mut config = ScannerConfig::new(input_prefix)
+    ScannerConfig::new(batch_namespace)
         .with_scan_interval(Duration::from_secs(scan_interval))
-        .with_output_prefix(output_prefix)
-        .with_config_hash(config_hash);
-
-    // Apply file pattern if provided
-    if let Ok(pattern) = env::var("SCANNER_FILE_PATTERN") {
-        match config.clone().with_file_pattern(&pattern) {
-            Ok(c) => config = c,
-            Err(e) => {
-                tracing::warn!(
-                    pattern = %pattern,
-                    error = %e,
-                    "Invalid SCANNER_FILE_PATTERN, scanning without file filter"
-                );
-                // Keep config without pattern
-            }
-        }
-    }
-
-    config
 }
 
 // =============================================================================
@@ -662,7 +605,8 @@ async fn start_health_server_background_with_default(
 
 /// Start the health server in the background with default port 8080.
 /// Returns error if the server fails to bind within a short timeout.
-async fn start_health_server_background() -> Result<HealthServerHandle, Box<dyn std::error::Error>> {
+async fn start_health_server_background() -> Result<HealthServerHandle, Box<dyn std::error::Error>>
+{
     start_health_server_background_with_default(8080).await
 }
 
@@ -841,7 +785,7 @@ async fn run_health_command(
 
     let addr = format!("{}:{}", host, port);
 
-        {
+    {
         let ready = Arc::new(AtomicBool::new(true));
         let listener = tokio::net::TcpListener::bind(&addr).await?;
 
@@ -900,7 +844,7 @@ fn main() {
     };
 
     // Create Tokio runtime for async commands
-        {
+    {
         let rt = match tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -927,10 +871,7 @@ fn main() {
                     pod_id,
                     storage_url,
                 } => run_worker(pod_id, storage_url).await,
-                Command::Scanner {
-                    pod_id,
-                    storage_url,
-                } => run_scanner(pod_id, storage_url).await,
+                Command::Scanner { pod_id } => run_scanner(pod_id).await,
                 Command::Health { host, port } => run_health_command(host, port).await,
             }
         });

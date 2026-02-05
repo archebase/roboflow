@@ -27,8 +27,7 @@ mod tests {
     fn create_test_job(id: &str, owner: &str) -> JobRecord {
         let mut job = JobRecord::new(
             id.to_string(),
-            format!("source/{}", id),
-            "test-bucket".to_string(),
+            format!("s3://test-bucket/source/{}", id),
             1024,
             "output/".to_string(),
             "config-hash".to_string(),

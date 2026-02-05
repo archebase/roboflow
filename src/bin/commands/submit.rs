@@ -28,8 +28,6 @@ use roboflow_distributed::batch::{
 use roboflow_distributed::tikv::schema::ConfigRecord;
 use std::path::{Path, PathBuf};
 
-use crate::commands::utils::parse_storage_url;
-
 /// Output format for submit command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -275,9 +273,6 @@ impl SubmitCommand {
         config_hash: &str,
         controller: &BatchController,
     ) -> Result<BatchSummary, String> {
-        // Generate a unique batch name from the source
-        let batch_name = self.batch_name_from_source(source)?;
-
         // Get submitter identity
         let submitter = std::env::var("ROBOFLOW_USER")
             .or_else(|_| std::env::var("USER"))
@@ -290,8 +285,11 @@ impl SubmitCommand {
             });
 
         // Create batch metadata
+        let display_name = self.generate_display_name(source);
+        let batch_id = self.generate_batch_id();
         let metadata = BatchMetadata {
-            name: batch_name.clone(),
+            name: batch_id.clone(),
+            display_name: Some(display_name.clone()),
             namespace: "jobs".to_string(),
             submitted_by: Some(submitter),
             labels: std::collections::HashMap::new(),
@@ -329,12 +327,12 @@ impl SubmitCommand {
 
         if self.dry_run {
             if self.verbose {
-                println!("Would submit batch: {}", batch_name);
+                println!("Would submit batch: {}", batch_id);
             }
             // Return a mock summary for dry run
             return Ok(BatchSummary {
-                id: batch_name,
-                name: batch_spec.metadata.name,
+                id: format!("jobs:{}", batch_id),
+                name: batch_spec.metadata.display_name.clone().unwrap_or(batch_spec.metadata.name.clone()),
                 namespace: batch_spec.metadata.namespace,
                 phase: BatchPhase::Pending,
                 files_total: 1,
@@ -347,31 +345,31 @@ impl SubmitCommand {
         }
 
         // Submit the batch
-        let batch_id = controller
+        let returned_batch_id = controller
             .submit_batch(&batch_spec)
             .await
             .map_err(|e| format!("Failed to submit batch: {}", e))?;
 
         // Get the spec and status to create summary
         let spec = controller
-            .get_batch_spec(&batch_id)
+            .get_batch_spec(&returned_batch_id)
             .await
             .map_err(|e| format!("Failed to get batch spec: {}", e))?
             .ok_or_else(|| "Batch spec not found after submission".to_string())?;
 
         let status = controller
-            .get_batch_status(&batch_id)
+            .get_batch_status(&returned_batch_id)
             .await
             .map_err(|e| format!("Failed to get batch status: {}", e))?
             .ok_or_else(|| "Batch status not found after submission".to_string())?;
 
         if self.verbose {
-            println!("Submitted batch: {} ({})", batch_name, batch_id);
+            println!("Submitted batch: {} ({})", display_name, returned_batch_id);
         }
 
         Ok(BatchSummary {
-            id: batch_id,
-            name: spec.metadata.name,
+            id: returned_batch_id,
+            name: spec.metadata.display_name.clone().unwrap_or(spec.metadata.name.clone()),
             namespace: spec.metadata.namespace,
             phase: status.phase,
             files_total: status.files_total,
@@ -383,39 +381,27 @@ impl SubmitCommand {
         })
     }
 
-    /// Generate a unique batch name from a source URL.
-    fn batch_name_from_source(&self, source: &str) -> Result<String, String> {
-        use std::path::Path;
-
-        // Parse the source URL to get the key
-        let (_bucket, key) = parse_storage_url(source)?;
-
-        // Get the file name
-        let file_name = Path::new(&key)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or_else(|| "Invalid source path".to_string())?;
-
-        // Hash the full source path for uniqueness
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        source.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        // Create a DNS-compliant name: file-hash
-        let name_base = file_name
-            .chars()
-            .map(|c| if c.is_alphanumeric() { c } else { '-' })
-            .collect::<String>();
-
-        // Truncate if too long and add hash suffix
-        let name = if name_base.len() > 50 {
-            format!("{}-{:x}", &name_base[..50], hash)
+    /// Generate a batch display name (just filename, no extension).
+    fn generate_display_name(&self, source: &str) -> String {
+        // Extract filename from URL
+        let filename = if let Some(last_slash) = source.rfind('/') {
+            &source[last_slash + 1..]
         } else {
-            format!("{}-{:x}", name_base, hash)
+            source
         };
 
-        Ok(name)
+        // Remove extension and sanitize
+        filename
+            .trim_end_matches(".mcap")
+            .trim_end_matches(".bag")
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+            .collect::<String>()
+    }
+
+    /// Generate a unique batch ID (8-character UUID).
+    fn generate_batch_id(&self) -> String {
+        uuid::Uuid::new_v4().to_string()[..8].to_string()
     }
 
     /// Submit jobs from a manifest file.
@@ -480,17 +466,12 @@ impl SubmitCommand {
         // Handle dry run mode for manifest
         if self.dry_run {
             for job_spec in &manifest.jobs {
-                let batch_name = match self.batch_name_from_source(&job_spec.source) {
-                    Ok(name) => name,
-                    Err(e) => {
-                        eprintln!("Error processing '{}': {}", job_spec.source, e);
-                        continue;
-                    }
-                };
+                let display_name = self.generate_display_name(&job_spec.source);
+                let batch_id = self.generate_batch_id();
 
                 submitted_batches.push(BatchSummary {
-                    id: batch_name.clone(),
-                    name: batch_name,
+                    id: format!("jobs:{}", batch_id),
+                    name: display_name,
                     namespace: "jobs".to_string(),
                     phase: BatchPhase::Pending,
                     files_total: 1,
@@ -533,7 +514,8 @@ impl SubmitCommand {
 
             // For manifest jobs, create a batch with job-specific max_attempts
             // We'll create the batch spec directly here instead of using submit_batch
-            let batch_name = self.batch_name_from_source(&job_spec.source)?;
+            let display_name = self.generate_display_name(&job_spec.source);
+            let batch_id = self.generate_batch_id();
 
             let submitter = std::env::var("ROBOFLOW_USER")
                 .or_else(|_| std::env::var("USER"))
@@ -544,7 +526,8 @@ impl SubmitCommand {
                 });
 
             let metadata = BatchMetadata {
-                name: batch_name.clone(),
+                name: batch_id.clone(),
+                display_name: Some(display_name.clone()),
                 namespace: "jobs".to_string(),
                 submitted_by: Some(submitter),
                 labels: std::collections::HashMap::new(),
@@ -589,8 +572,8 @@ impl SubmitCommand {
                     ) {
                         (Ok(Some(spec)), Ok(Some(status))) => {
                             submitted_batches.push(BatchSummary {
-                                id: batch_id,
-                                name: spec.metadata.name,
+                                id: batch_id.clone(),
+                                name: spec.metadata.display_name.clone().unwrap_or(spec.metadata.name.clone()),
                                 namespace: spec.metadata.namespace,
                                 phase: status.phase,
                                 files_total: status.files_total,
@@ -635,7 +618,7 @@ impl SubmitCommand {
                             // Fallback: create minimal summary
                             submitted_batches.push(BatchSummary {
                                 id: batch_id.clone(),
-                                name: batch_name,
+                                name: display_name.clone(),
                                 namespace: "jobs".to_string(),
                                 phase: BatchPhase::Pending,
                                 files_total: 1,

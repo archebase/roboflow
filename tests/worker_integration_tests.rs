@@ -80,7 +80,6 @@ fn test_lerobot_writer_basic_flow() {
 // =============================================================================
 // These tests require the distributed feature (TiKV dependencies)
 
-
 #[test]
 fn test_worker_config_default() {
     use roboflow_distributed::WorkerConfig;
@@ -89,7 +88,6 @@ fn test_worker_config_default() {
     assert_eq!(config.output_prefix, "output/");
     assert_eq!(config.storage_prefix, "input/");
 }
-
 
 #[test]
 fn test_worker_config_builder() {
@@ -107,7 +105,6 @@ fn test_worker_config_builder() {
 // Test: Processing result creation
 // =============================================================================
 
-
 #[test]
 fn test_processing_result_success() {
     use roboflow_distributed::worker::ProcessingResult;
@@ -123,7 +120,6 @@ fn test_processing_result_success() {
         }
     }
 }
-
 
 #[test]
 fn test_processing_result_failed() {
@@ -149,7 +145,6 @@ fn test_processing_result_failed() {
 // Test: Shutdown handler functionality
 // =============================================================================
 
-
 #[test]
 fn test_shutdown_handler_default() {
     use roboflow_distributed::ShutdownHandler;
@@ -157,7 +152,6 @@ fn test_shutdown_handler_default() {
     let handler = ShutdownHandler::default();
     assert!(!handler.is_requested());
 }
-
 
 #[test]
 fn test_shutdown_handler_programmatic() {
@@ -169,7 +163,6 @@ fn test_shutdown_handler_programmatic() {
     handler.shutdown();
     assert!(handler.is_requested());
 }
-
 
 #[test]
 fn test_shutdown_handler_flag() {
@@ -185,7 +178,6 @@ fn test_shutdown_handler_flag() {
     assert!(flag.load(Ordering::SeqCst));
 }
 
-
 #[test]
 fn test_shutdown_interrupted_to_string() {
     use roboflow_distributed::ShutdownInterrupted;
@@ -193,7 +185,6 @@ fn test_shutdown_interrupted_to_string() {
     let err = ShutdownInterrupted;
     assert_eq!(err.to_string(), "Processing interrupted by shutdown signal");
 }
-
 
 #[test]
 fn test_shutdown_constants() {
@@ -206,23 +197,20 @@ fn test_shutdown_constants() {
 // Test: JobRecord state transitions
 // =============================================================================
 
-
 #[test]
 fn test_job_record_new() {
     use roboflow_distributed::tikv::schema::JobRecord;
 
     let job = JobRecord::new(
         "job-123".to_string(),
-        "path/to/file.bag".to_string(),
-        "test-bucket".to_string(),
+        "s3://test-bucket/path/to/file.bag".to_string(),
         1024,
         "output/".to_string(),
         "config-hash-123".to_string(),
     );
 
     assert_eq!(job.id, "job-123");
-    assert_eq!(job.source_key, "path/to/file.bag");
-    assert_eq!(job.source_bucket, "test-bucket");
+    assert_eq!(job.source_url, "s3://test-bucket/path/to/file.bag");
     assert_eq!(job.source_size, 1024);
     assert_eq!(
         job.status,
@@ -234,15 +222,13 @@ fn test_job_record_new() {
     assert!(!job.is_terminal());
 }
 
-
 #[test]
 fn test_job_record_claim() {
     use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
 
     let mut job = JobRecord::new(
         "job-123".to_string(),
-        "path/to/file.bag".to_string(),
-        "test-bucket".to_string(),
+        "s3://test-bucket/path/to/file.bag".to_string(),
         1024,
         "output/".to_string(),
         "config-hash-123".to_string(),
@@ -258,15 +244,13 @@ fn test_job_record_claim() {
     assert!(!job.is_terminal());
 }
 
-
 #[test]
 fn test_job_record_claim_fails_if_not_claimable() {
     use roboflow_distributed::tikv::schema::JobRecord;
 
     let mut job = JobRecord::new(
         "job-123".to_string(),
-        "path/to/file.bag".to_string(),
-        "test-bucket".to_string(),
+        "s3://test-bucket/path/to/file.bag".to_string(),
         1024,
         "output/".to_string(),
         "config-hash-123".to_string(),
@@ -281,15 +265,13 @@ fn test_job_record_claim_fails_if_not_claimable() {
     assert!(result.unwrap_err().contains("not claimable"));
 }
 
-
 #[test]
 fn test_job_record_complete() {
     use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
 
     let mut job = JobRecord::new(
         "job-123".to_string(),
-        "path/to/file.bag".to_string(),
-        "test-bucket".to_string(),
+        "s3://test-bucket/path/to/file.bag".to_string(),
         1024,
         "output/".to_string(),
         "config-hash-123".to_string(),
@@ -303,15 +285,13 @@ fn test_job_record_complete() {
     assert!(job.is_terminal());
 }
 
-
 #[test]
 fn test_job_record_fail_with_retry() {
     use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
 
     let mut job = JobRecord::new(
         "job-123".to_string(),
-        "path/to/file.bag".to_string(),
-        "test-bucket".to_string(),
+        "s3://test-bucket/path/to/file.bag".to_string(),
         1024,
         "output/".to_string(),
         "config-hash-123".to_string(),
@@ -328,15 +308,13 @@ fn test_job_record_fail_with_retry() {
     assert!(job.is_claimable());
 }
 
-
 #[test]
 fn test_job_record_fail_dead_after_max_attempts() {
     use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
 
     let mut job = JobRecord::new(
         "job-123".to_string(),
-        "path/to/file.bag".to_string(),
-        "test-bucket".to_string(),
+        "s3://test-bucket/path/to/file.bag".to_string(),
         1024,
         "output/".to_string(),
         "config-hash-123".to_string(),
@@ -355,15 +333,13 @@ fn test_job_record_fail_dead_after_max_attempts() {
     assert!(!job.is_claimable());
 }
 
-
 #[test]
 fn test_job_record_cancel() {
     use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
 
     let mut job = JobRecord::new(
         "job-123".to_string(),
-        "path/to/file.bag".to_string(),
-        "test-bucket".to_string(),
+        "s3://test-bucket/path/to/file.bag".to_string(),
         1024,
         "output/".to_string(),
         "config-hash-123".to_string(),
@@ -379,15 +355,13 @@ fn test_job_record_cancel() {
     assert!(!job.is_claimable()); // Cancelled jobs cannot be reclaimed
 }
 
-
 #[test]
 fn test_job_record_can_cancel() {
     use roboflow_distributed::tikv::schema::JobRecord;
 
     let mut job = JobRecord::new(
         "job-123".to_string(),
-        "path/to/file.bag".to_string(),
-        "test-bucket".to_string(),
+        "s3://test-bucket/path/to/file.bag".to_string(),
         1024,
         "output/".to_string(),
         "config-hash-123".to_string(),
@@ -409,15 +383,13 @@ fn test_job_record_can_cancel() {
     assert!(!job.can_cancel("random-user", &[]));
 }
 
-
 #[test]
 fn test_job_record_is_claimable() {
     use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
 
     let mut job = JobRecord::new(
         "job-123".to_string(),
-        "path/to/file.bag".to_string(),
-        "test-bucket".to_string(),
+        "s3://test-bucket/path/to/file.bag".to_string(),
         1024,
         "output/".to_string(),
         "config-hash-123".to_string(),
@@ -442,8 +414,7 @@ fn test_job_record_is_claimable() {
     // Dead job is not claimable
     let mut job2 = JobRecord::new(
         "job-456".to_string(),
-        "path/to/file2.bag".to_string(),
-        "test-bucket".to_string(),
+        "s3://test-bucket/path/to/file2.bag".to_string(),
         1024,
         "output/".to_string(),
         "config-hash-123".to_string(),
@@ -456,7 +427,6 @@ fn test_job_record_is_claimable() {
 // =============================================================================
 // Test: WorkerMetrics
 // =============================================================================
-
 
 #[test]
 fn test_worker_metrics_new() {
@@ -473,7 +443,6 @@ fn test_worker_metrics_new() {
     assert_eq!(metrics.processing_errors.load(Ordering::Relaxed), 0);
     assert_eq!(metrics.heartbeat_errors.load(Ordering::Relaxed), 0);
 }
-
 
 #[test]
 fn test_worker_metrics_increments() {
@@ -511,7 +480,6 @@ fn test_worker_metrics_increments() {
     assert_eq!(metrics.heartbeat_errors.load(Ordering::Relaxed), 1);
 }
 
-
 #[test]
 fn test_worker_metrics_snapshot() {
     use roboflow_distributed::worker::WorkerMetrics;
@@ -541,7 +509,6 @@ fn test_worker_metrics_snapshot() {
 // Test: CheckpointConfig
 // =============================================================================
 
-
 #[test]
 fn test_checkpoint_config_default() {
     use roboflow_distributed::tikv::checkpoint::CheckpointConfig;
@@ -552,7 +519,6 @@ fn test_checkpoint_config_default() {
     assert_eq!(config.checkpoint_interval_seconds, 10);
     assert!(config.checkpoint_async);
 }
-
 
 #[test]
 fn test_checkpoint_config_builder() {
@@ -571,7 +537,6 @@ fn test_checkpoint_config_builder() {
 // =============================================================================
 // Test: WorkerConfig extended
 // =============================================================================
-
 
 #[test]
 fn test_worker_config_extended() {
@@ -611,7 +576,6 @@ fn test_worker_config_extended() {
 // Test: Worker constants
 // =============================================================================
 
-
 #[test]
 fn test_worker_constants() {
     use roboflow_distributed::worker::{
@@ -634,7 +598,6 @@ fn test_worker_constants() {
 // =============================================================================
 // Test: ProcessingResult variants
 // =============================================================================
-
 
 #[test]
 fn test_processing_result_all_variants() {
@@ -669,7 +632,6 @@ fn test_processing_result_all_variants() {
 // Test: WorkerMetricsSnapshot
 // =============================================================================
 
-
 #[test]
 fn test_worker_metrics_snapshot_clone() {
     use roboflow_distributed::worker::WorkerMetrics;
@@ -690,7 +652,6 @@ fn test_worker_metrics_snapshot_clone() {
 // =============================================================================
 // Test: JobStatus methods
 // =============================================================================
-
 
 #[test]
 fn test_job_status_methods() {
@@ -715,7 +676,6 @@ fn test_job_status_methods() {
 // =============================================================================
 // Test: WorkerConfig default values
 // =============================================================================
-
 
 #[test]
 fn test_worker_config_all_defaults() {
@@ -743,15 +703,13 @@ fn test_worker_config_all_defaults() {
 // Test: JobRecord edge cases
 // =============================================================================
 
-
 #[test]
 fn test_job_record_max_attempts_exact_boundary() {
     use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
 
     let mut job = JobRecord::new(
         "job-123".to_string(),
-        "path/to/file.bag".to_string(),
-        "test-bucket".to_string(),
+        "s3://test-bucket/path/to/file.bag".to_string(),
         1024,
         "output/".to_string(),
         "config-hash-123".to_string(),
@@ -776,15 +734,13 @@ fn test_job_record_max_attempts_exact_boundary() {
     assert!(!job.is_claimable());
 }
 
-
 #[test]
 fn test_job_record_multiple_claim_attempts() {
     use roboflow_distributed::tikv::schema::JobRecord;
 
     let mut job = JobRecord::new(
         "job-123".to_string(),
-        "path/to/file.bag".to_string(),
-        "test-bucket".to_string(),
+        "s3://test-bucket/path/to/file.bag".to_string(),
         1024,
         "output/".to_string(),
         "config-hash-123".to_string(),
@@ -819,15 +775,13 @@ fn test_job_record_multiple_claim_attempts() {
     assert!(!job.is_claimable());
 }
 
-
 #[test]
 fn test_job_record_cancel_prevents_reclaim() {
     use roboflow_distributed::tikv::schema::JobRecord;
 
     let mut job = JobRecord::new(
         "job-123".to_string(),
-        "path/to/file.bag".to_string(),
-        "test-bucket".to_string(),
+        "s3://test-bucket/path/to/file.bag".to_string(),
         1024,
         "output/".to_string(),
         "config-hash-123".to_string(),
@@ -848,7 +802,6 @@ fn test_job_record_cancel_prevents_reclaim() {
 // Test: ConfigRecord functionality
 // =============================================================================
 
-
 #[test]
 fn test_config_record_new() {
     use roboflow_distributed::tikv::schema::ConfigRecord;
@@ -866,7 +819,6 @@ fps = 30
     assert_eq!(record.content, content);
     assert!(record.created_at <= chrono::Utc::now());
 }
-
 
 #[test]
 fn test_config_record_compute_hash() {
@@ -894,7 +846,6 @@ fn test_config_record_compute_hash() {
 // Test: LockRecord functionality
 // =============================================================================
 
-
 #[test]
 fn test_lock_record_new() {
     use roboflow_distributed::tikv::schema::LockRecord;
@@ -910,7 +861,6 @@ fn test_lock_record_new() {
     assert_eq!(lock.version, 1);
     assert!(lock.expires_at > lock.acquired_at);
 }
-
 
 #[test]
 fn test_lock_record_is_expired() {
@@ -928,7 +878,6 @@ fn test_lock_record_is_expired() {
     lock = LockRecord::new("resource-1".to_string(), "pod-abc".to_string(), 3600);
     assert!(!lock.is_expired());
 }
-
 
 #[test]
 fn test_lock_record_is_expired_with_grace() {
@@ -968,7 +917,6 @@ fn test_lock_record_is_expired_with_grace() {
 // Test: CheckpointState functionality
 // =============================================================================
 
-
 #[test]
 fn test_checkpoint_state_progress() {
     use chrono::Utc;
@@ -997,7 +945,6 @@ fn test_checkpoint_state_progress() {
     };
     assert_eq!(checkpoint_zero.progress_percent(), 0.0);
 }
-
 
 #[test]
 fn test_checkpoint_state_is_complete() {
@@ -1033,7 +980,6 @@ fn test_checkpoint_state_is_complete() {
 // Test: WorkerMetricsSnapshot display
 // =============================================================================
 
-
 #[test]
 fn test_worker_metrics_snapshot_debug() {
     use roboflow_distributed::worker::WorkerMetrics;
@@ -1059,7 +1005,6 @@ fn test_worker_metrics_snapshot_debug() {
 // Test: HeartbeatRecord functionality
 // =============================================================================
 
-
 #[test]
 fn test_heartbeat_record_new() {
     use roboflow_distributed::tikv::schema::{HeartbeatRecord, WorkerStatus};
@@ -1073,7 +1018,6 @@ fn test_heartbeat_record_new() {
     assert!(heartbeat.last_heartbeat <= chrono::Utc::now());
 }
 
-
 #[test]
 fn test_heartbeat_record_beat() {
     use roboflow_distributed::tikv::schema::HeartbeatRecord;
@@ -1084,7 +1028,6 @@ fn test_heartbeat_record_beat() {
     heartbeat.beat();
     assert!(heartbeat.last_heartbeat >= first_time);
 }
-
 
 #[test]
 fn test_heartbeat_record_status() {

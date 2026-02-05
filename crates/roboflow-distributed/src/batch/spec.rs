@@ -58,6 +58,10 @@ pub struct BatchMetadata {
     /// Name of the batch job (must be unique).
     pub name: String,
 
+    /// Display name for user-friendly output (optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+
     /// Namespace for grouping jobs (optional).
     #[serde(default)]
     pub namespace: String,
@@ -83,6 +87,7 @@ impl Default for BatchMetadata {
     fn default() -> Self {
         Self {
             name: String::new(),
+            display_name: None,
             namespace: "default".to_string(),
             submitted_by: None,
             labels: HashMap::new(),
@@ -242,6 +247,7 @@ impl BatchSpec {
             kind: KIND_BATCH_JOB.to_string(),
             metadata: BatchMetadata {
                 name: name.into(),
+                display_name: None,
                 namespace: "default".to_string(),
                 submitted_by: None,
                 labels: HashMap::new(),

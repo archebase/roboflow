@@ -488,7 +488,7 @@ impl BatchController {
 
                 summaries.push(BatchSummary {
                     id: batch_id.to_string(),
-                    name: spec.metadata.name,
+                    name: spec.metadata.display_name.clone().unwrap_or(spec.metadata.name.clone()),
                     namespace: spec.metadata.namespace,
                     phase: status.phase,
                     files_total: status.files_total,

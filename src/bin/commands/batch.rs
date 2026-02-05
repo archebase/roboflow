@@ -470,7 +470,7 @@ impl BatchCommand {
 
         println!("Batch job submitted successfully");
         println!("  Batch ID: {}", batch_id);
-        println!("  Name: {}", spec.metadata.name);
+        println!("  Name: {}", spec.metadata.display_name.as_ref().unwrap_or(&spec.metadata.name));
         println!("  Sources: {}", spec.spec.sources.len());
         println!("  Output: {}", spec.spec.output);
 

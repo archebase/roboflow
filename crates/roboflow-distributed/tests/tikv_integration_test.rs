@@ -46,8 +46,7 @@ mod tests {
     fn create_test_job(id: &str) -> JobRecord {
         JobRecord::new(
             id.to_string(),
-            format!("source/{}", id),
-            "test-bucket".to_string(),
+            format!("s3://test-bucket/source/{}", id),
             1024,
             "output/".to_string(),
             "config-hash".to_string(),
@@ -1068,7 +1067,7 @@ mod tests {
             assert!(retrieved.is_some());
             let retrieved = retrieved.unwrap();
             assert_eq!(retrieved.id, job_id);
-            assert_eq!(retrieved.source_key, job.source_key);
+            assert_eq!(retrieved.source_url, job.source_url);
         }
 
         cleanup_test_data(&client, &job_id, "").await;

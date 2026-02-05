@@ -1175,14 +1175,13 @@ pub fn print_job_table(jobs: &[JobRecord], format: OutputFormat) {
                 let owner = job.owner.as_deref().unwrap_or("");
                 let created = job.created_at.to_rfc3339();
                 println!(
-                    "{},{},{},{},{},{},{},{}",
+                    "{},{},{},{},{},{},{}",
                     job.id,
                     format_status_csv(job.status),
                     owner,
                     job.attempts,
                     created,
-                    job.source_bucket,
-                    job.source_key,
+                    job.source_url,
                     job.output_prefix
                 );
             }
@@ -1197,7 +1196,7 @@ pub fn print_job_table(jobs: &[JobRecord], format: OutputFormat) {
 fn print_job_detail(job: &JobRecord, checkpoint: Option<&roboflow_distributed::CheckpointState>) {
     println!("Job ID:        {}", job.id);
     println!("Status:        {}", format_status(job.status));
-    println!("Source:        {}/{}", job.source_bucket, job.source_key);
+    println!("Source:        {}", job.source_url);
     println!("Source Size:   {} bytes", job.source_size);
     println!("Output:        {}", job.output_prefix);
     println!("Config Hash:   {}", job.config_hash);
