@@ -346,6 +346,7 @@ impl Scanner {
     /// Create a job record for a file.
     fn create_job(
         &self,
+        source_url: &str,
         metadata: &ObjectMetadata,
         hash: &str,
         output_prefix: &str,
@@ -353,7 +354,7 @@ impl Scanner {
     ) -> JobRecord {
         JobRecord::new(
             hash.to_string(),
-            metadata.path.clone(),
+            source_url.to_string(),
             metadata.size,
             output_prefix.to_string(),
             config_hash.to_string(),
@@ -605,7 +606,7 @@ impl Scanner {
                     let job_pairs: Vec<(Vec<u8>, Vec<u8>)> = chunk
                         .iter()
                         .map(|(metadata, hash)| {
-                            let job = self.create_job(metadata, hash, output_prefix, config_hash);
+                            let job = self.create_job(source_url, metadata, hash, output_prefix, config_hash);
                             use super::tikv::key::JobKeys;
                             let key = JobKeys::record(&job.id);
                             let data = bincode::serialize(&job)
@@ -982,10 +983,7 @@ mod tests {
         assert_eq!(extract_path("oss://bucket/file.bag"), "file.bag");
 
         // File with nested path
-        assert_eq!(
-            extract_path("s3://bucket/data/file.mcap"),
-            "data/file.mcap"
-        );
+        assert_eq!(extract_path("s3://bucket/data/file.mcap"), "data/file.mcap");
         assert_eq!(
             extract_path("oss://bucket/data/subdir/file.bag"),
             "data/subdir/file.bag"
