@@ -2,18 +2,16 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Roboflow CLI - distributed data processing pipeline.
+//! Roboflow CLI - unified distributed data processing pipeline.
 //!
-//! This binary provides long-running worker and scanner processes for
-//! distributed dataset processing using TiKV coordination.
+//! This binary provides a unified interface for all pipeline operations:
 //!
 //! ## Subcommands
 //!
 //! - `submit` - Submit jobs to the distributed queue
 //! - `jobs` - Manage jobs (list, get, retry, cancel, delete, stats)
-//! - `worker` - Run a worker that claims and processes jobs from TiKV
-//! - `scanner` - Run a scanner that discovers files and creates jobs
-//! - `health` - Run a standalone health check server (for testing)
+//! - `batch` - Manage batch jobs
+//! - `run` - Run the unified service (worker + finalizer + reaper in one)
 //!
 //! ## Environment Variables
 //!
@@ -30,7 +28,11 @@
 //! - `AWS_SECRET_ACCESS_KEY` - AWS secret key
 //! - `AWS_REGION` - AWS region
 //!
-//! ### Worker Configuration
+//! ### Role Configuration (for `run` command)
+//! - `ROLE` - Role to run: `worker`, `finalizer`, or `unified` (default)
+//! - `POD_ID` - Unique identifier for this instance
+//!
+//! ### Worker Configuration (ROLE=worker or unified)
 //! - `WORKER_POLL_INTERVAL_SECS` - Job poll interval (default: 5)
 //! - `WORKER_MAX_CONCURRENT_JOBS` - Max concurrent jobs (default: 1)
 //! - `WORKER_MAX_ATTEMPTS` - Max attempts per job (default: 3)
@@ -41,47 +43,55 @@
 //! - `WORKER_STORAGE_PREFIX` - Input storage prefix (default: input/)
 //! - `WORKER_OUTPUT_PREFIX` - Output storage prefix (default: output/)
 //!
-//! ### Scanner Configuration
-//! - `SCANNER_INPUT_PREFIX` - Input prefix to scan (default: input/)
-//! - `SCANNER_SCAN_INTERVAL_SECS` - Scan interval (default: 60)
-//! - `SCANNER_OUTPUT_PREFIX` - Output prefix for jobs (default: output/)
-//! - `SCANNER_FILE_PATTERN` - Glob pattern for filtering files (optional)
-//!
-//! ### Health Server Configuration
-//! - `HEALTH_PORT` - Health server port (default: 8080)
-//! - `HEALTH_HOST` - Health server host (default: 0.0.0.0)
-//!
-//! ### Logging
-//! - `LOG_FORMAT` - Log format: pretty or json (default: pretty)
-//! - `LOG_LEVEL` - Log level (default: info)
-//! - `RUST_LOG` - Per-module log levels
+//! ### Finalizer Configuration (ROLE=finalizer or unified)
+//! - `FINALIZER_POLL_INTERVAL_SECS` - Poll interval for completed batches (default: 30)
+//! - `FINALIZER_MERGE_TIMEOUT_SECS` - Merge operation timeout (default: 600)
 
 use std::env;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::time::Duration;
 
-use roboflow_distributed::{Scanner, ScannerConfig, Worker, WorkerConfig};
+use roboflow_distributed::{
+    BatchController, Finalizer, FinalizerConfig, MergeCoordinator, ReaperConfig, Worker,
+    WorkerConfig, ZombieReaper,
+};
 use roboflow_storage::StorageFactory;
+use tokio_util::sync::CancellationToken;
 
 // Include CLI commands module
 mod commands;
 
 // =============================================================================
-// Command Types
+// Role Types
 // =============================================================================
 
-/// Generate a pod ID from environment or hostname + UUID.
-fn generate_pod_id(prefix: &str) -> String {
-    match env::var("POD_NAME") {
-        Ok(name) => name,
-        Err(_) => {
-            // Try to get hostname, fall back to "unknown"
-            let hostname = hostname::get()
-                .map(|h| h.to_string_lossy().to_string())
-                .unwrap_or_else(|_| "unknown".to_string());
-            format!("{}-{}", prefix, hostname)
+/// Runtime role for the unified service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// Worker only - processes work units
+    Worker,
+    /// Finalizer only - merges completed batches
+    Finalizer,
+    /// Unified - runs all roles (worker, finalizer, reaper)
+    Unified,
+}
+
+impl Role {
+    /// Parse role from environment variable or string.
+    pub fn try_from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "worker" => Some(Role::Worker),
+            "finalizer" => Some(Role::Finalizer),
+            "unified" => Some(Role::Unified),
+            _ => None,
         }
+    }
+
+    /// Get role from ROLE env var, default to Unified.
+    pub fn from_env() -> Self {
+        env::var("ROLE")
+            .ok()
+            .and_then(|s| Self::try_from_str(&s))
+            .unwrap_or(Role::Unified)
     }
 }
 
@@ -102,16 +112,11 @@ enum Command {
         /// Remaining arguments for batch command
         args: Vec<String>,
     },
-    /// Run the worker loop
-    Worker {
-        /// Pod ID for this worker
-        pod_id: Option<String>,
-        /// Storage URL for input/output files
-        storage_url: Option<String>,
-    },
-    /// Run the scanner loop
-    Scanner {
-        /// Pod ID for this scanner
+    /// Run the unified service (worker + finalizer + reaper)
+    Run {
+        /// Role to run (worker, finalizer, unified)
+        role: Option<String>,
+        /// Pod ID for this instance
         pod_id: Option<String>,
     },
     /// Run a standalone health check server
@@ -133,27 +138,31 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
 
     match command.as_str() {
         "submit" => {
-            // Collect remaining args for submit command
             let submit_args: Vec<String> = args[2..].to_vec();
             Ok(Command::Submit { args: submit_args })
         }
         "jobs" => {
-            // Collect remaining args for jobs command
             let jobs_args: Vec<String> = args[2..].to_vec();
             Ok(Command::Jobs { args: jobs_args })
         }
         "batch" => {
-            // Collect remaining args for batch command
             let batch_args: Vec<String> = args[2..].to_vec();
             Ok(Command::Batch { args: batch_args })
         }
-        "worker" => {
+        "run" => {
+            let mut role = None;
             let mut pod_id = None;
-            let mut storage_url = None;
 
             let mut i = 2;
             while i < args.len() {
                 match args[i].as_str() {
+                    "--role" | "-r" => {
+                        i += 1;
+                        if i >= args.len() {
+                            return Err("--role requires a value".to_string());
+                        }
+                        role = Some(args[i].clone());
+                    }
                     "--pod-id" | "-p" => {
                         i += 1;
                         if i >= args.len() {
@@ -161,55 +170,20 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                         }
                         pod_id = Some(args[i].clone());
                     }
-                    "--storage-url" | "-s" => {
-                        i += 1;
-                        if i >= args.len() {
-                            return Err("--storage-url requires a value".to_string());
-                        }
-                        storage_url = Some(args[i].clone());
-                    }
                     "--help" | "-h" => {
-                        return Ok(Command::Worker {
+                        return Ok(Command::Run {
+                            role: None,
                             pod_id: None,
-                            storage_url: None,
                         });
                     }
                     unknown => {
-                        return Err(format!("unknown flag for worker: {}", unknown));
+                        return Err(format!("unknown flag for run: {}", unknown));
                     }
                 }
                 i += 1;
             }
 
-            Ok(Command::Worker {
-                pod_id,
-                storage_url,
-            })
-        }
-        "scanner" => {
-            let mut pod_id = None;
-
-            let mut i = 2;
-            while i < args.len() {
-                match args[i].as_str() {
-                    "--pod-id" | "-p" => {
-                        i += 1;
-                        if i >= args.len() {
-                            return Err("--pod-id requires a value".to_string());
-                        }
-                        pod_id = Some(args[i].clone());
-                    }
-                    "--help" | "-h" => {
-                        return Ok(Command::Scanner { pod_id: None });
-                    }
-                    unknown => {
-                        return Err(format!("unknown flag for scanner: {}", unknown));
-                    }
-                }
-                i += 1;
-            }
-
-            Ok(Command::Scanner { pod_id })
+            Ok(Command::Run { role, pod_id })
         }
         "health" => {
             let mut host = None;
@@ -262,620 +236,311 @@ fn usage() -> Result<Command, String> {
 
 /// Get help text.
 fn get_help() -> String {
-    r#"Roboflow CLI - Distributed Data Processing Pipeline
+    r#"Roboflow - Distributed data transformation pipeline
 
 USAGE:
     roboflow <COMMAND> [OPTIONS]
 
 COMMANDS:
-    submit       Submit jobs to the distributed queue
-    jobs         Manage jobs (list, get, retry, cancel, delete, stats)
-    batch        Manage batch jobs (submit, status, list, cancel)
-    worker       Run a worker that claims and processes jobs from TiKV
-    scanner      Run a scanner that discovers files and creates jobs
-    health       Run a standalone health check server
-WORKER OPTIONS:
-    -p, --pod-id <ID>           Pod ID for this worker (default: POD_NAME env var or hostname+UUID)
-    -s, --storage-url <URL>     Storage URL for input/output files (default: auto-detected)
+    submit      Submit a conversion job to the distributed queue
+    jobs        Manage and inspect jobs
+    batch       Manage batch jobs
+    run         Run the unified service (worker + finalizer + reaper)
+    health      Run a standalone health check server
+    help        Print this help message
 
-SCANNER OPTIONS:
-    -p, --pod-id <ID>           Pod ID for this scanner (default: POD_NAME env var or hostname+UUID)
+RUN COMMAND:
+    roboflow run [OPTIONS]
 
-HEALTH OPTIONS:
-        --host <HOST>           Host to bind to (default: 0.0.0.0 or HEALTH env var)
-        --port <PORT>           Port to bind to (default: 8080 or HEALTH_PORT env var)
+OPTIONS:
+    -r, --role <ROLE>      Role to run: worker, finalizer, unified [default: unified]
+    -p, --pod-id <ID>      Pod ID for this instance [default: auto-generated]
+    -h, --help             Print help information
 
 ENVIRONMENT VARIABLES:
-    TiKV Configuration:
-        TIKV_PD_ENDPOINTS                PD endpoints (default: 127.0.0.1:2379)
-        TIKV_CONNECTION_TIMEOUT_SECS     Connection timeout (default: 10)
-        TIKV_OPERATION_TIMEOUT_SECS      Operation timeout (default: 30)
-
-    Storage Configuration:
-        OSS_ACCESS_KEY_ID               Alibaba OSS access key
-        OSS_ACCESS_KEY_SECRET            Alibaba OSS secret key
-        OSS_ENDPOINT                     Alibaba OSS endpoint
-        AWS_ACCESS_KEY_ID                AWS access key
-        AWS_SECRET_ACCESS_KEY            AWS secret key
-        AWS_REGION                       AWS region
-
-    Worker Configuration:
-        WORKER_POLL_INTERVAL_SECS        Job poll interval (default: 5)
-        WORKER_MAX_CONCURRENT_JOBS       Max concurrent jobs (default: 1)
-        WORKER_MAX_ATTEMPTS              Max attempts per job (default: 3)
-        WORKER_JOB_TIMEOUT_SECS          Job timeout (default: 3600)
-        WORKER_HEARTBEAT_INTERVAL_SECS   Heartbeat interval (default: 30)
-        WORKER_CHECKPOINT_INTERVAL_FRAMES Checkpoint interval in frames (default: 100)
-        WORKER_CHECKPOINT_INTERVAL_SECS  Checkpoint interval in seconds (default: 10)
-        WORKER_STORAGE_PREFIX            Input storage prefix (default: input/)
-        WORKER_OUTPUT_PREFIX             Output storage prefix (default: output/)
-
-    Scanner Configuration:
-        SCANNER_NAMESPACE                 Namespace for batches (default: jobs)
-        SCANNER_SCAN_INTERVAL_SECS        Scan interval (default: 60)
-
-    Health Server Configuration:
-        HEALTH_PORT                       Health server port (default: 8080)
-        HEALTH_HOST                       Health server host (default: 0.0.0.0)
-
-    Logging:
-        LOG_FORMAT                        Log format: pretty or json (default: pretty)
-        LOG_LEVEL                         Log level (default: info)
-        RUST_LOG                          Per-module log levels
+    ROLE                    Role to run (worker, finalizer, unified)
+    POD_ID                  Pod ID for this instance
+    TIKV_PD_ENDPOINTS        TiKV PD endpoints [default: 127.0.0.1:2379]
 
 EXAMPLES:
-    # Submit a single file
-    roboflow submit oss://bucket/file.mcap --output oss://bucket/output/
+    # Run unified service (all roles)
+    roboflow run
 
-    # List all jobs
+    # Run as worker only
+    roboflow run --role worker
+
+    # Submit a job
+    roboflow submit s3://bucket/input.bag --output s3://bucket/output/
+
+    # List jobs
     roboflow jobs list
-
-    # List failed jobs
-    roboflow jobs list --status failed
-
-    # Get job details
-    roboflow jobs get <job-id>
-
-    # Submit a batch job
-    roboflow batch submit batch.yaml
-
-    # List batch jobs
-    roboflow batch list
-
-    # Get batch status
-    roboflow batch status default:my-batch
-
-    # Run worker with default settings
-    roboflow worker
-
-    # Run worker with custom pod ID
-    roboflow worker --pod-id worker-1
-
-    # Run scanner
-    roboflow scanner
-
-    # Run health server on custom port
-    roboflow health --port 9090
-
-    # Run with JSON logging
-    LOG_FORMAT=json roboflow worker
 "#
     .to_string()
 }
 
-// =============================================================================
-// Worker Command
-// =============================================================================
+/// Generate a pod ID from environment or hostname + UUID.
+fn generate_pod_id(prefix: &str) -> String {
+    match env::var("POD_NAME") {
+        Ok(name) => name,
+        Err(_) => {
+            let hostname = hostname::get()
+                .map(|h| h.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
+            format!("{}-{}", prefix, hostname)
+        }
+    }
+}
 
+/// Create TiKV client from environment.
+async fn create_tikv() -> Result<roboflow_distributed::TikvClient, String> {
+    use roboflow_distributed::TikvConfig;
+
+    let config = TikvConfig::default();
+
+    roboflow_distributed::TikvClient::new(config)
+        .await
+        .map_err(|e| format!("Failed to create TiKV client: {}", e))
+}
+
+/// Create storage factory from environment.
+fn create_storage_factory() -> StorageFactory {
+    StorageFactory::from_env()
+}
+
+/// Create storage from environment.
+fn create_storage() -> Result<Arc<dyn roboflow_storage::Storage>, String> {
+    let storage_factory = create_storage_factory();
+
+    // Determine storage URL from environment or use local
+    let storage_url = if let Ok(endpoint) = env::var("AWS_S3_ENDPOINT") {
+        let bucket = env::var("AWS_S3_BUCKET").unwrap_or_default();
+        if !bucket.is_empty() {
+            format!("s3://{}@{}", bucket, endpoint)
+        } else {
+            "file://./data".to_string()
+        }
+    } else if let Ok(_endpoint) = env::var("OSS_ENDPOINT") {
+        let bucket = env::var("OSS_BUCKET").unwrap_or_default();
+        if !bucket.is_empty() {
+            format!("oss://{}", bucket)
+        } else {
+            "file://./data".to_string()
+        }
+    } else {
+        "file://./data".to_string()
+    };
+
+    storage_factory
+        .create(&storage_url)
+        .map_err(|e| format!("Failed to create storage: {}", e))
+}
+
+/// Run the worker role.
 async fn run_worker(
-    pod_id: Option<String>,
-    storage_url: Option<String>,
+    pod_id: String,
+    tikv: Arc<roboflow_distributed::TikvClient>,
+    storage: Arc<dyn roboflow_storage::Storage>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::env;
-
-    // Initialize TiKV client from environment
-    let tikv = Arc::new(roboflow_distributed::TikvClient::from_env().await?);
-
-    // Determine storage URL
-    let storage_url = storage_url
-        .unwrap_or_else(|| env::var("STORAGE_URL").unwrap_or_else(|_| "file://./data".to_string()));
-
-    // Create storage backend using factory from environment
-    let factory = StorageFactory::from_env();
-    let storage = factory.create(&storage_url).map_err(|e| {
-        anyhow::anyhow!(
-            "Failed to create storage backend for URL '{}': {}",
-            storage_url,
-            e
-        )
-    })?;
-
-    // Load worker configuration from environment
-    let config = load_worker_config();
-
-    // Generate or use provided pod ID
-    let pod_id = pod_id.unwrap_or_else(|| generate_pod_id("worker"));
-
-    tracing::info!(
-        pod_id = %pod_id,
-        storage_url = %storage_url,
-        "Starting worker"
-    );
-
-    // Create worker
+    let config = WorkerConfig::new();
     let mut worker = Worker::new(pod_id, tikv, storage, config)?;
 
-    // Start health server in background (worker uses 8081 to avoid conflict with scanner)
-    let health_handle = start_health_server_background_with_default(8081).await?;
-
-    // Run worker loop (this blocks until shutdown)
-    worker.run().await?;
-
-    // Shutdown health server
-    health_handle.shutdown().await;
-
-    Ok(())
+    worker.run().await.map_err(|e| e.into())
 }
 
-fn load_worker_config() -> WorkerConfig {
-    use std::env;
-
-    let poll_interval = env::var("WORKER_POLL_INTERVAL_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(5);
-
-    let max_concurrent_jobs = env::var("WORKER_MAX_CONCURRENT_JOBS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1);
-
-    let max_attempts = env::var("WORKER_MAX_ATTEMPTS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(3);
-
-    let job_timeout = env::var("WORKER_JOB_TIMEOUT_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(3600);
-
-    let heartbeat_interval = env::var("WORKER_HEARTBEAT_INTERVAL_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(30);
-
-    let checkpoint_interval_frames = env::var("WORKER_CHECKPOINT_INTERVAL_FRAMES")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
-
-    let checkpoint_interval_seconds = env::var("WORKER_CHECKPOINT_INTERVAL_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(10);
-
-    let storage_prefix = env::var("WORKER_STORAGE_PREFIX").unwrap_or_else(|_| "input/".to_string());
-
-    let output_prefix = env::var("WORKER_OUTPUT_PREFIX").unwrap_or_else(|_| "output/".to_string());
-
-    WorkerConfig::new()
-        .with_max_concurrent_jobs(max_concurrent_jobs)
-        .with_poll_interval(Duration::from_secs(poll_interval))
-        .with_max_attempts(max_attempts)
-        .with_job_timeout(Duration::from_secs(job_timeout))
-        .with_heartbeat_interval(Duration::from_secs(heartbeat_interval))
-        .with_checkpoint_interval_frames(checkpoint_interval_frames)
-        .with_checkpoint_interval_seconds(checkpoint_interval_seconds)
-        .with_storage_prefix(storage_prefix)
-        .with_output_prefix(output_prefix)
-}
-
-// =============================================================================
-// Scanner Command
-// =============================================================================
-
-async fn run_scanner(pod_id: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize TiKV client from environment
-    let tikv = Arc::new(roboflow_distributed::TikvClient::from_env().await?);
-
-    // Create storage factory from environment
-    let factory = StorageFactory::from_env();
-
-    // Load scanner configuration
-    let config = load_scanner_config();
-
-    // Generate or use provided pod ID
-    let pod_id = pod_id.unwrap_or_else(|| generate_pod_id("scanner"));
-
-    tracing::info!(
-        pod_id = %pod_id,
-        "Starting scanner"
-    );
-
-    // Create scanner
-    let mut scanner = Scanner::new(pod_id, tikv, Arc::new(factory), config)?;
-
-    // Start health server in background
-    let health_handle = start_health_server_background().await?;
-
-    // Run scanner loop (this blocks until shutdown)
-    scanner.run().await?;
-
-    // Shutdown health server
-    health_handle.shutdown().await;
-
-    Ok(())
-}
-
-fn load_scanner_config() -> ScannerConfig {
-    use std::env;
-
-    // Get batch namespace (default "jobs")
-    let batch_namespace = env::var("SCANNER_NAMESPACE").unwrap_or_else(|_| "jobs".to_string());
-
-    let scan_interval = env::var("SCANNER_SCAN_INTERVAL_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(60);
-
-    ScannerConfig::new(batch_namespace).with_scan_interval(Duration::from_secs(scan_interval))
-}
-
-// =============================================================================
-// Health Server
-// =============================================================================
-
-/// Health server handle for background management.
-pub struct HealthServerHandle {
-    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    _server_task: tokio::task::JoinHandle<()>,
-}
-
-impl HealthServerHandle {
-    /// Shutdown the health server.
-    pub async fn shutdown(mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
-        }
-        // Wait for the server task to complete
-        let _ = tokio::time::timeout(Duration::from_secs(5), self._server_task).await;
-    }
-}
-
-/// Health server startup result.
-enum HealthServerStartup {
-    Ready,
-    Failed(String),
-}
-
-/// Start the health server in the background with a specific default port.
-/// Returns error if the server fails to bind within a short timeout.
-async fn start_health_server_background_with_default(
-    default_port: u16,
-) -> Result<HealthServerHandle, Box<dyn std::error::Error>> {
-    use std::env;
-
-    let host = env::var("HEALTH_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-    let port = env::var("HEALTH_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(default_port);
-
-    let addr = format!("{}:{}", host, port);
-    let addr_for_log = addr.clone();
-
-    // Create a channel to verify successful startup
-    let (startup_tx, mut startup_rx) = tokio::sync::oneshot::channel::<HealthServerStartup>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-
-    // Spawn the server task
-    let server_task = tokio::spawn(async move {
-        run_health_server(&addr, shutdown_rx, startup_tx).await;
-    });
-
-    // Wait for startup confirmation with a timeout
-    let startup_result = tokio::time::timeout(Duration::from_millis(500), &mut startup_rx)
-        .await
-        .map_err(|_| {
-            format!(
-                "Health server startup timed out after 500ms - may have failed to bind to {}",
-                addr_for_log
-            )
-        })?
-        .map_err(|e| format!("Health server startup channel closed: {}", e))?;
-
-    match startup_result {
-        HealthServerStartup::Ready => {
-            tracing::info!("Health server successfully started on {}", addr_for_log);
-        }
-        HealthServerStartup::Failed(err) => {
-            return Err(format!("Health server failed to start: {}", err).into());
-        }
-    }
-
-    Ok(HealthServerHandle {
-        shutdown_tx: Some(shutdown_tx),
-        _server_task: server_task,
-    })
-}
-
-/// Start the health server in the background with default port 8080.
-/// Returns error if the server fails to bind within a short timeout.
-async fn start_health_server_background() -> Result<HealthServerHandle, Box<dyn std::error::Error>>
-{
-    start_health_server_background_with_default(8080).await
-}
-
-/// Run the health check server.
-async fn run_health_server(
-    addr: &str,
-    shutdown_rx: tokio::sync::oneshot::Receiver<()>,
-    startup_tx: tokio::sync::oneshot::Sender<HealthServerStartup>,
-) {
-    // Ready flag - set to true when service is ready
-    let ready = Arc::new(AtomicBool::new(true));
-
-    // Try to bind the listener
-    let listener = match tokio::net::TcpListener::bind(addr).await {
-        Ok(l) => {
-            // Send success signal
-            let _ = startup_tx.send(HealthServerStartup::Ready);
-            l
-        }
-        Err(e) => {
-            let err_msg = format!("Failed to bind health server to {}: {}", addr, e);
-            tracing::error!("{}", err_msg);
-            let _ = startup_tx.send(HealthServerStartup::Failed(err_msg));
-            return;
-        }
-    };
-
-    // Use a simple TCP loop to handle HTTP requests
-    let ready = Arc::clone(&ready);
-    let mut shutdown_rx = shutdown_rx;
-
-    loop {
-        tokio::select! {
-            result = tokio::time::timeout(
-                Duration::from_secs(5),
-                listener.accept()
-            ) => {
-                match result {
-                    Ok(Ok((socket, peer_addr))) => {
-                        let ready = Arc::clone(&ready);
-                        tokio::spawn(async move {
-                            use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                            let mut socket: tokio::net::TcpStream = socket;
-                            let mut buf = [0u8; 2048]; // Increased buffer size
-                            let response = match tokio::time::timeout(
-                                Duration::from_secs(5),
-                                socket.read(&mut buf)
-                            ).await {
-                                Ok(Ok(n)) if n > 0 => {
-                                    let request = String::from_utf8_lossy(&buf[..n]);
-                                    handle_health_request(&request, &ready)
-                                }
-                                Ok(Ok(_)) => {
-                                    "HTTP/1.1 400 Bad Request\r\n\r\n".to_string()
-                                }
-                                Ok(Err(e)) => {
-                                    tracing::warn!(
-                                        peer = %peer_addr,
-                                        error = %e,
-                                        "Health server socket read error"
-                                    );
-                                    "HTTP/1.1 500 Internal Server Error\r\n\r\n".to_string()
-                                }
-                                Err(_) => {
-                                    tracing::warn!(
-                                        peer = %peer_addr,
-                                        "Health server read timeout"
-                                    );
-                                    "HTTP/1.1 408 Request Timeout\r\n\r\n".to_string()
-                                }
-                            };
-
-                            if let Err(e) = socket.write_all(response.as_bytes()).await {
-                                tracing::warn!(
-                                    peer = %peer_addr,
-                                    error = %e,
-                                    "Health server response write failed"
-                                );
-                            }
-                            let _ = socket.shutdown().await;
-                        });
-                    }
-                    Ok(Err(e)) => {
-                        // Log at warn level (not debug) so production can see issues
-                        tracing::warn!(
-                            error = %e,
-                            "Health server accept error - may indicate network issues or resource exhaustion"
-                        );
-                    }
-                    Err(_) => {
-                        // Timeout is expected - no connections, just loop again
-                    }
-                }
-            }
-            _ = &mut shutdown_rx => {
-                tracing::info!("Health server shutting down");
-                break;
-            }
-        }
-    }
-}
-
-/// Handle a health check HTTP request.
-fn handle_health_request(request: &str, ready: &AtomicBool) -> String {
-    use std::sync::atomic::Ordering;
-
-    // Basic request validation - check for HTTP/1.x GET request
-    if !request.starts_with("GET /") {
-        return "HTTP/1.1 400 Bad Request\r\n\r\n".to_string();
-    }
-
-    // Extract path more carefully
-    let path_end = match request.find(' ') {
-        Some(pos) if request.starts_with("GET ") => pos,
-        _ => return "HTTP/1.1 400 Bad Request\r\n\r\n".to_string(),
-    };
-
-    // Skip "GET " to get the path
-    let request_line = &request[4..path_end];
-
-    let response = match request_line {
-        "/health/live" => {
-            // Liveness probe - always return 200 if we're responding
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"alive\"}\r\n"
-        }
-        "/health/ready" => {
-            // Readiness probe - check ready flag
-            if ready.load(Ordering::Relaxed) {
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"ready\"}\r\n"
-            } else {
-                "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\n\r\n{\"status\":\"not_ready\"}\r\n"
-            }
-        }
-        "/health" => {
-            // Basic health check
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"healthy\"}\r\n"
-        }
-        "/metrics" => {
-            // Prometheus metrics endpoint
-            // Returns placeholder metrics - actual worker/scanner metrics
-            // would need to be shared via a global registry
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\n\r\n\
-            # HELP roboflow_up Whether the roboflow service is up\n\
-            # TYPE roboflow_up gauge\n\
-            roboflow_up 1\n\
-            # HELP roboflow_health_server_ready Whether the service is ready\n\
-            # TYPE roboflow_health_server_ready gauge\n\
-            roboflow_health_server_ready 1\n\r\n"
-        }
-        _ => "HTTP/1.1 404 Not Found\r\n\r\n",
-    };
-
-    response.to_string()
-}
-
-// =============================================================================
-// Standalone Health Command
-// =============================================================================
-
-async fn run_health_command(
-    host: Option<String>,
-    port: Option<u16>,
+/// Run the finalizer role.
+async fn run_finalizer(
+    pod_id: String,
+    tikv: Arc<roboflow_distributed::TikvClient>,
+    batch_controller: Arc<BatchController>,
+    merge_coordinator: Arc<MergeCoordinator>,
+    cancel: CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::env;
+    let config = FinalizerConfig::from_env()?;
+    let finalizer = Finalizer::new(pod_id, tikv, batch_controller, merge_coordinator, config)?;
 
-    let host =
-        host.unwrap_or_else(|| env::var("HEALTH_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()));
-    let port = port.unwrap_or_else(|| {
-        env::var("HEALTH_PORT")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(8080)
-    });
-
-    tracing::info!("Starting health server on {}:{}", host, port);
-
-    let addr = format!("{}:{}", host, port);
-
-    {
-        let ready = Arc::new(AtomicBool::new(true));
-        let listener = tokio::net::TcpListener::bind(&addr).await?;
-
-        println!("Health server listening on http://{}", addr);
-        println!("Endpoints:");
-        println!("  http://{}/health/live   - Liveness probe", addr);
-        println!("  http://{}/health/ready  - Readiness probe", addr);
-        println!("  http://{}/health        - Basic health check", addr);
-        println!("  http://{}/metrics       - Prometheus metrics", addr);
-
-        loop {
-            let (socket, _) = listener.accept().await?;
-
-            let ready = Arc::clone(&ready);
-            tokio::spawn(async move {
-                use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                let mut socket = socket;
-                let mut buf = [0u8; 2048];
-
-                let response =
-                    match tokio::time::timeout(Duration::from_secs(5), socket.read(&mut buf)).await
-                    {
-                        Ok(Ok(n)) if n > 0 => {
-                            let request = String::from_utf8_lossy(&buf[..n]);
-                            handle_health_request(&request, &ready)
-                        }
-                        Ok(Ok(_)) | Ok(Err(_)) => "HTTP/1.1 400 Bad Request\r\n\r\n".to_string(),
-                        Err(_) => "HTTP/1.1 408 Request Timeout\r\n\r\n".to_string(),
-                    };
-
-                let _ = socket.write_all(response.as_bytes()).await;
-                let _ = socket.shutdown().await;
-            });
-        }
-    }
+    finalizer.run(cancel).await.map_err(|e| e.into())
 }
 
-// =============================================================================
-// Main Entry Point
-// =============================================================================
+/// Run unified service (all roles).
+async fn run_unified(
+    pod_id: String,
+    tikv: Arc<roboflow_distributed::TikvClient>,
+    storage: Arc<dyn roboflow_storage::Storage>,
+    cancel: CancellationToken,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let worker_config = WorkerConfig::new();
+    let finalizer_config = FinalizerConfig::from_env()?;
+    let reaper_config = ReaperConfig::new();
 
-fn main() {
-    // Initialize structured logging first
-    roboflow_core::init_logging()
-        .unwrap_or_else(|e| eprintln!("Failed to initialize logging: {}", e));
+    let batch_controller = Arc::new(BatchController::with_client(tikv.clone()));
+    let merge_coordinator = Arc::new(MergeCoordinator::new(
+        tikv.clone(),
+        format!("{}-finalizer", pod_id),
+    ));
 
-    // Parse command-line arguments
+    // Clone cancel for finalizer task
+    let cancel_clone = cancel.clone();
+
+    // Create worker, finalizer, and reaper
+    let mut worker = Worker::new(
+        format!("{}-worker", pod_id),
+        tikv.clone(),
+        storage,
+        worker_config,
+    )?;
+
+    let finalizer = Finalizer::new(
+        format!("{}-finalizer", pod_id),
+        tikv.clone(),
+        batch_controller.clone(),
+        merge_coordinator,
+        finalizer_config,
+    )?;
+
+    let mut reaper = ZombieReaper::new(tikv.clone(), reaper_config);
+
+    // Start batch controller in background with error logging
+    let batch_controller_id = pod_id.clone();
+    tokio::spawn(async move {
+        if let Err(e) = batch_controller.run().await {
+            tracing::error!(
+                pod_id = %batch_controller_id,
+                error = %e,
+                "BatchController failed"
+            );
+        }
+    });
+
+    // Spawn all three tasks with error logging
+    let worker_pod_id = pod_id.clone();
+    let worker_handle = tokio::spawn(async move {
+        if let Err(e) = worker.run().await {
+            tracing::error!(
+                pod_id = %worker_pod_id,
+                error = %e,
+                "Worker failed"
+            );
+        }
+    });
+
+    let reaper_pod_id = pod_id.clone();
+    let reaper_handle = tokio::spawn(async move {
+        if let Err(e) = reaper.run().await {
+            tracing::error!(
+                pod_id = %reaper_pod_id,
+                error = %e,
+                "ZombieReaper failed"
+            );
+        }
+    });
+
+    let finalizer_pod_id = pod_id.clone();
+    let finalizer_handle = tokio::spawn(async move {
+        if let Err(e) = finalizer.run(cancel_clone).await {
+            tracing::error!(
+                pod_id = %finalizer_pod_id,
+                error = %e,
+                "Finalizer failed"
+            );
+        }
+    });
+
+    // Wait for any task to complete (usually due to shutdown or error)
+    tokio::select! {
+        _ = worker_handle => {
+            cancel.cancel();
+        }
+        _ = reaper_handle => {
+            cancel.cancel();
+        }
+        _ = finalizer_handle => {
+            cancel.cancel();
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
-    let command = match parse_args(&args) {
-        Ok(cmd) => cmd,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
+    let command = parse_args(&args)?;
+
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            env::var("RUST_LOG").unwrap_or_else(|_| "roboflow=info,tikv_client=warn".to_string()),
+        )
+        .init();
+
+    match command {
+        Command::Submit { args } => {
+            commands::run_submit_command(&args).await?;
         }
-    };
+        Command::Jobs { args } => {
+            commands::run_jobs_command(&args).await?;
+        }
+        Command::Batch { args } => {
+            commands::run_batch_command(&args).await?;
+        }
+        Command::Run { role, pod_id } => {
+            let role = role
+                .and_then(|r| Role::try_from_str(&r))
+                .unwrap_or_else(Role::from_env);
 
-    // Create Tokio runtime for async commands
-    {
-        let rt = match tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(rt) => rt,
-            Err(e) => {
-                eprintln!("Failed to create tokio runtime: {}", e);
-                std::process::exit(1);
+            let pod_id = pod_id.unwrap_or_else(|| generate_pod_id("roboflow"));
+
+            tracing::info!(
+                pod_id = %pod_id,
+                role = ?role,
+                "Starting unified service"
+            );
+
+            let tikv = Arc::new(create_tikv().await?);
+            let storage = create_storage()?;
+            let cancel = CancellationToken::new();
+            let cancel_clone = cancel.clone();
+
+            tokio::spawn(async move {
+                match tokio::signal::ctrl_c().await {
+                    Ok(()) => {
+                        tracing::info!("Received Ctrl+C, shutting down...");
+                        cancel_clone.cancel();
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to install Ctrl+C handler");
+                        // Still cancel to ensure shutdown
+                        cancel_clone.cancel();
+                    }
+                }
+            });
+
+            match role {
+                Role::Worker => {
+                    run_worker(pod_id, tikv, storage).await?;
+                }
+                Role::Finalizer => {
+                    let batch_controller = Arc::new(BatchController::with_client(tikv.clone()));
+                    let merge_coordinator = Arc::new(MergeCoordinator::new(
+                        tikv.clone(),
+                        format!("{}-finalizer", pod_id),
+                    ));
+                    run_finalizer(pod_id, tikv, batch_controller, merge_coordinator, cancel)
+                        .await?;
+                }
+                Role::Unified => {
+                    run_unified(pod_id, tikv, storage, cancel).await?;
+                }
             }
-        };
-
-        let result = rt.block_on(async {
-            match command {
-                Command::Submit { args } => crate::commands::run_submit_command(&args)
-                    .await
-                    .map_err(|e| e.into()),
-                Command::Jobs { args } => crate::commands::run_jobs_command(&args)
-                    .await
-                    .map_err(|e| e.into()),
-                Command::Batch { args } => crate::commands::run_batch_command(&args)
-                    .await
-                    .map_err(|e| e.into()),
-                Command::Worker {
-                    pod_id,
-                    storage_url,
-                } => run_worker(pod_id, storage_url).await,
-                Command::Scanner { pod_id } => run_scanner(pod_id).await,
-                Command::Health { host, port } => run_health_command(host, port).await,
-            }
-        });
-
-        if let Err(e) = result {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
+        }
+        Command::Health { host, port } => {
+            // Health command - placeholder implementation
+            eprintln!("Health command not yet implemented");
+            eprintln!("Host: {:?}", host);
+            eprintln!("Port: {:?}", port);
         }
     }
+
+    Ok(())
 }

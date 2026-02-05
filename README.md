@@ -18,20 +18,54 @@
 
 ## Architecture
 
+Roboflow uses a **Kubernetes-inspired distributed control plane** for fault-tolerant batch processing.
+
 ```
-┌─────────────┐     ┌─────────────┐     ┌──────────────┐
-│   Scanner   │────▶│    TiKV     │◀────│    Worker    │
-│ (File       │     │  Coordinator │     │ (Processing  │
-│  Discovery) │     │              │     │  & Export)   │
-└─────────────┘     └─────────────┘     └──────────────┘
-                            │
-                            ▼
-                     ┌─────────────┐
-                     │ Cloud       │
-                     │ Storage     │
-                     │ (S3/OSS)    │
-                     └─────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Control Plane                               │
+├─────────────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐              │
+│  │   Scanner    │  │   Reaper     │  │  Finalizer   │              │
+│  │  Controller  │  │  Controller  │  │  Controller  │              │
+│  │              │  │              │  │              │              │
+│  │ • Discover   │  │ • Detect     │  │ • Monitor    │              │
+│  │   files      │  │   stale pods │  │   batches    │              │
+│  │ • Create     │  │ • Reclaim    │  │ • Trigger    │              │
+│  │   jobs       │  │   orphaned   │  │   merge      │              │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘              │
+│         │                 │                 │                       │
+│         └─────────────────┼─────────────────┘                       │
+│                           │                                         │
+│                           ▼                                         │
+│                    ┌─────────────┐                                  │
+│                    │    TiKV     │                                  │
+│                    │  (etcd-like │                                  │
+│                    │   state)    │                                  │
+│                    └─────────────┘                                  │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                          Data Plane                                 │
+├─────────────────────────────────────────────────────────────────────┤
+│  Worker (pod-abc)    Worker (pod-def)    Worker (pod-xyz)           │
+│  • Claim jobs        • Claim jobs        • Claim jobs               │
+│  • Send heartbeat    • Send heartbeat    • Send heartbeat           │
+│  • Process data      • Process data      • Process data             │
+│  • Save checkpoint   • Save checkpoint   • Save checkpoint          │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+### Key Patterns
+
+| Kubernetes Concept | Roboflow Equivalent |
+|-------------------|---------------------|
+| Pod | `Worker` with `pod_id` |
+| etcd | TiKV distributed store |
+| kubelet heartbeat | `HeartbeatManager` |
+| node-controller | `ZombieReaper` |
+| Finalizers | `Finalizer` controller |
+| Job/CronJob | `JobRecord`, `BatchSpec` |
+| Lease API | `LockManager` |
 
 ## Workspace Structure
 
@@ -40,7 +74,7 @@
 | `roboflow-core` | Error types, registry, values |
 | `roboflow-storage` | S3, OSS, Local storage (always available) |
 | `roboflow-dataset` | KPS, LeRobot, streaming converters |
-| `roboflow-distributed` | TiKV client, catalog, circuit breaker |
+| `roboflow-distributed` | TiKV client, catalog, controllers |
 | `roboflow-hdf5` | Optional HDF5 format support |
 | `roboflow-pipeline` | Hyper pipeline, compression stages |
 

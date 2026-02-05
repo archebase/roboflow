@@ -244,43 +244,41 @@ impl CameraParamCollector {
     /// parameters from ROS CameraInfo and TF messages.
     ///
     /// # Arguments
-    /// * `reader` - MCAP reader to get messages from
+    /// * `reader` - RoboReader to get messages from
     /// * `camera_topics` - Map of camera name to topic prefix (e.g., "hand_right" -> "/camera/hand/right")
     /// * `parent_frame` - Parent frame for extrinsics (e.g., "base_link")
     pub fn extract_from_mcap(
         &mut self,
-        reader: &robocodec::mcap::McapReader,
+        reader: &robocodec::RoboReader,
         camera_topics: HashMap<String, String>,
         parent_frame: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         println!("  Extracting camera parameters...");
-
-        let iter = reader.decode_messages()?;
 
         // Track camera frames for TF lookup
         let mut camera_frames: HashMap<String, String> = HashMap::new();
         // Store all transforms for later lookup: child_frame_id -> (frame_id, transform)
         let mut transforms: HashMap<String, Vec<(String, ExtrinsicParams)>> = HashMap::new();
 
-        for result in iter {
-            let (msg, channel_info) = result?;
+        for msg_result in reader.decoded()? {
+            let timestamped_msg = msg_result?;
 
             // Check if this is a camera_info topic
             if let Some(camera_name) =
-                self.find_camera_for_topic(&channel_info.topic, &camera_topics)
-                && let Some(intrinsics) = self.extract_camera_info(&msg, &camera_name)
+                self.find_camera_for_topic(&timestamped_msg.channel.topic, &camera_topics)
+                && let Some(intrinsics) = self.extract_camera_info(&timestamped_msg.message, &camera_name)
             {
                 self.update_intrinsics(&camera_name, intrinsics);
 
                 // Try to extract the frame_id from camera_info header
-                if let Some(frame_id) = self.get_nested_string(&msg, &["header", "frame_id"]) {
+                if let Some(frame_id) = self.get_nested_string(&timestamped_msg.message, &["header", "frame_id"]) {
                     camera_frames.insert(camera_name.clone(), frame_id);
                 }
             }
 
             // Check if this is a TF topic
-            if channel_info.topic == "/tf" || channel_info.topic == "/tf_static" {
-                self.collect_tf_transforms(&msg, &mut transforms);
+            if timestamped_msg.channel.topic == "/tf" || timestamped_msg.channel.topic == "/tf_static" {
+                self.collect_tf_transforms(&timestamped_msg.message, &mut transforms);
             }
         }
 

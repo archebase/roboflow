@@ -18,6 +18,7 @@
 
 pub mod batch;
 pub mod catalog;
+pub mod finalizer;
 pub mod heartbeat;
 pub mod merge;
 pub mod reaper;
@@ -69,11 +70,17 @@ pub use reaper::{
 // Re-export constants from tikv config
 pub use tikv::config::{DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_PD_ENDPOINTS, KEY_PREFIX};
 
+// Re-export public types from finalizer (batch completion)
+pub use finalizer::{Finalizer, FinalizerConfig};
+
 // Re-export public types from shutdown (graceful shutdown)
 pub use shutdown::{
     DEFAULT_SHUTDOWN_TIMEOUT_SECS as SHUTDOWN_DEFAULT_TIMEOUT_SECS, ShutdownHandler,
     ShutdownInterrupted,
 };
+
+// Re-export public types from merge (staging + merge coordination)
+pub use merge::{MergeConfig, MergeCoordinator, MergeResult};
 
 // =============================================================================
 // Coordinator Traits

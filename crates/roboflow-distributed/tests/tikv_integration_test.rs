@@ -6,10 +6,9 @@
 //!
 //! These tests verify:
 //! 1. Lock system integration (acquisition, renewal, release, fencing tokens)
-//! 2. Scanner integration (leader election, job discovery, job creation)
-//! 3. Worker checkpoint integration (save, load, resume)
-//! 4. Concurrency tests (multi-worker coordination)
-//! 5. Catalog/persistence tests (job lifecycle, state transitions)
+//! 2. Worker checkpoint integration (save, load, resume)
+//! 3. Concurrency tests (multi-worker coordination)
+//! 4. Catalog/persistence tests (job lifecycle, state transitions)
 
 #[cfg(feature = "distributed")]
 mod tests {
@@ -789,80 +788,6 @@ mod tests {
             .signed_duration_since(heartbeat.last_heartbeat)
             .num_seconds();
         assert!(!heartbeat.is_stale(age + 1));
-    }
-
-    // =============================================================================
-    // Scanner Integration Tests
-    // =============================================================================
-
-    #[tokio::test]
-    async fn test_scanner_leader_lock() {
-        let Some(client) = get_tikv_or_skip().await else {
-            return;
-        };
-
-        let pod1 = "test-scanner-pod-1";
-        let pod2 = "test-scanner-pod-2";
-
-        let lock_manager1 = LockManager::new(client.clone(), pod1);
-        let lock_manager2 = LockManager::new(client.clone(), pod2);
-
-        // First scanner becomes leader
-        let guard1_result = lock_manager1
-            .acquire_with_renewal_default("scanner_lock")
-            .await;
-
-        assert!(guard1_result.is_ok());
-
-        // Second scanner cannot become leader
-        let guard2_result = lock_manager2
-            .acquire_with_renewal_default("scanner_lock")
-            .await;
-
-        assert!(guard2_result.is_err());
-
-        // Release first lock
-        drop(guard1_result.unwrap());
-
-        // Now second scanner can become leader
-        let guard3_result = lock_manager2
-            .acquire_with_renewal_default("scanner_lock")
-            .await;
-
-        assert!(guard3_result.is_ok());
-        drop(guard3_result.unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_scanner_job_creation() {
-        let Some(client) = get_tikv_or_skip().await else {
-            return;
-        };
-
-        let temp_dir = TempDir::new().unwrap();
-        let input_dir = temp_dir.path().join("input");
-        std::fs::create_dir_all(&input_dir).unwrap();
-
-        // Create test files
-        std::fs::write(input_dir.join("test1.mcap"), b"test data 1").unwrap();
-        std::fs::write(input_dir.join("test2.mcap"), b"test data 2").unwrap();
-
-        let storage =
-            Arc::new(LocalStorage::new(temp_dir.path())) as Arc<dyn roboflow_storage::Storage>;
-
-        // Create scanner
-        use roboflow_distributed::{Scanner, ScannerConfig};
-        let config = ScannerConfig::new(input_dir.to_str().unwrap())
-            .with_batch_size(10)
-            .with_scan_interval(Duration::from_millis(100));
-
-        let scanner = Scanner::new("test-scanner-discovery", client.clone(), storage, config)
-            .expect("Failed to create scanner");
-
-        // Verify scanner has metrics
-        let metrics = scanner.metrics().snapshot();
-        assert_eq!(metrics.files_discovered, 0);
-        assert_eq!(metrics.jobs_created, 0);
     }
 
     // =============================================================================

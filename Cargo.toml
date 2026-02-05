@@ -96,6 +96,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 object_store = { version = "0.11", optional = true, features = ["aws"] }
 # Async runtime (always enabled for distributed processing)
 tokio = { version = "1.40", features = ["rt-multi-thread", "sync"] }
+tokio-util = "0.7"
 url = { version = "2.5", optional = true }
 bytes = { version = "1.7", optional = true }
 
