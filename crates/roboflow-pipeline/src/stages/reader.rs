@@ -60,6 +60,13 @@ pub struct ReaderStage {
     /// Channel information
     _channels: HashMap<u16, robocodec::io::metadata::ChannelInfo>,
     /// Channel for sending chunks to compression stage
+    ///
+    /// TODO: Currently unused. The reader uses `decoded()` which returns
+    /// `TimestampedDecodedMessage` without raw byte data. To properly send chunks,
+    /// we need to either:
+    /// 1. Use a raw message API that provides byte data for MessageChunkData construction
+    /// 2. Extend TimestampedDecodedMessage to expose serialized bytes
+    /// 3. Refactor to use a different chunking strategy
     _chunks_sender: Sender<MessageChunkData>,
 }
 
@@ -112,6 +119,9 @@ impl ReaderStage {
             if current_chunk_messages >= self.config.max_messages
                 || current_chunk_size >= self.config.target_chunk_size
             {
+                // TODO: Construct and send MessageChunkData here
+                // Current limitation: TimestampedDecodedMessage doesn't expose
+                // raw serialized bytes needed for MessageChunkData construction
                 chunks_processed += 1;
                 current_chunk_messages = 0;
                 current_chunk_size = 0;
@@ -122,8 +132,8 @@ impl ReaderStage {
             // Note: TimestampedDecodedMessage doesn't expose raw data directly
             // The size tracking would need to be implemented differently
 
-            // Note: In the new API, we'd need to construct MessageChunkData differently
-            // For now, just count messages
+            // TODO: In the new API, we'd need to construct MessageChunkData differently
+            // For now, just count messages to track progress
             if messages_read.is_multiple_of(10000) {
                 info!(messages_read, "Reading messages...");
             }

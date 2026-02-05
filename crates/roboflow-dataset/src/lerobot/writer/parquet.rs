@@ -16,6 +16,10 @@ use roboflow_core::RoboflowError;
 
 use super::frame::LerobotFrame;
 
+/// Default action dimension for robotics datasets when not inferable from state.
+/// Common for dual-arm setups like BridgeData and Aloha (7 DOF per arm).
+const DEFAULT_ACTION_DIMENSION: usize = 14;
+
 /// Write current episode to Parquet file.
 ///
 /// This function collects all frame data for the current episode and writes
@@ -91,7 +95,9 @@ pub fn write_episode_parquet(
             last_action = Some(a.clone());
         } else if !observation_state.is_empty() {
             // No action available yet, use zeros with correct dimension
-            let dim = observation_state.last().map_or(14, |s| s.len().min(14));
+            let dim = observation_state
+                .last()
+                .map_or(DEFAULT_ACTION_DIMENSION, |s| s.len().min(DEFAULT_ACTION_DIMENSION));
             action.push(vec![0.0; dim]);
         }
 
