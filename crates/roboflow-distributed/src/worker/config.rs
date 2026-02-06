@@ -54,9 +54,6 @@ pub struct WorkerConfig {
     /// Whether to use async checkpointing.
     pub checkpoint_async: bool,
 
-    /// Storage bucket/prefix for reading source files.
-    pub storage_prefix: String,
-
     /// Local output prefix for writing files (used when output_storage_url is not set).
     pub output_prefix: String,
 
@@ -93,7 +90,6 @@ impl Default for WorkerConfig {
             checkpoint_interval_frames: DEFAULT_CHECKPOINT_INTERVAL_FRAMES,
             checkpoint_interval_seconds: DEFAULT_CHECKPOINT_INTERVAL_SECS,
             checkpoint_async: true,
-            storage_prefix: String::from("input/"),
             output_prefix: String::from("output/"),
             output_storage_url: None,
             expected_workers: 1,
@@ -135,12 +131,6 @@ impl WorkerConfig {
     /// Set the heartbeat interval.
     pub fn with_heartbeat_interval(mut self, interval: Duration) -> Self {
         self.heartbeat_interval = interval;
-        self
-    }
-
-    /// Set the storage prefix.
-    pub fn with_storage_prefix(mut self, prefix: impl Into<String>) -> Self {
-        self.storage_prefix = prefix.into();
         self
     }
 

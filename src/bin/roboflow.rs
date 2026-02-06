@@ -40,8 +40,7 @@
 //! - `WORKER_HEARTBEAT_INTERVAL_SECS` - Heartbeat interval (default: 30)
 //! - `WORKER_CHECKPOINT_INTERVAL_FRAMES` - Checkpoint interval in frames (default: 100)
 //! - `WORKER_CHECKPOINT_INTERVAL_SECS` - Checkpoint interval in seconds (default: 10)
-//! - `WORKER_STORAGE_PREFIX` - Input storage prefix (default: input/)
-//! - `WORKER_OUTPUT_PREFIX` - Output storage prefix (default: output/)
+//! - `WORKER_OUTPUT_PREFIX` - Fallback output prefix (default: output/) - only used if Batch output_path is empty
 //!
 //! ### Finalizer Configuration (ROLE=finalizer or unified)
 //! - `FINALIZER_POLL_INTERVAL_SECS` - Poll interval for completed batches (default: 30)

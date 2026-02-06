@@ -79,7 +79,6 @@ impl Worker {
         let pod_id = pod_id.into();
 
         // Create storage factory from storage URL (for creating output storage backends)
-        // Use the storage_prefix as the base URL for the factory
         let storage_factory = StorageFactory::new();
 
         // Create checkpoint manager with config from WorkerConfig
@@ -228,41 +227,16 @@ impl Worker {
                 }
             }
 
-            // Determine if input is cloud storage based on source_url scheme
-            let is_cloud_storage =
-                source_url.starts_with("s3://") || source_url.starts_with("oss://");
-
             // Use source_url directly - work units are self-contained.
-            // For cloud storage (S3/OSS), pass the full URL so the converter can detect it.
-            // For local storage paths, strip storage_prefix to avoid double-prefixing.
+            // The converter detects storage type from the URL scheme (s3://, oss://, file://, or local path).
             tracing::info!(
                 pod_id = %self.pod_id,
                 unit_id = %unit_id,
                 source_url = %source_url,
-                is_cloud_storage,
                 "Processing work unit with source URL"
             );
 
-            let input_path = if is_cloud_storage {
-                // Pass full S3/OSS URL - converter will parse it and create cloud storage backend
-                tracing::info!(
-                    pod_id = %self.pod_id,
-                    unit_id = %unit_id,
-                    input_url = %source_url,
-                    "Using full cloud URL for input"
-                );
-                PathBuf::from(&source_url)
-            } else if let Some(prefix) = source_url.strip_prefix(&self.config.storage_prefix) {
-                tracing::info!(
-                    pod_id = %self.pod_id,
-                    unit_id = %unit_id,
-                    stripped_path = %prefix,
-                    "Using stripped local path for input"
-                );
-                PathBuf::from(prefix)
-            } else {
-                PathBuf::from(&source_url)
-            };
+            let input_path = PathBuf::from(&source_url);
 
             // Build the output path for this work unit
             let output_path = self.build_output_path(unit);
@@ -323,6 +297,8 @@ impl Worker {
             // Create streaming converter with storage backends
             // For cloud storage inputs, pass None for input_storage to let converter
             // download the file. For local storage, pass self.storage for fast path.
+            let is_cloud_storage =
+                source_url.starts_with("s3://") || source_url.starts_with("oss://");
             let input_storage = if is_cloud_storage {
                 None
             } else {
@@ -690,16 +666,21 @@ impl Worker {
 impl Worker {
     /// Build the output path for a work unit.
     ///
-    /// The output path follows the pattern: `{output_prefix}/{unit_id}/`
-    /// This ensures each work unit has a unique output directory.
+    /// Uses the output_path specified in the Batch/WorkUnit from submit.
+    /// Falls back to a default pattern if not set.
     fn build_output_path(&self, unit: &WorkUnit) -> PathBuf {
-        // Create a work unit-specific output directory.
-        // Pattern: output_prefix/unit_id/
-        PathBuf::from(format!(
-            "{}/{}",
-            self.config.output_prefix.trim_end_matches('/'),
-            unit.id
-        ))
+        // Use the output_path from the WorkUnit (specified during submit)
+        // If empty, fall back to legacy pattern
+        if !unit.output_path.is_empty() {
+            PathBuf::from(&unit.output_path)
+        } else {
+            // Fallback: {output_prefix}/{unit_id}/
+            PathBuf::from(format!(
+                "{}/{}",
+                self.config.output_prefix.trim_end_matches('/'),
+                unit.id
+            ))
+        }
     }
 
     /// Create a LeRobot configuration for processing a work unit.
@@ -1109,7 +1090,6 @@ mod tests {
         assert_eq!(config.checkpoint_interval_frames, 100);
         assert_eq!(config.checkpoint_interval_seconds, 10);
         assert!(config.checkpoint_async);
-        assert_eq!(config.storage_prefix, "input/");
         assert_eq!(config.output_prefix, "output/");
     }
 
@@ -1121,7 +1101,6 @@ mod tests {
             .with_max_attempts(5)
             .with_job_timeout(Duration::from_secs(7200))
             .with_heartbeat_interval(Duration::from_secs(60))
-            .with_storage_prefix("data/")
             .with_output_prefix("results/");
 
         assert_eq!(config.max_concurrent_jobs, 5);
@@ -1129,7 +1108,6 @@ mod tests {
         assert_eq!(config.max_attempts, 5);
         assert_eq!(config.job_timeout.as_secs(), 7200);
         assert_eq!(config.heartbeat_interval.as_secs(), 60);
-        assert_eq!(config.storage_prefix, "data/");
         assert_eq!(config.output_prefix, "results/");
     }
 

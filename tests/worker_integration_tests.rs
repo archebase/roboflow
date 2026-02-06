@@ -86,19 +86,15 @@ fn test_worker_config_default() {
 
     let config = WorkerConfig::new();
     assert_eq!(config.output_prefix, "output/");
-    assert_eq!(config.storage_prefix, "input/");
 }
 
 #[test]
 fn test_worker_config_builder() {
     use roboflow_distributed::WorkerConfig;
 
-    let config = WorkerConfig::new()
-        .with_storage_prefix("custom_input/")
-        .with_output_prefix("custom_output/");
+    let config = WorkerConfig::new().with_output_prefix("custom_output/");
 
     assert_eq!(config.output_prefix, "custom_output/");
-    assert_eq!(config.storage_prefix, "custom_input/");
 }
 
 // =============================================================================
@@ -535,7 +531,6 @@ fn test_worker_config_extended() {
         .with_checkpoint_interval_frames(200)
         .with_checkpoint_interval_seconds(30)
         .with_checkpoint_async(false)
-        .with_storage_prefix("custom_input/")
         .with_output_prefix("custom_output/")
         .with_output_storage_url("s3://my-bucket/output");
 
@@ -547,7 +542,6 @@ fn test_worker_config_extended() {
     assert_eq!(config.checkpoint_interval_frames, 200);
     assert_eq!(config.checkpoint_interval_seconds, 30);
     assert!(!config.checkpoint_async);
-    assert_eq!(config.storage_prefix, "custom_input/");
     assert_eq!(config.output_prefix, "custom_output/");
     assert_eq!(
         config.output_storage_url,
@@ -675,7 +669,6 @@ fn test_worker_config_all_defaults() {
     assert_eq!(config.checkpoint_interval_frames, 100);
     assert_eq!(config.checkpoint_interval_seconds, 10);
     assert!(config.checkpoint_async);
-    assert_eq!(config.storage_prefix, "input/");
     assert_eq!(config.output_prefix, "output/");
     assert!(config.output_storage_url.is_none());
     assert_eq!(config.expected_workers, 1);
