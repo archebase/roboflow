@@ -40,7 +40,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Invalidate cache when robocodec git dependency changes
-          cache-key: ["robocodec", "${{ hashFiles('**/Cargo.lock') }}"]
+          cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Install ruff
         run: pip install ruff
@@ -81,7 +81,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Invalidate cache when robocodec git dependency changes
-          cache-key: ["robocodec", "${{ hashFiles('**/Cargo.lock') }}"]
+          cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Install HDF5
         run: |
@@ -122,7 +122,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Invalidate cache when robocodec git dependency changes
-          cache-key: ["robocodec", "${{ hashFiles('**/Cargo.lock') }}"]
+          cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Create virtual environment
         run: |
@@ -157,7 +157,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Invalidate cache when robocodec git dependency changes
-          cache-key: ["robocodec", "${{ hashFiles('**/Cargo.lock') }}"]
+          cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Create virtual environment
         run: |
@@ -197,7 +197,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Invalidate cache when robocodec git dependency changes
-          cache-key: ["robocodec", "${{ hashFiles('**/Cargo.lock') }}"]
+          cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Cache cargo-llvm-cov
         uses: actions/cache@v4
