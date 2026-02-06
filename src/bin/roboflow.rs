@@ -127,6 +127,45 @@ enum Command {
     },
 }
 
+/// Get help text for the run command.
+fn get_run_help() -> String {
+    [
+        "Run the unified service (worker + finalizer + reaper + scanner)",
+        "",
+        "USAGE:",
+        "    roboflow run [OPTIONS]",
+        "",
+        "OPTIONS:",
+        "    -r, --role <ROLE>      Role to run: worker, finalizer, unified [default: unified]",
+        "    -p, --pod-id <ID>      Pod ID for this instance [default: auto-generated]",
+        "    -h, --help             Print help information",
+        "",
+        "ENVIRONMENT VARIABLES:",
+        "    ROLE                    Role to run (worker, finalizer, unified)",
+        "    POD_ID                  Pod ID for this instance",
+        "    TIKV_PD_ENDPOINTS        TiKV PD endpoints [default: 127.0.0.1:2379]",
+        "",
+        "ROLES:",
+        "    unified    Run all components (scanner, worker, finalizer, reaper) [default]",
+        "    worker     Run job processing only",
+        "    finalizer  Run batch finalization and merge only",
+        "",
+        "EXAMPLES:",
+        "    # Run unified service (all roles)",
+        "    roboflow run",
+        "",
+        "    # Run as worker only",
+        "    roboflow run --role worker",
+        "",
+        "    # Run as finalizer only",
+        "    roboflow run --role finalizer",
+        "",
+        "    # Run with custom pod ID",
+        "    roboflow run --pod-id my-pod-1",
+    ]
+    .join("\n")
+}
+
 /// Parse command-line arguments.
 fn parse_args(args: &[String]) -> Result<Command, String> {
     if args.len() < 2 {
@@ -170,10 +209,8 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                         pod_id = Some(args[i].clone());
                     }
                     "--help" | "-h" => {
-                        return Ok(Command::Run {
-                            role: None,
-                            pod_id: None,
-                        });
+                        eprintln!("{}", get_run_help());
+                        std::process::exit(0);
                     }
                     unknown => {
                         return Err(format!("unknown flag for run: {}", unknown));
