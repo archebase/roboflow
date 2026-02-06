@@ -2,7 +2,7 @@
 /target/
 **/*.rs.bk
 *.pdb
-Cargo.lock
+# Cargo.lock is now tracked for reproducible builds
 
 # Python
 __pycache__/
