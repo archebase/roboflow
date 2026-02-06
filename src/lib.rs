@@ -127,8 +127,8 @@ pub use roboflow_storage::{
 pub use roboflow_distributed::{
     DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_PD_ENDPOINTS, KEY_PREFIX,
     tikv::{
-        CheckpointState, HeartbeatRecord, JobRecord, JobStatus, LockRecord, TikvClient, TikvConfig,
-        TikvError, WorkerStatus,
+        CheckpointState, HeartbeatRecord, LockRecord, TikvClient, TikvConfig, TikvError,
+        WorkerStatus,
     },
 };
 

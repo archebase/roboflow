@@ -2,18 +2,18 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Scanner actor for processing batch jobs and creating jobs.
+//! Scanner actor for processing batch jobs and creating work units.
 //!
 //! The scanner uses leader election to ensure only one instance is active
 //! at a time. It queries TiKV for pending batch jobs, scans the source URLs
-//! specified in each batch, and creates jobs for discovered files.
+//! specified in each batch, and creates work units for discovered files.
 //!
 //! # Architecture
 //!
 //! - **Leader Election**: Only the leader performs scans
 //! - **Batch Processing**: Queries Pending batches from TiKV
 //! - **File Discovery**: For each batch, scans the source URLs in S3/OSS
-//! - **Job Creation**: Creates jobs for discovered files, updates batch status
+//! - **Work Unit Creation**: Creates work units for discovered files, updates batch status
 //!
 //! # Example
 //!
@@ -49,8 +49,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
-use super::batch::{BatchKeys, BatchPhase, BatchSpec, BatchStatus, DiscoveryStatus};
-use super::tikv::{TikvError, client::TikvClient, locks::LockManager, schema::JobRecord};
+use super::batch::{
+    BatchKeys, BatchPhase, BatchSpec, BatchStatus, DiscoveryStatus, WorkFile, WorkUnit,
+    WorkUnitKeys,
+};
+use super::tikv::{TikvError, client::TikvClient, locks::LockManager};
 use roboflow_storage::{ObjectMetadata, StorageError, StorageFactory};
 use tokio::sync::broadcast;
 use tokio::time::sleep;
@@ -98,6 +101,37 @@ impl ScannerConfig {
             batch_namespace: batch_namespace.into(),
             ..Default::default()
         }
+    }
+
+    /// Create scanner configuration from environment variables.
+    ///
+    /// - `SCANNER_SCAN_INTERVAL_SECS`: Scan interval in seconds (default: 60)
+    /// - `SCANNER_BATCH_SIZE`: Batch size for job operations (default: 100)
+    /// - `SCANNER_MAX_BATCHES_PER_CYCLE`: Max batches to process per cycle (default: 10)
+    pub fn from_env() -> Result<Self, String> {
+        use std::env;
+
+        let scan_interval = env::var("SCANNER_SCAN_INTERVAL_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_SCAN_INTERVAL_SECS);
+
+        let batch_size = env::var("SCANNER_BATCH_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_BATCH_SIZE);
+
+        let max_batches_per_cycle = env::var("SCANNER_MAX_BATCHES_PER_CYCLE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10);
+
+        Ok(Self {
+            batch_namespace: String::from("jobs"),
+            scan_interval: Duration::from_secs(scan_interval),
+            batch_size,
+            max_batches_per_cycle,
+        })
     }
 
     /// Set the scan interval.
@@ -302,19 +336,26 @@ impl Scanner {
         format!("{:016x}", hasher.finish())
     }
 
-    /// Check which hashes already have jobs.
-    async fn check_existing_jobs(&self, hashes: &[String]) -> Result<HashSet<String>, TikvError> {
-        use super::tikv::key::JobKeys;
-
+    /// Check which hashes already have work units.
+    ///
+    /// Checks work unit keys directly since work unit IDs are file hashes.
+    async fn check_existing_work_units(
+        &self,
+        hashes: &[String],
+    ) -> Result<HashSet<String>, TikvError> {
         if hashes.is_empty() {
             return Ok(HashSet::new());
         }
 
         let mut existing = HashSet::new();
 
-        // Process hashes in batches to avoid overwhelming TiKV
+        // Need batch_id to construct work unit keys, but we don't have it yet.
+        // Use pending queue as a lightweight existence check.
         for chunk in hashes.chunks(self.config.batch_size) {
-            let keys: Vec<Vec<u8>> = chunk.iter().map(|hash| JobKeys::record(hash)).collect();
+            let keys: Vec<Vec<u8>> = chunk
+                .iter()
+                .map(|hash| WorkUnitKeys::pending(hash))
+                .collect();
 
             let results = self.tikv.batch_get(keys).await?;
 
@@ -337,25 +378,28 @@ impl Scanner {
             pod_id = %self.pod_id,
             total = hashes.len(),
             existing = existing.len(),
-            "Checked existing jobs"
+            "Checked existing work units"
         );
 
         Ok(existing)
     }
 
-    /// Create a job record for a file.
-    fn create_job(
+    /// Create a work unit for a file.
+    fn create_work_unit(
         &self,
+        batch_id: &str,
         source_url: &str,
         metadata: &ObjectMetadata,
         hash: &str,
         output_prefix: &str,
         config_hash: &str,
-    ) -> JobRecord {
-        JobRecord::new(
-            hash.to_string(),
-            source_url.to_string(),
-            metadata.size,
+    ) -> WorkUnit {
+        let work_file = WorkFile::new(source_url.to_string(), metadata.size);
+
+        WorkUnit::with_id(
+            hash.to_string(), // Use hash as ID (like legacy Job system)
+            batch_id.to_string(),
+            vec![work_file],
             output_prefix.to_string(),
             config_hash.to_string(),
         )
@@ -576,8 +620,8 @@ impl Scanner {
 
             let hashes: Vec<String> = file_hashes.iter().map(|(_, h)| h.clone()).collect();
 
-            // Check existing jobs
-            let existing = match self.check_existing_jobs(&hashes).await {
+            // Check existing work units
+            let existing = match self.check_existing_work_units(&hashes).await {
                 Ok(e) => e,
                 Err(e) => {
                     tracing::error!(
@@ -599,33 +643,44 @@ impl Scanner {
             let source_duplicates = source_files_count - new_files.len() as u64;
             duplicates_skipped += source_duplicates;
 
-            // Create jobs for new files
-            let source_jobs_created = if !new_files.is_empty() {
+            // Create work units for new files
+            let source_work_units_created = if !new_files.is_empty() {
                 let mut created = 0u64;
                 for chunk in new_files.chunks(self.config.batch_size) {
-                    let job_pairs: Vec<(Vec<u8>, Vec<u8>)> = chunk
-                        .iter()
-                        .map(|(metadata, hash)| {
-                            let job = self.create_job(
-                                source_url,
-                                metadata,
-                                hash,
-                                output_prefix,
-                                config_hash,
-                            );
-                            use super::tikv::key::JobKeys;
-                            let key = JobKeys::record(&job.id);
-                            let data = bincode::serialize(&job)
-                                .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                            Ok::<_, TikvError>((key, data))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
+                    let mut work_unit_pairs = Vec::new();
+                    let mut pending_pairs = Vec::new();
 
-                    if let Err(e) = self.tikv.batch_put(job_pairs).await {
+                    for (metadata, hash) in chunk {
+                        let work_unit = self.create_work_unit(
+                            batch_id,
+                            source_url,
+                            metadata,
+                            hash,
+                            output_prefix,
+                            config_hash,
+                        );
+
+                        // Store work unit
+                        let unit_key = WorkUnitKeys::unit(&work_unit.batch_id, &work_unit.id);
+                        let unit_data = bincode::serialize(&work_unit)
+                            .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                        work_unit_pairs.push((unit_key, unit_data));
+
+                        // Add to pending queue
+                        let pending_key = WorkUnitKeys::pending(&work_unit.id);
+                        let pending_data = work_unit.batch_id.as_bytes().to_vec();
+                        pending_pairs.push((pending_key, pending_data));
+                    }
+
+                    // Batch put work units and pending entries together
+                    let all_pairs: Vec<(Vec<u8>, Vec<u8>)> =
+                        work_unit_pairs.into_iter().chain(pending_pairs).collect();
+
+                    if let Err(e) = self.tikv.batch_put(all_pairs).await {
                         tracing::error!(
                             batch_id = %batch_id,
                             error = %e,
-                            "Failed to create jobs"
+                            "Failed to create work units"
                         );
                         self.metrics.inc_scan_errors();
                         return Err(e);
@@ -637,7 +692,7 @@ impl Scanner {
                 0
             };
 
-            jobs_created += source_jobs_created;
+            jobs_created += source_work_units_created;
 
             // Update batch status
             status.files_total += source_files_count as u32;

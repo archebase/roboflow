@@ -24,16 +24,19 @@ pub mod merge;
 pub mod reaper;
 pub mod scanner;
 pub mod shutdown;
+pub mod state;
 pub mod tikv;
 pub mod worker;
+
+// Re-export public types from state (unified state lifecycle)
+pub use state::{StateLifecycle, StateTransitionError};
 
 // Re-export public types from tikv (distributed coordination)
 pub use tikv::{
     CheckpointConfig, CheckpointManager, CheckpointState, CircuitBreaker, CircuitConfig,
     CircuitState, DEFAULT_CHECKPOINT_INTERVAL_FRAMES, DEFAULT_CHECKPOINT_INTERVAL_SECS,
-    HeartbeatRecord, JobRecord, JobStatus, LockGuard, LockManager, LockManagerConfig, LockRecord,
-    ParquetUploadState, TikvClient, TikvConfig, TikvError, UploadedPart, VideoUploadState,
-    WorkerStatus,
+    HeartbeatRecord, LockGuard, LockManager, LockManagerConfig, LockRecord, ParquetUploadState,
+    TikvClient, TikvConfig, TikvError, UploadedPart, VideoUploadState, WorkerStatus,
 };
 
 // Re-export public types from batch (declarative batch processing)
@@ -80,7 +83,10 @@ pub use shutdown::{
 };
 
 // Re-export public types from merge (staging + merge coordination)
-pub use merge::{MergeConfig, MergeCoordinator, MergeResult};
+pub use merge::{
+    DEFAULT_MAX_CONCURRENT_MERGES as MERGE_DEFAULT_MAX_CONCURRENT, MergeConfig, MergeCoordinator,
+    MergePermit, MergeResult, MergeSemaphore, MergeSemaphoreMetrics,
+};
 
 // =============================================================================
 // Coordinator Traits
@@ -92,11 +98,6 @@ use roboflow_core::Result;
 
 /// Coordinator trait for distributed job coordination.
 pub trait Coordinator: Send + Sync {
-    // Job operations
-    fn claim_job(&self, file_hash: &str, pod_id: &str) -> Result<Option<JobRecord>>;
-    fn complete_job(&self, file_hash: &str) -> Result<()>;
-    fn fail_job(&self, file_hash: &str, error: &str) -> Result<()>;
-
     // Lock operations
     fn acquire_lock(&self, resource: &str, owner: &str, ttl: Duration) -> Result<bool>;
     fn release_lock(&self, resource: &str, owner: &str) -> Result<bool>;

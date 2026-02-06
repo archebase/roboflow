@@ -10,7 +10,7 @@
 use super::key::{BatchIndexKeys, BatchKeys, WorkUnitKeys};
 use super::spec::BatchSpec;
 use super::status::{BatchPhase, BatchStatus, DiscoveryStatus};
-use super::work_unit::{WorkFile, WorkUnit, WorkUnitStatus};
+use super::work_unit::{WorkUnit, WorkUnitStatus};
 use crate::tikv::{TikvClient, TikvError};
 
 use std::sync::Arc;
@@ -206,86 +206,58 @@ impl BatchController {
 
     /// Reconcile the Discovering phase.
     ///
-    /// This discovers files from source URLs and creates work units.
+    /// NOTE: File discovery is handled by the Scanner actor, which has
+    /// leader election to ensure only one instance performs discovery.
+    /// This method only checks for discovery timeout and lets the Scanner
+    /// handle the actual file discovery and work unit creation.
     async fn reconcile_discovering(
         &self,
         spec: &BatchSpec,
         mut status: BatchStatus,
     ) -> Result<BatchStatus, TikvError> {
+        let batch_id = super::batch_id_from_spec(spec);
+
         // Defensively handle missing discovery_status (recover from inconsistent state)
-        let discovery_status = if let Some(ds) = status.discovery_status.as_mut() {
-            ds
-        } else {
+        if status.discovery_status.is_none() {
             tracing::warn!(
-                batch_id = %super::batch_id_from_spec(spec),
+                batch_id = %batch_id,
                 "Discovery phase but no discovery_status - recovering"
             );
             status.discovery_status = Some(DiscoveryStatus::new(spec.spec.sources.len() as u32));
-            status.discovery_status.as_mut().unwrap()
-        };
-
-        // Discover files from each source
-        for source in &spec.spec.sources {
-            if discovery_status.sources_scanned >= discovery_status.total_sources {
-                break;
-            }
-
-            let files = self
-                .discover_files(&source.url, &spec.metadata.namespace, &spec.metadata.name)
-                .await?;
-
-            // Create work units for discovered files
-            for file_url in files {
-                tracing::info!(
-                    file_url = %file_url,
-                    "Creating WorkFile with URL"
-                );
-
-                let work_unit = WorkUnit::new(
-                    super::batch_id_from_spec(spec),
-                    vec![WorkFile::new(file_url.clone(), 0)], // Size fetched during processing
-                    spec.spec.output.clone(),
-                    spec.spec.config.clone(),
-                );
-
-                tracing::info!(
-                    work_unit_id = %work_unit.id,
-                    work_unit_url = %work_unit.primary_source().unwrap_or(""),
-                    "WorkUnit created - verify URL stored correctly"
-                );
-
-                // Save work unit
-                let unit_key = WorkUnitKeys::unit(&work_unit.batch_id, &work_unit.id);
-                let unit_data = bincode::serialize(&work_unit)
-                    .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                self.client.put(unit_key, unit_data).await?;
-
-                // Add to pending queue
-                let pending_key = WorkUnitKeys::pending(&work_unit.id);
-                let pending_data = work_unit.batch_id.as_bytes().to_vec();
-                self.client.put(pending_key, pending_data).await?;
-
-                discovery_status.add_files(1);
-                status.work_units_total += 1;
-                status.files_total += 1;
-            }
-
-            discovery_status.increment_scanned();
         }
 
-        // Check if discovery is complete
-        if discovery_status.sources_scanned >= discovery_status.total_sources {
-            // Transition to Running phase
-            status.transition_to(BatchPhase::Running);
-            status.set_files_total(status.files_total);
-            status.set_work_units_total(status.work_units_total);
-            tracing::info!(
-                batch_id = %super::batch_id_from_spec(spec),
-                files = status.files_total,
-                work_units = status.work_units_total,
-                "Discovery complete, transitioning to Running"
+        // Check for discovery timeout - Scanner should complete discovery within
+        // the configured timeout. If it doesn't, mark the batch as failed.
+        let age_secs = status
+            .updated_at
+            .signed_duration_since(chrono::Utc::now())
+            .num_seconds()
+            .abs();
+        let timeout_secs = self.config.discovery_timeout.as_secs() as i64;
+
+        if age_secs > timeout_secs {
+            tracing::warn!(
+                batch_id = %batch_id,
+                age_secs = age_secs,
+                timeout_secs = timeout_secs,
+                "Discovery timeout exceeded"
             );
+            status.transition_to(BatchPhase::Failed);
+            status.error = Some(format!(
+                "Discovery timeout: exceeded {} seconds",
+                timeout_secs
+            ));
+            return Ok(status);
         }
+
+        // Scanner is responsible for file discovery and work unit creation.
+        // When Scanner completes discovery, it will transition the batch to Running.
+        // This controller just waits and checks for timeout.
+        tracing::debug!(
+            batch_id = %batch_id,
+            age_secs = age_secs,
+            "Waiting for Scanner to complete discovery"
+        );
 
         Ok(status)
     }
@@ -357,42 +329,6 @@ impl BatchController {
         }
 
         Ok(status)
-    }
-
-    /// Discover files from a source URL.
-    ///
-    /// Supports glob patterns for S3 and OSS storage.
-    async fn discover_files(
-        &self,
-        url: &str,
-        _namespace: &str,
-        _name: &str,
-    ) -> Result<Vec<String>, TikvError> {
-        tracing::info!(
-            url = %url,
-            "discover_files called with URL"
-        );
-
-        // For now, return a single file if not a glob
-        // Full glob expansion will be handled by the CLI before submission
-        let files = if url.contains('*') {
-            // Glob pattern - caller should expand before submission
-            tracing::warn!(
-                url = %url,
-                "Glob patterns should be expanded before submission"
-            );
-            vec![]
-        } else {
-            vec![url.to_string()]
-        };
-
-        tracing::info!(
-            original_url = %url,
-            discovered_files = ?files,
-            "Discovered files to be stored"
-        );
-
-        Ok(files)
     }
 
     /// Save batch status to TiKV.

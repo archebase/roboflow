@@ -171,6 +171,7 @@ impl AuditLogger {
     }
 
     /// Log a failed operation.
+    #[allow(dead_code)]
     pub fn log_failure(
         operation: AuditOperation,
         actor: &str,

@@ -134,6 +134,52 @@ impl fmt::Display for BatchPhase {
     }
 }
 
+impl crate::state::StateLifecycle for BatchPhase {
+    fn is_terminal(&self) -> bool {
+        matches!(self, Self::Complete | Self::Failed | Self::Cancelled)
+    }
+
+    fn is_claimable(&self) -> bool {
+        // Batches are not "claimable" - only work units and jobs are claimed by workers
+        false
+    }
+
+    fn can_transition_to(&self, target: &Self) -> bool {
+        // Self-transition is always allowed (idempotent)
+        if self == target {
+            return true;
+        }
+
+        match self {
+            BatchPhase::Pending => matches!(
+                target,
+                BatchPhase::Discovering | BatchPhase::Failed | BatchPhase::Cancelled
+            ),
+            BatchPhase::Discovering => matches!(
+                target,
+                BatchPhase::Running | BatchPhase::Failed | BatchPhase::Cancelled
+            ),
+            BatchPhase::Running => matches!(
+                target,
+                BatchPhase::Complete
+                    | BatchPhase::Failed
+                    | BatchPhase::Suspending
+                    | BatchPhase::Cancelled
+            ),
+            BatchPhase::Suspending => matches!(
+                target,
+                BatchPhase::Suspended | BatchPhase::Failed | BatchPhase::Cancelled
+            ),
+            BatchPhase::Suspended => matches!(
+                target,
+                BatchPhase::Running | BatchPhase::Failed | BatchPhase::Cancelled
+            ),
+            // Terminal states cannot transition
+            BatchPhase::Complete | BatchPhase::Failed | BatchPhase::Cancelled => false,
+        }
+    }
+}
+
 /// Status of the discovery phase.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryStatus {

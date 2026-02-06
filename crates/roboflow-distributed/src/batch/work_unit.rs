@@ -133,6 +133,45 @@ impl fmt::Display for WorkUnitStatus {
     }
 }
 
+impl crate::state::StateLifecycle for WorkUnitStatus {
+    fn is_terminal(&self) -> bool {
+        matches!(self, Self::Complete | Self::Dead | Self::Cancelled)
+    }
+
+    fn is_claimable(&self) -> bool {
+        matches!(self, Self::Pending | Self::Failed)
+    }
+
+    fn can_transition_to(&self, target: &Self) -> bool {
+        // Self-transition is always allowed (idempotent)
+        if self == target {
+            return true;
+        }
+
+        match self {
+            WorkUnitStatus::Pending => matches!(
+                target,
+                WorkUnitStatus::Processing | WorkUnitStatus::Failed | WorkUnitStatus::Cancelled
+            ),
+            WorkUnitStatus::Processing => matches!(
+                target,
+                WorkUnitStatus::Complete
+                    | WorkUnitStatus::Failed
+                    | WorkUnitStatus::Dead
+                    | WorkUnitStatus::Cancelled
+            ),
+            WorkUnitStatus::Failed => {
+                matches!(
+                    target,
+                    WorkUnitStatus::Processing | WorkUnitStatus::Cancelled
+                )
+            }
+            // Terminal states cannot transition
+            WorkUnitStatus::Complete | WorkUnitStatus::Dead | WorkUnitStatus::Cancelled => false,
+        }
+    }
+}
+
 impl WorkUnit {
     /// Create a new work unit.
     pub fn new(

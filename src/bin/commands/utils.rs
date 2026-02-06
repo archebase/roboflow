@@ -8,6 +8,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 /// Compute a hash-based job ID from file key and size.
+/// NOTE: This function is kept for potential future use but is currently unused.
+#[allow(dead_code)]
 pub fn compute_file_hash(key: &str, size: u64) -> String {
     let mut hasher = DefaultHasher::new();
     key.hash(&mut hasher);

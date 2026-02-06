@@ -193,237 +193,220 @@ fn test_shutdown_constants() {
     assert_eq!(SHUTDOWN_DEFAULT_TIMEOUT_SECS, 30);
 }
 
-// =============================================================================
-// Test: JobRecord state transitions
-// =============================================================================
-
-#[test]
-fn test_job_record_new() {
-    use roboflow_distributed::tikv::schema::JobRecord;
-
-    let job = JobRecord::new(
-        "job-123".to_string(),
-        "s3://test-bucket/path/to/file.bag".to_string(),
-        1024,
-        "output/".to_string(),
-        "config-hash-123".to_string(),
-    );
-
-    assert_eq!(job.id, "job-123");
-    assert_eq!(job.source_url, "s3://test-bucket/path/to/file.bag");
-    assert_eq!(job.source_size, 1024);
-    assert_eq!(
-        job.status,
-        roboflow_distributed::tikv::schema::JobStatus::Pending
-    );
-    assert!(job.owner.is_none());
-    assert_eq!(job.attempts, 0);
-    assert_eq!(job.max_attempts, 3);
-    assert!(!job.is_terminal());
-}
-
-#[test]
-fn test_job_record_claim() {
-    use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
-
-    let mut job = JobRecord::new(
-        "job-123".to_string(),
-        "s3://test-bucket/path/to/file.bag".to_string(),
-        1024,
-        "output/".to_string(),
-        "config-hash-123".to_string(),
-    );
-
-    // Claim the job
-    let result = job.claim("pod-abc".to_string());
-    assert!(result.is_ok());
-
-    assert_eq!(job.status, JobStatus::Processing);
-    assert_eq!(job.owner, Some("pod-abc".to_string()));
-    assert_eq!(job.attempts, 1);
-    assert!(!job.is_terminal());
-}
-
-#[test]
-fn test_job_record_claim_fails_if_not_claimable() {
-    use roboflow_distributed::tikv::schema::JobRecord;
-
-    let mut job = JobRecord::new(
-        "job-123".to_string(),
-        "s3://test-bucket/path/to/file.bag".to_string(),
-        1024,
-        "output/".to_string(),
-        "config-hash-123".to_string(),
-    );
-
-    // Mark as completed first
-    job.complete();
-
-    // Try to claim - should fail
-    let result = job.claim("pod-xyz".to_string());
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("not claimable"));
-}
-
-#[test]
-fn test_job_record_complete() {
-    use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
-
-    let mut job = JobRecord::new(
-        "job-123".to_string(),
-        "s3://test-bucket/path/to/file.bag".to_string(),
-        1024,
-        "output/".to_string(),
-        "config-hash-123".to_string(),
-    );
-
-    job.claim("pod-abc".to_string()).unwrap();
-    job.complete();
-
-    assert_eq!(job.status, JobStatus::Completed);
-    assert!(job.owner.is_none());
-    assert!(job.is_terminal());
-}
-
-#[test]
-fn test_job_record_fail_with_retry() {
-    use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
-
-    let mut job = JobRecord::new(
-        "job-123".to_string(),
-        "s3://test-bucket/path/to/file.bag".to_string(),
-        1024,
-        "output/".to_string(),
-        "config-hash-123".to_string(),
-    );
-
-    job.claim("pod-abc".to_string()).unwrap();
-    job.fail("Test error".to_string());
-
-    // With attempts < max_attempts, should be Failed (retryable)
-    assert_eq!(job.status, JobStatus::Failed);
-    assert!(job.owner.is_none());
-    assert_eq!(job.error, Some("Test error".to_string()));
-    assert!(!job.is_terminal());
-    assert!(job.is_claimable());
-}
-
-#[test]
-fn test_job_record_fail_dead_after_max_attempts() {
-    use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
-
-    let mut job = JobRecord::new(
-        "job-123".to_string(),
-        "s3://test-bucket/path/to/file.bag".to_string(),
-        1024,
-        "output/".to_string(),
-        "config-hash-123".to_string(),
-    );
-
-    // Set attempts to max
-    job.attempts = job.max_attempts;
-
-    job.fail("Final error".to_string());
-
-    // With attempts >= max_attempts, should be Dead (not retryable)
-    assert_eq!(job.status, JobStatus::Dead);
-    assert!(job.owner.is_none());
-    assert_eq!(job.error, Some("Final error".to_string()));
-    assert!(job.is_terminal());
-    assert!(!job.is_claimable());
-}
-
-#[test]
-fn test_job_record_cancel() {
-    use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
-
-    let mut job = JobRecord::new(
-        "job-123".to_string(),
-        "s3://test-bucket/path/to/file.bag".to_string(),
-        1024,
-        "output/".to_string(),
-        "config-hash-123".to_string(),
-    );
-
-    job.claim("pod-abc".to_string()).unwrap();
-    job.cancel("admin-user");
-
-    assert_eq!(job.status, JobStatus::Cancelled);
-    assert!(job.owner.is_none());
-    assert!(job.cancelled_at.is_some());
-    assert!(job.is_terminal());
-    assert!(!job.is_claimable()); // Cancelled jobs cannot be reclaimed
-}
-
-#[test]
-fn test_job_record_can_cancel() {
-    use roboflow_distributed::tikv::schema::JobRecord;
-
-    let mut job = JobRecord::new(
-        "job-123".to_string(),
-        "s3://test-bucket/path/to/file.bag".to_string(),
-        1024,
-        "output/".to_string(),
-        "config-hash-123".to_string(),
-    );
-
-    job.submitted_by = Some("user-123".to_string());
-    job.claim("pod-abc".to_string()).unwrap();
-
-    // Owner can cancel
-    assert!(job.can_cancel("pod-abc", &[]));
-
-    // Submitter can cancel
-    assert!(job.can_cancel("user-123", &[]));
-
-    // Admin can cancel
-    assert!(job.can_cancel("admin-user", &["admin-user".to_string()]));
-
-    // Random user cannot cancel
-    assert!(!job.can_cancel("random-user", &[]));
-}
-
-#[test]
-fn test_job_record_is_claimable() {
-    use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
-
-    let mut job = JobRecord::new(
-        "job-123".to_string(),
-        "s3://test-bucket/path/to/file.bag".to_string(),
-        1024,
-        "output/".to_string(),
-        "config-hash-123".to_string(),
-    );
-
-    // New job is claimable
-    assert!(job.is_claimable());
-
-    // Processing job is not claimable
-    job.claim("pod-abc".to_string()).unwrap();
-    assert!(!job.is_claimable());
-
-    // Failed job is claimable
-    job.status = JobStatus::Failed;
-    job.owner = None;
-    assert!(job.is_claimable());
-
-    // Cancelled job is not claimable
-    job.cancel("admin");
-    assert!(!job.is_claimable());
-
-    // Dead job is not claimable
-    let mut job2 = JobRecord::new(
-        "job-456".to_string(),
-        "s3://test-bucket/path/to/file2.bag".to_string(),
-        1024,
-        "output/".to_string(),
-        "config-hash-123".to_string(),
-    );
-    job2.attempts = job2.max_attempts;
-    job2.fail("Final error".to_string());
-    assert!(!job2.is_claimable());
-}
-
+// // =============================================================================
+// // Test: ConfigRecord functionality
+// // =============================================================================
+//
+// #[test]
+// fn test_config_record_new() {
+//     use roboflow_distributed::tikv::schema::ConfigRecord;
+//     let _config = ConfigRecord::new("test-config".to_string());
+//     // This test was using JobRecord which has been removed
+//     // TODO: Rewrite for ConfigRecord if needed
+// }
+//
+// #[test]
+// fn test_job_record_claim() {
+//     use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
+//
+//     let mut job = JobRecord::new(
+//         "job-123".to_string(),
+//         "s3://test-bucket/path/to/file.bag".to_string(),
+//         1024,
+//         "output/".to_string(),
+//         "config-hash-123".to_string(),
+//     );
+//
+//     // Claim the job
+//     let result = job.claim("pod-abc".to_string());
+//     assert!(result.is_ok());
+//
+//     assert_eq!(job.status, JobStatus::Processing);
+//     assert_eq!(job.owner, Some("pod-abc".to_string()));
+//     assert_eq!(job.attempts, 1);
+//     assert!(!job.is_terminal());
+// }
+//
+// #[test]
+// fn test_job_record_claim_fails_if_not_claimable() {
+//     use roboflow_distributed::tikv::schema::JobRecord;
+//
+//     let mut job = JobRecord::new(
+//         "job-123".to_string(),
+//         "s3://test-bucket/path/to/file.bag".to_string(),
+//         1024,
+//         "output/".to_string(),
+//         "config-hash-123".to_string(),
+//     );
+//
+//     // Mark as completed first
+//     job.complete();
+//
+//     // Try to claim - should fail
+//     let result = job.claim("pod-xyz".to_string());
+//     assert!(result.is_err());
+//     assert!(result.unwrap_err().contains("not claimable"));
+// }
+//
+// #[test]
+// fn test_job_record_complete() {
+//     use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
+//
+//     let mut job = JobRecord::new(
+//         "job-123".to_string(),
+//         "s3://test-bucket/path/to/file.bag".to_string(),
+//         1024,
+//         "output/".to_string(),
+//         "config-hash-123".to_string(),
+//     );
+//
+//     job.claim("pod-abc".to_string()).unwrap();
+//     job.complete();
+//
+//     assert_eq!(job.status, JobStatus::Completed);
+//     assert!(job.owner.is_none());
+//     assert!(job.is_terminal());
+// }
+//
+// #[test]
+// fn test_job_record_fail_with_retry() {
+//     use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
+//
+//     let mut job = JobRecord::new(
+//         "job-123".to_string(),
+//         "s3://test-bucket/path/to/file.bag".to_string(),
+//         1024,
+//         "output/".to_string(),
+//         "config-hash-123".to_string(),
+//     );
+//
+//     job.claim("pod-abc".to_string()).unwrap();
+//     job.fail("Test error".to_string());
+//
+//     // With attempts < max_attempts, should be Failed (retryable)
+//     assert_eq!(job.status, JobStatus::Failed);
+//     assert!(job.owner.is_none());
+//     assert_eq!(job.error, Some("Test error".to_string()));
+//     assert!(!job.is_terminal());
+//     assert!(job.is_claimable());
+// }
+//
+// #[test]
+// fn test_job_record_fail_dead_after_max_attempts() {
+//     use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
+//
+//     let mut job = JobRecord::new(
+//         "job-123".to_string(),
+//         "s3://test-bucket/path/to/file.bag".to_string(),
+//         1024,
+//         "output/".to_string(),
+//         "config-hash-123".to_string(),
+//     );
+//
+//     // Set attempts to max
+//     job.attempts = job.max_attempts;
+//
+//     job.fail("Final error".to_string());
+//
+//     // With attempts >= max_attempts, should be Dead (not retryable)
+//     assert_eq!(job.status, JobStatus::Dead);
+//     assert!(job.owner.is_none());
+//     assert_eq!(job.error, Some("Final error".to_string()));
+//     assert!(job.is_terminal());
+//     assert!(!job.is_claimable());
+// }
+//
+// #[test]
+// fn test_job_record_cancel() {
+//     use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
+//
+//     let mut job = JobRecord::new(
+//         "job-123".to_string(),
+//         "s3://test-bucket/path/to/file.bag".to_string(),
+//         1024,
+//         "output/".to_string(),
+//         "config-hash-123".to_string(),
+//     );
+//
+//     job.claim("pod-abc".to_string()).unwrap();
+//     job.cancel("admin-user");
+//
+//     assert_eq!(job.status, JobStatus::Cancelled);
+//     assert!(job.owner.is_none());
+//     assert!(job.cancelled_at.is_some());
+//     assert!(job.is_terminal());
+//     assert!(!job.is_claimable()); // Cancelled jobs cannot be reclaimed
+// }
+//
+// #[test]
+// fn test_job_record_can_cancel() {
+//     use roboflow_distributed::tikv::schema::JobRecord;
+//
+//     let mut job = JobRecord::new(
+//         "job-123".to_string(),
+//         "s3://test-bucket/path/to/file.bag".to_string(),
+//         1024,
+//         "output/".to_string(),
+//         "config-hash-123".to_string(),
+//     );
+//
+//     job.submitted_by = Some("user-123".to_string());
+//     job.claim("pod-abc".to_string()).unwrap();
+//
+//     // Owner can cancel
+//     assert!(job.can_cancel("pod-abc", &[]));
+//
+//     // Submitter can cancel
+//     assert!(job.can_cancel("user-123", &[]));
+//
+//     // Admin can cancel
+//     assert!(job.can_cancel("admin-user", &["admin-user".to_string()]));
+//
+//     // Random user cannot cancel
+//     assert!(!job.can_cancel("random-user", &[]));
+// }
+//
+// #[test]
+// fn test_job_record_is_claimable() {
+//     use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
+//
+//     let mut job = JobRecord::new(
+//         "job-123".to_string(),
+//         "s3://test-bucket/path/to/file.bag".to_string(),
+//         1024,
+//         "output/".to_string(),
+//         "config-hash-123".to_string(),
+//     );
+//
+//     // New job is claimable
+//     assert!(job.is_claimable());
+//
+//     // Processing job is not claimable
+//     job.claim("pod-abc".to_string()).unwrap();
+//     assert!(!job.is_claimable());
+//
+//     // Failed job is claimable
+//     job.status = JobStatus::Failed;
+//     job.owner = None;
+//     assert!(job.is_claimable());
+//
+//     // Cancelled job is not claimable
+//     job.cancel("admin");
+//     assert!(!job.is_claimable());
+//
+//     // Dead job is not claimable
+//     let mut job2 = JobRecord::new(
+//         "job-456".to_string(),
+//         "s3://test-bucket/path/to/file2.bag".to_string(),
+//         1024,
+//         "output/".to_string(),
+//         "config-hash-123".to_string(),
+//     );
+//     job2.attempts = job2.max_attempts;
+//     job2.fail("Final error".to_string());
+//     assert!(!job2.is_claimable());
+// }
+//
 // =============================================================================
 // Test: WorkerMetrics
 // =============================================================================
@@ -650,30 +633,30 @@ fn test_worker_metrics_snapshot_clone() {
 }
 
 // =============================================================================
-// Test: JobStatus methods
-// =============================================================================
-
-#[test]
-fn test_job_status_methods() {
-    use roboflow_distributed::tikv::schema::JobStatus;
-
-    assert!(!JobStatus::Pending.is_active());
-    assert!(JobStatus::Processing.is_active());
-    assert!(!JobStatus::Completed.is_active());
-
-    assert!(!JobStatus::Pending.is_terminal());
-    assert!(JobStatus::Completed.is_terminal());
-    assert!(JobStatus::Dead.is_terminal());
-    assert!(JobStatus::Cancelled.is_terminal());
-    assert!(!JobStatus::Failed.is_terminal());
-
-    assert!(!JobStatus::Pending.is_failed());
-    assert!(JobStatus::Failed.is_failed());
-    assert!(JobStatus::Dead.is_failed());
-    assert!(!JobStatus::Cancelled.is_failed());
-}
-
-// =============================================================================
+// // Test: JobStatus methods
+// // =============================================================================
+//
+// #[test]
+// fn test_job_status_methods() {
+//     use roboflow_distributed::tikv::schema::JobStatus;
+//
+//     assert!(!JobStatus::Pending.is_active());
+//     assert!(JobStatus::Processing.is_active());
+//     assert!(!JobStatus::Completed.is_active());
+//
+//     assert!(!JobStatus::Pending.is_terminal());
+//     assert!(JobStatus::Completed.is_terminal());
+//     assert!(JobStatus::Dead.is_terminal());
+//     assert!(JobStatus::Cancelled.is_terminal());
+//     assert!(!JobStatus::Failed.is_terminal());
+//
+//     assert!(!JobStatus::Pending.is_failed());
+//     assert!(JobStatus::Failed.is_failed());
+//     assert!(JobStatus::Dead.is_failed());
+//     assert!(!JobStatus::Cancelled.is_failed());
+// }
+//
+// // =============================================================================
 // Test: WorkerConfig default values
 // =============================================================================
 
@@ -700,106 +683,106 @@ fn test_worker_config_all_defaults() {
 }
 
 // =============================================================================
-// Test: JobRecord edge cases
-// =============================================================================
-
-#[test]
-fn test_job_record_max_attempts_exact_boundary() {
-    use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
-
-    let mut job = JobRecord::new(
-        "job-123".to_string(),
-        "s3://test-bucket/path/to/file.bag".to_string(),
-        1024,
-        "output/".to_string(),
-        "config-hash-123".to_string(),
-    );
-
-    // Set attempts to exactly max_attempts - 1, then fail
-    job.attempts = job.max_attempts - 1;
-    job.fail("Test error".to_string());
-
-    // Should be Failed (retryable)
-    assert_eq!(job.status, JobStatus::Failed);
-    assert!(!job.is_terminal());
-    assert!(job.is_claimable());
-
-    // Increment attempts and fail again
-    job.attempts = job.max_attempts;
-    job.fail("Final error".to_string());
-
-    // Now should be Dead
-    assert_eq!(job.status, JobStatus::Dead);
-    assert!(job.is_terminal());
-    assert!(!job.is_claimable());
-}
-
-#[test]
-fn test_job_record_multiple_claim_attempts() {
-    use roboflow_distributed::tikv::schema::JobRecord;
-
-    let mut job = JobRecord::new(
-        "job-123".to_string(),
-        "s3://test-bucket/path/to/file.bag".to_string(),
-        1024,
-        "output/".to_string(),
-        "config-hash-123".to_string(),
-    );
-
-    // First claim
-    let result = job.claim("pod-1".to_string());
-    assert!(result.is_ok());
-    assert_eq!(job.attempts, 1);
-    assert_eq!(job.owner, Some("pod-1".to_string()));
-
-    // Simulate job failing and being retried
-    job.status = roboflow_distributed::tikv::schema::JobStatus::Failed;
-    job.owner = None;
-
-    // Second claim
-    let result = job.claim("pod-2".to_string());
-    assert!(result.is_ok());
-    assert_eq!(job.attempts, 2);
-    assert_eq!(job.owner, Some("pod-2".to_string()));
-
-    // Third claim
-    job.status = roboflow_distributed::tikv::schema::JobStatus::Failed;
-    job.owner = None;
-    let result = job.claim("pod-3".to_string());
-    assert!(result.is_ok());
-    assert_eq!(job.attempts, 3);
-
-    // Fourth claim should fail (max_attempts reached)
-    job.status = roboflow_distributed::tikv::schema::JobStatus::Failed;
-    job.owner = None;
-    assert!(!job.is_claimable());
-}
-
-#[test]
-fn test_job_record_cancel_prevents_reclaim() {
-    use roboflow_distributed::tikv::schema::JobRecord;
-
-    let mut job = JobRecord::new(
-        "job-123".to_string(),
-        "s3://test-bucket/path/to/file.bag".to_string(),
-        1024,
-        "output/".to_string(),
-        "config-hash-123".to_string(),
-    );
-
-    // Cancel the job
-    job.cancel("admin-user");
-
-    assert!(job.is_terminal());
-    assert!(!job.is_claimable());
-
-    // Try to claim - should fail
-    let result = job.claim("pod-1".to_string());
-    assert!(result.is_err());
-}
-
-// =============================================================================
-// Test: ConfigRecord functionality
+// // Test: JobRecord edge cases
+// // =============================================================================
+//
+// #[test]
+// fn test_job_record_max_attempts_exact_boundary() {
+//     use roboflow_distributed::tikv::schema::{JobRecord, JobStatus};
+//
+//     let mut job = JobRecord::new(
+//         "job-123".to_string(),
+//         "s3://test-bucket/path/to/file.bag".to_string(),
+//         1024,
+//         "output/".to_string(),
+//         "config-hash-123".to_string(),
+//     );
+//
+//     // Set attempts to exactly max_attempts - 1, then fail
+//     job.attempts = job.max_attempts - 1;
+//     job.fail("Test error".to_string());
+//
+//     // Should be Failed (retryable)
+//     assert_eq!(job.status, JobStatus::Failed);
+//     assert!(!job.is_terminal());
+//     assert!(job.is_claimable());
+//
+//     // Increment attempts and fail again
+//     job.attempts = job.max_attempts;
+//     job.fail("Final error".to_string());
+//
+//     // Now should be Dead
+//     assert_eq!(job.status, JobStatus::Dead);
+//     assert!(job.is_terminal());
+//     assert!(!job.is_claimable());
+// }
+//
+// #[test]
+// fn test_job_record_multiple_claim_attempts() {
+//     use roboflow_distributed::tikv::schema::JobRecord;
+//
+//     let mut job = JobRecord::new(
+//         "job-123".to_string(),
+//         "s3://test-bucket/path/to/file.bag".to_string(),
+//         1024,
+//         "output/".to_string(),
+//         "config-hash-123".to_string(),
+//     );
+//
+//     // First claim
+//     let result = job.claim("pod-1".to_string());
+//     assert!(result.is_ok());
+//     assert_eq!(job.attempts, 1);
+//     assert_eq!(job.owner, Some("pod-1".to_string()));
+//
+//     // Simulate job failing and being retried
+//     job.status = roboflow_distributed::tikv::schema::JobStatus::Failed;
+//     job.owner = None;
+//
+//     // Second claim
+//     let result = job.claim("pod-2".to_string());
+//     assert!(result.is_ok());
+//     assert_eq!(job.attempts, 2);
+//     assert_eq!(job.owner, Some("pod-2".to_string()));
+//
+//     // Third claim
+//     job.status = roboflow_distributed::tikv::schema::JobStatus::Failed;
+//     job.owner = None;
+//     let result = job.claim("pod-3".to_string());
+//     assert!(result.is_ok());
+//     assert_eq!(job.attempts, 3);
+//
+//     // Fourth claim should fail (max_attempts reached)
+//     job.status = roboflow_distributed::tikv::schema::JobStatus::Failed;
+//     job.owner = None;
+//     assert!(!job.is_claimable());
+// }
+//
+// #[test]
+// fn test_job_record_cancel_prevents_reclaim() {
+//     use roboflow_distributed::tikv::schema::JobRecord;
+//
+//     let mut job = JobRecord::new(
+//         "job-123".to_string(),
+//         "s3://test-bucket/path/to/file.bag".to_string(),
+//         1024,
+//         "output/".to_string(),
+//         "config-hash-123".to_string(),
+//     );
+//
+//     // Cancel the job
+//     job.cancel("admin-user");
+//
+//     assert!(job.is_terminal());
+//     assert!(!job.is_claimable());
+//
+//     // Try to claim - should fail
+//     let result = job.claim("pod-1".to_string());
+//     assert!(result.is_err());
+// }
+//
+// // =============================================================================
+// // Test: ConfigRecord functionality
 // =============================================================================
 
 #[test]

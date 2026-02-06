@@ -11,10 +11,214 @@ use super::executor::ParquetMergeExecutor;
 use super::schema::MergeState;
 use crate::tikv::{client::TikvClient, error::TikvError, locks::LockManager};
 use roboflow_storage::StorageFactory;
+use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tracing::info;
+
+// =============================================================================
+// Merge Semaphore (Backpressure)
+// =============================================================================
+
+/// Default maximum concurrent merge operations.
+pub const DEFAULT_MAX_CONCURRENT_MERGES: usize = 3;
+
+/// Metrics for the merge semaphore.
+#[derive(Debug, Clone, Default)]
+pub struct MergeSemaphoreMetrics {
+    /// Current number of available permits.
+    pub available_permits: usize,
+    /// Current number of pending merges in queue.
+    pub queue_depth: usize,
+    /// Total number of merge attempts (for metrics).
+    pub total_attempts: u64,
+    /// Number of merges that succeeded (for metrics).
+    pub successful_merges: u64,
+}
+
+/// RAII permit for merge operations.
+///
+/// When dropped, the permit is automatically returned to the semaphore.
+pub struct MergePermit {
+    semaphore: Arc<MergeSemaphoreInner>,
+}
+
+impl MergePermit {
+    fn new(semaphore: Arc<MergeSemaphoreInner>) -> Self {
+        Self { semaphore }
+    }
+}
+
+impl Drop for MergePermit {
+    fn drop(&mut self) {
+        self.semaphore.release();
+    }
+}
+
+/// Inner state of the merge semaphore (shared via Arc).
+struct MergeSemaphoreInner {
+    /// Maximum permits allowed.
+    max_permits: usize,
+    /// Current available permits (AtomicU32 for cross-thread sync).
+    available: AtomicU32,
+}
+
+impl MergeSemaphoreInner {
+    fn new(max_permits: usize) -> Self {
+        Self {
+            max_permits,
+            available: AtomicU32::new(max_permits as u32),
+        }
+    }
+
+    /// Try to acquire a permit without blocking.
+    fn try_acquire(&self) -> bool {
+        let mut current = self.available.load(Ordering::Acquire);
+        while current > 0 {
+            match self.available.compare_exchange_weak(
+                current,
+                current - 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => current = actual,
+            }
+        }
+        false
+    }
+
+    /// Release a permit back to the semaphore.
+    fn release(&self) {
+        let _ = self
+            .available
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                if current < self.max_permits as u32 {
+                    Some(current + 1)
+                } else {
+                    None // Should not happen, but handle gracefully
+                }
+            });
+    }
+
+    /// Get current available permits.
+    fn available_permits(&self) -> usize {
+        self.available.load(Ordering::Acquire) as usize
+    }
+}
+
+/// Bounded semaphore for limiting concurrent merge operations.
+///
+/// Provides backpressure by limiting the number of simultaneous merges.
+/// Uses a non-blocking try_acquire pattern - if no permits are available,
+/// the caller should return `MergeResult::NotReady`.
+pub struct MergeSemaphore {
+    /// Inner shared state.
+    inner: Arc<MergeSemaphoreInner>,
+    /// Queue of pending merge requests (for observability).
+    pending: Arc<Mutex<VecDeque<(String, Instant)>>>,
+    /// Metrics tracking.
+    metrics: Arc<Mutex<MergeSemaphoreMetrics>>,
+}
+
+impl MergeSemaphore {
+    /// Create a new merge semaphore.
+    pub fn new(max_permits: usize) -> Self {
+        let inner = Arc::new(MergeSemaphoreInner::new(max_permits));
+        Self {
+            inner: Arc::clone(&inner),
+            pending: Arc::new(Mutex::new(VecDeque::new())),
+            metrics: Arc::new(Mutex::new(MergeSemaphoreMetrics {
+                available_permits: max_permits,
+                queue_depth: 0,
+                total_attempts: 0,
+                successful_merges: 0,
+            })),
+        }
+    }
+
+    /// Create with default limits.
+    pub fn with_defaults() -> Self {
+        Self::new(DEFAULT_MAX_CONCURRENT_MERGES)
+    }
+
+    /// Try to acquire a permit without blocking.
+    ///
+    /// Returns `Some(MergePermit)` if acquired, `None` if no permits available.
+    /// The permit is automatically released when dropped.
+    pub fn try_acquire(&self) -> Option<MergePermit> {
+        // Track the attempt
+        if let Ok(mut metrics) = self.metrics.try_lock() {
+            metrics.total_attempts += 1;
+        }
+
+        if self.inner.try_acquire() {
+            // Update metrics
+            if let Ok(mut metrics) = self.metrics.try_lock() {
+                metrics.available_permits = self.inner.available_permits();
+            }
+            Some(MergePermit::new(Arc::clone(&self.inner)))
+        } else {
+            // No permits available - would need to wait
+            if let Ok(mut metrics) = self.metrics.try_lock() {
+                metrics.available_permits = 0;
+            }
+            None
+        }
+    }
+
+    /// Add a pending request to the queue (for observability).
+    pub fn enqueue_pending(&self, batch_id: String) {
+        if let Ok(mut queue) = self.pending.try_lock() {
+            queue.push_back((batch_id, Instant::now()));
+        }
+        if let Ok(mut metrics) = self.metrics.try_lock() {
+            metrics.queue_depth = self.pending.try_lock().map(|q| q.len()).unwrap_or(0);
+        }
+    }
+
+    /// Remove a pending request from the queue (for observability).
+    pub fn dequeue_pending(&self, batch_id: &str) {
+        if let Ok(mut queue) = self.pending.try_lock() {
+            queue.retain(|(id, _)| id != batch_id);
+        }
+        if let Ok(mut metrics) = self.metrics.try_lock() {
+            metrics.queue_depth = self.pending.try_lock().map(|q| q.len()).unwrap_or(0);
+        }
+    }
+
+    /// Get current metrics snapshot.
+    pub fn metrics(&self) -> MergeSemaphoreMetrics {
+        self.metrics
+            .try_lock()
+            .map(|m| m.clone())
+            .unwrap_or_default()
+    }
+
+    /// Get current available permits.
+    pub fn available_permits(&self) -> usize {
+        self.inner.available_permits()
+    }
+
+    /// Record a successful merge completion.
+    pub fn record_success(&self) {
+        if let Ok(mut metrics) = self.metrics.try_lock() {
+            metrics.successful_merges += 1;
+        }
+    }
+}
+
+impl Clone for MergeSemaphore {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+            pending: Arc::clone(&self.pending),
+            metrics: Arc::clone(&self.metrics),
+        }
+    }
+}
 
 /// Merge coordinator configuration.
 #[derive(Debug, Clone)]
@@ -58,6 +262,9 @@ pub struct MergeCoordinator {
 
     /// Temporary directory for merge operations.
     temp_dir: PathBuf,
+
+    /// Semaphore for limiting concurrent merges (backpressure).
+    semaphore: MergeSemaphore,
 }
 
 impl MergeCoordinator {
@@ -71,6 +278,7 @@ impl MergeCoordinator {
             config: MergeConfig::default(),
             storage_factory: StorageFactory::default(),
             temp_dir: std::env::temp_dir(),
+            semaphore: MergeSemaphore::with_defaults(),
         }
     }
 
@@ -84,6 +292,7 @@ impl MergeCoordinator {
             config,
             storage_factory: StorageFactory::default(),
             temp_dir: std::env::temp_dir(),
+            semaphore: MergeSemaphore::with_defaults(),
         }
     }
 
@@ -97,6 +306,17 @@ impl MergeCoordinator {
     pub fn with_storage_factory(mut self, factory: StorageFactory) -> Self {
         self.storage_factory = factory;
         self
+    }
+
+    /// Set the merge semaphore for backpressure control.
+    pub fn with_semaphore(mut self, semaphore: MergeSemaphore) -> Self {
+        self.semaphore = semaphore;
+        self
+    }
+
+    /// Get the merge semaphore (for metrics/observation).
+    pub fn semaphore(&self) -> &MergeSemaphore {
+        &self.semaphore
     }
 
     /// Register a worker's completed staging output.
@@ -154,6 +374,25 @@ impl MergeCoordinator {
         expected_workers: usize,
         output_path: String,
     ) -> Result<MergeResult, TikvError> {
+        // Apply backpressure - try to acquire semaphore permit
+        let _permit = match self.semaphore.try_acquire() {
+            Some(permit) => permit,
+            None => {
+                // No permits available - too many concurrent merges
+                // Enqueue as pending for observability
+                self.semaphore.enqueue_pending(job_id.to_string());
+                tracing::debug!(
+                    job_id = %job_id,
+                    available_permits = self.semaphore.available_permits(),
+                    "Merge backpressure: no permits available"
+                );
+                return Ok(MergeResult::NotReady);
+            }
+        };
+
+        // Permit is held - remove from pending queue if it was there
+        self.semaphore.dequeue_pending(job_id);
+
         // Try to acquire merge lock
         let lock_resource = Self::merge_lock_resource(job_id);
         let lock_guard = match self
@@ -164,6 +403,7 @@ impl MergeCoordinator {
             Some(guard) => guard,
             None => {
                 // Another worker is handling the merge
+                // Permit is released here via RAII
                 return Ok(MergeResult::NotClaimed);
             }
         };

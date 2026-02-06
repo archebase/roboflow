@@ -361,6 +361,46 @@ impl HeartbeatManager {
         }
     }
 
+    /// Mark the worker as shutting down gracefully.
+    ///
+    /// This updates the heartbeat one final time with a terminal status
+    /// (Draining) to signal that this worker is intentionally stopping
+    /// rather than crashing. The heartbeat record is retained for
+    /// observability and debugging.
+    ///
+    /// This is different from `cleanup()` which deletes the heartbeat entirely.
+    #[must_use = "heartbeat errors should be handled to detect TiKV issues"]
+    pub async fn graceful_shutdown(&self) -> Result<(), TikvError> {
+        let mut heartbeat = self
+            .tikv
+            .get_heartbeat(&self.pod_id)
+            .await?
+            .unwrap_or_else(|| HeartbeatRecord::new(self.pod_id.clone()));
+
+        heartbeat.beat();
+        heartbeat.status = WorkerStatus::Draining;
+
+        // Add shutdown metadata
+        if let Some(ref mut metadata) = heartbeat.metadata
+            && let Some(obj) = metadata.as_object_mut()
+        {
+            obj.insert(
+                "shutdown_at".to_string(),
+                serde_json::json!(chrono::Utc::now().to_rfc3339()),
+            );
+            obj.insert("reason".to_string(), serde_json::json!("graceful_shutdown"));
+        }
+
+        self.tikv.update_heartbeat(&self.pod_id, &heartbeat).await?;
+
+        tracing::info!(
+            pod_id = %self.pod_id,
+            "Heartbeat marked as draining (graceful shutdown)"
+        );
+
+        Ok(())
+    }
+
     /// Delete the heartbeat key from TiKV (cleanup on shutdown).
     #[must_use = "cleanup errors should be handled to detect TiKV issues"]
     pub async fn cleanup(&self) -> Result<(), TikvError> {

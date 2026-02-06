@@ -36,6 +36,9 @@ pub mod coordinator;
 pub mod executor;
 pub mod schema;
 
-pub use coordinator::{MergeConfig, MergeCoordinator, MergeResult};
+pub use coordinator::{
+    DEFAULT_MAX_CONCURRENT_MERGES, MergeConfig, MergeCoordinator, MergePermit, MergeResult,
+    MergeSemaphore, MergeSemaphoreMetrics,
+};
 pub use executor::ParquetMergeExecutor;
 pub use schema::{MergeState, MergeStatus};

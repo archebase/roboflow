@@ -51,8 +51,8 @@ use std::env;
 use std::sync::Arc;
 
 use roboflow_distributed::{
-    BatchController, Finalizer, FinalizerConfig, MergeCoordinator, ReaperConfig, Worker,
-    WorkerConfig, ZombieReaper,
+    BatchController, Finalizer, FinalizerConfig, MergeCoordinator, ReaperConfig, Scanner,
+    ScannerConfig, Worker, WorkerConfig, ZombieReaper,
 };
 use roboflow_storage::StorageFactory;
 use tokio_util::sync::CancellationToken;
@@ -335,6 +335,66 @@ fn create_storage() -> Result<Arc<dyn roboflow_storage::Storage>, String> {
         .map_err(|e| format!("Failed to create storage: {}", e))
 }
 
+/// Health check result.
+#[derive(Debug)]
+struct HealthCheckResult {
+    /// Whether the system is healthy.
+    is_healthy: bool,
+    /// List of errors found (if unhealthy).
+    errors: Vec<String>,
+    /// Optional details about the health check.
+    details: Option<std::collections::HashMap<String, String>>,
+}
+
+/// Run health checks against TiKV and storage.
+async fn run_health_check() -> HealthCheckResult {
+    let mut errors = Vec::new();
+    let mut details = std::collections::HashMap::new();
+
+    // Add PD endpoints info
+    details.insert(
+        "pd_endpoints".to_string(),
+        env::var("TIKV_PD_ENDPOINTS").unwrap_or_default(),
+    );
+
+    // Check TiKV connectivity
+    match create_tikv().await {
+        Ok(tikv) => {
+            // Verify TiKV is responsive with a simple scan operation
+            match tikv.scan(vec![], 1).await {
+                Ok(_) => {
+                    details.insert("tikv".to_string(), "connected".to_string());
+                }
+                Err(e) => {
+                    errors.push(format!("TiKV scan failed: {}", e));
+                    details.insert("tikv".to_string(), "unresponsive".to_string());
+                }
+            }
+        }
+        Err(e) => {
+            errors.push(format!("TiKV connection: {}", e));
+            details.insert("tikv".to_string(), "failed".to_string());
+        }
+    }
+
+    // Check storage connectivity
+    match create_storage() {
+        Ok(_) => {
+            details.insert("storage".to_string(), "available".to_string());
+        }
+        Err(e) => {
+            errors.push(format!("Storage: {}", e));
+            details.insert("storage".to_string(), "failed".to_string());
+        }
+    }
+
+    HealthCheckResult {
+        is_healthy: errors.is_empty(),
+        errors,
+        details: Some(details),
+    }
+}
+
 /// Run the worker role.
 async fn run_worker(
     pod_id: String,
@@ -371,6 +431,7 @@ async fn run_unified(
     let worker_config = WorkerConfig::new();
     let finalizer_config = FinalizerConfig::from_env()?;
     let reaper_config = ReaperConfig::new();
+    let scanner_config = ScannerConfig::from_env()?;
 
     let batch_controller = Arc::new(BatchController::with_client(tikv.clone()));
     let merge_coordinator = Arc::new(MergeCoordinator::new(
@@ -378,7 +439,7 @@ async fn run_unified(
         format!("{}-finalizer", pod_id),
     ));
 
-    // Clone cancel for finalizer task
+    // Clone cancel for tasks
     let cancel_clone = cancel.clone();
 
     // Create worker, finalizer, and reaper
@@ -399,6 +460,11 @@ async fn run_unified(
 
     let mut reaper = ZombieReaper::new(tikv.clone(), reaper_config);
 
+    // Scanner variables for spawning in task
+    let scanner_pod_id = format!("{}-scanner", pod_id);
+    let scanner_tikv = tikv.clone();
+    let scanner_cancel = cancel.clone();
+
     // Start batch controller in background with error logging
     let batch_controller_id = pod_id.clone();
     tokio::spawn(async move {
@@ -408,6 +474,33 @@ async fn run_unified(
                 error = %e,
                 "BatchController failed"
             );
+        }
+    });
+
+    // Spawn scanner task - runs its own leader election loop
+    let scanner_handle = tokio::spawn(async move {
+        let mut scanner = match Scanner::new(
+            scanner_pod_id,
+            scanner_tikv,
+            Arc::new(StorageFactory::from_env()),
+            scanner_config,
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to create scanner");
+                return;
+            }
+        };
+
+        tokio::select! {
+            result = scanner.run() => {
+                if let Err(e) = result {
+                    tracing::error!(error = %e, "Scanner failed");
+                }
+            }
+            _ = scanner_cancel.cancelled() => {
+                tracing::info!("Scanner shutting down");
+            }
         }
     });
 
@@ -454,6 +547,9 @@ async fn run_unified(
             cancel.cancel();
         }
         _ = finalizer_handle => {
+            cancel.cancel();
+        }
+        _ = scanner_handle => {
             cancel.cancel();
         }
     }
@@ -534,11 +630,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Command::Health { host, port } => {
-            // Health command - placeholder implementation
-            eprintln!("Health command not yet implemented");
-            eprintln!("Host: {:?}", host);
-            eprintln!("Port: {:?}", port);
+        Command::Health {
+            host: _host,
+            port: _port,
+        } => {
+            // Health check - validate TiKV and storage connectivity
+            let result = run_health_check().await;
+
+            // Format output based on result
+            let status = if result.is_healthy {
+                "healthy"
+            } else {
+                "unhealthy"
+            };
+            println!("{}", status);
+
+            if !result.is_healthy {
+                for error in &result.errors {
+                    eprintln!("  [ERROR] {}", error);
+                }
+                std::process::exit(1);
+            }
+
+            // Print detailed health info
+            if let Some(details) = &result.details {
+                println!("\nDetails:");
+                for (key, value) in details {
+                    println!("  {}: {}", key, value);
+                }
+            }
         }
     }
 
