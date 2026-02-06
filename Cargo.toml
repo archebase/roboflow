@@ -32,7 +32,7 @@ repository = "https://github.com/archebase/roboflow"
 description = "Schema-driven message codec supporting CDR, protobuf, and JSON"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [dependencies]
 robocodec = { workspace = true }
@@ -114,10 +114,6 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 # Memory allocator (optional, for better concurrent performance on Linux)
 tikv-jemallocator = { version = "0.6", optional = true }
 
-# PyO3 for Python bindings (optional, gated by "python" feature)
-# Note: extension-module is included here to prevent libpython linking
-pyo3 = { version = "0.25", features = ["abi3-py311", "extension-module"], optional = true }
-
 # CLI argument parsing (used by profiler and other binaries)
 clap = { version = "4.5", features = ["derive"], optional = true }
 
@@ -137,10 +133,6 @@ dataset-depth = ["dep:png"]
 dataset-all = ["dataset-hdf5", "dataset-parquet", "dataset-depth"]
 # Cloud storage support for Alibaba OSS and S3-compatible backends
 cloud-storage = ["dep:object_store", "dep:url", "dep:bytes"]
-# Python bindings via PyO3 (extension-module mode to prevent libpython linking)
-python = ["pyo3", "robocodec/python"]
-# Python extension module (alias for python, since extension-module is now default)
-extension-module = ["python"]
 # GPU compression (experimental)
 # Enables GPU-accelerated compression via nvCOMP
 # Requires: NVIDIA GPU, CUDA toolkit, nvCOMP library (Linux)
