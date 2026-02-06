@@ -224,57 +224,63 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
             Ok(Command::Health { host, port })
         }
         "--help" | "-h" | "help" => usage(),
-        unknown => Err(format!("unknown command: {}\n\n{}", unknown, get_help())),
+        unknown => {
+            eprintln!("unknown command: {}\n", unknown);
+            eprintln!("{}", get_help());
+            Err("".to_string())
+        }
     }
 }
 
 /// Print usage information and return an error.
 fn usage() -> Result<Command, String> {
-    Err(get_help())
+    eprintln!("{}", get_help());
+    Err("".to_string())
 }
 
 /// Get help text.
 fn get_help() -> String {
-    r#"Roboflow - Distributed data transformation pipeline
-
-USAGE:
-    roboflow <COMMAND> [OPTIONS]
-
-COMMANDS:
-    submit      Submit a conversion job to the distributed queue
-    jobs        Manage and inspect jobs
-    batch       Manage batch jobs
-    run         Run the unified service (worker + finalizer + reaper)
-    health      Run a standalone health check server
-    help        Print this help message
-
-RUN COMMAND:
-    roboflow run [OPTIONS]
-
-OPTIONS:
-    -r, --role <ROLE>      Role to run: worker, finalizer, unified [default: unified]
-    -p, --pod-id <ID>      Pod ID for this instance [default: auto-generated]
-    -h, --help             Print help information
-
-ENVIRONMENT VARIABLES:
-    ROLE                    Role to run (worker, finalizer, unified)
-    POD_ID                  Pod ID for this instance
-    TIKV_PD_ENDPOINTS        TiKV PD endpoints [default: 127.0.0.1:2379]
-
-EXAMPLES:
-    # Run unified service (all roles)
-    roboflow run
-
-    # Run as worker only
-    roboflow run --role worker
-
-    # Submit a job
-    roboflow submit s3://bucket/input.bag --output s3://bucket/output/
-
-    # List jobs
-    roboflow jobs list
-"#
-    .to_string()
+    [
+        "Roboflow - Distributed data transformation pipeline",
+        "",
+        "USAGE:",
+        "    roboflow <COMMAND> [OPTIONS]",
+        "",
+        "COMMANDS:",
+        "    submit      Submit a conversion job to the distributed queue",
+        "    jobs        Manage and inspect jobs",
+        "    batch       Manage batch jobs",
+        "    run         Run the unified service (worker + finalizer + reaper)",
+        "    health      Run a standalone health check server",
+        "    help        Print this help message",
+        "",
+        "RUN COMMAND:",
+        "    roboflow run [OPTIONS]",
+        "",
+        "OPTIONS:",
+        "    -r, --role <ROLE>      Role to run: worker, finalizer, unified [default: unified]",
+        "    -p, --pod-id <ID>      Pod ID for this instance [default: auto-generated]",
+        "    -h, --help             Print help information",
+        "",
+        "ENVIRONMENT VARIABLES:",
+        "    ROLE                    Role to run (worker, finalizer, unified)",
+        "    POD_ID                  Pod ID for this instance",
+        "    TIKV_PD_ENDPOINTS        TiKV PD endpoints [default: 127.0.0.1:2379]",
+        "",
+        "EXAMPLES:",
+        "    # Run unified service (all roles)",
+        "    roboflow run",
+        "",
+        "    # Run as worker only",
+        "    roboflow run --role worker",
+        "",
+        "    # Submit a job",
+        "    roboflow submit s3://bucket/input.bag --output s3://bucket/output/",
+        "",
+        "    # List jobs",
+        "    roboflow jobs list",
+    ]
+    .join("\n")
 }
 
 /// Generate a pod ID from environment or hostname + UUID.
