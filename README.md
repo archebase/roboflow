@@ -65,7 +65,7 @@ Roboflow uses a **Kubernetes-inspired distributed control plane** for fault-tole
 | node-controller | `ZombieReaper` |
 | Finalizers | `Finalizer` controller |
 | Job/CronJob | `JobRecord`, `BatchSpec` |
-| Lease API | `LockManager` |
+| State machine | `BatchPhase` (Pending → Discovering → Running → Merging → Complete/Failed) |
 
 ## Workspace Structure
 

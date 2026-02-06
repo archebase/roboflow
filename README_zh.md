@@ -65,7 +65,7 @@ Roboflow 采用**受 Kubernetes 启发的分布式控制平面**，实现容错�
 | node-controller | `ZombieReaper` |
 | Finalizers | `Finalizer` 控制器 |
 | Job/CronJob | `JobRecord`, `BatchSpec` |
-| Lease API | `LockManager` |
+| 状态机 | `BatchPhase` (Pending → Discovering → Running → Merging → Complete/Failed) |
 
 ## 工作空间结构
 
