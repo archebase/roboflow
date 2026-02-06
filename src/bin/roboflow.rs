@@ -433,10 +433,7 @@ async fn run_unified(
     let scanner_config = ScannerConfig::from_env()?;
 
     let batch_controller = Arc::new(BatchController::with_client(tikv.clone()));
-    let merge_coordinator = Arc::new(MergeCoordinator::new(
-        tikv.clone(),
-        format!("{}-finalizer", pod_id),
-    ));
+    let merge_coordinator = Arc::new(MergeCoordinator::new(tikv.clone()));
 
     // Clone cancel for tasks
     let cancel_clone = cancel.clone();
@@ -617,10 +614,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Role::Finalizer => {
                     let batch_controller = Arc::new(BatchController::with_client(tikv.clone()));
-                    let merge_coordinator = Arc::new(MergeCoordinator::new(
-                        tikv.clone(),
-                        format!("{}-finalizer", pod_id),
-                    ));
+                    let merge_coordinator = Arc::new(MergeCoordinator::new(tikv.clone()));
                     run_finalizer(pod_id, tikv, batch_controller, merge_coordinator, cancel)
                         .await?;
                 }

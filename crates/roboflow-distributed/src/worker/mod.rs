@@ -91,7 +91,7 @@ impl Worker {
 
         // Create merge coordinator for distributed dataset merge operations
         use super::merge::MergeCoordinator;
-        let merge_coordinator = MergeCoordinator::new(tikv.clone(), pod_id.clone());
+        let merge_coordinator = MergeCoordinator::new(tikv.clone());
 
         // Create batch controller for work unit processing
         let batch_controller = BatchController::with_client(tikv.clone());
@@ -534,6 +534,12 @@ impl Worker {
                             tracing::debug!(
                                 unit_id = %unit_id,
                                 "Merge task claimed by another worker"
+                            );
+                        }
+                        Ok(super::merge::MergeResult::NotFound) => {
+                            tracing::warn!(
+                                unit_id = %unit_id,
+                                "Batch not found for merge"
                             );
                         }
                         Ok(super::merge::MergeResult::NotReady) => {

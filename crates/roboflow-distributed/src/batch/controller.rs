@@ -193,6 +193,10 @@ impl BatchController {
                 // Check if batch is complete
                 self.reconcile_running(spec, status).await
             }
+            BatchPhase::Merging => {
+                // Merge in progress (handled by Finalizer)
+                Ok(status)
+            }
             BatchPhase::Complete | BatchPhase::Failed | BatchPhase::Cancelled => {
                 // Terminal phases, nothing to do
                 Ok(status)

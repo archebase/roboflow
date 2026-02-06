@@ -202,6 +202,13 @@ impl Finalizer {
                 // Mark batch as complete
                 self.mark_batch_complete(&batch.id).await?;
             }
+            super::merge::MergeResult::NotFound => {
+                warn!(
+                    pod_id = %self.pod_id,
+                    batch_id = %batch.id,
+                    "Batch not found for merge"
+                );
+            }
             super::merge::MergeResult::NotClaimed => {
                 warn!(
                     pod_id = %self.pod_id,

@@ -985,6 +985,7 @@ fn format_phase(phase: BatchPhase) -> String {
         BatchPhase::Pending => "Pending".to_string(),
         BatchPhase::Discovering => "Discovering".to_string(),
         BatchPhase::Running => "Running".to_string(),
+        BatchPhase::Merging => "Merging".to_string(),
         BatchPhase::Complete => "Complete".to_string(),
         BatchPhase::Failed => "Failed".to_string(),
         BatchPhase::Cancelled => "Cancelled".to_string(),

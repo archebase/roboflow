@@ -86,6 +86,10 @@ pub enum BatchPhase {
     #[serde(rename = "Running")]
     Running,
 
+    /// Merging staged outputs into final dataset.
+    #[serde(rename = "Merging")]
+    Merging,
+
     /// Job completed successfully.
     #[serde(rename = "Complete")]
     Complete,
@@ -115,7 +119,7 @@ impl BatchPhase {
 
     /// Check if phase is active (work can progress).
     pub fn is_active(&self) -> bool {
-        matches!(self, Self::Discovering | Self::Running)
+        matches!(self, Self::Discovering | Self::Running | Self::Merging)
     }
 }
 
@@ -125,6 +129,7 @@ impl fmt::Display for BatchPhase {
             Self::Pending => write!(f, "Pending"),
             Self::Discovering => write!(f, "Discovering"),
             Self::Running => write!(f, "Running"),
+            Self::Merging => write!(f, "Merging"),
             Self::Complete => write!(f, "Complete"),
             Self::Failed => write!(f, "Failed"),
             Self::Cancelled => write!(f, "Cancelled"),
@@ -161,11 +166,12 @@ impl crate::state::StateLifecycle for BatchPhase {
             ),
             BatchPhase::Running => matches!(
                 target,
-                BatchPhase::Complete
+                BatchPhase::Merging
                     | BatchPhase::Failed
                     | BatchPhase::Suspending
                     | BatchPhase::Cancelled
             ),
+            BatchPhase::Merging => matches!(target, BatchPhase::Complete | BatchPhase::Failed),
             BatchPhase::Suspending => matches!(
                 target,
                 BatchPhase::Suspended | BatchPhase::Failed | BatchPhase::Cancelled
