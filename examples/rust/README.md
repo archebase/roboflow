@@ -130,7 +130,6 @@ To add support for missing features:
 
 ## See Also
 
-- [Python Examples](../python/) - Python implementation for KPS conversion
 - [CLAUDE.md](../../CLAUDE.md) - Project documentation
 
 ## References

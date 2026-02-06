@@ -44,7 +44,6 @@ roboflow/
 │   │   ├── fluent/         # Builder API
 │   │   ├── auto_config.rs  # Hardware-aware configuration
 │   │   └── gpu/            # GPU compression support
-│   ├── python/             # PyO3 bindings
 │   └── bin/                # CLI tools
 └── depends on → robocodec   # External library
                             # https://github.com/archebase/robocodec
@@ -111,7 +110,6 @@ Roboflow::open(vec!["input.bag"])?
   - Fluent API: `src/pipeline/fluent/`
   - Auto-configuration: `src/pipeline/auto_config.rs`
   - GPU: `src/pipeline/gpu/`
-- Python Bindings: `src/python/`
 - CLI Tools: `src/bin/`
 
 **Robocodec (external library)**:

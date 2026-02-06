@@ -4,34 +4,6 @@
 *.pdb
 # Cargo.lock is now tracked for reproducible builds
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-.pytest_cache/
-.coverage
-htmlcov/
-.venv/
-venv/
-ENV/
-
 # IDE
 .idea/
 .vscode/
@@ -52,9 +24,6 @@ tests/output/
 /output/
 *.toml.bak
 
-# ignore pyo3
-python/robocodec-0.1.0.data/
-
 # ignore flamegraph
 flamegraph.svg
 profiles/
@@ -62,6 +31,3 @@ profiles/
 # robot data
 *.bag
 *.mcap
-
-# claude
-.claude/

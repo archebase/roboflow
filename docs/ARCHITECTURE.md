@@ -20,9 +20,6 @@ Roboflow is a **high-performance robotics data processing pipeline** built on to
 │  │  │  (4-stage)   │  │   Maximum throughput     │       │    │
 │  │  └──────────────┘  └──────────────────────────┘       │    │
 │  └────────────────────────────────────────────────────────┘    │
-│  ┌────────────────────────────────────────────────────────┐    │
-│  │            Python Bindings (PyO3)                     │    │
-│  └────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────┘
                             │ depends on
                             ▼
@@ -65,7 +62,6 @@ Roboflow is a **high-performance robotics data processing pipeline** built on to
 | `pipeline/hyper/` | 7-stage HyperPipeline implementation |
 | `pipeline/auto_config.rs` | Hardware-aware auto-configuration |
 | `pipeline/gpu/` | GPU compression support (experimental) |
-| `python/` | PyO3 bindings for Python API |
 | `bin/` | CLI tools (convert, extract, inspect, schema, search) |
 
 **Design**: Roboflow depends on the external `robocodec` crate for all low-level format handling, codecs, and schema parsing.
@@ -140,19 +136,6 @@ let config = PipelineAutoConfig::auto(PerformanceMode::Throughput)
     .build();
 ```
 
-### 4. Python Bindings
-
-**Location**: `src/python/`
-
-PyO3 bindings with feature parity:
-
-```python
-from roboflow import Roboflow
-
-# Use via fluent API
-Roboflow.open(["input.bag"]).write_to("output.mcap").run()
-```
-
 ## CLI Tools
 
 | Tool | Location | Purpose |
@@ -172,8 +155,8 @@ Roboflow.open(["input.bag"]).write_to("output.mcap").run()
 | Pipeline orchestration | Format handling |
 | Fluent API | Codecs (CDR/Protobuf/JSON) |
 | Auto-configuration | Schema parsing |
-| Python bindings | MCAP/ROS bag I/O |
-| GPU compression | Arena types |
+| GPU compression | MCAP/ROS bag I/O |
+| Arena types | Arena types |
 
 This separation allows:
 1. **Independent development**: Format handling evolves separately from pipeline logic
@@ -185,7 +168,6 @@ This separation allows:
 - **Memory safety**: No garbage collection pauses
 - **Zero-cost abstractions**: High-level code, low-level performance
 - **Cross-platform**: Linux, macOS, Windows
-- **FFI friendly**: Easy Python bindings via PyO3
 
 ### Why Two Pipeline Designs?
 
@@ -225,23 +207,15 @@ Roboflow::open(vec!["input.bag"])?
     .run()?;
 ```
 
-### Python API (PyO3)
-
-```python
-from roboflow import Roboflow
-
-Roboflow.open(["input.bag"]).write_to("output.mcap").run()
-```
-
 ## Feature Flags
 
 | Flag | Description |
 |------|-------------|
-| `python` | Python bindings via PyO3 |
 | `dataset-hdf5` | HDF5 dataset support |
 | `dataset-parquet` | Parquet dataset support |
 | `dataset-depth` | Depth video support |
 | `dataset-all` | All KPS features |
+| `cloud-storage` | S3/OSS cloud storage support |
 | `cli` | CLI tools |
 | `jemalloc` | Use jemalloc allocator (Linux) |
 | `gpu` | GPU compression support |
