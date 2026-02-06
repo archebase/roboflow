@@ -398,7 +398,7 @@ mod tests {
         let pool = BufferPool::with_capacity(100);
         let mut buffer = pool.acquire(100);
 
-        buffer.as_mut().extend_from_slice(&[1, 2, 3, 4, 5]);
+        AsMut::<Vec<u8>>::as_mut(&mut buffer).extend_from_slice(&[1, 2, 3, 4, 5]);
         assert_eq!(buffer.len(), 5);
 
         buffer.clear();
@@ -455,7 +455,7 @@ mod tests {
                 thread::spawn(move || {
                     for _ in 0..100 {
                         let mut buf = pool.acquire(1024);
-                        buf.as_mut().push(42);
+                        AsMut::<Vec<u8>>::as_mut(&mut buf).push(42);
                     }
                 })
             })

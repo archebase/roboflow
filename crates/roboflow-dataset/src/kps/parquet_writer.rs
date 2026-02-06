@@ -322,7 +322,7 @@ impl ParquetKpsWriter {
     /// Record the dimension of a state topic.
     // TODO: This method is used in tests but not in production code yet.
     // It will be used when state data processing is fully implemented.
-    #[expect(dead_code)]
+    #[allow(dead_code)]
     fn record_state_dimension(&mut self, topic: String, dim: usize) {
         self.state_shapes.insert(topic, dim);
     }
