@@ -10,7 +10,6 @@
 //! 3. Orphaned work units are reclaimed
 //! 4. Failed work units can be retried
 
-#[cfg(feature = "distributed")]
 mod tests {
     use std::time::Duration;
 
@@ -262,13 +261,4 @@ mod tests {
     //         let _ = client.delete(JobKeys::record(job_id)).await;
     //         let _ = client.delete(StateKeys::checkpoint(job_id)).await;
     //     }
-}
-
-#[cfg(not(feature = "distributed"))]
-mod tests {
-    #[tokio::test]
-    async fn test_zombie_reaper_not_available_without_distributed() {
-        // Verify that zombie reaper requires distributed feature
-        println!("Zombie reaper requires 'distributed' feature");
-    }
 }

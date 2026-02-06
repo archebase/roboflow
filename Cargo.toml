@@ -130,17 +130,13 @@ io-uring = { version = "0.7", optional = true }
 
 # Dataset features (optional, disabled by default)
 [features]
-default = ["distributed"]
+default = []
 dataset-hdf5 = ["dep:hdf5"]
 dataset-parquet = ["dep:polars"]
 dataset-depth = ["dep:png"]
 dataset-all = ["dataset-hdf5", "dataset-parquet", "dataset-depth"]
 # Cloud storage support for Alibaba OSS and S3-compatible backends
 cloud-storage = ["dep:object_store", "dep:url", "dep:bytes"]
-# Distributed coordination via TiKV
-# Note: The distributed dependencies are always included (roboflow-distributed, tikv-client, futures, tokio, bincode)
-# This feature gates conditional compilation of distributed-specific code paths
-distributed = []
 # Python bindings via PyO3 (extension-module mode to prevent libpython linking)
 python = ["pyo3", "robocodec/python"]
 # Python extension module (alias for python, since extension-module is now default)

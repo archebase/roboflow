@@ -10,7 +10,6 @@
 //! 3. Concurrency tests (multi-worker coordination)
 //! 4. Catalog/persistence tests (work unit lifecycle, state transitions)
 
-#[cfg(feature = "distributed")]
 mod tests {
     use std::sync::Arc;
     use std::time::Duration;

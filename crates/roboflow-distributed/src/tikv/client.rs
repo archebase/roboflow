@@ -59,33 +59,21 @@ impl TikvClient {
         // Create circuit breaker with default configuration
         let circuit_breaker = Arc::new(super::circuit::CircuitBreaker::new());
 
-        {
-            // Try to connect to TiKV cluster
-            let client = tikv_client::TransactionClient::new_with_config(
-                config.pd_endpoints.clone(),
-                tikv_client::Config::default(),
-            )
-            .await
-            .map_err(|e| TikvError::ConnectionFailed(e.to_string()))?;
+        // Try to connect to TiKV cluster
+        let client = tikv_client::TransactionClient::new_with_config(
+            config.pd_endpoints.clone(),
+            tikv_client::Config::default(),
+        )
+        .await
+        .map_err(|e| TikvError::ConnectionFailed(e.to_string()))?;
 
-            tracing::info!("Connected to TiKV: {}", config.describe());
+        tracing::info!("Connected to TiKV: {}", config.describe());
 
-            Ok(Self {
-                config,
-                inner: Some(Arc::new(client)),
-                circuit_breaker,
-            })
-        }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            tracing::warn!("Distributed feature not enabled, TikvClient will be a no-op");
-            Ok(Self {
-                config,
-                inner: None,
-                circuit_breaker,
-            })
-        }
+        Ok(Self {
+            config,
+            inner: Some(Arc::new(client)),
+            circuit_breaker,
+        })
     }
 
     /// Create a new client with default configuration from environment.
@@ -139,14 +127,6 @@ impl TikvClient {
             self.circuit_breaker.record_success();
             Ok(result)
         }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = key;
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
-        }
     }
 
     /// Put a key-value pair.
@@ -181,14 +161,6 @@ impl TikvClient {
             self.circuit_breaker.record_success();
             Ok(())
         }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = (key, value);
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
-        }
     }
 
     /// Delete a key.
@@ -222,14 +194,6 @@ impl TikvClient {
 
             self.circuit_breaker.record_success();
             Ok(())
-        }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = key;
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
         }
     }
 
@@ -287,14 +251,6 @@ impl TikvClient {
 
             Ok(result)
         }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = (prefix, limit);
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
-        }
     }
 
     /// Batch get multiple keys.
@@ -324,14 +280,6 @@ impl TikvClient {
 
             Ok(results)
         }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = keys;
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
-        }
     }
 
     /// Batch put multiple key-value pairs.
@@ -357,14 +305,6 @@ impl TikvClient {
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
             Ok(())
-        }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = pairs;
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
         }
     }
 
@@ -437,14 +377,6 @@ impl TikvClient {
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
             Ok(success)
-        }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = (key, expected_version, new_value);
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
         }
     }
 
@@ -640,14 +572,6 @@ impl TikvClient {
 
             Ok(acquired)
         }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = (resource, owner, ttl_seconds);
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
-        }
     }
 
     /// Release a distributed lock (atomic operation within a single transaction).
@@ -717,14 +641,6 @@ impl TikvClient {
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
             Ok(released)
-        }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = (resource, owner);
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
         }
     }
 
@@ -838,13 +754,7 @@ impl TikvClient {
 
     /// Check if the client is connected.
     pub fn is_connected(&self) -> bool {
-        {
-            self.inner.is_some()
-        }
-        #[cfg(not(feature = "distributed"))]
-        {
-            false
-        }
+        self.inner.is_some()
     }
 }
 

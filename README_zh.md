@@ -174,14 +174,12 @@ encoding = "cdr"
 
 ```bash
 cargo build
-cargo build --features distributed
 ```
 
 ### 测试
 
 ```bash
 cargo test
-cargo test --features distributed
 ```
 
 ### 格式化与检查

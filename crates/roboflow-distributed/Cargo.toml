@@ -8,8 +8,8 @@ repository = "https://github.com/archebase/roboflow"
 description = "Distributed coordination for roboflow - TiKV backend"
 
 [features]
-default = ["distributed"]
-distributed = []
+default = []
+
 
 [dependencies]
 roboflow-core = { path = "../roboflow-core", version = "0.2.0" }

@@ -174,14 +174,12 @@ encoding = "cdr"
 
 ```bash
 cargo build
-cargo build --features distributed
 ```
 
 ### Test
 
 ```bash
 cargo test
-cargo test --features distributed
 ```
 
 ### Format & Lint

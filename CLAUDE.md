@@ -34,7 +34,7 @@ The project uses a Cargo workspace with 6 crates:
 
 ```bash
 cargo build                              # Standard build
-cargo test --features distributed       # With distributed coordination
+cargo test                               # Distributed coordination is always enabled
 cargo test --test kps_v12_tests         # KPS v1.2 spec tests
 ```
 
