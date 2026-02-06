@@ -1,0 +1,5 @@
+# CI-specific cargo configuration
+[build]
+# Use system linker instead of lld (lld crashes on large binaries in CI)
+[target.x86_64-unknown-linux-gnu]
+linker = "cc"
