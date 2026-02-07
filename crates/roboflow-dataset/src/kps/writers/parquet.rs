@@ -67,6 +67,8 @@ pub struct StreamingParquetWriter {
 
 impl StreamingParquetWriter {
     /// Create a new Parquet writer for the specified output directory.
+    ///
+    /// This creates a fully initialized writer ready to accept frames.
     pub fn create(
         output_dir: impl AsRef<Path>,
         episode_id: usize,
@@ -83,29 +85,48 @@ impl StreamingParquetWriter {
         std::fs::create_dir_all(&videos_dir)?;
         std::fs::create_dir_all(&meta_dir)?;
 
+        // Initialize buffers for each mapped feature
+        let mut observation_buffer = HashMap::new();
+        let mut action_buffer = HashMap::new();
+
+        for mapping in &config.mappings {
+            let feature_name = mapping
+                .feature
+                .strip_prefix("observation.")
+                .or_else(|| mapping.feature.strip_prefix("action."))
+                .unwrap_or(&mapping.feature);
+
+            if mapping.feature.starts_with("observation.")
+                && matches!(mapping.mapping_type, crate::kps::MappingType::State)
+            {
+                observation_buffer.insert(feature_name.to_string(), Vec::new());
+            } else if mapping.feature.starts_with("action.") {
+                action_buffer.insert(feature_name.to_string(), Vec::new());
+            }
+        }
+
         Ok(Self {
             episode_id,
             output_dir: output_dir.to_path_buf(),
             frame_count: 0,
             images_encoded: 0,
             state_records: 0,
-            initialized: false,
+            initialized: true,
             image_shapes: HashMap::new(),
             state_dims: HashMap::new(),
             config: Some(config.clone()),
-            start_time: None,
-            observation_buffer: HashMap::new(),
-            action_buffer: HashMap::new(),
+            start_time: Some(std::time::Instant::now()),
+            observation_buffer,
+            action_buffer,
             image_buffer: HashMap::new(),
             frames_per_shard: 10000, // Default shard size
             output_bytes: 0,
         })
     }
 
-    /// Set the number of frames per Parquet shard.
-    pub fn with_frames_per_shard(mut self, frames: usize) -> Self {
-        self.frames_per_shard = frames;
-        self
+    /// Create a builder for configuring a Parquet writer.
+    pub fn builder() -> ParquetWriterBuilder {
+        ParquetWriterBuilder::new()
     }
 
     /// Write a Parquet file from buffered data.
@@ -280,48 +301,81 @@ impl StreamingParquetWriter {
     }
 }
 
-impl DatasetWriter for StreamingParquetWriter {
-    fn initialize(&mut self, config: &dyn std::any::Any) -> roboflow_core::Result<()> {
-        let kps_config = config.downcast_ref::<KpsConfig>().ok_or_else(|| {
-            roboflow_core::RoboflowError::parse(
-                "DatasetWriter",
-                "Expected KpsConfig for KPS writer",
-            )
-        })?;
+/// Builder for creating [`StreamingParquetWriter`] instances.
+pub struct ParquetWriterBuilder {
+    output_dir: Option<std::path::PathBuf>,
+    episode_id: usize,
+    config: Option<KpsConfig>,
+    frames_per_shard: usize,
+}
 
-        // Store config
-        self.config = Some(kps_config.clone());
-
-        // Initialize buffers for each mapped feature
-        for mapping in &kps_config.mappings {
-            let feature_name = mapping
-                .feature
-                .strip_prefix("observation.")
-                .or_else(|| mapping.feature.strip_prefix("action."))
-                .unwrap_or(&mapping.feature);
-
-            if mapping.feature.starts_with("observation.")
-                && matches!(mapping.mapping_type, crate::kps::MappingType::State)
-            {
-                self.observation_buffer
-                    .insert(feature_name.to_string(), Vec::new());
-            } else if mapping.feature.starts_with("action.") {
-                self.action_buffer
-                    .insert(feature_name.to_string(), Vec::new());
-            }
+impl ParquetWriterBuilder {
+    /// Create a new builder with default settings.
+    pub fn new() -> Self {
+        Self {
+            output_dir: None,
+            episode_id: 0,
+            config: None,
+            frames_per_shard: 10000,
         }
-
-        self.initialized = true;
-        self.start_time = Some(std::time::Instant::now());
-
-        Ok(())
     }
 
+    /// Set the output directory.
+    pub fn output_dir(mut self, path: impl AsRef<std::path::Path>) -> Self {
+        self.output_dir = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Set the episode ID.
+    pub fn episode_id(mut self, id: usize) -> Self {
+        self.episode_id = id;
+        self
+    }
+
+    /// Set the KPS configuration.
+    pub fn config(mut self, config: KpsConfig) -> Self {
+        self.config = Some(config);
+        self
+    }
+
+    /// Set the number of frames per Parquet shard.
+    pub fn frames_per_shard(mut self, frames: usize) -> Self {
+        self.frames_per_shard = frames;
+        self
+    }
+
+    /// Build the writer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if output_dir or config is not set.
+    pub fn build(self) -> Result<StreamingParquetWriter> {
+        let output_dir = self.output_dir.ok_or_else(|| {
+            roboflow_core::RoboflowError::parse("ParquetWriterBuilder", "output_dir is required")
+        })?;
+
+        let config = self.config.ok_or_else(|| {
+            roboflow_core::RoboflowError::parse("ParquetWriterBuilder", "config is required")
+        })?;
+
+        let mut writer = StreamingParquetWriter::create(&output_dir, self.episode_id, &config)?;
+        writer.frames_per_shard = self.frames_per_shard;
+        Ok(writer)
+    }
+}
+
+impl Default for ParquetWriterBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DatasetWriter for StreamingParquetWriter {
     fn write_frame(&mut self, frame: &AlignedFrame) -> roboflow_core::Result<()> {
         if !self.initialized {
             return Err(roboflow_core::RoboflowError::encode(
                 "DatasetWriter",
-                "Writer not initialized",
+                "Writer not initialized. Use builder() or create() to create an initialized writer.",
             ));
         }
 
@@ -383,14 +437,7 @@ impl DatasetWriter for StreamingParquetWriter {
         Ok(())
     }
 
-    fn finalize(&mut self, config: &dyn std::any::Any) -> roboflow_core::Result<WriterStats> {
-        let kps_config = config.downcast_ref::<KpsConfig>().ok_or_else(|| {
-            roboflow_core::RoboflowError::parse(
-                "DatasetWriter",
-                "Expected KpsConfig for KPS writer",
-            )
-        })?;
-
+    fn finalize(&mut self) -> roboflow_core::Result<WriterStats> {
         // Write final shard
 
         {
@@ -403,7 +450,9 @@ impl DatasetWriter for StreamingParquetWriter {
         self.process_images()?;
 
         // Write metadata files
-        self.write_metadata_files(kps_config)?;
+        if let Some(config) = &self.config {
+            self.write_metadata_files(config)?;
+        }
 
         let duration = self
             .start_time
@@ -421,10 +470,6 @@ impl DatasetWriter for StreamingParquetWriter {
 
     fn frame_count(&self) -> usize {
         self.frame_count
-    }
-
-    fn is_initialized(&self) -> bool {
-        self.initialized
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

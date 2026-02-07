@@ -845,26 +845,6 @@ impl V12DeliveryBuilder {
     pub fn generate_episode_uuid() -> String {
         Uuid::new_v4().to_string()
     }
-
-    /// Recursively copy a directory.
-    #[allow(dead_code)]
-    fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        fs::create_dir_all(target)?;
-
-        for entry in fs::read_dir(source)? {
-            let entry = entry?;
-            let source_path = entry.path();
-            let target_path = target.join(entry.file_name());
-
-            if source_path.is_dir() {
-                Self::copy_dir_recursive(&source_path, &target_path)?;
-            } else {
-                fs::copy(&source_path, &target_path)?;
-            }
-        }
-
-        Ok(())
-    }
 }
 
 /// Helper for building v1.2 delivery config with a fluent API.

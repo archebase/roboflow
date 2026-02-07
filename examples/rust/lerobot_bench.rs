@@ -136,8 +136,7 @@ struct BenchResults {
     total_duration: Duration,
 
     /// Timing breakdown
-    #[allow(dead_code)]
-    timing: TimingBreakdown,
+    _timing: TimingBreakdown,
 
     /// Number of cameras
     camera_count: usize,
@@ -231,22 +230,6 @@ impl TimedLerobotWriter {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn frame_count(&self) -> usize {
-        self.inner.frame_count()
-    }
-
-    #[allow(dead_code)]
-    fn is_initialized(&self) -> bool {
-        self.inner.is_initialized()
-    }
-
-    fn initialize(&mut self, config: &LerobotConfig) -> Result<(), Box<dyn std::error::Error>> {
-        self.inner
-            .initialize(config)
-            .map_err(|e: roboflow_core::RoboflowError| e.into())
-    }
-
     fn into_inner(self) -> LerobotWriter {
         self.inner
     }
@@ -275,12 +258,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create output directory
     std::fs::create_dir_all(&config.output_dir)?;
 
-    // Create LeRobot writer
+    // Create LeRobot writer (already initialized via new_local)
     let mut writer = TimedLerobotWriter::create(LerobotWriter::new_local(
         &config.output_dir,
         lerobot_config.clone(),
     )?);
-    writer.initialize(&lerobot_config)?;
 
     let total_start = Instant::now();
     let mut timing = TimingBreakdown::default();
@@ -380,7 +362,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         images_encoded: 0, // Not directly tracked
         output_bytes,
         total_duration,
-        timing,
+        _timing: timing,
         camera_count: 3, // cam_high, cam_right, cam_left
     };
 

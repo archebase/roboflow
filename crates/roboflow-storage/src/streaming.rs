@@ -49,7 +49,7 @@ pub struct StreamingOssReader {
     current_buffer: Option<Bytes>,
     /// Buffer offset within the object
     buffer_offset: u64,
-    // TODO: Add prefetch support with background task and channel
+    // Prefetch fields for future optimization:
     // prefetch_count: usize,
     // chunk_receiver: Receiver<Option<Bytes>>,
     // _shutdown_sender: Option<Sender<()>>,

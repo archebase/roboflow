@@ -150,7 +150,6 @@ fn parse_camera_topics_from_env() -> HashMap<String, String> {
 }
 
 /// Example: Create a minimal Kps config programmatically.
-#[allow(dead_code)]
 fn create_example_config() -> roboflow::io::kps::KpsConfig {
     use roboflow::io::kps::{
         DatasetConfig, ImageFormat, KpsConfig, Mapping, MappingType, OutputConfig,
@@ -197,7 +196,6 @@ fn create_example_config() -> roboflow::io::kps::KpsConfig {
 }
 
 /// Example: Write a config file to disk.
-#[allow(dead_code)]
 fn write_example_config(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let config = create_example_config();
     let toml_string = toml::to_string_pretty(&config)?;

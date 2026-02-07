@@ -7,6 +7,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::image::ImageDecoderConfig;
+
 /// Streaming dataset converter configuration.
 #[derive(Debug, Clone)]
 pub struct StreamingConfig {
@@ -37,10 +39,20 @@ pub struct StreamingConfig {
     /// When the input storage is a cloud backend (S3/OSS), files are downloaded
     /// to this directory before processing. Defaults to `std::env::temp_dir()`.
     pub temp_dir: Option<PathBuf>,
+
+    /// Image decoder configuration for CompressedImage messages.
+    ///
+    /// When set, compressed images (JPEG/PNG) will be decoded to RGB
+    /// before being stored in the dataset. If None, compressed images
+    /// are stored as-is.
+    pub decoder_config: Option<ImageDecoderConfig>,
 }
 
 impl Default for StreamingConfig {
     fn default() -> Self {
+        #[cfg(feature = "image-decode")]
+        use crate::image::ImageDecoderConfig;
+
         Self {
             fps: 30,
             completion_window_frames: 5, // Wait for 5 frames (166ms at 30fps)
@@ -49,6 +61,10 @@ impl Default for StreamingConfig {
             late_message_strategy: LateMessageStrategy::WarnAndDrop,
             feature_requirements: HashMap::new(),
             temp_dir: None,
+            #[cfg(feature = "image-decode")]
+            decoder_config: Some(ImageDecoderConfig::new()),
+            #[cfg(not(feature = "image-decode"))]
+            decoder_config: None,
         }
     }
 }
@@ -153,6 +169,24 @@ impl StreamingConfig {
         self
     }
 
+    /// Set the image decoder configuration.
+    ///
+    /// When configured, compressed images (JPEG/PNG) will be decoded to RGB
+    /// before being stored in the dataset.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use roboflow_dataset::{StreamingConfig, image::ImageDecoderConfig};
+    ///
+    /// let config = StreamingConfig::with_fps(30)
+    ///     .with_decoder_config(ImageDecoderConfig::max_throughput());
+    /// ```
+    pub fn with_decoder_config(mut self, config: ImageDecoderConfig) -> Self {
+        self.decoder_config = Some(config);
+        self
+    }
+
     /// Calculate the completion window in nanoseconds.
     ///
     /// # Panics
@@ -216,6 +250,7 @@ mod tests {
         let config = StreamingConfig {
             fps: 0,
             temp_dir: None,
+            decoder_config: None,
             ..Default::default()
         };
         assert!(config.validate().is_err());

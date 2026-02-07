@@ -75,8 +75,7 @@ pub struct IoUringPrefetcher {
     config: IoUringPrefetcherConfig,
     path: String,
     sender: Sender<PrefetchedBlock>,
-    #[allow(dead_code)]
-    stats: Arc<PrefetcherStats>,
+    _stats: Arc<PrefetcherStats>,
 }
 
 impl IoUringPrefetcher {
@@ -90,7 +89,7 @@ impl IoUringPrefetcher {
             config,
             path: path.as_ref().to_string_lossy().to_string(),
             sender,
-            stats: Arc::new(PrefetcherStats::default()),
+            _stats: Arc::new(PrefetcherStats::default()),
         })
     }
 

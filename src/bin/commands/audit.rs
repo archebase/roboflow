@@ -36,9 +36,12 @@ pub struct AuditEntry {
 }
 
 /// Types of audited operations.
+///
+/// This enum defines all possible operation types that can be recorded in the audit log.
+/// Some variants may not currently be used but are reserved for future API expansion.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
-#[allow(dead_code)]
+#[allow(dead_code)] // Public API with variants reserved for future use
 pub enum AuditOperation {
     /// Job was cancelled.
     JobCancel,
@@ -54,6 +57,15 @@ pub enum AuditOperation {
 
     /// Admin action performed.
     AdminAction,
+
+    /// Batch job was submitted.
+    BatchSubmit,
+
+    /// Batch job was queried.
+    BatchQuery,
+
+    /// Batch job was cancelled.
+    BatchCancel,
 }
 
 /// Additional context for audit entries.
@@ -78,13 +90,6 @@ impl AuditContext {
     /// Add a key-value pair to the context.
     pub fn add(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.extra.push((key.into(), value.into()));
-        self
-    }
-
-    /// Set the source of the operation.
-    #[allow(dead_code)]
-    pub fn with_source(mut self, source: impl Into<String>) -> Self {
-        self.source = Some(source.into());
         self
     }
 }
@@ -166,6 +171,7 @@ impl AuditLogger {
     }
 
     /// Log a failed operation.
+    #[allow(dead_code)]
     pub fn log_failure(
         operation: AuditOperation,
         actor: &str,
@@ -194,10 +200,9 @@ mod tests {
     fn test_audit_context_builder() {
         let context = AuditContext::new()
             .add("key1", "value1")
-            .add("key2", "value2")
-            .with_source("127.0.0.1");
+            .add("key2", "value2");
 
-        assert_eq!(context.source, Some("127.0.0.1".to_string()));
+        assert_eq!(context.source, None);
         assert_eq!(context.extra.len(), 2);
     }
 }

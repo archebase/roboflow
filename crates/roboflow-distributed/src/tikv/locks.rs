@@ -453,8 +453,7 @@ pub struct LockGuard {
     renewal_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 
     /// Renewal interval for auto-renewal (moved into renewal task).
-    #[allow(dead_code)]
-    renewal_interval: Duration,
+    _renewal_interval: Duration,
 }
 
 impl LockGuard {
@@ -529,7 +528,7 @@ impl LockGuard {
             ttl_secs,
             released,
             renewal_handle,
-            renewal_interval,
+            _renewal_interval: renewal_interval,
         }
     }
 

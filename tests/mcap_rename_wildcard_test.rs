@@ -69,7 +69,7 @@ struct ChannelSnapshot {
 }
 
 impl ChannelSnapshot {
-    fn from_channel_info(channel: &robocodec::mcap::reader::ChannelInfo) -> Self {
+    fn from_channel_info(channel: &robocodec::io::ChannelInfo) -> Self {
         Self {
             topic: channel.topic.clone(),
             message_type: channel.message_type.clone(),

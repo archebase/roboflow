@@ -2,18 +2,18 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Scanner actor for discovering new files in storage and creating jobs.
+//! Scanner actor for processing batch jobs and creating work units.
 //!
 //! The scanner uses leader election to ensure only one instance is active
-//! at a time. It periodically scans storage for new files and creates jobs
-//! in TiKV for processing.
+//! at a time. It queries TiKV for pending batch jobs, scans the source URLs
+//! specified in each batch, and creates work units for discovered files.
 //!
 //! # Architecture
 //!
 //! - **Leader Election**: Only the leader performs scans
-//! - **File Discovery**: Lists objects in S3/OSS with optional glob filtering
-//! - **Duplicate Detection**: Batch check existing jobs in TiKV
-//! - **Job Creation**: Insert jobs for new files
+//! - **Batch Processing**: Queries Pending batches from TiKV
+//! - **File Discovery**: For each batch, scans the source URLs in S3/OSS
+//! - **Work Unit Creation**: Creates work units for discovered files, updates batch status
 //!
 //! # Example
 //!
@@ -49,8 +49,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
-use super::tikv::{TikvError, client::TikvClient, locks::LockManager, schema::JobRecord};
-use roboflow_storage::{ObjectMetadata, Storage, StorageError};
+use super::batch::{
+    BatchKeys, BatchPhase, BatchSpec, BatchStatus, DiscoveryStatus, WorkFile, WorkUnit,
+    WorkUnitKeys,
+};
+use super::tikv::{TikvError, client::TikvClient, locks::LockManager};
+use roboflow_storage::{ObjectMetadata, StorageError, StorageFactory};
 use tokio::sync::broadcast;
 use tokio::time::sleep;
 
@@ -66,8 +70,8 @@ pub const DEFAULT_LOCK_TTL_SECS: i64 = 300; // 5 minutes
 /// Scanner configuration.
 #[derive(Debug, Clone)]
 pub struct ScannerConfig {
-    /// Input bucket/prefix to scan.
-    pub input_prefix: String,
+    /// Batch namespace to query batches from TiKV.
+    pub batch_namespace: String,
 
     /// Scan interval in seconds.
     pub scan_interval: Duration,
@@ -75,36 +79,59 @@ pub struct ScannerConfig {
     /// Batch size for checking existing jobs.
     pub batch_size: usize,
 
-    /// Optional glob pattern for filtering files.
-    pub file_pattern: Option<glob::Pattern>,
-
-    /// Output prefix for processed jobs.
-    pub output_prefix: String,
-
-    /// Configuration hash for job records.
-    pub config_hash: String,
+    /// Maximum number of batches to process per scan cycle.
+    pub max_batches_per_cycle: usize,
 }
 
 impl Default for ScannerConfig {
     fn default() -> Self {
         Self {
-            input_prefix: String::from("input/"),
+            batch_namespace: String::from("jobs"),
             scan_interval: Duration::from_secs(DEFAULT_SCAN_INTERVAL_SECS),
             batch_size: DEFAULT_BATCH_SIZE,
-            file_pattern: None,
-            output_prefix: String::from("output/"),
-            config_hash: String::from("default"),
+            max_batches_per_cycle: 10,
         }
     }
 }
 
 impl ScannerConfig {
     /// Create a new scanner configuration.
-    pub fn new(input_prefix: impl Into<String>) -> Self {
+    pub fn new(batch_namespace: impl Into<String>) -> Self {
         Self {
-            input_prefix: input_prefix.into(),
+            batch_namespace: batch_namespace.into(),
             ..Default::default()
         }
+    }
+
+    /// Create scanner configuration from environment variables.
+    ///
+    /// - `SCANNER_SCAN_INTERVAL_SECS`: Scan interval in seconds (default: 60)
+    /// - `SCANNER_BATCH_SIZE`: Batch size for job operations (default: 100)
+    /// - `SCANNER_MAX_BATCHES_PER_CYCLE`: Max batches to process per cycle (default: 10)
+    pub fn from_env() -> Result<Self, String> {
+        use std::env;
+
+        let scan_interval = env::var("SCANNER_SCAN_INTERVAL_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_SCAN_INTERVAL_SECS);
+
+        let batch_size = env::var("SCANNER_BATCH_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_BATCH_SIZE);
+
+        let max_batches_per_cycle = env::var("SCANNER_MAX_BATCHES_PER_CYCLE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10);
+
+        Ok(Self {
+            batch_namespace: String::from("jobs"),
+            scan_interval: Duration::from_secs(scan_interval),
+            batch_size,
+            max_batches_per_cycle,
+        })
     }
 
     /// Set the scan interval.
@@ -119,21 +146,9 @@ impl ScannerConfig {
         self
     }
 
-    /// Set the file pattern (glob).
-    pub fn with_file_pattern(mut self, pattern: &str) -> Result<Self, glob::PatternError> {
-        self.file_pattern = Some(glob::Pattern::new(pattern)?);
-        Ok(self)
-    }
-
-    /// Set the output prefix.
-    pub fn with_output_prefix(mut self, prefix: impl Into<String>) -> Self {
-        self.output_prefix = prefix.into();
-        self
-    }
-
-    /// Set the configuration hash.
-    pub fn with_config_hash(mut self, hash: impl Into<String>) -> Self {
-        self.config_hash = hash.into();
+    /// Set the max batches per cycle.
+    pub fn with_max_batches_per_cycle(mut self, max: usize) -> Self {
+        self.max_batches_per_cycle = max;
         self
     }
 }
@@ -233,7 +248,7 @@ pub struct MetricsSnapshot {
     pub is_leader: bool,
 }
 
-/// Scanner actor for file discovery and job creation.
+/// Scanner actor for batch processing and job creation.
 pub struct Scanner {
     /// Pod ID for leader election.
     pod_id: String,
@@ -244,8 +259,8 @@ pub struct Scanner {
     /// Lock manager for leader election.
     lock_manager: Arc<LockManager>,
 
-    /// Storage backend for listing files.
-    storage: Arc<dyn Storage>,
+    /// Storage factory for creating storage backends.
+    storage_factory: Arc<StorageFactory>,
 
     /// Scanner configuration.
     config: ScannerConfig,
@@ -262,7 +277,7 @@ impl Scanner {
     pub fn new(
         pod_id: impl Into<String>,
         tikv: Arc<TikvClient>,
-        storage: Arc<dyn Storage>,
+        storage_factory: Arc<StorageFactory>,
         config: ScannerConfig,
     ) -> Result<Self, TikvError> {
         let pod_id = pod_id.into();
@@ -272,7 +287,7 @@ impl Scanner {
             pod_id,
             tikv,
             lock_manager,
-            storage,
+            storage_factory,
             config,
             metrics: Arc::new(ScannerMetrics::new()),
             shutdown_tx: None,
@@ -288,13 +303,11 @@ impl Scanner {
     ///
     /// Returns `Ok(Some(guard))` if leadership acquired, `Ok(None)` if not.
     async fn try_become_leader(&self) -> Result<Option<LockGuard>, TikvError> {
-        let ttl = Duration::from_secs(DEFAULT_LOCK_TTL_SECS as u64);
-        match self
-            .lock_manager
-            .try_acquire_with_renewal("scanner_lock", ttl)
-            .await
-        {
-            Ok(guard) => {
+        // Use a TTL longer than the scan interval to prevent lock expiration during scan
+        let scan_interval_secs = self.config.scan_interval.as_secs() as i64;
+        let ttl = Duration::from_secs((scan_interval_secs * 3).max(60) as u64);
+        match self.lock_manager.try_acquire("scanner_lock", ttl).await {
+            Ok(Some(guard)) => {
                 tracing::info!(
                     pod_id = %self.pod_id,
                     "Scanner leadership acquired"
@@ -302,7 +315,7 @@ impl Scanner {
                 self.metrics.set_leader(true);
                 Ok(Some(guard))
             }
-            Err(TikvError::LockAcquisitionFailed(_)) => {
+            Ok(None) => {
                 tracing::debug!(
                     pod_id = %self.pod_id,
                     "Scanner leadership not acquired (already held)"
@@ -315,27 +328,34 @@ impl Scanner {
     }
 
     /// Compute file hash for deduplication.
-    fn compute_file_hash(&self, metadata: &ObjectMetadata) -> String {
+    fn compute_file_hash(&self, metadata: &ObjectMetadata, config_hash: &str) -> String {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         metadata.path.hash(&mut hasher);
         metadata.size.hash(&mut hasher);
-        self.config.config_hash.hash(&mut hasher);
+        config_hash.hash(&mut hasher);
         format!("{:016x}", hasher.finish())
     }
 
-    /// Check which hashes already have jobs.
-    async fn check_existing_jobs(&self, hashes: &[String]) -> Result<HashSet<String>, TikvError> {
-        use super::tikv::key::JobKeys;
-
+    /// Check which hashes already have work units.
+    ///
+    /// Checks work unit keys directly since work unit IDs are file hashes.
+    async fn check_existing_work_units(
+        &self,
+        hashes: &[String],
+    ) -> Result<HashSet<String>, TikvError> {
         if hashes.is_empty() {
             return Ok(HashSet::new());
         }
 
         let mut existing = HashSet::new();
 
-        // Process hashes in batches to avoid overwhelming TiKV
+        // Need batch_id to construct work unit keys, but we don't have it yet.
+        // Use pending queue as a lightweight existence check.
         for chunk in hashes.chunks(self.config.batch_size) {
-            let keys: Vec<Vec<u8>> = chunk.iter().map(|hash| JobKeys::record(hash)).collect();
+            let keys: Vec<Vec<u8>> = chunk
+                .iter()
+                .map(|hash| WorkUnitKeys::pending(hash))
+                .collect();
 
             let results = self.tikv.batch_get(keys).await?;
 
@@ -358,183 +378,437 @@ impl Scanner {
             pod_id = %self.pod_id,
             total = hashes.len(),
             existing = existing.len(),
-            "Checked existing jobs"
+            "Checked existing work units"
         );
 
         Ok(existing)
     }
 
-    /// Extract bucket name from storage URL or metadata.
-    fn extract_bucket(&self, metadata: &ObjectMetadata) -> String {
-        // Try to extract from path if it looks like a URL
-        if let Some(rest) = metadata.path.split("://").nth(1)
-            && let Some(bucket) = rest.split('/').next()
-        {
-            return bucket.to_string();
-        }
+    /// Create a work unit for a file.
+    fn create_work_unit(
+        &self,
+        batch_id: &str,
+        source_url: &str,
+        metadata: &ObjectMetadata,
+        hash: &str,
+        output_prefix: &str,
+        config_hash: &str,
+    ) -> WorkUnit {
+        let work_file = WorkFile::new(source_url.to_string(), metadata.size);
 
-        // Default bucket name
-        "default".to_string()
-    }
-
-    /// Create a job record for a file.
-    fn create_job(&self, metadata: &ObjectMetadata, hash: &str) -> JobRecord {
-        let bucket = self.extract_bucket(metadata);
-
-        JobRecord::new(
-            hash.to_string(),
-            metadata.path.clone(),
-            bucket,
-            metadata.size,
-            self.config.output_prefix.clone(),
-            self.config.config_hash.clone(),
+        WorkUnit::with_id(
+            hash.to_string(), // Use hash as ID (like legacy Job system)
+            batch_id.to_string(),
+            vec![work_file],
+            output_prefix.to_string(),
+            config_hash.to_string(),
         )
     }
 
-    /// Run a single scan cycle.
-    async fn scan_cycle(&self) -> Result<ScanStats, TikvError> {
-        let start = SystemTime::now();
+    /// Get pending batches from TiKV.
+    async fn get_pending_batches(
+        &self,
+    ) -> Result<Vec<(String, BatchSpec, BatchStatus)>, TikvError> {
+        let mut batches = Vec::new();
 
-        // List files from storage (sync operation, wrap in task)
-        let storage = self.storage.clone();
-        let file_pattern = self.config.file_pattern.clone();
-        let input_prefix = self.config.input_prefix.clone();
-        let list_task = tokio::task::spawn_blocking(move || {
-            let prefix = Path::new(&input_prefix);
-            let files = storage.list(prefix)?;
+        // Scan all batch specs
+        let prefix = BatchKeys::specs_prefix();
+        let results = self
+            .tikv
+            .scan(prefix, self.config.max_batches_per_cycle as u32)
+            .await?;
 
-            // Filter by pattern if configured
-            let filtered: Vec<ObjectMetadata> = if let Some(pattern) = file_pattern {
-                files
-                    .into_iter()
-                    .filter(|meta| !meta.is_dir && pattern.matches(&meta.path))
-                    .collect()
-            } else {
-                files.into_iter().filter(|meta| !meta.is_dir).collect()
-            };
+        for (key, _value) in results {
+            // Extract batch_id from key
+            let key_str = String::from_utf8_lossy(&key);
+            // Key format: /roboflow/v1/batch/specs/{batch_id}
+            if let Some(batch_id) = key_str.split('/').next_back() {
+                // Get batch spec
+                let spec_key = BatchKeys::spec(batch_id);
+                let spec_data = match self.tikv.get(spec_key).await? {
+                    Some(d) => d,
+                    None => continue,
+                };
+                let spec: BatchSpec = match serde_yaml::from_slice(&spec_data) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
 
-            Ok::<_, StorageError>(filtered)
-        });
-
-        let files = match list_task.await {
-            Ok(Ok(files)) => files,
-            Ok(Err(e)) => {
-                tracing::error!(
-                    pod_id = %self.pod_id,
-                    error = %e,
-                    "Failed to list input files"
-                );
-                self.metrics.inc_scan_errors();
-                return Ok(ScanStats::default());
-            }
-            Err(e) => {
-                if e.is_panic() {
-                    tracing::error!(
-                        pod_id = %self.pod_id,
-                        "Panic in list task"
-                    );
+                // Skip if not in our namespace
+                if spec.metadata.namespace != self.config.batch_namespace {
+                    continue;
                 }
-                self.metrics.inc_scan_errors();
-                return Ok(ScanStats::default());
+
+                // Get batch status
+                let status_key = BatchKeys::status(batch_id);
+                let status: BatchStatus = match self.tikv.get(status_key).await? {
+                    Some(d) => bincode::deserialize(&d).unwrap_or_default(),
+                    None => BatchStatus::new(),
+                };
+
+                // Only process Pending or Discovering batches
+                if matches!(status.phase, BatchPhase::Pending | BatchPhase::Discovering) {
+                    batches.push((batch_id.to_string(), spec, status));
+                }
             }
-        };
-
-        let files_discovered = files.len() as u64;
-        self.metrics.inc_files_discovered(files_discovered);
-
-        if files.is_empty() {
-            tracing::debug!(
-                pod_id = %self.pod_id,
-                "No files to process"
-            );
-            return Ok(ScanStats {
-                files_discovered,
-                jobs_created: 0,
-                duplicates_skipped: 0,
-            });
         }
 
-        // Compute hashes
-        let file_hashes: Vec<(ObjectMetadata, String)> = files
-            .iter()
-            .map(|meta| {
-                let hash = self.compute_file_hash(meta);
-                (meta.clone(), hash)
-            })
-            .collect();
+        Ok(batches)
+    }
 
-        let hashes: Vec<String> = file_hashes.iter().map(|(_, h)| h.clone()).collect();
+    /// Scan a source URL and return discovered files.
+    ///
+    /// Handles two cases:
+    /// 1. Direct file URLs (e.g., s3://bucket/file.mcap) - returns that single file
+    /// 2. Directory/prefix URLs (e.g., s3://bucket/path/) - lists all files in that directory
+    async fn scan_source_url(&self, source_url: &str) -> Result<Vec<ObjectMetadata>, StorageError> {
+        tracing::info!(
+            source_url = %source_url,
+            "Scanning source URL"
+        );
 
-        // Check existing jobs
-        let existing = match self.check_existing_jobs(&hashes).await {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::error!(
-                    pod_id = %self.pod_id,
-                    error = %e,
-                    "Failed to check existing jobs"
-                );
-                self.metrics.inc_scan_errors();
-                return Ok(ScanStats::default());
+        // Create storage backend from URL
+        let storage = self.storage_factory.create(source_url)?;
+
+        // Extract the path after the bucket name.
+        // URLs are like: s3://bucket/path/to/file or oss://bucket/file.mcap
+        // The format is: scheme://bucket/path
+        // We need to skip past :// to find the slash after the bucket name.
+        let path_for_list = if let Some(protocol_end) = source_url.find("://") {
+            // Start looking after :// (3 characters)
+            let after_protocol = &source_url[protocol_end + 3..];
+            if let Some(slash_after_bucket) = after_protocol.find('/') {
+                // Return everything after the slash following the bucket
+                &source_url[protocol_end + 3 + slash_after_bucket + 1..]
+            } else {
+                // No path after bucket, return empty to list entire bucket
+                ""
             }
+        } else {
+            // No protocol found, use URL as-is (shouldn't happen with valid URLs)
+            source_url
         };
-
-        // Filter and create jobs for new files
-        let new_files: Vec<(ObjectMetadata, String)> = file_hashes
-            .into_iter()
-            .filter(|(_, hash)| !existing.contains(hash))
-            .collect();
-
-        let duplicates_skipped = files_discovered - new_files.len() as u64;
-        self.metrics.inc_duplicates_skipped(duplicates_skipped);
-
-        // Create jobs in batches for better performance
-        let mut jobs_created = 0u64;
-        for chunk in new_files.chunks(self.config.batch_size) {
-            let job_pairs: Vec<(Vec<u8>, Vec<u8>)> = chunk
-                .iter()
-                .map(|(metadata, hash)| {
-                    let job = self.create_job(metadata, hash);
-                    use super::tikv::key::JobKeys;
-                    let key = JobKeys::record(&job.id);
-                    let data = bincode::serialize(&job)
-                        .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                    Ok::<_, TikvError>((key, data))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-
-            if let Err(e) = self.tikv.batch_put(job_pairs).await {
-                tracing::error!(
-                    pod_id = %self.pod_id,
-                    batch_size = chunk.len(),
-                    error = %e,
-                    "Failed to create batch of jobs - scan cycle incomplete, files skipped"
-                );
-                self.metrics.inc_scan_errors();
-                // Return error to fail the entire scan cycle - continuing would skip files
-                return Err(e);
-            }
-            jobs_created += chunk.len() as u64;
-        }
-        self.metrics.inc_jobs_created(jobs_created);
-
-        let duration = start.elapsed().unwrap_or_default().as_millis() as u64;
-        self.metrics.set_last_scan_duration(duration);
 
         tracing::info!(
-            pod_id = %self.pod_id,
-            files_discovered,
-            jobs_created,
-            duplicates_skipped,
-            duration_ms = duration,
-            "Scan cycle completed"
+            source_url = %source_url,
+            path_for_list = %path_for_list,
+            "Extracted path for listing"
         );
+
+        let path = Path::new(path_for_list);
+
+        // First try to list the path (directory case)
+        let files = storage.list(path)?;
+
+        tracing::info!(
+            source_url = %source_url,
+            files_found = files.len(),
+            "List operation completed"
+        );
+
+        // Filter out directories
+        let files: Vec<_> = files.into_iter().filter(|m| !m.is_dir).collect();
+
+        // If listing returned files, return them
+        if !files.is_empty() {
+            return Ok(files);
+        }
+
+        // If listing was empty, check if the path itself is a file
+        // This handles direct file URLs like s3://bucket/file.mcap
+        match storage.metadata(path) {
+            Ok(metadata) => {
+                // It's a file, return it as a single-element list
+                tracing::info!(
+                    source_url = %source_url,
+                    file_path = %metadata.path,
+                    file_size = %metadata.size,
+                    "Found direct file via metadata"
+                );
+                Ok(vec![metadata])
+            }
+            Err(StorageError::NotFound(_)) => {
+                // Neither a directory with files nor a file - return empty
+                tracing::warn!(
+                    source_url = %source_url,
+                    path = %path_for_list,
+                    "No files found - neither directory nor file"
+                );
+                Ok(vec![])
+            }
+            Err(e) => {
+                tracing::error!(
+                    source_url = %source_url,
+                    error = %e,
+                    "Failed to get metadata"
+                );
+                Err(e)
+            }
+        }
+    }
+
+    /// Process a batch: scan sources, create jobs, update status.
+    async fn process_batch(
+        &self,
+        batch_id: &str,
+        spec: &BatchSpec,
+        mut status: BatchStatus,
+    ) -> Result<ScanStats, TikvError> {
+        let mut files_discovered = 0u64;
+        let mut jobs_created = 0u64;
+        let mut duplicates_skipped = 0u64;
+
+        // Skip if already completed discovery
+        if status.phase == BatchPhase::Running {
+            return Ok(ScanStats::default());
+        }
+
+        // Transition to Discovering if in Pending
+        if status.phase == BatchPhase::Pending {
+            status.transition_to(BatchPhase::Discovering);
+            // Initialize discovery status
+            let total_sources = spec.spec.sources.len() as u32;
+            status.discovery_status = Some(DiscoveryStatus::new(total_sources));
+        }
+
+        // Track which sources we've already processed
+        let sources_processed = status
+            .discovery_status
+            .as_ref()
+            .map(|d| d.sources_scanned as usize)
+            .unwrap_or(0);
+
+        // Process each source that hasn't been processed yet
+        for source in spec.spec.sources.iter().skip(sources_processed) {
+            let source_url = &source.url;
+
+            tracing::debug!(
+                batch_id = %batch_id,
+                source_url = %source_url,
+                "Scanning source"
+            );
+
+            // Scan the source URL
+            let files = match self.scan_source_url(source_url).await {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::error!(
+                        batch_id = %batch_id,
+                        source_url = %source_url,
+                        error = %e,
+                        "Failed to scan source URL"
+                    );
+                    self.metrics.inc_scan_errors();
+                    continue;
+                }
+            };
+
+            let source_files_count = files.len() as u64;
+            files_discovered += source_files_count;
+
+            // Compute hashes and check for existing jobs
+            let config_hash = &spec.spec.config;
+            let output_prefix = &spec.spec.output;
+
+            let file_hashes: Vec<(ObjectMetadata, String)> = files
+                .iter()
+                .map(|meta| {
+                    let hash = self.compute_file_hash(meta, config_hash);
+                    (meta.clone(), hash)
+                })
+                .collect();
+
+            let hashes: Vec<String> = file_hashes.iter().map(|(_, h)| h.clone()).collect();
+
+            // Check existing work units
+            let existing = match self.check_existing_work_units(&hashes).await {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::error!(
+                        batch_id = %batch_id,
+                        error = %e,
+                        "Failed to check existing jobs"
+                    );
+                    self.metrics.inc_scan_errors();
+                    continue;
+                }
+            };
+
+            // Filter new files
+            let new_files: Vec<(ObjectMetadata, String)> = file_hashes
+                .into_iter()
+                .filter(|(_, hash)| !existing.contains(hash))
+                .collect();
+
+            let source_duplicates = source_files_count - new_files.len() as u64;
+            duplicates_skipped += source_duplicates;
+
+            // Create work units for new files
+            let source_work_units_created = if !new_files.is_empty() {
+                let mut created = 0u64;
+                for chunk in new_files.chunks(self.config.batch_size) {
+                    let mut work_unit_pairs = Vec::new();
+                    let mut pending_pairs = Vec::new();
+
+                    for (metadata, hash) in chunk {
+                        let work_unit = self.create_work_unit(
+                            batch_id,
+                            source_url,
+                            metadata,
+                            hash,
+                            output_prefix,
+                            config_hash,
+                        );
+
+                        // Store work unit
+                        let unit_key = WorkUnitKeys::unit(&work_unit.batch_id, &work_unit.id);
+                        let unit_data = bincode::serialize(&work_unit)
+                            .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                        work_unit_pairs.push((unit_key, unit_data));
+
+                        // Add to pending queue
+                        let pending_key = WorkUnitKeys::pending(&work_unit.id);
+                        let pending_data = work_unit.batch_id.as_bytes().to_vec();
+                        pending_pairs.push((pending_key, pending_data));
+                    }
+
+                    // Batch put work units and pending entries together
+                    let all_pairs: Vec<(Vec<u8>, Vec<u8>)> =
+                        work_unit_pairs.into_iter().chain(pending_pairs).collect();
+
+                    if let Err(e) = self.tikv.batch_put(all_pairs).await {
+                        tracing::error!(
+                            batch_id = %batch_id,
+                            error = %e,
+                            "Failed to create work units"
+                        );
+                        self.metrics.inc_scan_errors();
+                        return Err(e);
+                    }
+                    created += chunk.len() as u64;
+                }
+                created
+            } else {
+                0
+            };
+
+            jobs_created += source_work_units_created;
+
+            // Update batch status
+            status.files_total += source_files_count as u32;
+            if let Some(ref mut ds) = status.discovery_status {
+                ds.add_files(source_files_count as u32);
+                ds.increment_scanned();
+            }
+
+            // Save updated status after each source
+            self.save_batch_status(batch_id, &status).await?;
+        }
+
+        // Check if all sources are processed
+        let total_sources = spec.spec.sources.len() as u32;
+        let processed = status
+            .discovery_status
+            .as_ref()
+            .map(|d| d.sources_scanned)
+            .unwrap_or(0);
+
+        if processed >= total_sources {
+            // Transition to Running
+            status.transition_to(BatchPhase::Running);
+            self.save_batch_status(batch_id, &status).await?;
+        }
+
+        self.metrics.inc_files_discovered(files_discovered);
+        self.metrics.inc_jobs_created(jobs_created);
+        self.metrics.inc_duplicates_skipped(duplicates_skipped);
 
         Ok(ScanStats {
             files_discovered,
             jobs_created,
             duplicates_skipped,
         })
+    }
+
+    /// Save batch status to TiKV.
+    async fn save_batch_status(
+        &self,
+        batch_id: &str,
+        status: &BatchStatus,
+    ) -> Result<(), TikvError> {
+        let key = BatchKeys::status(batch_id);
+        let data =
+            bincode::serialize(status).map_err(|e| TikvError::Serialization(e.to_string()))?;
+        self.tikv.put(key, data).await
+    }
+
+    /// Run a single scan cycle.
+    ///
+    /// Queries pending batches from TiKV, scans their source URLs,
+    /// and creates jobs for discovered files.
+    async fn scan_cycle(&self) -> Result<ScanStats, TikvError> {
+        let start = SystemTime::now();
+
+        // Get pending batches
+        let batches = self.get_pending_batches().await?;
+
+        if batches.is_empty() {
+            tracing::debug!(
+                pod_id = %self.pod_id,
+                namespace = %self.config.batch_namespace,
+                "No pending batches to process"
+            );
+            return Ok(ScanStats::default());
+        }
+
+        tracing::info!(
+            pod_id = %self.pod_id,
+            batch_count = batches.len(),
+            "Processing batches"
+        );
+
+        let mut total_stats = ScanStats::default();
+
+        // Process each batch
+        for (batch_id, spec, status) in batches {
+            match self.process_batch(&batch_id, &spec, status).await {
+                Ok(stats) => {
+                    tracing::info!(
+                        pod_id = %self.pod_id,
+                        batch_id = %batch_id,
+                        files_discovered = stats.files_discovered,
+                        jobs_created = stats.jobs_created,
+                        "Batch processed"
+                    );
+                    total_stats.files_discovered += stats.files_discovered;
+                    total_stats.jobs_created += stats.jobs_created;
+                    total_stats.duplicates_skipped += stats.duplicates_skipped;
+                }
+                Err(e) => {
+                    tracing::error!(
+                        pod_id = %self.pod_id,
+                        batch_id = %batch_id,
+                        error = %e,
+                        "Failed to process batch"
+                    );
+                    self.metrics.inc_scan_errors();
+                }
+            }
+        }
+
+        let duration = start.elapsed().unwrap_or_default().as_millis() as u64;
+        self.metrics.set_last_scan_duration(duration);
+
+        tracing::info!(
+            pod_id = %self.pod_id,
+            files_discovered = total_stats.files_discovered,
+            jobs_created = total_stats.jobs_created,
+            duplicates_skipped = total_stats.duplicates_skipped,
+            duration_ms = duration,
+            "Scan cycle completed"
+        );
+
+        Ok(total_stats)
     }
 
     /// Run the scanner loop.
@@ -668,52 +942,27 @@ impl LockManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roboflow_storage::LocalStorage;
-    use std::fs;
-    use tempfile::TempDir;
-
-    fn create_test_storage() -> (Arc<dyn Storage>, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = Arc::new(LocalStorage::new(temp_dir.path())) as Arc<dyn Storage>;
-        (storage, temp_dir)
-    }
 
     #[test]
     fn test_scanner_config_default() {
         let config = ScannerConfig::default();
-        assert_eq!(config.input_prefix, "input/");
+        assert_eq!(config.batch_namespace, "jobs");
         assert_eq!(config.scan_interval.as_secs(), DEFAULT_SCAN_INTERVAL_SECS);
         assert_eq!(config.batch_size, DEFAULT_BATCH_SIZE);
-        assert!(config.file_pattern.is_none());
-        assert_eq!(config.output_prefix, "output/");
-        assert_eq!(config.config_hash, "default");
+        assert_eq!(config.max_batches_per_cycle, 10);
     }
 
     #[test]
     fn test_scanner_config_builder() {
-        let config = ScannerConfig::new("custom/")
+        let config = ScannerConfig::new("custom-namespace")
             .with_scan_interval(Duration::from_secs(120))
             .with_batch_size(200)
-            .with_output_prefix("result/")
-            .with_config_hash("test-config");
+            .with_max_batches_per_cycle(50);
 
-        assert_eq!(config.input_prefix, "custom/");
+        assert_eq!(config.batch_namespace, "custom-namespace");
         assert_eq!(config.scan_interval.as_secs(), 120);
         assert_eq!(config.batch_size, 200);
-        assert_eq!(config.output_prefix, "result/");
-        assert_eq!(config.config_hash, "test-config");
-    }
-
-    #[test]
-    fn test_scanner_config_with_pattern() {
-        let config = ScannerConfig::default()
-            .with_file_pattern("*.mcap")
-            .unwrap();
-        assert!(config.file_pattern.is_some());
-        let pattern = config.file_pattern.unwrap();
-        assert!(pattern.matches("test.mcap"));
-        assert!(pattern.matches("data.mcap"));
-        assert!(!pattern.matches("test.txt"));
+        assert_eq!(config.max_batches_per_cycle, 50);
     }
 
     #[test]
@@ -766,30 +1015,6 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_bucket() {
-        // Test the bucket extraction logic
-        let test_extract = |path: &str| -> String {
-            if path.contains("://")
-                && let Some(rest) = path.split("://").nth(1)
-                && let Some(bucket) = rest.split('/').next()
-            {
-                return bucket.to_string();
-            }
-            "default".to_string()
-        };
-
-        assert_eq!(
-            test_extract("s3://my-bucket/path/to/file.mcap"),
-            "my-bucket"
-        );
-        assert_eq!(
-            test_extract("oss://other-bucket/data/file.mcap"),
-            "other-bucket"
-        );
-        assert_eq!(test_extract("local/path/file.mcap"), "default");
-    }
-
-    #[test]
     fn test_scan_stats_default() {
         let stats = ScanStats::default();
         assert_eq!(stats.files_discovered, 0);
@@ -797,26 +1022,57 @@ mod tests {
         assert_eq!(stats.duplicates_skipped, 0);
     }
 
-    #[tokio::test]
-    async fn test_scanner_list_files() {
-        let (storage, temp_dir) = create_test_storage();
+    #[test]
+    fn test_extract_path_from_source_url() {
+        // Helper function to extract path matching scan_source_url logic
+        // URLs are like: scheme://bucket/path - we need everything after the bucket
+        let extract_path = |url: &str| -> String {
+            if let Some(protocol_end) = url.find("://") {
+                let after_protocol = &url[protocol_end + 3..];
+                if let Some(slash_after_bucket) = after_protocol.find('/') {
+                    url[protocol_end + 3 + slash_after_bucket + 1..].to_string()
+                } else {
+                    "".to_string()
+                }
+            } else {
+                url.to_string()
+            }
+        };
 
-        // Create test files
-        let input_dir = temp_dir.path().join("input");
-        fs::create_dir_all(&input_dir).unwrap();
+        // Single file in root
+        assert_eq!(extract_path("s3://bucket/file.mcap"), "file.mcap");
+        assert_eq!(extract_path("oss://bucket/file.bag"), "file.bag");
 
-        fs::write(input_dir.join("test1.mcap"), b"test data 1").unwrap();
-        fs::write(input_dir.join("test2.mcap"), b"test data 2").unwrap();
-        fs::write(input_dir.join("test3.txt"), b"test data 3").unwrap();
+        // File with nested path
+        assert_eq!(extract_path("s3://bucket/data/file.mcap"), "data/file.mcap");
+        assert_eq!(
+            extract_path("oss://bucket/data/subdir/file.bag"),
+            "data/subdir/file.bag"
+        );
 
-        // Test listing through storage directly
-        let prefix = Path::new(&input_dir);
-        let files = storage.list(prefix).unwrap();
+        // Deeply nested path
+        assert_eq!(
+            extract_path("s3://bucket/data/2025/01/31/file.mcap"),
+            "data/2025/01/31/file.mcap"
+        );
+        assert_eq!(
+            extract_path("s3://bucket/a/b/c/d/e/file.mcap"),
+            "a/b/c/d/e/file.mcap"
+        );
 
-        assert_eq!(files.len(), 3);
+        // Directory path
+        assert_eq!(extract_path("s3://bucket/data/"), "data/");
+        assert_eq!(extract_path("s3://bucket/data/subdir/"), "data/subdir/");
+        assert_eq!(extract_path("s3://bucket/a/b/c/"), "a/b/c/");
 
-        // Filter out directories
-        let files_only: Vec<_> = files.into_iter().filter(|f| !f.is_dir).collect();
-        assert_eq!(files_only.len(), 3);
+        // Root (no path after bucket)
+        assert_eq!(extract_path("s3://bucket/"), "");
+        assert_eq!(extract_path("oss://bucket/"), "");
+
+        // Complex filename with underscores, dates, etc.
+        assert_eq!(
+            extract_path("s3://roboflow-raw/Rubbish_sorting_P4-278_20250830101558.bag"),
+            "Rubbish_sorting_P4-278_20250830101558.bag"
+        );
     }
 }

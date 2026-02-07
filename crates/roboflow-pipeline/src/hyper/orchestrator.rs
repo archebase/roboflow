@@ -282,6 +282,13 @@ impl HyperPipeline {
                 "HyperPipeline",
                 format!("Unknown file format: {}", self.config.input_path.display()),
             )),
+            FileFormat::Rrd => Err(RoboflowError::parse(
+                "HyperPipeline",
+                format!(
+                    "RRD format not supported in hyper pipeline: {}",
+                    self.config.input_path.display()
+                ),
+            )),
         }
     }
 

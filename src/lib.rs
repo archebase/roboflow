@@ -124,12 +124,11 @@ pub use roboflow_storage::{
 // =============================================================================
 // Distributed coordination (TiKV backend)
 // =============================================================================
-#[cfg(feature = "distributed")]
 pub use roboflow_distributed::{
     DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_PD_ENDPOINTS, KEY_PREFIX,
     tikv::{
-        CheckpointState, HeartbeatRecord, JobRecord, JobStatus, LockRecord, TikvClient, TikvConfig,
-        TikvError, WorkerStatus,
+        CheckpointState, HeartbeatRecord, LockRecord, TikvClient, TikvConfig, TikvError,
+        WorkerStatus,
     },
 };
 
@@ -140,7 +139,7 @@ pub use robocodec::schema::{FieldType, MessageSchema, parse_schema};
 pub use robocodec::io::{
     ChannelInfo,
     metadata::RawMessage,
-    reader::{ReaderBuilder, RoboReader},
+    reader::RoboReader,
     traits::{FormatReader, FormatWriter},
     writer::RoboWriter,
 };
@@ -150,19 +149,17 @@ pub use robocodec::transform::TransformBuilder;
 pub use config::NormalizeConfig;
 
 // =============================================================================
-// Python bindings (conditional compilation)
-// =============================================================================
-#[cfg(feature = "python")]
-pub mod python;
-
-// =============================================================================
 // Common types (for public API)
 // =============================================================================
 
 // Simplified type aliases for the unified API
-// TODO: Re-add high-level reader/writer type aliases once API is stabilized
-// pub type Reader = io::RoboReader;
-// pub type Writer = io::RoboWriter;
+//
+// High-level reader/writer type aliases are intentionally not provided at this time.
+// The unified I/O API is still evolving. Users should import the specific types
+// they need (e.g., `roboflow::io::RoboReader`) rather than relying on opaque
+// type aliases that may change in future versions.
+//
+// See https://github.com/archebase/roboflow/issues/[TBD] for API stabilization progress.
 
 /// Decoder trait for generic decoding operations.
 pub trait Decoder: Send + Sync {

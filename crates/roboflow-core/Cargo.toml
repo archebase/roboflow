@@ -8,7 +8,7 @@ repository = "https://github.com/archebase/roboflow"
 description = "Core types for roboflow - error handling, codec values, type registry"
 
 [dependencies]
-robocodec = { git = "https://github.com/archebase/robocodec", rev = "5a8e11b" }
+robocodec = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
 

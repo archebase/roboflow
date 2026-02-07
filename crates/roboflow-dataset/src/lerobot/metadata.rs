@@ -247,9 +247,10 @@ impl MetadataCollector {
         }
 
         // Add image features
+        // camera key already contains the full feature path (e.g., "observation.images.cam_high")
         for (camera, (w, h)) in &self.image_shapes {
             features.insert(
-                format!("observation.images.{}", camera),
+                camera.clone(),
                 json!({
                     "dtype": "video",
                     "shape": [*h, *w, 3],
@@ -408,9 +409,10 @@ impl MetadataCollector {
         }
 
         // Add image features
+        // camera key already contains the full feature path (e.g., "observation.images.cam_high")
         for (camera, (w, h)) in &self.image_shapes {
             features.insert(
-                format!("observation.images.{}", camera),
+                camera.clone(),
                 json!({
                     "dtype": "video",
                     "shape": [*h, *w, 3],

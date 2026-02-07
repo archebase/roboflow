@@ -11,7 +11,6 @@ Roboflow: Distributed data transformation pipeline converting robotics bag/MCAP 
 - Schema-driven message translation (CDR, Protobuf, JSON)
 - Zero-copy arena allocation for memory efficiency
 - Cloud storage support (OSS, S3) for distributed workloads
-- Python bindings via PyO3 (must use `extension-module` mode)
 
 ## Workspace Structure
 
@@ -34,11 +33,9 @@ The project uses a Cargo workspace with 6 crates:
 
 ```bash
 cargo build                              # Standard build
-cargo test --features distributed       # With distributed coordination
+cargo test                               # All tests
 cargo test --test kps_v12_tests         # KPS v1.2 spec tests
 ```
-
-**Important:** Run Python tests separately via pytest (PyO3 extension-module conflict).
 
 ## Code Quality
 
@@ -177,10 +174,18 @@ Automated review tools (e.g., Greptile) may provide feedback on PRs. When addres
 
 | Flag | Purpose |
 |------|---------|
-| `distributed` | TiKV distributed coordination |
-| `python` | PyO3 bindings |
+| `distributed` | TiKV distributed coordination (always enabled) |
+| `dataset-hdf5` | HDF5 dataset format support |
+| `dataset-parquet` | Parquet dataset format support |
+| `dataset-depth` | Depth image support |
+| `dataset-all` | All dataset formats |
+| `cloud-storage` | S3/OSS cloud storage support |
 | `gpu` | GPU compression (Linux only) |
 | `jemalloc` | jemalloc allocator (Linux only) |
+| `cli` | CLI support for binaries |
+| `profiling` | Profiling support |
+| `cpuid` | CPU-aware detection (x86_64 only) |
+| `io-uring-io` | io_uring support (Linux 5.6+) |
 
 **Note:** Storage (S3/OSS) and dataset formats (Parquet, LeRobot) are always available.
 
@@ -201,10 +206,10 @@ Automated review tools (e.g., Greptile) may provide feedback on PRs. When addres
 - **Always use arena allocation** for message data (~22% overhead if skipped)
 - Arena types are in `robocodec`, imported via `use robocodec::arena::Arena`
 
-### Python Bindings
-- Use `#[pymethods]` on structs in `src/python/`
-- Must rebuild with `maturin develop` after changes
-- Cannot run Rust and Python tests in same invocation
+### Dead Code
+- **Remove unused code** rather than marking it as `#[allow(dead_code)]`
+- Compiler warnings about unused functions/imports indicate code that should be removed
+- Keep the codebase lean - only add `#[allow(dead_code)]` when explicitly requested
 
 ## External Dependencies
 

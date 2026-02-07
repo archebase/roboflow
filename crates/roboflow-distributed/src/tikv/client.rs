@@ -31,14 +31,11 @@
 //! `KeyBuilder` or `*Keys` types to construct proper prefix-based keys.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use super::config::TikvConfig;
 use super::error::{Result, TikvError};
-use super::key::{HeartbeatKeys, JobKeys, LockKeys, StateKeys};
-use super::schema::{CheckpointState, HeartbeatRecord, JobRecord, JobStatus, LockRecord};
-
-use tokio::time::sleep;
+use super::key::{ConfigKeys, HeartbeatKeys, LockKeys, StateKeys};
+use super::schema::{CheckpointState, ConfigRecord, HeartbeatRecord, LockRecord};
 
 /// TiKV client wrapper with connection pooling and circuit breaker.
 #[derive(Clone)]
@@ -62,115 +59,26 @@ impl TikvClient {
         // Create circuit breaker with default configuration
         let circuit_breaker = Arc::new(super::circuit::CircuitBreaker::new());
 
-        {
-            // Try to connect to TiKV cluster
-            let client = tikv_client::TransactionClient::new_with_config(
-                config.pd_endpoints.clone(),
-                tikv_client::Config::default(),
-            )
-            .await
-            .map_err(|e| TikvError::ConnectionFailed(e.to_string()))?;
+        // Try to connect to TiKV cluster
+        let client = tikv_client::TransactionClient::new_with_config(
+            config.pd_endpoints.clone(),
+            tikv_client::Config::default(),
+        )
+        .await
+        .map_err(|e| TikvError::ConnectionFailed(e.to_string()))?;
 
-            tracing::info!("Connected to TiKV: {}", config.describe());
+        tracing::info!("Connected to TiKV: {}", config.describe());
 
-            Ok(Self {
-                config,
-                inner: Some(Arc::new(client)),
-                circuit_breaker,
-            })
-        }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            tracing::warn!("Distributed feature not enabled, TikvClient will be a no-op");
-            Ok(Self {
-                config,
-                inner: None,
-                circuit_breaker,
-            })
-        }
+        Ok(Self {
+            config,
+            inner: Some(Arc::new(client)),
+            circuit_breaker,
+        })
     }
 
     /// Create a new client with default configuration from environment.
     pub async fn from_env() -> Result<Self> {
         Self::new(TikvConfig::default()).await
-    }
-
-    /// Retry helper with exponential backoff for write conflicts.
-    ///
-    /// This helper automatically retries operations that fail with write conflicts,
-    /// using exponential backoff between retries.
-    #[allow(dead_code)]
-    async fn retry_with_backoff<F, Fut, T>(&self, operation_name: &str, operation: F) -> Result<T>
-    where
-        F: Fn() -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
-    {
-        let max_retries = self.config.max_retries;
-        let base_delay = Duration::from_millis(self.config.retry_base_delay_ms);
-
-        for attempt in 0..max_retries {
-            match operation().await {
-                Ok(value) => {
-                    if attempt > 0 {
-                        tracing::debug!(
-                            operation = operation_name,
-                            attempts = attempt + 1,
-                            "Operation succeeded after retries"
-                        );
-                    }
-                    return Ok(value);
-                }
-                Err(err) if err.is_write_conflict() || err.is_retryable() => {
-                    if attempt >= max_retries - 1 {
-                        tracing::warn!(
-                            operation = operation_name,
-                            attempts = attempt + 1,
-                            max_retries,
-                            "Operation failed after max retries"
-                        );
-                        return Err(TikvError::retryable(
-                            attempt + 1,
-                            max_retries,
-                            err.to_string(),
-                        ));
-                    }
-
-                    let delay = base_delay * 2_u32.pow(attempt);
-                    tracing::debug!(
-                        operation = operation_name,
-                        attempt = attempt + 1,
-                        delay_ms = delay.as_millis(),
-                        error = %err,
-                        "Retrying operation after write conflict"
-                    );
-                    sleep(delay).await;
-                }
-                Err(err) => return Err(err),
-            }
-        }
-
-        // This should never be reached, but the compiler doesn't know that
-        Err(TikvError::retryable(
-            max_retries,
-            max_retries,
-            "Unexpected loop exit",
-        ))
-    }
-
-    /// Execute an operation with circuit breaker protection.
-    ///
-    /// This method wraps the operation with circuit breaker logic, which will
-    /// fail fast if the circuit is open (TiKV service is experiencing issues).
-    /// This prevents cascading failures by rejecting requests quickly when
-    /// the service is down.
-    #[allow(dead_code)]
-    async fn with_circuit_breaker<F, Fut, T>(&self, operation: F) -> Result<T>
-    where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
-    {
-        self.circuit_breaker.call(operation).await
     }
 
     /// Get the circuit breaker state (for monitoring).
@@ -219,14 +127,6 @@ impl TikvClient {
             self.circuit_breaker.record_success();
             Ok(result)
         }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = key;
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
-        }
     }
 
     /// Put a key-value pair.
@@ -260,14 +160,6 @@ impl TikvClient {
 
             self.circuit_breaker.record_success();
             Ok(())
-        }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = (key, value);
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
         }
     }
 
@@ -303,14 +195,6 @@ impl TikvClient {
             self.circuit_breaker.record_success();
             Ok(())
         }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = key;
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
-        }
     }
 
     /// Scan keys with a prefix.
@@ -335,10 +219,10 @@ impl TikvClient {
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
             // Create a proper prefix scan range using exclusive upper bound.
-            // To find the first key after the prefix, we append a null byte (0x00)
-            // which gives us the first key that doesn't match the prefix.
+            // We append 0xFF to ensure the scan range includes all keys with the prefix.
+            // Using 0xFF instead of 0x00 because null byte comes before regular ASCII chars.
             let mut scan_end = prefix.clone();
-            scan_end.push(0);
+            scan_end.push(0xFF);
 
             // Use exclusive range (..) instead of inclusive (..=) for correctness
             let iter = txn
@@ -347,6 +231,8 @@ impl TikvClient {
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
             // Collect the iterator into a Vec
+            // Note: The .into() conversion from Key to Vec<u8> is necessary but triggers
+            // clippy::useless_conversion as a false positive. The allow attribute is justified.
             let result: Vec<(Vec<u8>, Vec<u8>)> = iter
                 .map(|pair| {
                     #[allow(clippy::useless_conversion)]
@@ -364,14 +250,6 @@ impl TikvClient {
             tracing::debug!(limit = limit, results = result.len(), "Scan completed");
 
             Ok(result)
-        }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = (prefix, limit);
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
         }
     }
 
@@ -402,14 +280,6 @@ impl TikvClient {
 
             Ok(results)
         }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = keys;
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
-        }
     }
 
     /// Batch put multiple key-value pairs.
@@ -435,14 +305,6 @@ impl TikvClient {
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
             Ok(())
-        }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = pairs;
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
         }
     }
 
@@ -516,309 +378,92 @@ impl TikvClient {
 
             Ok(success)
         }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = (key, expected_version, new_value);
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
-        }
     }
 
     // ============== High-level operations for specific types ==============
 
-    /// Get a job record by file hash.
-    pub async fn get_job(&self, file_hash: &str) -> Result<Option<JobRecord>> {
-        let key = JobKeys::record(file_hash);
-        let data = self.get(key).await?;
-
-        match data {
-            Some(bytes) => {
-                let record: JobRecord = bincode::deserialize(&bytes)
-                    .map_err(|e| TikvError::Deserialization(e.to_string()))?;
-                Ok(Some(record))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Put a job record.
-    pub async fn put_job(&self, job: &JobRecord) -> Result<()> {
-        let key = JobKeys::record(&job.id);
-        let data = bincode::serialize(job).map_err(|e| TikvError::Serialization(e.to_string()))?;
-        self.put(key, data).await
-    }
-
-    /// Batch get multiple job records.
+    /// Transactional claim operation for work units.
     ///
-    /// Returns a vector of (job_id, Option<JobRecord>) tuples.
-    /// Jobs that don't exist will have None as the record.
-    pub async fn batch_get_jobs(
+    /// This atomically claims a work unit using a callback that processes
+    /// the raw work unit data. The callback should return:
+    /// - Some(new_data) if the work unit was successfully claimed
+    /// - None if the work unit couldn't be claimed
+    ///
+    /// All operations happen in a single transaction for atomicity.
+    pub async fn transactional_claim<F>(
         &self,
-        job_ids: &[String],
-    ) -> Result<Vec<(String, Option<JobRecord>)>> {
-        use super::key::JobKeys;
+        work_unit_key: Vec<u8>,
+        pending_key: Vec<u8>,
+        _worker_id: &str,
+        claim_processor: F,
+    ) -> Result<Option<Vec<u8>>>
+    where
+        F: FnOnce(
+            &[u8],
+        )
+            -> std::result::Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>>,
+    {
+        let inner = self.inner.as_ref().ok_or_else(|| {
+            TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+        })?;
 
-        let keys: Vec<Vec<u8>> = job_ids.iter().map(|id| JobKeys::record(id)).collect();
+        let mut txn = inner
+            .begin_optimistic()
+            .await
+            .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
-        let values = self.batch_get(keys).await?;
-
-        let mut results = Vec::with_capacity(job_ids.len());
-        for (i, data) in values.into_iter().enumerate() {
-            let job_id = &job_ids[i];
-            let record = match data {
-                Some(bytes) => {
-                    let record: JobRecord = bincode::deserialize(&bytes)
-                        .map_err(|e| TikvError::Deserialization(e.to_string()))?;
-                    Some(record)
-                }
-                None => None,
-            };
-            results.push((job_id.clone(), record));
-        }
-
-        Ok(results)
-    }
-
-    /// Claim a job (atomic operation within a single transaction).
-    ///
-    /// This uses a single transaction to read the job, check if it's claimable,
-    /// and update it. If two workers race to claim the same job, TiKV's
-    /// optimistic concurrency will detect the write conflict and one will
-    /// fail with a `WriteConflict` error.
-    pub async fn claim_job(&self, file_hash: &str, pod_id: &str) -> Result<bool> {
-        tracing::debug!(
-            file_hash = %file_hash,
-            pod_id = %pod_id,
-            "Attempting to claim job"
-        );
-
+        // Read work unit in transaction
+        let claimed_data = match txn
+            .get(work_unit_key.clone())
+            .await
+            .map_err(|e| TikvError::ClientError(e.to_string()))?
         {
-            let inner = self.inner.as_ref().ok_or_else(|| {
-                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
-            })?;
-
-            let key = JobKeys::record(file_hash);
-            let mut txn = inner
-                .begin_optimistic()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            // Read job in transaction
-            let current = txn
-                .get(key.clone())
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            let claimed = match current {
-                Some(data) => {
-                    let job: JobRecord = bincode::deserialize(&data)
-                        .map_err(|e| TikvError::Deserialization(e.to_string()))?;
-
-                    if job.is_claimable() {
-                        let mut job = job;
-                        job.claim(pod_id.to_string()).map_err(TikvError::Other)?;
-                        let new_data = bincode::serialize(&job)
-                            .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                        txn.put(key, new_data)
+            Some(data) => {
+                // Call the claim processor to check and update the work unit
+                match claim_processor(&data) {
+                    Ok(Some(new_data)) => {
+                        let data_clone = new_data.clone();
+                        txn.put(work_unit_key, new_data)
                             .await
                             .map_err(|e| TikvError::ClientError(e.to_string()))?;
-                        true
-                    } else {
-                        false
+
+                        // Remove from pending queue in same transaction
+                        txn.delete(pending_key)
+                            .await
+                            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+                        txn.commit()
+                            .await
+                            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+                        Some(data_clone)
+                    }
+                    Ok(None) => {
+                        // Not claimable - commit transaction with no changes
+                        txn.commit()
+                            .await
+                            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                        None
+                    }
+                    Err(e) => {
+                        // Claim processor failed
+                        return Err(TikvError::Other(format!("Claim processor failed: {}", e)));
                     }
                 }
-                None => false,
-            };
-
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            if claimed {
-                tracing::info!(
-                    file_hash = %file_hash,
-                    pod_id = %pod_id,
-                    "Job successfully claimed"
-                );
-            } else {
-                tracing::debug!(
-                    file_hash = %file_hash,
-                    pod_id = %pod_id,
-                    "Job not claimable (already claimed or not found)"
-                );
             }
-
-            Ok(claimed)
-        }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = (file_hash, pod_id);
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
-        }
-    }
-
-    /// Complete a job (atomic operation within a single transaction).
-    ///
-    /// This uses a single transaction to read the job, verify it's in Processing state,
-    /// and mark it as Completed. Returns an error if the job is not in Processing state
-    /// or doesn't exist.
-    pub async fn complete_job(&self, file_hash: &str) -> Result<bool> {
-        tracing::debug!(
-            file_hash = %file_hash,
-            "Attempting to complete job"
-        );
-
-        {
-            use super::schema::JobStatus;
-
-            let inner = self.inner.as_ref().ok_or_else(|| {
-                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
-            })?;
-
-            let key = JobKeys::record(file_hash);
-            let mut txn = inner
-                .begin_optimistic()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            let completed = match txn
-                .get(key.clone())
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?
-            {
-                Some(data) => {
-                    let mut job: JobRecord = bincode::deserialize(&data)
-                        .map_err(|e| TikvError::Deserialization(e.to_string()))?;
-
-                    // Only allow completion if currently processing
-                    if job.status != JobStatus::Processing {
-                        tracing::debug!(
-                            file_hash = %file_hash,
-                            status = ?job.status,
-                            "Job not in Processing state, cannot complete"
-                        );
-                        return Ok(false);
-                    }
-
-                    job.complete();
-                    let new_data = bincode::serialize(&job)
-                        .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                    txn.put(key, new_data)
-                        .await
-                        .map_err(|e| TikvError::ClientError(e.to_string()))?;
-                    true
-                }
-                None => {
-                    return Err(TikvError::KeyNotFound(format!("Job: {}", file_hash)));
-                }
-            };
-
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            if completed {
-                tracing::info!(
-                    file_hash = %file_hash,
-                    "Job completed successfully"
-                );
+            None => {
+                // Work unit doesn't exist, clean up pending index
+                txn.delete(pending_key)
+                    .await
+                    .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                txn.commit()
+                    .await
+                    .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                None
             }
+        };
 
-            Ok(completed)
-        }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = file_hash;
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
-        }
-    }
-
-    /// Fail a job with an error message (atomic operation within a single transaction).
-    ///
-    /// This uses a single transaction to read the job, verify it's in Processing state,
-    /// and mark it as Failed. Returns an error if the job doesn't exist.
-    pub async fn fail_job(&self, file_hash: &str, error: String) -> Result<bool> {
-        tracing::debug!(
-            file_hash = %file_hash,
-            error = %error,
-            "Attempting to fail job"
-        );
-
-        {
-            use super::schema::JobStatus;
-
-            let inner = self.inner.as_ref().ok_or_else(|| {
-                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
-            })?;
-
-            let key = JobKeys::record(file_hash);
-            let mut txn = inner
-                .begin_optimistic()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            let failed = match txn
-                .get(key.clone())
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?
-            {
-                Some(data) => {
-                    let mut job: JobRecord = bincode::deserialize(&data)
-                        .map_err(|e| TikvError::Deserialization(e.to_string()))?;
-
-                    // Only allow failure if currently processing
-                    if job.status != JobStatus::Processing {
-                        tracing::debug!(
-                            file_hash = %file_hash,
-                            status = ?job.status,
-                            "Job not in Processing state, cannot fail"
-                        );
-                        return Ok(false);
-                    }
-
-                    job.fail(error.clone());
-                    let new_data = bincode::serialize(&job)
-                        .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                    txn.put(key, new_data)
-                        .await
-                        .map_err(|e| TikvError::ClientError(e.to_string()))?;
-                    true
-                }
-                None => {
-                    return Err(TikvError::KeyNotFound(format!("Job: {}", file_hash)));
-                }
-            };
-
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            if failed {
-                tracing::warn!(
-                    file_hash = %file_hash,
-                    error = %error,
-                    "Job failed"
-                );
-            }
-
-            Ok(failed)
-        }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = (file_hash, error);
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
-        }
+        Ok(claimed_data)
     }
 
     /// Acquire a distributed lock (atomic operation within a single transaction).
@@ -927,14 +572,6 @@ impl TikvClient {
 
             Ok(acquired)
         }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = (resource, owner, ttl_seconds);
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
-        }
     }
 
     /// Release a distributed lock (atomic operation within a single transaction).
@@ -1004,14 +641,6 @@ impl TikvClient {
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
             Ok(released)
-        }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = (resource, owner);
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
         }
     }
 
@@ -1085,6 +714,29 @@ impl TikvClient {
         }
     }
 
+    /// Store a dataset configuration in TiKV.
+    pub async fn put_config(&self, config: &ConfigRecord) -> Result<()> {
+        let key = ConfigKeys::config(&config.hash);
+        let data =
+            bincode::serialize(config).map_err(|e| TikvError::Serialization(e.to_string()))?;
+        self.put(key, data).await
+    }
+
+    /// Get a dataset configuration from TiKV.
+    pub async fn get_config(&self, hash: &str) -> Result<Option<ConfigRecord>> {
+        let key = ConfigKeys::config(hash);
+        let data = self.get(key).await?;
+
+        match data {
+            Some(bytes) => {
+                let config: ConfigRecord = bincode::deserialize(&bytes)
+                    .map_err(|e| TikvError::Deserialization(e.to_string()))?;
+                Ok(Some(config))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Try to become the scanner leader.
     pub async fn acquire_scanner_lock(&self, pod_id: &str, ttl_seconds: i64) -> Result<bool> {
         self.acquire_lock("scanner_lock", pod_id, ttl_seconds).await
@@ -1095,145 +747,6 @@ impl TikvClient {
         self.release_lock("scanner_lock", pod_id).await
     }
 
-    /// Reclaim an orphaned job from a dead worker.
-    ///
-    /// This uses a single transaction to:
-    /// 1. Read the job (verify still Processing)
-    /// 2. Read the owner's heartbeat (verify stale)
-    /// 3. Update job to Pending with no owner
-    ///
-    /// Returns `Ok(true)` if the job was reclaimed, `Ok(false)` if it
-    /// couldn't be reclaimed (not stale, not Processing, or conflict),
-    /// or `Err` if there was a connection error.
-    pub async fn reclaim_job(&self, job_id: &str, stale_threshold_seconds: i64) -> Result<bool> {
-        tracing::debug!(
-            job_id = %job_id,
-            stale_threshold_secs = stale_threshold_seconds,
-            "Attempting to reclaim job"
-        );
-
-        #[cfg(feature = "distributed")]
-        {
-            let inner = self.inner.as_ref().ok_or_else(|| {
-                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
-            })?;
-
-            let job_key = JobKeys::record(job_id);
-            let mut txn = inner
-                .begin_optimistic()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            // Read job in transaction
-            let reclaimed = match txn
-                .get(job_key.clone())
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?
-            {
-                Some(data) => {
-                    let mut job: JobRecord = bincode::deserialize(&data)
-                        .map_err(|e| TikvError::Deserialization(e.to_string()))?;
-
-                    // Verify job is still in Processing state
-                    if job.status != JobStatus::Processing {
-                        tracing::debug!(
-                            job_id = %job_id,
-                            status = ?job.status,
-                            "Job not in Processing state, cannot reclaim"
-                        );
-                        return Ok(false);
-                    }
-
-                    // Verify job has an owner
-                    let owner = match &job.owner {
-                        Some(o) => o.clone(),
-                        None => {
-                            tracing::debug!(
-                                job_id = %job_id,
-                                "Job has no owner, cannot reclaim"
-                            );
-                            return Ok(false);
-                        }
-                    };
-
-                    // Check if owner's heartbeat is stale
-                    let heartbeat_key = HeartbeatKeys::heartbeat(&owner);
-                    let owner_stale = match txn
-                        .get(heartbeat_key)
-                        .await
-                        .map_err(|e| TikvError::ClientError(e.to_string()))?
-                    {
-                        Some(hb_data) => {
-                            if let Ok(record) = bincode::deserialize::<HeartbeatRecord>(&hb_data) {
-                                record.is_stale(stale_threshold_seconds)
-                            } else {
-                                // Invalid heartbeat data - consider stale
-                                true
-                            }
-                        }
-                        None => {
-                            // No heartbeat record - consider stale
-                            true
-                        }
-                    };
-
-                    if !owner_stale {
-                        tracing::debug!(
-                            job_id = %job_id,
-                            owner = %owner,
-                            "Owner's heartbeat is fresh, cannot reclaim"
-                        );
-                        return Ok(false);
-                    }
-
-                    // Reclaim the job: set back to Pending with no owner
-                    job.status = JobStatus::Pending;
-                    job.owner = None;
-                    job.updated_at = chrono::Utc::now();
-
-                    // Note: We preserve the checkpoint for resume capability
-                    // The checkpoint key is NOT deleted here
-
-                    let new_data = bincode::serialize(&job)
-                        .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                    txn.put(job_key, new_data)
-                        .await
-                        .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-                    true
-                }
-                None => {
-                    tracing::debug!(
-                        job_id = %job_id,
-                        "Job not found, cannot reclaim"
-                    );
-                    return Ok(false);
-                }
-            };
-
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            if reclaimed {
-                tracing::info!(
-                    job_id = %job_id,
-                    "Job reclaimed successfully"
-                );
-            }
-
-            Ok(reclaimed)
-        }
-
-        #[cfg(not(feature = "distributed"))]
-        {
-            let _ = (job_id, stale_threshold_seconds);
-            Err(TikvError::ConnectionFailed(
-                "Distributed feature not enabled".to_string(),
-            ))
-        }
-    }
-
     /// Get a reference to the configuration.
     pub fn config(&self) -> &TikvConfig {
         &self.config
@@ -1241,27 +754,7 @@ impl TikvClient {
 
     /// Check if the client is connected.
     pub fn is_connected(&self) -> bool {
-        {
-            self.inner.is_some()
-        }
-        #[cfg(not(feature = "distributed"))]
-        {
-            false
-        }
-    }
-}
-
-#[cfg(test)]
-impl TikvClient {
-    /// Create a no-op client for testing checkpoint manager logic.
-    /// This client is not connected to TiKV and will fail on actual operations.
-    #[allow(dead_code)]
-    pub(crate) fn no_op_for_testing() -> Self {
-        Self {
-            config: TikvConfig::default(),
-            inner: None,
-            circuit_breaker: Arc::new(super::circuit::CircuitBreaker::new()),
-        }
+        self.inner.is_some()
     }
 }
 

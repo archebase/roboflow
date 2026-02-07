@@ -15,6 +15,7 @@ object_store = { version = "0.11", features = ["aws"] }
 tokio = { version = "1.40", features = ["rt-multi-thread", "sync"] }
 url = "2.5"
 bytes = "1.7"
+async-trait = "0.1"
 
 # Error handling
 thiserror = "1.0"

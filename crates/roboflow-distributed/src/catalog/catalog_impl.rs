@@ -153,7 +153,7 @@ impl TiKVCatalog {
         for key_bytes in keys {
             let key_str = String::from_utf8_lossy(&key_bytes);
             // Key format: roboflow/idx/config/{hash}/{segment_id}
-            #[allow(clippy::collapsible_if)]
+            #[expect(clippy::collapsible_if)]
             if let Some(segment_id) = key_str.split('/').nth(5) {
                 if let Some(segment) = self.get_segment(segment_id).await? {
                     return Ok(Some(segment));

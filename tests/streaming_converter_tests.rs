@@ -12,17 +12,22 @@
 //! - End-to-end conversion
 
 use std::collections::HashMap;
+
+#[cfg(feature = "dataset-all")]
 use std::fs;
+#[cfg(feature = "dataset-all")]
 use std::path::Path;
 
 #[cfg(feature = "dataset-all")]
 use roboflow::StreamingDatasetConverter;
+#[cfg(feature = "dataset-all")]
 use roboflow::lerobot::config::DatasetConfig;
+#[cfg(feature = "dataset-all")]
 use roboflow::lerobot::{LerobotConfig, Mapping, MappingType, VideoConfig};
 use roboflow::streaming::{FeatureRequirement, FrameCompletionCriteria, StreamingConfig};
 
 /// Create a test output directory.
-#[allow(dead_code)]
+#[cfg(feature = "dataset-all")]
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
     fs::create_dir_all("tests/output").ok();
     tempfile::tempdir_in("tests/output").unwrap_or_else(|_| {
@@ -32,7 +37,7 @@ fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
 }
 
 /// Create a default test configuration for LeRobot.
-#[allow(dead_code)]
+#[cfg(feature = "dataset-all")]
 fn test_lerobot_config() -> LerobotConfig {
     LerobotConfig {
         dataset: DatasetConfig {
@@ -46,11 +51,13 @@ fn test_lerobot_config() -> LerobotConfig {
                 topic: "/camera/image_raw".to_string(),
                 feature: "observation.images.camera".to_string(),
                 mapping_type: MappingType::Image,
+                camera_key: None,
             },
             Mapping {
                 topic: "/robot/state".to_string(),
                 feature: "observation.state".to_string(),
                 mapping_type: MappingType::State,
+                camera_key: None,
             },
         ],
         video: VideoConfig::default(),
@@ -59,7 +66,7 @@ fn test_lerobot_config() -> LerobotConfig {
 }
 
 /// Find a test fixture file by pattern.
-#[allow(dead_code)]
+#[cfg(feature = "dataset-all")]
 fn find_fixture(pattern: &str) -> Option<String> {
     let fixtures_dir = Path::new("tests/fixtures");
     if !fixtures_dir.exists() {

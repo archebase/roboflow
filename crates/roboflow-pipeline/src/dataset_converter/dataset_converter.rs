@@ -130,19 +130,19 @@ impl DatasetConverter {
         // Use the FPS from config if available
         let fps = kps_config.dataset.fps;
 
-        // Create the dataset writer
+        // Create the dataset writer (already initialized via builder)
         let config = roboflow_dataset::DatasetConfig::Kps(kps_config.clone());
-        let mut writer = create_writer(&self.output_dir, &config).map_err(
+        let mut writer = create_writer(&self.output_dir, None, None, &config).map_err(
             |e: roboflow_core::RoboflowError| {
                 RoboflowError::encode("DatasetConverter", e.to_string())
             },
         )?;
 
-        // Initialize the writer
-        writer.initialize(kps_config)?;
-
         // Open input file
-        let reader = RoboReader::open(input_path)?;
+        let path_str = input_path
+            .to_str()
+            .ok_or_else(|| RoboflowError::parse("Path", "Invalid UTF-8 path"))?;
+        let reader = RoboReader::open(path_str)?;
 
         // Build topic -> mapping lookup
         let topic_mappings: HashMap<String, KpsMapping> = kps_config
@@ -161,18 +161,18 @@ impl DatasetConverter {
 
         info!(mappings = topic_mappings.len(), "Processing messages");
 
-        for result in reader.decode_messages_with_timestamp()? {
-            let (timestamped_msg, channel_info) = result?;
+        for msg_result in reader.decoded()? {
+            let timestamped_msg = msg_result?;
 
             // Find mapping for this topic
-            let mapping = match topic_mappings.get(&channel_info.topic) {
+            let mapping = match topic_mappings.get(&timestamped_msg.channel.topic) {
                 Some(m) => m,
                 None => continue, // Skip unmapped topics
             };
 
             // Align timestamp to frame boundary
             let aligned_timestamp =
-                Self::align_to_frame(timestamped_msg.log_time, frame_interval_ns);
+                Self::align_to_frame(timestamped_msg.log_time.unwrap_or(0), frame_interval_ns);
 
             // Get or create frame - track new frames for max_frames limit
             let is_new = !frame_buffer.contains_key(&aligned_timestamp);
@@ -200,7 +200,7 @@ impl DatasetConverter {
                         frame.add_image(
                             mapping.feature.clone(),
                             ImageData {
-                                original_timestamp: timestamped_msg.log_time,
+                                original_timestamp: timestamped_msg.log_time.unwrap_or(0),
                                 ..img
                             },
                         );
@@ -217,7 +217,10 @@ impl DatasetConverter {
                     }
                 }
                 KpsMappingType::Timestamp => {
-                    frame.add_timestamp(mapping.feature.clone(), timestamped_msg.log_time);
+                    frame.add_timestamp(
+                        mapping.feature.clone(),
+                        timestamped_msg.log_time.unwrap_or(0),
+                    );
                 }
                 _ => {}
             }
@@ -251,7 +254,7 @@ impl DatasetConverter {
         }
 
         // Finalize and get stats
-        let stats = writer.finalize(kps_config)?;
+        let stats = writer.finalize()?;
         let duration = start_time.elapsed();
 
         info!(
@@ -283,17 +286,17 @@ impl DatasetConverter {
 
         // Create the dataset writer
         let config = roboflow_dataset::DatasetConfig::Lerobot(lerobot_config.clone());
-        let mut writer = create_writer(&self.output_dir, &config).map_err(
+        let mut writer = create_writer(&self.output_dir, None, None, &config).map_err(
             |e: roboflow_core::RoboflowError| {
                 RoboflowError::encode("DatasetConverter", e.to_string())
             },
         )?;
 
-        // Initialize the writer
-        writer.initialize(lerobot_config)?;
-
         // Open input file
-        let reader = RoboReader::open(input_path)?;
+        let path_str = input_path
+            .to_str()
+            .ok_or_else(|| RoboflowError::parse("Path", "Invalid UTF-8 path"))?;
+        let reader = RoboReader::open(path_str)?;
 
         // Build topic -> mapping lookup
         let topic_mappings: HashMap<String, LerobotMapping> = lerobot_config
@@ -312,18 +315,18 @@ impl DatasetConverter {
 
         info!(mappings = topic_mappings.len(), "Processing messages");
 
-        for result in reader.decode_messages_with_timestamp()? {
-            let (timestamped_msg, channel_info) = result?;
+        for msg_result in reader.decoded()? {
+            let timestamped_msg = msg_result?;
 
             // Find mapping for this topic
-            let mapping = match topic_mappings.get(&channel_info.topic) {
+            let mapping = match topic_mappings.get(&timestamped_msg.channel.topic) {
                 Some(m) => m,
                 None => continue, // Skip unmapped topics
             };
 
             // Align timestamp to frame boundary
             let aligned_timestamp =
-                Self::align_to_frame(timestamped_msg.log_time, frame_interval_ns);
+                Self::align_to_frame(timestamped_msg.log_time.unwrap_or(0), frame_interval_ns);
 
             // Get or create frame - track new frames for max_frames limit
             let is_new = !frame_buffer.contains_key(&aligned_timestamp);
@@ -351,7 +354,7 @@ impl DatasetConverter {
                         frame.add_image(
                             mapping.feature.clone(),
                             ImageData {
-                                original_timestamp: timestamped_msg.log_time,
+                                original_timestamp: timestamped_msg.log_time.unwrap_or(0),
                                 ..img
                             },
                         );
@@ -368,7 +371,10 @@ impl DatasetConverter {
                     }
                 }
                 LerobotMappingType::Timestamp => {
-                    frame.add_timestamp(mapping.feature.clone(), timestamped_msg.log_time);
+                    frame.add_timestamp(
+                        mapping.feature.clone(),
+                        timestamped_msg.log_time.unwrap_or(0),
+                    );
                 }
             }
         }
@@ -401,7 +407,7 @@ impl DatasetConverter {
         }
 
         // Finalize and get stats
-        let stats = writer.finalize(lerobot_config)?;
+        let stats = writer.finalize()?;
         let duration = start_time.elapsed();
 
         info!(
@@ -563,7 +569,8 @@ mod tests {
             ]),
         );
 
-        let result = DatasetConverter::extract_float_array(&msg).unwrap();
+        let result = DatasetConverter::extract_float_array(&msg)
+            .expect("float array extraction should succeed with valid input");
         assert_eq!(result, vec![1.0, 2.0, 3.0]);
     }
 
@@ -577,7 +584,8 @@ mod tests {
         msg.insert("data".to_string(), CodecValue::Bytes(vec![1, 2, 3, 4]));
         msg.insert("format".to_string(), CodecValue::String("rgb8".to_string()));
 
-        let image = DatasetConverter::extract_image(&msg).unwrap();
+        let image = DatasetConverter::extract_image(&msg)
+            .expect("image extraction should succeed with valid input");
         assert_eq!(image.width, 640);
         assert_eq!(image.height, 480);
         assert_eq!(image.data, vec![1, 2, 3, 4]);

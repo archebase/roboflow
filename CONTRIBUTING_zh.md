@@ -1,6 +1,6 @@
 # 贡献指南
 
-感谢您对 Robocodec 项目的关注！本文档提供了为该项目做贡献的指导原则和说明。
+感谢您对 Roboflow 项目的关注！本文档提供了为该项目做贡献的指导原则和说明。
 
 ## 行为准则
 
@@ -16,7 +16,7 @@
 - **重现步骤**：重现错误的详细步骤
 - **预期行为**：您期望发生什么
 - **实际行为**：实际发生了什么
-- **环境信息**：操作系统、Rust 版本、Python 版本（如适用）
+- **环境信息**：操作系统、Rust 版本
 - **日志/错误信息**：任何相关的错误信息或堆栈跟踪
 - **测试文件**：如果适用，提供可重现问题的示例数据文件
 
@@ -35,9 +35,9 @@
 1. Fork 本仓库
 2. 克隆您的 fork 并添加上游远程仓库：
    ```bash
-   git clone https://github.com/YOUR_USERNAME/robocodec.git
-   cd robocodec
-   git remote add upstream https://github.com/archebase/robocodec.git
+   git clone https://github.com/YOUR_USERNAME/roboflow.git
+   cd roboflow
+   git remote add upstream https://github.com/archebase/roboflow.git
    ```
 
 3. 为您的更改创建分支：
@@ -64,11 +64,11 @@
 提交前运行测试套件：
 
 ```bash
-# 运行 Rust 测试
-cargo test --all-features
+# 运行所有测试
+cargo test
 
-# 运行 Python 测试（如适用）
-maturin develop && pytest
+# 运行带数据集功能的测试（需要安装 HDF5）
+cargo test --features dataset-all
 
 # 运行 clippy
 cargo clippy --all-features -- -D warnings
@@ -89,42 +89,35 @@ cargo fmt -- --check
 ### 项目结构
 
 ```
-robocodec/
-├── src/
-│   ├── bin/          # 命令行工具
-│   ├── codec/        # 编解码器实现
-│   ├── core/         # 核心类型和错误
-│   ├── encoding/     # 编码/解码实现
-│   ├── format/       # 文件格式处理器
-│   ├── schema/       # 模式解析器
-│   └── python/       # Python 绑定
-├── python/           # Python 包
-├── tests/            # 集成测试
-└── examples/         # 示例代码
+roboflow/
+├── crates/
+│   ├── roboflow-core/         # 核心类型和错误处理
+│   ├── roboflow-storage/      # 存储抽象（S3、OSS、本地）
+│   ├── roboflow-dataset/      # 数据集写入器（KPS、LeRobot）
+│   ├── roboflow-distributed/  # TiKV 分布式协调
+│   ├── roboflow-hdf5/         # 可选的 HDF5 支持
+│   ├── roboflow-pipeline/     # 流水线实现
+│   └── roboflow/              # 主包，包含 CLI 工具
+│       ├── src/
+│       │   ├── pipeline/       # 流水线实现
+│       │   └── bin/           # 命令行工具
+└── Cargo.toml
 ```
+
+**说明**：项目使用外部 `robocodec` 库进行 I/O 操作和格式处理。
 
 ### 添加功能
 
-1. **新的编解码器支持**：添加到 `src/codec/` 并更新 `src/core/registry.rs`
-2. **新的文件格式**：添加到 `src/format/`，实现 Reader/Writer 接口
-3. **新的模式格式**：将解析器添加到 `src/schema/`
-4. **CLI 工具**：添加二进制文件到 `src/bin/` 并更新 Cargo.toml
-
-### Python 绑定
-
-Python 绑定通过 PyO3 管理。当添加需要暴露给 Python 的 Rust API 时：
-
-1. 添加 `#[pyfunction]` 或 `#[pymethods]` 属性
-2. 在 `src/python/mod.rs` 中注册
-3. 如需要，在 `python/robocodec/` 中添加类型存根
-4. 更新 Python 文档
+1. **新的编解码器支持**：在 `robocodec` 库中实现并更新注册表
+2. **新的文件格式**：实现 Reader/Writer 接口
+3. **新的模式格式**：将解析器添加到 schema 模块
+4. **CLI 工具**：添加二进制文件到 `crates/roboflow/src/bin/` 并更新 Cargo.toml
 
 ### 测试指南
 
 - **单元测试**：测试单个函数和模块
 - **集成测试**：测试端到端功能
 - **往返测试**：验证编解码一致性
-- **跨语言测试**：验证 Rust 和 Python API 的对等性
 
 ## 发布流程
 
@@ -134,7 +127,6 @@ Python 绑定通过 PyO3 管理。当添加需要暴露给 Python 的 Rust API �
 2. 更新 CHANGELOG.md
 3. 创建 git 标签
 4. 发布到 crates.io
-5. 构建并发布 Python 包到 PyPI
 
 ## 有问题？
 

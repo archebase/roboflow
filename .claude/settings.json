@@ -17,7 +17,6 @@
     "nanobanana-skill@claude-code-settings": true,
     "spec-kit-skill@claude-code-settings": true,
     "code-simplifier@claude-plugins-official": true,
-    "rust-analyzer-lsp@claude-plugins-official": true,
     "engineering-skills@claude-code-skills": true
   }
 }

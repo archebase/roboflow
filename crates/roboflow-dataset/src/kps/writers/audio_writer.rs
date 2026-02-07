@@ -22,8 +22,7 @@ pub struct AudioWriter {
     output_dir: PathBuf,
 
     /// Episode ID.
-    #[allow(dead_code)]
-    episode_id: String,
+    _episode_id: String,
 }
 
 impl AudioWriter {
@@ -31,7 +30,7 @@ impl AudioWriter {
     pub fn new(output_dir: impl AsRef<Path>, episode_id: &str) -> Self {
         Self {
             output_dir: output_dir.as_ref().to_path_buf(),
-            episode_id: episode_id.to_string(),
+            _episode_id: episode_id.to_string(),
         }
     }
 
@@ -196,7 +195,7 @@ mod tests {
 
         let writer = AudioWriter {
             output_dir: std::env::temp_dir(),
-            episode_id: "test".to_string(),
+            _episode_id: "test".to_string(),
         };
 
         // Create temp file for testing
@@ -221,7 +220,7 @@ mod tests {
     #[test]
     fn test_audio_writer_new() {
         let writer = AudioWriter::new("/tmp/output", "episode_001");
-        assert_eq!(writer.episode_id, "episode_001");
+        assert_eq!(writer._episode_id, "episode_001");
         assert_eq!(writer.output_dir, PathBuf::from("/tmp/output"));
         assert_eq!(writer.audio_dir(), PathBuf::from("/tmp/output/audio"));
     }

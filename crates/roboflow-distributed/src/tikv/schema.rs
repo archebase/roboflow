@@ -10,211 +10,37 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Job record stored in TiKV.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct JobRecord {
-    /// Unique identifier (UUID).
-    pub id: String,
+/// Dataset configuration stored in TiKV.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigRecord {
+    /// Config hash (SHA-256 of content)
+    pub hash: String,
 
-    /// Source object key in S3/OSS.
-    pub source_key: String,
+    /// Serialized TOML configuration content
+    pub content: String,
 
-    /// Source bucket name.
-    pub source_bucket: String,
-
-    /// Source file size in bytes.
-    pub source_size: u64,
-
-    /// Current job status.
-    pub status: JobStatus,
-
-    /// Owner pod ID when Processing.
-    pub owner: Option<String>,
-
-    /// User who submitted this job (for authorization).
-    pub submitted_by: Option<String>,
-
-    /// Number of processing attempts.
-    pub attempts: u32,
-
-    /// Maximum allowed attempts.
-    pub max_attempts: u32,
-
-    /// Creation timestamp.
+    /// Creation timestamp
     pub created_at: DateTime<Utc>,
-
-    /// Last update timestamp.
-    pub updated_at: DateTime<Utc>,
-
-    /// Error message if failed.
-    pub error: Option<String>,
-
-    /// Output prefix for processed data.
-    pub output_prefix: String,
-
-    /// Hash of configuration used for this job.
-    pub config_hash: String,
-
-    /// Cancellation timestamp (if job was cancelled).
-    pub cancelled_at: Option<DateTime<Utc>>,
 }
 
-impl JobRecord {
-    /// Create a new job record.
-    pub fn new(
-        id: String,
-        source_key: String,
-        source_bucket: String,
-        source_size: u64,
-        output_prefix: String,
-        config_hash: String,
-    ) -> Self {
+impl ConfigRecord {
+    /// Create a new config record from TOML content.
+    pub fn new(content: String) -> Self {
+        let hash = Self::compute_hash(&content);
         let now = Utc::now();
         Self {
-            id,
-            source_key,
-            source_bucket,
-            source_size,
-            status: JobStatus::Pending,
-            owner: None,
-            submitted_by: None,
-            cancelled_at: None,
-            attempts: 0,
-            max_attempts: 3,
+            hash,
+            content,
             created_at: now,
-            updated_at: now,
-            error: None,
-            output_prefix,
-            config_hash,
         }
     }
 
-    /// Check if this job is terminal (completed, dead, or cancelled).
-    pub fn is_terminal(&self) -> bool {
-        matches!(
-            self.status,
-            JobStatus::Completed | JobStatus::Dead | JobStatus::Cancelled
-        )
-    }
-
-    /// Mark this job as claimed by a pod.
-    pub fn claim(&mut self, pod_id: String) -> Result<(), String> {
-        if !self.is_claimable() {
-            return Err(format!("Job is not claimable: {:?}", self.status));
-        }
-        self.status = JobStatus::Processing;
-        self.owner = Some(pod_id);
-        self.attempts += 1;
-        self.updated_at = Utc::now();
-        Ok(())
-    }
-
-    /// Mark this job as completed.
-    pub fn complete(&mut self) {
-        self.status = JobStatus::Completed;
-        self.owner = None;
-        self.updated_at = Utc::now();
-    }
-
-    /// Mark this job as failed.
-    pub fn fail(&mut self, error: String) {
-        self.status = if self.attempts >= self.max_attempts {
-            JobStatus::Dead
-        } else {
-            JobStatus::Failed
-        };
-        self.owner = None;
-        self.error = Some(error);
-        self.updated_at = Utc::now();
-    }
-
-    /// Mark this job as cancelled.
-    pub fn cancel(&mut self, _requester: &str) {
-        self.status = JobStatus::Cancelled;
-        self.cancelled_at = Some(Utc::now());
-        self.owner = None;
-        self.updated_at = Utc::now();
-    }
-
-    /// Check if a requester is authorized to cancel this job.
-    ///
-    /// Authorization rules:
-    /// - Admin users (from ROBOFLOW_ADMIN_USERS env var) can cancel any job
-    /// - The submitter of the job can cancel their own jobs
-    /// - The current processing pod can cancel its assigned job
-    pub fn can_cancel(&self, requester: &str, admin_users: &[String]) -> bool {
-        // Admin users can cancel any job
-        if admin_users.contains(&requester.to_string()) {
-            return true;
-        }
-
-        // The submitter can cancel their own jobs
-        if let Some(submitter) = &self.submitted_by
-            && submitter == requester
-        {
-            return true;
-        }
-
-        // The current processing pod can cancel its job
-        if let Some(owner) = &self.owner
-            && owner == requester
-        {
-            return true;
-        }
-
-        false
-    }
-
-    /// Check if this job can be claimed (considering cancelled state).
-    pub fn is_claimable(&self) -> bool {
-        // Cannot claim if previously cancelled
-        if self.cancelled_at.is_some() {
-            return false;
-        }
-        matches!(self.status, JobStatus::Pending | JobStatus::Failed)
-            && self.attempts < self.max_attempts
-    }
-}
-
-/// Job status enum.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum JobStatus {
-    /// Job is pending assignment.
-    Pending,
-
-    /// Job is being processed.
-    Processing,
-
-    /// Job completed successfully.
-    Completed,
-
-    /// Job failed but may be retried.
-    Failed,
-
-    /// Job failed permanently (max attempts exceeded).
-    Dead,
-
-    /// Job was cancelled by user request.
-    Cancelled,
-}
-
-impl JobStatus {
-    /// Check if this status indicates the job is actively being processed.
-    pub fn is_active(&self) -> bool {
-        matches!(self, JobStatus::Processing)
-    }
-
-    /// Check if this status is a terminal state.
-    pub fn is_terminal(&self) -> bool {
-        matches!(
-            self,
-            JobStatus::Completed | JobStatus::Dead | JobStatus::Cancelled
-        )
-    }
-
-    /// Check if this status indicates failure.
-    pub fn is_failed(&self) -> bool {
-        matches!(self, JobStatus::Failed | JobStatus::Dead)
+    /// Compute SHA-256 hash of config content.
+    pub fn compute_hash(content: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(content.as_bytes());
+        format!("{:x}", hasher.finalize())
     }
 }
 
@@ -639,89 +465,6 @@ impl ParquetUploadState {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_job_record_new() {
-        let job = JobRecord::new(
-            "test-id".to_string(),
-            "test-key".to_string(),
-            "test-bucket".to_string(),
-            1024,
-            "output/".to_string(),
-            "config-hash".to_string(),
-        );
-        assert_eq!(job.status, JobStatus::Pending);
-        assert_eq!(job.attempts, 0);
-        assert!(job.owner.is_none());
-    }
-
-    #[test]
-    fn test_job_record_claim() {
-        let mut job = JobRecord::new(
-            "test-id".to_string(),
-            "test-key".to_string(),
-            "test-bucket".to_string(),
-            1024,
-            "output/".to_string(),
-            "config-hash".to_string(),
-        );
-        assert!(job.claim("pod-1".to_string()).is_ok());
-        assert_eq!(job.status, JobStatus::Processing);
-        assert_eq!(job.owner, Some("pod-1".to_string()));
-        assert_eq!(job.attempts, 1);
-    }
-
-    #[test]
-    fn test_job_record_complete() {
-        let mut job = JobRecord::new(
-            "test-id".to_string(),
-            "test-key".to_string(),
-            "test-bucket".to_string(),
-            1024,
-            "output/".to_string(),
-            "config-hash".to_string(),
-        );
-        job.claim("pod-1".to_string()).unwrap();
-        job.complete();
-        assert_eq!(job.status, JobStatus::Completed);
-        assert!(job.owner.is_none());
-    }
-
-    #[test]
-    fn test_job_record_fail() {
-        let mut job = JobRecord::new(
-            "test-id".to_string(),
-            "test-key".to_string(),
-            "test-bucket".to_string(),
-            1024,
-            "output/".to_string(),
-            "config-hash".to_string(),
-        );
-        job.max_attempts = 2;
-        job.claim("pod-1".to_string()).unwrap();
-        job.fail("test error".to_string());
-        assert_eq!(job.status, JobStatus::Failed);
-        assert_eq!(job.error, Some("test error".to_string()));
-
-        // Second failure should mark as dead
-        job.claim("pod-2".to_string()).unwrap();
-        job.fail("test error".to_string());
-        assert_eq!(job.status, JobStatus::Dead);
-    }
-
-    #[test]
-    fn test_job_status() {
-        assert!(JobStatus::Processing.is_active());
-        assert!(!JobStatus::Pending.is_active());
-
-        assert!(JobStatus::Completed.is_terminal());
-        assert!(JobStatus::Dead.is_terminal());
-        assert!(!JobStatus::Pending.is_terminal());
-
-        assert!(JobStatus::Failed.is_failed());
-        assert!(JobStatus::Dead.is_failed());
-        assert!(!JobStatus::Pending.is_failed());
-    }
 
     #[test]
     fn test_lock_record() {

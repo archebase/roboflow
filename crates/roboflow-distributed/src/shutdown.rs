@@ -104,6 +104,11 @@ impl ShutdownHandler {
         self.shutdown_tx.subscribe()
     }
 
+    /// Get a clone of the shutdown sender for creating subscriptions.
+    pub fn sender(&self) -> broadcast::Sender<()> {
+        self.shutdown_tx.clone()
+    }
+
     /// Check if shutdown has been requested.
     pub fn is_requested(&self) -> bool {
         self.shutdown_flag.load(Ordering::SeqCst)

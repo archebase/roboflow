@@ -16,6 +16,7 @@
 //! - `locks`: `/roboflow/v1/locks/{resource}` - Distributed locks
 //! - `state`: `/roboflow/v1/state/{file_hash}` - Checkpoint state
 //! - `heartbeat`: `/roboflow/v1/heartbeat/{pod_id}` - Worker heartbeats
+//! - `configs`: `/roboflow/v1/configs/{config_hash}` - Dataset configurations
 //! - `system`: `/roboflow/v1/system/scanner_lock` - Scanner leadership
 
 use super::config::KEY_PREFIX;
@@ -131,6 +132,21 @@ impl HeartbeatKeys {
     }
 }
 
+/// Config keys.
+pub struct ConfigKeys;
+
+impl ConfigKeys {
+    /// Create a key for a configuration record.
+    pub fn config(config_hash: &str) -> Vec<u8> {
+        KeyBuilder::new().push("configs").push(config_hash).build()
+    }
+
+    /// Create a prefix for scanning all configs.
+    pub fn prefix() -> Vec<u8> {
+        format!("{KEY_PREFIX}configs/").into_bytes()
+    }
+}
+
 /// System keys.
 pub struct SystemKeys;
 
@@ -151,35 +167,35 @@ mod tests {
     #[test]
     fn test_job_key() {
         let key = JobKeys::record("abc123");
-        let key_str = String::from_utf8(key).unwrap();
+        let key_str = String::from_utf8(key).expect("Job keys should be valid UTF-8");
         assert_eq!(key_str, "/roboflow/v1/jobs/abc123");
     }
 
     #[test]
     fn test_lock_key() {
         let key = LockKeys::lock("resource_1");
-        let key_str = String::from_utf8(key).unwrap();
+        let key_str = String::from_utf8(key).expect("Lock keys should be valid UTF-8");
         assert_eq!(key_str, "/roboflow/v1/locks/resource_1");
     }
 
     #[test]
     fn test_state_key() {
         let key = StateKeys::checkpoint("xyz789");
-        let key_str = String::from_utf8(key).unwrap();
+        let key_str = String::from_utf8(key).expect("State keys should be valid UTF-8");
         assert_eq!(key_str, "/roboflow/v1/state/xyz789");
     }
 
     #[test]
     fn test_heartbeat_key() {
         let key = HeartbeatKeys::heartbeat("pod-123");
-        let key_str = String::from_utf8(key).unwrap();
+        let key_str = String::from_utf8(key).expect("Heartbeat keys should be valid UTF-8");
         assert_eq!(key_str, "/roboflow/v1/heartbeat/pod-123");
     }
 
     #[test]
     fn test_scanner_lock_key() {
         let key = SystemKeys::scanner_lock();
-        let key_str = String::from_utf8(key).unwrap();
+        let key_str = String::from_utf8(key).expect("System keys should be valid UTF-8");
         assert_eq!(key_str, "/roboflow/v1/system/scanner_lock");
     }
 }

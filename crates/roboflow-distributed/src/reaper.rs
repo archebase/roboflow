@@ -2,23 +2,23 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Zombie reaper for reclaiming jobs from dead workers.
+//! Zombie reaper for reclaiming work units from dead workers.
 //!
 //! The zombie reaper periodically scans for:
 //! - Stale heartbeats (workers that haven't sent a heartbeat recently)
-//! - Orphaned jobs (jobs in Processing state owned by stale workers)
+//! - Orphaned work units (work units in Processing state owned by stale workers)
 //!
-//! When orphaned jobs are found, they are reclaimed by:
-//! - Verifying the job is still in Processing state
+//! When orphaned work units are found, they are reclaimed by:
+//! - Verifying the work unit is still in Processing state
 //! - Verifying the owner's heartbeat is stale
-//! - Setting the job back to Pending status with no owner
-//! - Preserving the checkpoint for resume capability
+//! - Setting the work unit back to Failed status with no owner
+//!   (Failed status allows retry via the controller's pending queue)
 //!
 //! ## Design
 //!
 //! The reaper runs on ALL workers (no leader election) to maximize
 //! fault tolerance. Multiple workers may attempt to reclaim the same
-//! job, but TiKV's optimistic concurrency ensures only one succeeds.
+//! work unit, but TiKV's optimistic concurrency ensures only one succeeds.
 //!
 //! To prevent thundering herd, the reaper limits reclamations per
 //! iteration and adds random jitter to the sleep interval.
@@ -27,12 +27,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use super::tikv::{
-    TikvError,
-    client::TikvClient,
-    key::{HeartbeatKeys, JobKeys},
-    schema::{HeartbeatRecord, JobRecord, JobStatus},
-};
+use super::batch::{WorkUnit, WorkUnitKeys, WorkUnitStatus};
+use super::tikv::{TikvError, client::TikvClient, key::HeartbeatKeys, schema::HeartbeatRecord};
 use tokio::sync::broadcast;
 use tokio::time::sleep;
 
@@ -54,11 +50,11 @@ pub struct ReaperConfig {
     /// Threshold for considering a heartbeat stale.
     pub stale_threshold: Duration,
 
-    /// Maximum jobs to reclaim per iteration.
+    /// Maximum work units to reclaim per iteration.
     pub max_reclaims_per_iteration: usize,
 
-    /// Maximum heartbeats to scan per iteration.
-    pub max_heartbeat_scan: u32,
+    /// Maximum work units to scan per iteration.
+    pub max_work_unit_scan: u32,
 }
 
 impl Default for ReaperConfig {
@@ -67,7 +63,7 @@ impl Default for ReaperConfig {
             interval: Duration::from_secs(DEFAULT_REAPER_INTERVAL_SECS),
             stale_threshold: Duration::from_secs(DEFAULT_STALE_THRESHOLD_SECS as u64),
             max_reclaims_per_iteration: DEFAULT_MAX_RECLAIMS_PER_ITERATION,
-            max_heartbeat_scan: 1000,
+            max_work_unit_scan: 1000,
         }
     }
 }
@@ -96,9 +92,9 @@ impl ReaperConfig {
         self
     }
 
-    /// Set the maximum heartbeat scan limit.
-    pub fn with_max_heartbeat_scan(mut self, max: u32) -> Self {
-        self.max_heartbeat_scan = max;
+    /// Set the maximum work unit scan limit.
+    pub fn with_max_work_unit_scan(mut self, max: u32) -> Self {
+        self.max_work_unit_scan = max;
         self
     }
 }
@@ -106,8 +102,8 @@ impl ReaperConfig {
 /// Zombie reaper metrics.
 #[derive(Debug, Default)]
 pub struct ReaperMetrics {
-    /// Total jobs reclaimed.
-    pub jobs_reclaimed: AtomicU64,
+    /// Total work units reclaimed.
+    pub work_units_reclaimed: AtomicU64,
 
     /// Total stale workers found.
     pub stale_workers_found: AtomicU64,
@@ -121,8 +117,8 @@ pub struct ReaperMetrics {
     /// Total reclaim failures.
     pub reclaim_failures: AtomicU64,
 
-    /// Jobs skipped (already claimed by another reaper).
-    pub jobs_skipped: AtomicU64,
+    /// Work units skipped (already claimed by another reaper).
+    pub work_units_skipped: AtomicU64,
 }
 
 impl ReaperMetrics {
@@ -131,9 +127,9 @@ impl ReaperMetrics {
         Self::default()
     }
 
-    /// Increment jobs reclaimed counter.
-    pub fn inc_jobs_reclaimed(&self) {
-        self.jobs_reclaimed.fetch_add(1, Ordering::Relaxed);
+    /// Increment work units reclaimed counter.
+    pub fn inc_work_units_reclaimed(&self) {
+        self.work_units_reclaimed.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Increment stale workers found counter.
@@ -156,20 +152,20 @@ impl ReaperMetrics {
         self.reclaim_failures.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Increment jobs skipped.
-    pub fn inc_jobs_skipped(&self) {
-        self.jobs_skipped.fetch_add(1, Ordering::Relaxed);
+    /// Increment work units skipped.
+    pub fn inc_work_units_skipped(&self) {
+        self.work_units_skipped.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Get all current metric values.
     pub fn snapshot(&self) -> ReaperMetricsSnapshot {
         ReaperMetricsSnapshot {
-            jobs_reclaimed: self.jobs_reclaimed.load(Ordering::Relaxed),
+            work_units_reclaimed: self.work_units_reclaimed.load(Ordering::Relaxed),
             stale_workers_found: self.stale_workers_found.load(Ordering::Relaxed),
             iterations_total: self.iterations_total.load(Ordering::Relaxed),
             reclaim_attempts: self.reclaim_attempts.load(Ordering::Relaxed),
             reclaim_failures: self.reclaim_failures.load(Ordering::Relaxed),
-            jobs_skipped: self.jobs_skipped.load(Ordering::Relaxed),
+            work_units_skipped: self.work_units_skipped.load(Ordering::Relaxed),
         }
     }
 }
@@ -177,8 +173,8 @@ impl ReaperMetrics {
 /// Snapshot of reaper metrics.
 #[derive(Debug, Clone)]
 pub struct ReaperMetricsSnapshot {
-    /// Total jobs reclaimed.
-    pub jobs_reclaimed: u64,
+    /// Total work units reclaimed.
+    pub work_units_reclaimed: u64,
 
     /// Total stale workers found.
     pub stale_workers_found: u64,
@@ -192,33 +188,33 @@ pub struct ReaperMetricsSnapshot {
     /// Total reclaim failures.
     pub reclaim_failures: u64,
 
-    /// Jobs skipped (already claimed by another reaper).
-    pub jobs_skipped: u64,
+    /// Work units skipped (already claimed by another reaper).
+    pub work_units_skipped: u64,
 }
 
-/// Result of a job reclamation attempt.
+/// Result of a work unit reclamation attempt.
 #[derive(Debug, Clone)]
 pub enum ReclaimResult {
-    /// Job was successfully reclaimed.
+    /// Work unit was successfully reclaimed.
     Reclaimed,
 
-    /// Job was not stale (skip).
+    /// Work unit was not stale (skip).
     NotStale,
 
-    /// Job was not in Processing state (skip).
+    /// Work unit was not in Processing state (skip).
     NotProcessing,
 
-    /// Job reclaim failed (will retry).
+    /// Work unit reclaim failed (will retry).
     Failed,
 
-    /// Job was already reclaimed by another worker.
+    /// Work unit was already reclaimed by another worker.
     Skipped,
 }
 
-/// Zombie reaper for reclaiming jobs from dead workers.
+/// Zombie reaper for reclaiming work units from dead workers.
 ///
 /// The reaper periodically scans for stale heartbeats and reclaims
-/// orphaned jobs. It runs on all workers (no leader election) for
+/// orphaned work units. It runs on all workers (no leader election) for
 /// fault tolerance.
 pub struct ZombieReaper {
     /// TiKV client for operations.
@@ -268,7 +264,7 @@ impl ZombieReaper {
         let prefix = HeartbeatKeys::prefix();
         let results = self
             .tikv
-            .scan(prefix, self.config.max_heartbeat_scan)
+            .scan(prefix, 1000) // Fixed scan limit for heartbeats
             .await?;
 
         let stale_threshold = self.config.stale_threshold.as_secs() as i64;
@@ -295,91 +291,157 @@ impl ZombieReaper {
         Ok(stale_pods)
     }
 
-    /// Find orphaned jobs (jobs in Processing state owned by stale workers).
+    /// Find orphaned work units (work units in Processing state owned by stale workers).
     ///
-    /// Returns job records that can be reclaimed.
-    pub async fn find_orphaned_jobs(&self) -> Result<Vec<JobRecord>, TikvError> {
+    /// Returns work unit IDs and their batch IDs that can be reclaimed.
+    pub async fn find_orphaned_work_units(
+        &self,
+    ) -> Result<Vec<(String, String, String)>, TikvError> {
         let stale_workers = self.find_stale_workers().await?;
 
         if stale_workers.is_empty() {
-            tracing::debug!("No stale workers found, no orphaned jobs to reclaim");
+            tracing::debug!("No stale workers found, no orphaned work units to reclaim");
             return Ok(Vec::new());
         }
 
-        // Scan for jobs in Processing state
-        let job_prefix = JobKeys::prefix();
+        // Scan for work units in Processing state
+        let work_unit_prefix = WorkUnitKeys::prefix();
         let results = self
             .tikv
-            .scan(job_prefix, self.config.max_heartbeat_scan)
+            .scan(work_unit_prefix, self.config.max_work_unit_scan)
             .await?;
 
-        let mut orphaned_jobs = Vec::new();
+        let mut orphaned_units = Vec::new();
 
         for (_key, value) in results {
-            if let Ok(job) = bincode::deserialize::<JobRecord>(&value) {
-                // Check if job is in Processing state and owned by a stale worker
-                if job.status == JobStatus::Processing
-                    && let Some(owner) = &job.owner
+            if let Ok(unit) = bincode::deserialize::<WorkUnit>(&value) {
+                // Check if work unit is in Processing state and owned by a stale worker
+                if unit.status == WorkUnitStatus::Processing
+                    && let Some(ref owner) = unit.owner
                     && stale_workers.contains(owner)
                 {
                     tracing::debug!(
-                        job_id = %job.id,
+                        unit_id = %unit.id,
+                        batch_id = %unit.batch_id,
                         owner = %owner,
-                        "Found orphaned job"
+                        "Found orphaned work unit"
                     );
-                    orphaned_jobs.push(job);
+                    orphaned_units.push((unit.id.clone(), unit.batch_id.clone(), owner.clone()));
                 }
             }
         }
 
-        tracing::debug!(orphaned_count = orphaned_jobs.len(), "Found orphaned jobs");
+        tracing::debug!(
+            orphaned_count = orphaned_units.len(),
+            "Found orphaned work units"
+        );
 
-        Ok(orphaned_jobs)
+        Ok(orphaned_units)
     }
 
-    /// Reclaim a single job.
+    /// Reclaim a single work unit.
     ///
     /// This uses a transaction to:
-    /// 1. Read the job (verify still Processing)
+    /// 1. Read the work unit (verify still Processing)
     /// 2. Read the owner's heartbeat (verify stale)
-    /// 3. Update job to Pending with no owner
+    /// 3. Update work unit to Failed with no owner (allows retry)
     ///
     /// Returns the reclamation result.
-    pub async fn reclaim_job(&self, job_id: &str) -> Result<ReclaimResult, TikvError> {
+    pub async fn reclaim_work_unit(
+        &self,
+        batch_id: &str,
+        unit_id: &str,
+        owner: &str,
+    ) -> Result<ReclaimResult, TikvError> {
         self.metrics.inc_reclaim_attempts();
 
         let stale_threshold = self.config.stale_threshold.as_secs() as i64;
 
-        match self.tikv.reclaim_job(job_id, stale_threshold).await {
-            Ok(true) => {
-                self.metrics.inc_jobs_reclaimed();
+        // Verify the owner's heartbeat is still stale
+        let heartbeat_key = HeartbeatKeys::heartbeat(owner);
+        match self.tikv.get(heartbeat_key).await? {
+            Some(data) => {
+                if let Ok(record) = bincode::deserialize::<HeartbeatRecord>(&data)
+                    && !record.is_stale(stale_threshold)
+                {
+                    // Owner came back, skip reclamation
+                    self.metrics.inc_work_units_skipped();
+                    tracing::debug!(
+                        unit_id = %unit_id,
+                        owner = %owner,
+                        "Work unit owner heartbeat recovered, skipping reclamation"
+                    );
+                    return Ok(ReclaimResult::NotStale);
+                }
+            }
+            None => {
+                // Heartbeat not found - treat as stale
+            }
+        }
+
+        // Use transactional_claim pattern similar to controller
+        let work_unit_key = WorkUnitKeys::unit(batch_id, unit_id);
+        let owner_id = owner.to_string();
+        let owner_id_for_closure = owner_id.clone();
+        let unit_id_clone = unit_id.to_string();
+        let batch_id_clone = batch_id.to_string();
+
+        let result = self
+            .tikv
+            .transactional_claim(
+                work_unit_key.clone(),
+                vec![], // No pending key to delete
+                &owner_id,
+                move |data: &[u8]| -> Result<
+                    Option<Vec<u8>>,
+                    Box<dyn std::error::Error + Send + Sync>,
+                > {
+                    let mut unit: WorkUnit = bincode::deserialize(data)
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+                    // Verify still in Processing state
+                    if unit.status != WorkUnitStatus::Processing {
+                        return Ok(None);
+                    }
+
+                    // Verify still owned by the same worker
+                    if unit.owner.as_deref() != Some(&owner_id_for_closure) {
+                        return Ok(None);
+                    }
+
+                    // Mark as Failed (which allows retry)
+                    unit.fail("Worker died during processing".to_string());
+
+                    // Reserialize with updated state
+                    let new_data = bincode::serialize(&unit)
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+                    Ok(Some(new_data))
+                },
+            )
+            .await;
+
+        match result {
+            Ok(Some(_)) => {
+                self.metrics.inc_work_units_reclaimed();
                 tracing::info!(
-                    job_id = %job_id,
-                    "Job reclaimed successfully"
+                    unit_id = %unit_id_clone,
+                    batch_id = %batch_id_clone,
+                    "Work unit reclaimed successfully"
                 );
                 Ok(ReclaimResult::Reclaimed)
             }
-            Ok(false) => {
-                // Job wasn't reclaimed (not stale, not processing, or no owner)
-                // This could also mean another reaper got there first
-                self.metrics.inc_jobs_skipped();
-                Ok(ReclaimResult::Skipped)
-            }
-            Err(e) if e.is_write_conflict() || e.is_retryable() => {
-                // Another reaper got there first
-                self.metrics.inc_jobs_skipped();
-                tracing::debug!(
-                    job_id = %job_id,
-                    "Job reclaim failed due to conflict (likely claimed by another reaper)"
-                );
+            Ok(None) => {
+                // Transaction failed verification
+                self.metrics.inc_work_units_skipped();
                 Ok(ReclaimResult::Skipped)
             }
             Err(e) => {
                 self.metrics.inc_reclaim_failures();
                 tracing::error!(
-                    job_id = %job_id,
+                    unit_id = %unit_id,
                     error = %e,
-                    "Job reclaim failed"
+                    "Work unit reclaim failed"
                 );
                 Ok(ReclaimResult::Failed)
             }
@@ -388,22 +450,22 @@ impl ZombieReaper {
 
     /// Run a single reaper iteration.
     ///
-    /// Finds orphaned jobs and attempts to reclaim them up to
+    /// Finds orphaned work units and attempts to reclaim them up to
     /// the max_reclaims_per_iteration limit.
     pub async fn run_iteration(&self) -> Result<usize, TikvError> {
         self.metrics.inc_iterations();
 
-        let orphaned_jobs = self.find_orphaned_jobs().await?;
+        let orphaned_units = self.find_orphaned_work_units().await?;
 
-        if orphaned_jobs.is_empty() {
+        if orphaned_units.is_empty() {
             return Ok(0);
         }
 
         let mut reclaimed_count = 0;
         let max_reclaims = self.config.max_reclaims_per_iteration;
 
-        for job in orphaned_jobs.iter().take(max_reclaims) {
-            match self.reclaim_job(&job.id).await? {
+        for (unit_id, batch_id, owner) in orphaned_units.iter().take(max_reclaims) {
+            match self.reclaim_work_unit(batch_id, unit_id, owner).await? {
                 ReclaimResult::Reclaimed => {
                     reclaimed_count += 1;
                 }
@@ -411,17 +473,18 @@ impl ZombieReaper {
                     // Skip these
                 }
                 ReclaimResult::Failed => {
-                    // Log but continue with other jobs
+                    // Log but continue with other work units
                     tracing::warn!(
-                        job_id = %job.id,
-                        "Failed to reclaim job, will retry in next iteration"
+                        unit_id = %unit_id,
+                        batch_id = %batch_id,
+                        "Failed to reclaim work unit, will retry in next iteration"
                     );
                 }
                 ReclaimResult::Skipped => {
                     // Already claimed by another worker
                     tracing::debug!(
-                        job_id = %job.id,
-                        "Job already reclaimed by another worker"
+                        unit_id = %unit_id,
+                        "Work unit already reclaimed by another worker"
                     );
                 }
             }
@@ -430,7 +493,7 @@ impl ZombieReaper {
         if reclaimed_count > 0 {
             tracing::info!(
                 reclaimed = reclaimed_count,
-                total_orphaned = orphaned_jobs.len(),
+                total_orphaned = orphaned_units.len(),
                 "Reaper iteration completed"
             );
         }
@@ -457,7 +520,10 @@ impl ZombieReaper {
             match self.run_iteration().await {
                 Ok(reclaimed) => {
                     if reclaimed > 0 {
-                        tracing::info!(reclaimed = reclaimed, "Jobs reclaimed in this iteration");
+                        tracing::info!(
+                            reclaimed = reclaimed,
+                            "Work units reclaimed in this iteration"
+                        );
                     }
                 }
                 Err(e) => {
@@ -522,23 +588,25 @@ mod tests {
         let config = ReaperConfig::new()
             .with_interval(Duration::from_secs(120))
             .with_stale_threshold(Duration::from_secs(600))
-            .with_max_reclaims(20);
+            .with_max_reclaims(20)
+            .with_max_work_unit_scan(500);
 
         assert_eq!(config.interval.as_secs(), 120);
         assert_eq!(config.stale_threshold.as_secs(), 600);
         assert_eq!(config.max_reclaims_per_iteration, 20);
+        assert_eq!(config.max_work_unit_scan, 500);
     }
 
     #[test]
     fn test_reaper_metrics() {
         let metrics = ReaperMetrics::new();
 
-        metrics.inc_jobs_reclaimed();
+        metrics.inc_work_units_reclaimed();
         metrics.inc_stale_workers_found(5);
         metrics.inc_iterations();
 
         let snapshot = metrics.snapshot();
-        assert_eq!(snapshot.jobs_reclaimed, 1);
+        assert_eq!(snapshot.work_units_reclaimed, 1);
         assert_eq!(snapshot.stale_workers_found, 5);
         assert_eq!(snapshot.iterations_total, 1);
     }

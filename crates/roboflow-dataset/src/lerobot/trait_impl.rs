@@ -42,10 +42,14 @@ use roboflow_core::Result;
 pub trait LerobotWriterTrait: DatasetWriter {
     /// Initialize the writer with LeRobot configuration.
     ///
-    /// This is a convenience method that calls [`DatasetWriter::initialize`]
-    /// with the proper type casting.
-    fn initialize_with_config(&mut self, config: &LerobotConfig) -> Result<()> {
-        self.initialize(config)
+    /// This is a no-op in the new API since configuration is provided
+    /// via the builder. Kept for backward compatibility.
+    #[deprecated(
+        since = "0.3.0",
+        note = "Configuration is now provided via the builder pattern. Use LerobotWriter::builder().config(cfg).build() instead."
+    )]
+    fn initialize_with_config(&mut self, _config: &LerobotConfig) -> Result<()> {
+        Ok(())
     }
 
     /// Start a new episode.
@@ -94,18 +98,13 @@ pub trait LerobotWriterTrait: DatasetWriter {
 
     /// Finalize the dataset and write metadata files.
     ///
-    /// This is a convenience method that calls [`DatasetWriter::finalize`]
-    /// with the proper type casting.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - LeRobot configuration
+    /// This is a convenience method that calls [`DatasetWriter::finalize`].
     ///
     /// # Returns
     ///
     /// Statistics about the write operation
-    fn finalize_with_config(&mut self, config: &LerobotConfig) -> Result<WriterStats> {
-        self.finalize(config)
+    fn finalize_with_config(&mut self) -> Result<WriterStats> {
+        self.finalize()
     }
 
     /// Get reference to metadata collector.

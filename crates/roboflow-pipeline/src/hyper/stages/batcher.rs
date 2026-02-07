@@ -42,8 +42,7 @@ impl Default for BatcherStageConfig {
 ///
 /// Pass-through batcher that can optionally merge small chunks.
 pub struct BatcherStage {
-    #[allow(dead_code)]
-    config: BatcherStageConfig,
+    _config: BatcherStageConfig,
     receiver: Receiver<MessageChunk<'static>>,
     sender: Sender<MessageChunk<'static>>,
     stats: Arc<BatcherStageStats>,
@@ -63,7 +62,7 @@ impl BatcherStage {
         sender: Sender<MessageChunk<'static>>,
     ) -> Self {
         Self {
-            config,
+            _config: config,
             receiver,
             sender,
             stats: Arc::new(BatcherStageStats::default()),

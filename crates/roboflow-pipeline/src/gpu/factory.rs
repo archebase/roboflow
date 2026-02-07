@@ -211,7 +211,6 @@ pub struct GpuDeviceInfo {
 
 /// Compression statistics for monitoring.
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
 pub struct CompressionStats {
     /// Number of chunks compressed
     pub chunks_compressed: u64,
@@ -229,7 +228,6 @@ pub struct CompressionStats {
 
 impl CompressionStats {
     /// Calculate compression ratio from input/output bytes.
-    #[allow(dead_code)]
     pub fn calculate_ratio(input: u64, output: u64) -> f64 {
         if input == 0 {
             1.0

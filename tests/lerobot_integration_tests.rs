@@ -57,9 +57,6 @@ fn test_lerobot_end_to_end_conversion() {
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
-    // Initialize the writer
-    writer.initialize_with_config(&config).unwrap();
-
     // Write a simple episode
     writer.start_episode(Some(0));
 
@@ -72,7 +69,7 @@ fn test_lerobot_end_to_end_conversion() {
     writer.finish_episode(Some(0)).unwrap();
 
     // Finalize and get stats
-    let stats = writer.finalize_with_config(&config).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
 
     // Verify directory structure
     assert!(output_dir.path().join("data/chunk-000").exists());
@@ -99,7 +96,6 @@ fn test_lerobot_episode_segmentation() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     // First episode with task_index = 0
     writer.start_episode(Some(0));
@@ -109,7 +105,7 @@ fn test_lerobot_episode_segmentation() {
     writer.start_episode(Some(1));
     writer.finish_episode(Some(1)).unwrap();
 
-    let stats = writer.finalize_with_config(&config).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
 
     // Should complete successfully even with empty episodes
     assert!(stats.duration_sec >= 0.0);
@@ -125,7 +121,6 @@ fn test_lerobot_multi_camera() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     writer.start_episode(Some(0));
 
@@ -144,7 +139,7 @@ fn test_lerobot_multi_camera() {
     );
 
     writer.finish_episode(Some(0)).unwrap();
-    let stats = writer.finalize_with_config(&config).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
 
     // Verify directories were created
     assert!(output_dir.path().join("videos/chunk-000").exists());
@@ -161,13 +156,12 @@ fn test_lerobot_empty_dataset() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     // Start and finish episode without any frames
     writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
 
-    let stats = writer.finalize_with_config(&config).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
 
     // Should complete successfully with zero frames
     assert_eq!(stats.frames_written, 0);
@@ -184,9 +178,9 @@ fn test_lerobot_frame_count() {
 
     let writer = LerobotWriter::new_local(output_dir.path(), config).unwrap();
 
-    // Before initialization, frame count should be 0
+    // new_local creates an initialized writer
     assert_eq!(writer.frame_count(), 0);
-    assert!(!writer.is_initialized());
+    assert!(writer.is_initialized());
 }
 
 // =============================================================================
@@ -198,22 +192,18 @@ fn test_lerobot_writer_state() {
     let output_dir = test_output_dir("test_lerobot_state");
     let config = test_config();
 
-    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config).unwrap();
 
-    // Check initial state
-    assert!(!writer.is_initialized());
-    assert_eq!(writer.frame_count(), 0);
-
-    // Initialize
-    writer.initialize_with_config(&config).unwrap();
+    // new_local creates an initialized writer
     assert!(writer.is_initialized());
+    assert_eq!(writer.frame_count(), 0);
 
     // Start and finish an episode
     writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
 
     // Finalize
-    let stats = writer.finalize_with_config(&config).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
     assert_eq!(stats.frames_written, 0);
 }
 
@@ -227,7 +217,6 @@ fn test_lerobot_image_buffer() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     writer.start_episode(Some(0));
 
@@ -242,7 +231,7 @@ fn test_lerobot_image_buffer() {
     );
 
     writer.finish_episode(Some(0)).unwrap();
-    let stats = writer.finalize_with_config(&config).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
 
     // Should handle both images
     assert!(stats.duration_sec >= 0.0);
@@ -260,7 +249,6 @@ fn test_lerobot_metadata() {
     config.dataset.robot_type = Some("test_bot".to_string());
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     writer.start_episode(Some(0));
 
@@ -271,7 +259,7 @@ fn test_lerobot_metadata() {
     );
 
     writer.finish_episode(Some(0)).unwrap();
-    let _stats = writer.finalize_with_config(&config).unwrap();
+    let _stats = writer.finalize_with_config().unwrap();
 
     // Check that info.json was created
     let info_path = output_dir.path().join("meta/info.json");
@@ -292,7 +280,6 @@ fn test_lerobot_video_codec_config() {
     config.video.codec = "libx264".to_string();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     writer.start_episode(Some(0));
 
@@ -302,7 +289,7 @@ fn test_lerobot_video_codec_config() {
     );
 
     writer.finish_episode(Some(0)).unwrap();
-    let _stats = writer.finalize_with_config(&config).unwrap();
+    let _stats = writer.finalize_with_config().unwrap();
 
     // Test passes if no panic occurs
 }
@@ -317,7 +304,6 @@ fn test_lerobot_ffmpeg_missing_graceful() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     writer.start_episode(Some(0));
 
@@ -335,7 +321,7 @@ fn test_lerobot_ffmpeg_missing_graceful() {
     // Either succeeds or fails gracefully
     match result {
         Ok(_) => {
-            let _stats = writer.finalize_with_config(&config).unwrap();
+            let _stats = writer.finalize_with_config().unwrap();
             // Success - ffmpeg was available
         }
         Err(_e) => {
@@ -355,7 +341,6 @@ fn test_lerobot_timestamps() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.initialize_with_config(&config).unwrap();
 
     writer.start_episode(Some(0));
 
@@ -370,7 +355,7 @@ fn test_lerobot_timestamps() {
     );
 
     writer.finish_episode(Some(0)).unwrap();
-    let stats = writer.finalize_with_config(&config).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
 
     assert!(stats.duration_sec >= 0.0);
 }

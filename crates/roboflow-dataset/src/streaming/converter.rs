@@ -18,8 +18,7 @@ use crate::streaming::{
 };
 use robocodec::RoboReader;
 use roboflow_core::Result;
-use roboflow_storage::LocalStorage;
-use roboflow_storage::Storage;
+use roboflow_storage::{LocalStorage, Storage};
 
 /// Progress callback for checkpoint saving during conversion.
 ///
@@ -68,7 +67,7 @@ impl ProgressCallback for NoOpCallback {
 /// - **Input storage**: Downloads cloud files to temp directory before processing
 /// - **Output storage**: Writes output files directly to the configured backend
 pub struct StreamingDatasetConverter {
-    /// Output directory
+    /// Output directory (local buffer for temporary files)
     output_dir: PathBuf,
 
     /// Dataset format
@@ -87,10 +86,10 @@ pub struct StreamingDatasetConverter {
     input_storage: Option<Arc<dyn Storage>>,
 
     /// Output storage backend for writing output files
-    ///
-    /// NOTE: Currently unused - reserved for future cloud output support.
-    /// Writing to cloud storage requires changes to DatasetWriter trait.
     output_storage: Option<Arc<dyn Storage>>,
+
+    /// Output prefix within storage (e.g., "datasets/my_dataset")
+    output_prefix: Option<String>,
 
     /// Optional progress callback for checkpointing
     progress_callback: Option<Arc<dyn ProgressCallback>>,
@@ -111,6 +110,7 @@ impl StreamingDatasetConverter {
             config,
             input_storage: None,
             output_storage: None,
+            output_prefix: None,
             progress_callback: None,
         })
     }
@@ -131,6 +131,7 @@ impl StreamingDatasetConverter {
             config,
             input_storage,
             output_storage,
+            output_prefix: None,
             progress_callback: None,
         })
     }
@@ -141,14 +142,17 @@ impl StreamingDatasetConverter {
         lerobot_config: crate::lerobot::config::LerobotConfig,
     ) -> Result<Self> {
         let fps = lerobot_config.dataset.fps;
+        // Require observation.state for LeRobot datasets
+        let config = StreamingConfig::with_fps(fps).require_feature("observation.state");
         Ok(Self {
             output_dir: output_dir.as_ref().to_path_buf(),
             format: DatasetFormat::Lerobot,
             kps_config: None,
             lerobot_config: Some(lerobot_config),
-            config: StreamingConfig::with_fps(fps),
+            config,
             input_storage: None,
             output_storage: None,
+            output_prefix: None,
             progress_callback: None,
         })
     }
@@ -161,14 +165,17 @@ impl StreamingDatasetConverter {
         output_storage: Option<Arc<dyn Storage>>,
     ) -> Result<Self> {
         let fps = lerobot_config.dataset.fps;
+        // Require observation.state for LeRobot datasets
+        let config = StreamingConfig::with_fps(fps).require_feature("observation.state");
         Ok(Self {
             output_dir: output_dir.as_ref().to_path_buf(),
             format: DatasetFormat::Lerobot,
             kps_config: None,
             lerobot_config: Some(lerobot_config),
-            config: StreamingConfig::with_fps(fps),
+            config,
             input_storage,
             output_storage,
+            output_prefix: None,
             progress_callback: None,
         })
     }
@@ -182,6 +189,17 @@ impl StreamingDatasetConverter {
     /// Set the output storage backend.
     pub fn with_output_storage(mut self, storage: Arc<dyn Storage>) -> Self {
         self.output_storage = Some(storage);
+        self
+    }
+
+    /// Set the output prefix within storage.
+    ///
+    /// This is the path prefix within the storage backend where output files will be written.
+    /// For example, with prefix "datasets/my_dataset", files will be written to:
+    /// - "datasets/my_dataset/data/chunk-000/episode_000000.parquet"
+    /// - "datasets/my_dataset/videos/chunk-000/..."
+    pub fn with_output_prefix(mut self, prefix: String) -> Self {
+        self.output_prefix = Some(prefix);
         self
     }
 
@@ -209,6 +227,102 @@ impl StreamingDatasetConverter {
         self
     }
 
+    /// Extract the object key from a cloud storage URL.
+    ///
+    /// For example:
+    /// - `s3://my-bucket/path/to/file.bag` → `path/to/file.bag`
+    /// - `oss://my-bucket/file.bag` → `file.bag`
+    ///
+    /// Returns `None` if the URL is not a valid S3/OSS URL.
+    fn extract_cloud_key(url: &str) -> Option<&str> {
+        let rest = if let Some(r) = url.strip_prefix("s3://") {
+            r
+        } else if let Some(r) = url.strip_prefix("oss://") {
+            r
+        } else {
+            return None;
+        };
+
+        // Find the first '/' to split bucket/key
+        rest.find('/').map(|idx| &rest[idx + 1..])
+    }
+
+    /// Create cloud storage backend from URL for S3/OSS inputs.
+    ///
+    /// This is used when the converter receives an S3 or OSS URL directly
+    /// (without input_storage being set by the worker).
+    fn create_cloud_storage(&self, url: &str) -> Result<Arc<dyn Storage>> {
+        use roboflow_storage::{OssConfig, OssStorage};
+        use std::env;
+
+        // Parse URL to get bucket from the URL
+        let rest = if let Some(r) = url.strip_prefix("s3://") {
+            r
+        } else if let Some(r) = url.strip_prefix("oss://") {
+            r
+        } else {
+            return Err(roboflow_core::RoboflowError::other(format!(
+                "Unsupported cloud storage URL: {}",
+                url
+            )));
+        };
+
+        // Split bucket/key - we only need the bucket for storage creation
+        let (bucket, _key) = rest.split_once('/').ok_or_else(|| {
+            roboflow_core::RoboflowError::other(format!("Invalid cloud URL: {}", url))
+        })?;
+
+        // Get credentials from environment
+        let access_key_id = env::var("AWS_ACCESS_KEY_ID")
+            .or_else(|_| env::var("OSS_ACCESS_KEY_ID"))
+            .map_err(|_| roboflow_core::RoboflowError::other(
+                "Cloud storage credentials not found. Set AWS_ACCESS_KEY_ID or OSS_ACCESS_KEY_ID".to_string(),
+            ))?;
+
+        let access_key_secret = env::var("AWS_SECRET_ACCESS_KEY")
+            .or_else(|_| env::var("OSS_ACCESS_KEY_SECRET"))
+            .map_err(|_| roboflow_core::RoboflowError::other(
+                "Cloud storage credentials not found. Set AWS_SECRET_ACCESS_KEY or OSS_ACCESS_KEY_SECRET".to_string(),
+            ))?;
+
+        // Get endpoint from environment or construct from URL
+        let endpoint = env::var("AWS_ENDPOINT_URL")
+            .or_else(|_| env::var("OSS_ENDPOINT"))
+            .unwrap_or_else(|_| {
+                // For MinIO or local testing, default to localhost
+                if url.contains("127.0.0.1") || url.contains("localhost") {
+                    "http://127.0.0.1:9000".to_string()
+                } else {
+                    "https://s3.amazonaws.com".to_string()
+                }
+            });
+
+        let region = env::var("AWS_REGION").ok();
+
+        // Create OSS config
+        let mut oss_config =
+            OssConfig::new(bucket, endpoint.clone(), access_key_id, access_key_secret);
+        if let Some(reg) = region {
+            oss_config = oss_config.with_region(reg);
+        }
+        // Enable HTTP if endpoint uses http://
+        if endpoint.starts_with("http://") {
+            oss_config = oss_config.with_allow_http(true);
+        }
+
+        // Create OssStorage
+        let storage = OssStorage::with_config(oss_config.clone()).map_err(|e| {
+            roboflow_core::RoboflowError::other(format!(
+                "Failed to create cloud storage for bucket '{}' with endpoint '{}': {}",
+                bucket,
+                oss_config.endpoint_url(),
+                e
+            ))
+        })?;
+
+        Ok(Arc::new(storage) as Arc<dyn Storage>)
+    }
+
     /// Convert input file to dataset format.
     #[instrument(skip_all, fields(
         input = %input_path.as_ref().display(),
@@ -227,12 +341,23 @@ impl StreamingDatasetConverter {
 
         let start_time = Instant::now();
 
+        // Detect if input_path is a cloud storage URL (s3:// or oss://)
+        let input_path_str = input_path.to_string_lossy();
+        let is_cloud_url =
+            input_path_str.starts_with("s3://") || input_path_str.starts_with("oss://");
+
         // Handle cloud input: download to temp file if needed
-        let input_storage = self.input_storage.clone().unwrap_or_else(|| {
+        let input_storage = if let Some(storage) = &self.input_storage {
+            storage.clone()
+        } else if is_cloud_url {
+            // Create cloud storage for S3/OSS URLs
+            self.create_cloud_storage(&input_path_str)?
+        } else {
+            // Default to LocalStorage for local files
             Arc::new(LocalStorage::new(
                 input_path.parent().unwrap_or(Path::new(".")),
             )) as Arc<dyn Storage>
-        });
+        };
 
         let temp_dir = self
             .config
@@ -240,7 +365,22 @@ impl StreamingDatasetConverter {
             .clone()
             .unwrap_or_else(std::env::temp_dir);
 
-        let _temp_manager = match TempFileManager::new(input_storage, input_path, &temp_dir) {
+        // For local storage, pass just the filename (not full path)
+        // to avoid duplication when joining with the storage root
+        // For cloud storage (S3/OSS), extract just the object key from the URL
+        let storage_path = if input_storage.as_any().is::<LocalStorage>() {
+            input_path.file_name().unwrap_or(input_path.as_os_str())
+        } else if is_cloud_url {
+            // Extract just the key from s3://bucket/key or oss://bucket/key
+            Self::extract_cloud_key(&input_path_str)
+                .map(std::ffi::OsStr::new)
+                .unwrap_or(input_path.as_os_str())
+        } else {
+            input_path.as_os_str()
+        };
+        let storage_path = Path::new(storage_path);
+
+        let _temp_manager = match TempFileManager::new(input_storage, storage_path, &temp_dir) {
             Ok(manager) => manager,
             Err(e) => {
                 return Err(roboflow_core::RoboflowError::other(format!(
@@ -259,9 +399,8 @@ impl StreamingDatasetConverter {
             "Processing input file"
         );
 
-        // Create the dataset writer
+        // Create the dataset writer (already initialized via builder)
         let mut writer = self.create_writer()?;
-        writer.initialize(self.get_config_any()?)?;
 
         // Create alignment buffer
         let mut aligner = FrameAlignmentBuffer::new(self.config.clone());
@@ -276,7 +415,10 @@ impl StreamingDatasetConverter {
         // NOTE: RoboReader decodes BAG/MCAP files directly to TimestampedDecodedMessage.
         // There is NO intermediate MCAP conversion - neither in memory nor on disk.
         // BAG format is parsed natively, messages are decoded directly to HashMap<String, CodecValue>.
-        let reader = RoboReader::open(process_path)?;
+        let path_str = process_path
+            .to_str()
+            .ok_or_else(|| roboflow_core::RoboflowError::parse("Path", "Invalid UTF-8 path"))?;
+        let reader = RoboReader::open(path_str)?;
 
         info!(
             mappings = topic_mappings.len(),
@@ -288,18 +430,18 @@ impl StreamingDatasetConverter {
         let mut unmapped_warning_shown: std::collections::HashSet<String> =
             std::collections::HashSet::new();
 
-        for result in reader.decode_messages_with_timestamp()? {
-            let (timestamped_msg, channel) = result?;
+        for msg_result in reader.decoded()? {
+            let msg_result = msg_result?;
             stats.messages_processed += 1;
 
             // Find mapping for this topic
-            let mapping = match topic_mappings.get(&channel.topic) {
+            let mapping = match topic_mappings.get(&msg_result.channel.topic) {
                 Some(m) => m,
                 None => {
                     // Log warning once per unmapped topic to avoid spam
-                    if unmapped_warning_shown.insert(channel.topic.clone()) {
+                    if unmapped_warning_shown.insert(msg_result.channel.topic.clone()) {
                         tracing::warn!(
-                            topic = %channel.topic,
+                            topic = %msg_result.channel.topic,
                             "Message from unmapped topic will be ignored. Add this topic to your configuration if needed."
                         );
                     }
@@ -310,8 +452,8 @@ impl StreamingDatasetConverter {
 
             // Convert to our TimestampedMessage type
             let msg = crate::streaming::alignment::TimestampedMessage {
-                log_time: timestamped_msg.log_time,
-                message: timestamped_msg.message,
+                log_time: msg_result.log_time.unwrap_or(0),
+                message: msg_result.message,
             };
 
             // Process message through alignment buffer
@@ -400,7 +542,7 @@ impl StreamingDatasetConverter {
         }
 
         // Finalize writer
-        let writer_stats = writer.finalize(self.get_config_any()?)?;
+        let writer_stats = writer.finalize()?;
 
         // Compile final statistics
         stats.duration_sec = start_time.elapsed().as_secs_f64();
@@ -432,7 +574,8 @@ impl StreamingDatasetConverter {
                     )
                 })?;
                 let config = DatasetConfig::Kps(kps_config.clone());
-                create_writer(&self.output_dir, &config).map_err(|e| {
+                // KPS doesn't support cloud storage yet
+                create_writer(&self.output_dir, None, None, &config).map_err(|e| {
                     roboflow_core::RoboflowError::encode(
                         "StreamingConverter",
                         format!(
@@ -451,7 +594,10 @@ impl StreamingDatasetConverter {
                     )
                 })?;
                 let config = DatasetConfig::Lerobot(lerobot_config.clone());
-                create_writer(&self.output_dir, &config).map_err(|e| {
+                // Use cloud storage if available
+                let storage_ref = self.output_storage.as_ref();
+                let prefix_ref = self.output_prefix.as_deref();
+                create_writer(&self.output_dir, storage_ref, prefix_ref, &config).map_err(|e| {
                     roboflow_core::RoboflowError::encode(
                         "StreamingConverter",
                         format!(
@@ -462,20 +608,6 @@ impl StreamingDatasetConverter {
                     )
                 })
             }
-        }
-    }
-
-    /// Get the config as `dyn Any` for passing to writer.
-    fn get_config_any(&self) -> Result<&dyn std::any::Any> {
-        if let Some(kps_config) = &self.kps_config {
-            Ok(kps_config)
-        } else if let Some(lerobot_config) = &self.lerobot_config {
-            Ok(lerobot_config)
-        } else {
-            Err(roboflow_core::RoboflowError::parse(
-                "StreamingConverter",
-                "No config available",
-            ))
         }
     }
 
@@ -491,7 +623,7 @@ impl StreamingDatasetConverter {
                             mapping.topic.clone(),
                             Mapping {
                                 feature: mapping.feature.clone(),
-                                mapping_type: match mapping.mapping_type {
+                                _mapping_type: match mapping.mapping_type {
                                     crate::kps::MappingType::Image => "image",
                                     crate::kps::MappingType::State => "state",
                                     crate::kps::MappingType::Action => "action",
@@ -509,7 +641,7 @@ impl StreamingDatasetConverter {
                             mapping.topic.clone(),
                             Mapping {
                                 feature: mapping.feature.clone(),
-                                mapping_type: match mapping.mapping_type {
+                                _mapping_type: match mapping.mapping_type {
                                     crate::lerobot::config::MappingType::Image => "image",
                                     crate::lerobot::config::MappingType::State => "state",
                                     crate::lerobot::config::MappingType::Action => "action",
@@ -535,8 +667,7 @@ struct Mapping {
     feature: String,
     /// Data type for validation/routing (reserved for future use)
     /// Values: "image", "state", "action", "timestamp"
-    #[allow(dead_code)]
-    mapping_type: &'static str,
+    _mapping_type: &'static str,
 }
 
 #[cfg(test)]

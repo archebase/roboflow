@@ -82,44 +82,6 @@ impl CompressionConfig {
     }
 }
 
-/// Thread-local ZSTD compressor.
-///
-/// Each thread gets its own compressor to avoid synchronization overhead.
-#[allow(dead_code)]
-struct ThreadLocalCompressor {
-    compressor: zstd::bulk::Compressor<'static>,
-}
-
-#[allow(dead_code)]
-impl ThreadLocalCompressor {
-    /// Create a new thread-local compressor.
-    fn new(level: CompressionLevel) -> Result<Self> {
-        let compressor = zstd::bulk::Compressor::new(level).map_err(|e| {
-            RoboflowError::encode("Compressor", format!("Failed to create compressor: {e}"))
-        })?;
-        Ok(Self { compressor })
-    }
-
-    /// Compress data.
-    fn compress(&mut self, input: &[u8]) -> Result<Vec<u8>> {
-        self.compressor
-            .compress(input)
-            .map(|v| v.to_vec())
-            .map_err(|e| RoboflowError::encode("Compressor", format!("Compression failed: {e}")))
-    }
-
-    /// Compress directly into a buffer.
-    fn compress_into(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<()> {
-        output.clear();
-        let compressed = self
-            .compressor
-            .compress(input)
-            .map_err(|e| RoboflowError::encode("Compressor", format!("Compression failed: {e}")))?;
-        output.extend_from_slice(&compressed);
-        Ok(())
-    }
-}
-
 /// Parallel chunk compressor.
 ///
 /// Compresses chunks in parallel using Rayon, with thread-local

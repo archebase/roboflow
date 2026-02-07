@@ -31,20 +31,6 @@ pub struct PooledBuffer {
 }
 
 impl PooledBuffer {
-    /// Get a mutable reference to the buffer data.
-    #[inline]
-    #[allow(clippy::should_implement_trait)]
-    pub fn as_mut(&mut self) -> &mut Vec<u8> {
-        &mut self.data
-    }
-
-    /// Get a reference to the buffer data.
-    #[inline]
-    #[allow(clippy::should_implement_trait)]
-    pub fn as_ref(&self) -> &[u8] {
-        &self.data
-    }
-
     /// Get the capacity of the buffer.
     #[inline]
     pub fn capacity(&self) -> usize {
@@ -79,6 +65,23 @@ impl PooledBuffer {
     ///
     /// Use this when you need to transfer ownership of the buffer
     /// without returning it to the pool.
+    ///
+    /// # Safety
+    ///
+    /// This function uses `ManuallyDrop` to prevent the `Drop` impl from running,
+    /// which would otherwise return the buffer to the pool. The safety relies on:
+    ///
+    /// 1. **ManuallyDrop prevents double-free**: By wrapping `self` in `ManuallyDrop`,
+    ///    the destructor is suppressed, preventing `Drop::drop` from running and
+    ///    attempting to return the (already moved) buffer to the pool.
+    ///
+    /// 2. **ptr::read performs a bitwise copy**: `std::ptr::read` creates a copy of
+    ///    the `Vec<u8>` value. Since `Vec` is `Copy`-compatible (contains a pointer,
+    ///    capacity, and length), this transfers ownership of the heap allocation.
+    ///
+    /// 3. **Caller guarantees**: The caller takes ownership of the returned `Vec<u8>`,
+    ///    and the original `PooledBuffer` is forgotten without running its destructor.
+    ///    This is safe because the buffer is now owned exclusively by the caller.
     #[inline]
     pub fn into_inner(self) -> Vec<u8> {
         // Prevent returning to pool since we're taking ownership
@@ -395,7 +398,7 @@ mod tests {
         let pool = BufferPool::with_capacity(100);
         let mut buffer = pool.acquire(100);
 
-        buffer.as_mut().extend_from_slice(&[1, 2, 3, 4, 5]);
+        AsMut::<Vec<u8>>::as_mut(&mut buffer).extend_from_slice(&[1, 2, 3, 4, 5]);
         assert_eq!(buffer.len(), 5);
 
         buffer.clear();
@@ -452,14 +455,14 @@ mod tests {
                 thread::spawn(move || {
                     for _ in 0..100 {
                         let mut buf = pool.acquire(1024);
-                        buf.as_mut().push(42);
+                        AsMut::<Vec<u8>>::as_mut(&mut buf).push(42);
                     }
                 })
             })
             .collect();
 
         for handle in handles {
-            handle.join().unwrap();
+            handle.join().expect("background thread should not panic");
         }
 
         // Should have done mostly pool reuses

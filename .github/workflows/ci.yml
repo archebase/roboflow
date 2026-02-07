@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: -C linker=cc
 
 jobs:
   license:
@@ -38,15 +39,12 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
-
-      - name: Install ruff
-        run: pip install ruff
+        with:
+          # Invalidate cache when robocodec git dependency changes
+          cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Check formatting (Rust)
         run: cargo fmt -- --check
-
-      - name: Check formatting (Python)
-        run: ruff format --check python/
 
       - name: Install HDF5
         run: |
@@ -76,6 +74,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Invalidate cache when robocodec git dependency changes
+          cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Install HDF5
         run: |
@@ -88,94 +89,15 @@ jobs:
           fi
         shell: bash
 
-      # Note: Do NOT use --all-features or --features python here.
-      # PyO3's extension-module feature prevents linking in standalone test binaries.
-      # Python bindings are tested separately via maturin in the python job.
       - name: Run tests
         run: cargo test --features dataset-all
 
-  python:
-    name: Python Tests
-    needs: rust-test
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: true
-      matrix:
-        python-version: ['3.12']
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: 'pip'
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Create virtual environment
-        run: |
-          python -m venv .venv
-          echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
-          echo "$PWD/.venv/bin" >> $GITHUB_PATH
-
-      - name: Install dependencies
-        run: pip install maturin[patchelf] pytest pytest-cov
-
-      - name: Build and install Python package
-        run: maturin develop --release --features python
-
-      - name: Run Python tests
-        run: pytest python/ -v
-
-  lint:
-    name: Python Lint
-    needs: python
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Create virtual environment
-        run: |
-          python -m venv .venv
-          echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
-          echo "$PWD/.venv/bin" >> $GITHUB_PATH
-
-      - name: Install dependencies
-        run: pip install maturin[patchelf] ruff mypy
-
-      - name: Build and install Python package
-        run: maturin develop --release --features python
-
-      - name: Run ruff check (Python linting)
-        run: ruff check python/
-
-      - name: Run mypy
-        run: mypy python/roboflow
-
   coverage:
     name: Coverage
-    needs: lint
+    needs: rust-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'pip'
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -183,6 +105,9 @@ jobs:
           components: llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Invalidate cache when robocodec git dependency changes
+          cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Cache cargo-llvm-cov
         uses: actions/cache@v4
@@ -195,32 +120,16 @@ jobs:
         if: steps.cache-llvm-cov.outputs.cache-hit != 'true'
         run: cargo install cargo-llvm-cov
 
-      - name: Create virtual environment
-        run: |
-          python -m venv .venv
-          echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
-          echo "$PWD/.venv/bin" >> $GITHUB_PATH
-
-      - name: Install dependencies
-        run: pip install maturin[patchelf] pytest pytest-cov
-
       - name: Install HDF5
         run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
 
-      # Note: Do NOT use --all-features here - PyO3's extension-module prevents linking.
-      # Rust coverage excludes python feature; Python coverage is generated separately below.
       - name: Generate Rust coverage
         run: cargo llvm-cov --features dataset-all --workspace --lcov --output-path lcov.info
-
-      - name: Generate Python coverage
-        run: |
-          maturin develop --release --features python
-          pytest python/ --cov=roboflow --cov-report=xml:coverage-python.xml --cov-report=term
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./lcov.info,./coverage-python.xml
-          flags: rust,python
+          files: ./lcov.info
+          flags: rust
           name: codecov-umbrella

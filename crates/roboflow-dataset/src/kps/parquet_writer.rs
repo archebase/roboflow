@@ -18,28 +18,23 @@ use super::config::Mapping;
 use std::io::Write;
 
 // Row structures for Parquet data
-// Note: Marked dead_code because they're used in methods that may not be
-// active in all compilation configurations. These are used by the
-// ParquetKpsWriter implementation.
-#[allow(dead_code)]
+// These are used by the ParquetKpsWriter implementation.
 #[derive(Debug, Clone)]
 struct ObservationRow {
-    timestamp: i64,
+    _timestamp: i64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct ActionRow {
-    timestamp: i64,
+    _timestamp: i64,
 }
 
 /// Image frame for buffering.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct ImageFrame {
-    timestamp: i64,
-    width: usize,
-    height: usize,
+    _timestamp: i64,
+    _width: usize,
+    _height: usize,
     data: Vec<u8>,
 }
 
@@ -48,9 +43,8 @@ struct ImageFrame {
 /// Creates Kps datasets compatible with v3.0 format:
 /// - `data/` directory with Parquet shards
 /// - `videos/` directory with MP4 shards
-#[allow(dead_code)] // Fields are used when dataset-parquet feature is enabled
 pub struct ParquetKpsWriter {
-    episode_id: usize,
+    _episode_id: usize,
     output_dir: std::path::PathBuf,
     frame_count: usize,
     image_shapes: HashMap<String, (usize, usize)>,
@@ -76,7 +70,7 @@ impl ParquetKpsWriter {
         std::fs::create_dir_all(output_dir.join("meta/episodes"))?;
 
         Ok(Self {
-            episode_id,
+            _episode_id: episode_id,
             output_dir: output_dir.to_path_buf(),
             frame_count: 0,
             image_shapes: HashMap::new(),
@@ -115,30 +109,30 @@ impl ParquetKpsWriter {
         let max_frames = config.output.max_frames;
 
         // Open MCAP file
-        let reader = robocodec::RoboReader::open(mcap_path_ref)?;
+        let path_str = mcap_path_ref.to_str().ok_or("Invalid UTF-8 path")?;
+        let reader = robocodec::RoboReader::open(path_str)?;
 
         // Buffer image data by topic for MP4 encoding
         let mut image_buffers: HashMap<String, Vec<ImageFrame>> = HashMap::new();
 
         let mut frame_index = 0usize;
 
-        // Process messages - use decode_messages_with_timestamp to get timestamps
-        let iter = reader.decode_messages_with_timestamp()?;
-        for result in iter {
-            let (timestamped_msg, _channel_info) = result?;
+        // Process messages - use decoded() to get timestamps
+        for item in reader.decoded()? {
+            let timestamped_msg = item?;
 
             // Find matching mapping
-            let mapping = config
-                .mappings
-                .iter()
-                .find(|m| _channel_info.topic == m.topic || _channel_info.topic.contains(&m.topic));
+            let mapping = config.mappings.iter().find(|m| {
+                timestamped_msg.channel.topic == m.topic
+                    || timestamped_msg.channel.topic.contains(&m.topic)
+            });
 
             let Some(mapping) = mapping else {
                 continue;
             };
 
             // Extract actual message timestamp (convert nanoseconds to microseconds)
-            let timestamp = (timestamped_msg.log_time / 1000) as i64;
+            let timestamp = (timestamped_msg.log_time.unwrap_or(0) / 1000) as i64;
             self.timestamps.push(timestamp);
 
             let msg = &timestamped_msg.message;
@@ -234,9 +228,9 @@ impl ParquetKpsWriter {
             let buffers = image_buffers.entry(mapping.feature.clone()).or_default();
 
             buffers.push(ImageFrame {
-                timestamp: self.timestamps.last().copied().unwrap_or(0),
-                width: w,
-                height: h,
+                _timestamp: self.timestamps.last().copied().unwrap_or(0),
+                _width: w,
+                _height: h,
                 data: img_data.to_vec(),
             });
         }
@@ -252,7 +246,9 @@ impl ParquetKpsWriter {
     ) {
         // Add to observation data
         // For now, just track the timestamp
-        self.observation_data.push(ObservationRow { timestamp });
+        self.observation_data.push(ObservationRow {
+            _timestamp: timestamp,
+        });
     }
 
     fn process_action(
@@ -262,7 +258,9 @@ impl ParquetKpsWriter {
         timestamp: i64,
     ) {
         // Add to action data
-        self.action_data.push(ActionRow { timestamp });
+        self.action_data.push(ActionRow {
+            _timestamp: timestamp,
+        });
     }
 
     fn write_parquet(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -294,30 +292,6 @@ impl ParquetKpsWriter {
         self.write_videos_images(image_buffers)
     }
 
-    #[allow(dead_code)]
-    fn write_videos_ffmpeg(
-        &self,
-        image_buffers: &HashMap<String, Vec<ImageFrame>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // Create video directory per camera/topic
-        for (feature, frames) in image_buffers {
-            if frames.is_empty() {
-                continue;
-            }
-
-            let _video_dir = self.output_dir.join("videos");
-            let _video_path = _video_dir.join(format!("video-{:06}-of-00001.mp4", self.episode_id));
-
-            println!("  Encoding video: {} ({} frames)", feature, frames.len());
-
-            // Note: Actual ffmpeg encoding requires significant code
-            // For now, we'll write a placeholder
-            println!("    (MP4 encoding requires full ffmpeg-next integration - placeholder only)");
-        }
-
-        Ok(())
-    }
-
     fn write_videos_images(
         &self,
         image_buffers: &HashMap<String, Vec<ImageFrame>>,
@@ -341,12 +315,13 @@ impl ParquetKpsWriter {
     }
 
     /// Record the shape of an image topic.
-    #[allow(dead_code)]
     fn record_image_shape(&mut self, topic: String, width: usize, height: usize) {
         self.image_shapes.insert(topic, (width, height));
     }
 
     /// Record the dimension of a state topic.
+    // TODO: This method is used in tests but not in production code yet.
+    // It will be used when state data processing is fully implemented.
     #[allow(dead_code)]
     fn record_state_dimension(&mut self, topic: String, dim: usize) {
         self.state_shapes.insert(topic, dim);

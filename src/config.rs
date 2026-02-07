@@ -237,7 +237,8 @@ mod tests {
 "foo/Bar" = "baz/Bar"
 "#;
 
-        let config: NormalizeConfig = toml::from_str(toml_content).unwrap();
+        let config: NormalizeConfig =
+            toml::from_str(toml_content).expect("test config should parse correctly");
         assert!(config.validate().is_ok());
         assert_eq!(config.type_mappings.len(), 1);
     }
@@ -249,7 +250,8 @@ mod tests {
 "genie_msgs/msg/*" = "roboflow.msg.*"
 "#;
 
-        let config: NormalizeConfig = toml::from_str(toml_content).unwrap();
+        let config: NormalizeConfig =
+            toml::from_str(toml_content).expect("test config should parse correctly");
         assert!(config.validate().is_ok());
         assert_eq!(config.wildcard_mappings.len(), 1);
     }
@@ -263,7 +265,8 @@ from = "nmx.msg.LowdimData"
 to = "roboflow.msg.JointStates"
 "#;
 
-        let config: NormalizeConfig = toml::from_str(toml_content).unwrap();
+        let config: NormalizeConfig =
+            toml::from_str(toml_content).expect("test config should parse correctly");
         assert!(config.validate().is_ok());
         assert_eq!(config.topic_type_mappings.len(), 1);
         assert_eq!(config.topic_type_mappings[0].topic, "/lowdim/joint");
@@ -277,7 +280,8 @@ from = "/old/topic"
 to = "/new/topic"
 "#;
 
-        let config: NormalizeConfig = toml::from_str(toml_content).unwrap();
+        let config: NormalizeConfig =
+            toml::from_str(toml_content).expect("test config should parse correctly");
         assert!(config.validate().is_ok());
         assert_eq!(config.topic_mappings.len(), 1);
     }
@@ -292,7 +296,7 @@ to = "/new/topic"
     fn test_invalid_proto_type() {
         let result = NormalizeConfig::validate_type_name("nmx.msg.camid_1.intrinsic");
         assert!(result.is_err());
-        let err = result.unwrap_err();
+        let err = result.expect_err("validation should fail for invalid proto type");
         let err_msg = err.to_string();
         // Error should mention the invalid format and suggest using underscore
         assert!(err_msg.contains("Invalid proto type"));
@@ -302,7 +306,8 @@ to = "/new/topic"
     #[test]
     fn test_empty_config() {
         let toml_content = "";
-        let config: NormalizeConfig = toml::from_str(toml_content).unwrap();
+        let config: NormalizeConfig =
+            toml::from_str(toml_content).expect("empty config should parse correctly");
         assert!(config.validate().is_ok());
         assert!(config.type_mappings.is_empty());
         assert!(config.wildcard_mappings.is_empty());

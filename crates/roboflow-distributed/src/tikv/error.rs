@@ -129,6 +129,13 @@ impl From<TikvError> for roboflow_core::RoboflowError {
     }
 }
 
+/// Implement IsRetryableRef for TikvError so it can be used with retry_with_backoff.
+impl roboflow_core::retry::IsRetryableRef for TikvError {
+    fn is_retryable_ref(&self) -> bool {
+        self.is_retryable()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -146,8 +146,7 @@ impl CacheConfig {
 #[derive(Debug)]
 struct CacheEntry {
     /// Relative path within cache.
-    #[allow(dead_code)]
-    path: PathBuf,
+    _path: PathBuf,
     /// File size in bytes.
     size: u64,
     /// Last access time (for LRU).
@@ -164,7 +163,7 @@ impl CacheEntry {
     fn new(path: PathBuf, size: u64) -> Self {
         let now = SystemTime::now();
         Self {
-            path,
+            _path: path,
             size,
             last_accessed: now,
             created_at: now,
@@ -477,9 +476,15 @@ impl CachedStorage {
     fn add_to_cache(&self, path: &Path, size: u64) {
         let cache_path = self.cache_path(path);
 
-        // Note: Mutex poisoning here indicates a serious bug (panic in another thread)
-        // We unwrap to surface the error rather than silently continuing
-        let mut entries = self.entries.lock().expect("entries mutex poisoned");
+        // Handle poisoned mutex: recover the guard and continue
+        // A poisoned mutex means another thread panicked while holding the lock
+        let mut entries = match self.entries.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!("Cache entries mutex is poisoned, recovering guard");
+                poisoned.into_inner()
+            }
+        };
         entries.insert(path.to_path_buf(), CacheEntry::new(cache_path, size));
 
         let old_size = self.cache_size.fetch_add(size, Ordering::Relaxed);
@@ -933,8 +938,7 @@ pub struct CachedWriter {
     /// Maximum buffer size before triggering upload.
     max_buffer_size: usize,
     /// Whether to delete after upload.
-    #[allow(dead_code)]
-    delete_after_upload: bool,
+    _delete_after_upload: bool,
     /// Whether data has been uploaded.
     uploaded: bool,
     /// Whether writer has been flushed.
@@ -966,7 +970,7 @@ impl CachedWriter {
             remote_path,
             upload_sender,
             max_buffer_size,
-            delete_after_upload,
+            _delete_after_upload: delete_after_upload,
             uploaded: false,
             flushed: false,
         })

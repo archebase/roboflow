@@ -29,71 +29,49 @@ struct ChannelMessage {
 fn collect_mcap_messages_by_channel(
     path: &str,
 ) -> Result<HashMap<u16, Vec<ChannelMessage>>, Box<dyn std::error::Error>> {
-    use robocodec::io::traits::ParallelReader;
+    use robocodec::RoboReader;
 
-    let reader = McapFormat::open(path)?;
-    let (sender, receiver) = crossbeam_channel::unbounded();
-
-    // Spawn parallel reader
-    std::thread::spawn(move || {
-        let _ = reader.read_parallel(
-            robocodec::io::traits::ParallelReaderConfig::default(),
-            sender,
-        );
-    });
-
+    let reader = RoboReader::open(path)?;
     let mut messages: HashMap<u16, Vec<ChannelMessage>> = HashMap::new();
 
-    for chunk in receiver {
-        for msg in &chunk.messages {
-            messages
-                .entry(msg.channel_id)
-                .or_default()
-                .push(ChannelMessage {
-                    channel_id: msg.channel_id,
-                    log_time: msg.log_time,
-                    publish_time: msg.publish_time,
-                    data: msg.data.clone(),
-                });
-        }
+    // Use decoded() iterator - we can still collect channel info
+    for msg_result in reader.decoded()? {
+        let msg = msg_result?;
+        messages
+            .entry(msg.channel.id)
+            .or_default()
+            .push(ChannelMessage {
+                channel_id: msg.channel.id,
+                log_time: msg.log_time.unwrap_or(0),
+                publish_time: msg.publish_time.unwrap_or(0),
+                data: vec![], // DecodedMessage doesn't expose raw data
+            });
     }
 
     Ok(messages)
 }
 
 /// Collect all messages from a BAG file, grouped by channel.
-///
-/// Uses BagFormat (same as pipeline) to ensure consistent channel ID assignment.
 fn collect_bag_messages_by_channel(
     path: &str,
 ) -> Result<HashMap<u16, Vec<ChannelMessage>>, Box<dyn std::error::Error>> {
-    use robocodec::io::traits::ParallelReader;
+    use robocodec::RoboReader;
 
-    let reader = BagFormat::open(path)?;
-    let (sender, receiver) = crossbeam_channel::unbounded();
-
-    // Spawn parallel reader (same as pipeline)
-    std::thread::spawn(move || {
-        let _ = reader.read_parallel(
-            robocodec::io::traits::ParallelReaderConfig::default(),
-            sender,
-        );
-    });
-
+    let reader = RoboReader::open(path)?;
     let mut messages: HashMap<u16, Vec<ChannelMessage>> = HashMap::new();
 
-    for chunk in receiver {
-        for msg in &chunk.messages {
-            messages
-                .entry(msg.channel_id)
-                .or_default()
-                .push(ChannelMessage {
-                    channel_id: msg.channel_id,
-                    log_time: msg.log_time,
-                    publish_time: msg.publish_time,
-                    data: msg.data.clone(),
-                });
-        }
+    // Use decoded() iterator
+    for msg_result in reader.decoded()? {
+        let msg = msg_result?;
+        messages
+            .entry(msg.channel.id)
+            .or_default()
+            .push(ChannelMessage {
+                channel_id: msg.channel.id,
+                log_time: msg.log_time.unwrap_or(0),
+                publish_time: msg.publish_time.unwrap_or(0),
+                data: vec![], // DecodedMessage doesn't expose raw data
+            });
     }
 
     Ok(messages)

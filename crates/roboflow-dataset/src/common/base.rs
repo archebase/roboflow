@@ -143,24 +143,18 @@ impl AlignedFrame {
 /// ```rust,ignore
 /// use roboflow::dataset::common::{DatasetWriter, AlignedFrame};
 ///
-/// let mut writer: Box<dyn DatasetWriter> = create_writer("/output", &config)?;
-/// writer.initialize(&config)?;
+/// // Writers are created via type-safe builders
+/// let mut writer = LerobotWriter::builder()
+///     .output_dir("/output")
+///     .config(config)
+///     .build()?;
+///
 /// for frame in frames {
 ///     writer.write_frame(&frame)?;
 /// }
-/// let stats = writer.finalize(&config)?;
+/// let stats = writer.finalize()?;
 /// ```
 pub trait DatasetWriter: Send + std::any::Any {
-    /// Initialize the writer before writing frames.
-    ///
-    /// Called once before any frames are written. Sets up the output
-    /// structure and creates any necessary files or directories.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Format-specific configuration (use `dyn Any` for generic access)
-    fn initialize(&mut self, config: &dyn std::any::Any) -> Result<()>;
-
     /// Write a single aligned frame to the dataset.
     ///
     /// This method is called for each frame in the output, in order.
@@ -191,14 +185,10 @@ pub trait DatasetWriter: Send + std::any::Any {
     /// Called after all frames have been written. Writes metadata
     /// files (info.json, episodes, etc.) and returns statistics.
     ///
-    /// # Arguments
-    ///
-    /// * `config` - Format-specific configuration (use `dyn Any` for generic access)
-    ///
     /// # Returns
     ///
     /// Statistics about the write operation (frames, bytes, duration)
-    fn finalize(&mut self, config: &dyn std::any::Any) -> Result<WriterStats>;
+    fn finalize(&mut self) -> Result<WriterStats>;
 
     /// Get the number of frames written so far.
     fn frame_count(&self) -> usize;
@@ -213,9 +203,6 @@ pub trait DatasetWriter: Send + std::any::Any {
     fn episode_index(&self) -> Option<usize> {
         None
     }
-
-    /// Check if the writer has been initialized.
-    fn is_initialized(&self) -> bool;
 
     /// Return `self` as `&dyn Any` for downcasting.
     fn as_any(&self) -> &dyn std::any::Any;
