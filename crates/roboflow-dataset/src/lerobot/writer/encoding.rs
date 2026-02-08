@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use crate::common::ImageData;
+use crate::common::video::VideoEncoderError;
 use crate::common::video::{Mp4Encoder, VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
-use crate::kps::video_encoder::VideoEncoderError;
 use crate::lerobot::video_profiles::ResolvedConfig;
 use roboflow_core::Result;
 

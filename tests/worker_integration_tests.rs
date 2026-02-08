@@ -11,7 +11,7 @@
 
 use std::fs;
 
-use roboflow::{ImageData, LerobotConfig, LerobotWriter, VideoConfig};
+use roboflow::{DatasetBaseConfig, ImageData, LerobotConfig, LerobotWriter, VideoConfig};
 
 /// Create a test output directory using system temp.
 /// Using tempfile::tempdir() directly avoids:
@@ -34,9 +34,11 @@ fn test_lerobot_writer_basic_flow() {
     // Create a test LeRobot configuration
     let lerobot_config = LerobotConfig {
         dataset: roboflow::lerobot::DatasetConfig {
-            name: "test_dataset".to_string(),
-            fps: 30,
-            robot_type: Some("test_robot".to_string()),
+            base: DatasetBaseConfig {
+                name: "test_dataset".to_string(),
+                fps: 30,
+                robot_type: Some("test_robot".to_string()),
+            },
             env_type: None,
         },
         mappings: vec![],

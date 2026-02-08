@@ -14,7 +14,6 @@ rs = false
 
 [dependencies]
 roboflow-core = { path = "../roboflow-core", version = "0.2.0" }
-roboflow-storage = { path = "../roboflow-storage", version = "0.2.0" }
 roboflow-dataset = { path = "../roboflow-dataset", version = "0.2.0" }
 
 # External dependencies from robocodec (uses workspace version)
@@ -37,8 +36,7 @@ bumpalo = "3.16"
 bytemuck = "1.15"
 
 # System detection
-num_cpus = "1.16"
-sysinfo = "0.30"
+# (uses crate::hardware::detect_cpu_count() backed by std::thread::available_parallelism)
 
 # Serialization
 byteorder = "1.5"

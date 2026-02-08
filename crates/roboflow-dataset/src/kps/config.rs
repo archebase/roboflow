@@ -12,6 +12,14 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+// Re-export shared config types so existing imports continue to work.
+pub use crate::common::config::DatasetBaseConfig;
+pub use crate::common::config::Mapping;
+pub use crate::common::config::MappingType;
+
+/// KPS `DatasetConfig` is identical to [`DatasetBaseConfig`].
+pub type DatasetConfig = DatasetBaseConfig;
+
 /// Kps conversion configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct KpsConfig {
@@ -62,49 +70,6 @@ impl KpsConfig {
             })
             .collect()
     }
-}
-
-/// Dataset metadata configuration.
-#[derive(Debug, Clone, Deserialize)]
-pub struct DatasetConfig {
-    /// Dataset name
-    pub name: String,
-    /// Frames per second
-    pub fps: u32,
-    /// Robot type (optional)
-    #[serde(default)]
-    pub robot_type: Option<String>,
-}
-
-/// Topic to Kps feature mapping.
-#[derive(Debug, Clone, Deserialize)]
-pub struct Mapping {
-    /// MCAP topic pattern
-    pub topic: String,
-    /// Kps feature path (e.g., "observation.camera_0")
-    pub feature: String,
-    /// Mapping type (TOML field: "type")
-    #[serde(default, alias = "type")]
-    pub mapping_type: MappingType,
-}
-
-/// Type of data being mapped.
-#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum MappingType {
-    /// Image data (camera)
-    Image,
-    /// State/joint data
-    #[default]
-    State,
-    /// Action data
-    Action,
-    /// Timestamp data
-    Timestamp,
-    /// Other sensor data (IMU, force, etc.)
-    OtherSensor,
-    /// Audio data
-    Audio,
 }
 
 /// Output format configuration.

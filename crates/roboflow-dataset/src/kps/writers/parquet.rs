@@ -221,7 +221,7 @@ impl StreamingParquetWriter {
     /// Uses ffmpeg to encode buffered images as MP4 videos.
     /// Falls back to individual PPM files if ffmpeg is not available.
     fn process_images(&mut self) -> roboflow_core::Result<()> {
-        use crate::kps::video_encoder::{Mp4Encoder, VideoFrame, VideoFrameBuffer};
+        use crate::common::video::{Mp4Encoder, VideoFrame, VideoFrameBuffer};
 
         if self.image_buffer.is_empty() {
             return Ok(());
@@ -234,7 +234,7 @@ impl StreamingParquetWriter {
 
         // Create encoder with FPS from config
         let encoder = Mp4Encoder::with_config(
-            crate::kps::video_encoder::VideoEncoderConfig::default().with_fps(fps),
+            crate::common::video::VideoEncoderConfig::default().with_fps(fps),
         );
 
         // Process each camera's images

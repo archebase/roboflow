@@ -14,6 +14,11 @@ use serde::Deserialize;
 
 use roboflow_core::Result;
 
+// Re-export shared config types so existing imports continue to work.
+pub use crate::common::config::DatasetBaseConfig;
+pub use crate::common::config::Mapping;
+pub use crate::common::config::MappingType;
+
 /// LeRobot dataset configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LerobotConfig {
@@ -123,75 +128,40 @@ impl LerobotConfig {
     }
 }
 
-/// Dataset metadata configuration.
+/// LeRobot-specific dataset metadata configuration.
+///
+/// Embeds [`DatasetBaseConfig`] via `#[serde(flatten)]` for the common fields
+/// (`name`, `fps`, `robot_type`) and adds LeRobot-specific fields.
+///
+/// Field access to base fields works transparently via `Deref`:
+/// ```rust,ignore
+/// let config: DatasetConfig = /* ... */;
+/// let name = &config.name;       // auto-derefs to base.name
+/// let fps = config.fps;           // auto-derefs to base.fps
+/// let env = &config.env_type;     // direct field access
+/// ```
 #[derive(Debug, Clone, Deserialize)]
 pub struct DatasetConfig {
-    /// Dataset name
-    pub name: String,
+    /// Common dataset fields (name, fps, robot_type).
+    #[serde(flatten)]
+    pub base: DatasetBaseConfig,
 
-    /// Frames per second for the dataset
-    pub fps: u32,
-
-    /// Robot type (optional, can be inferred from annotations)
-    #[serde(default)]
-    pub robot_type: Option<String>,
-
-    /// Environment type (optional)
+    /// Environment type (optional, LeRobot-specific).
     #[serde(default)]
     pub env_type: Option<String>,
 }
 
-/// Topic to LeRobot feature mapping.
-#[derive(Debug, Clone, Deserialize)]
-pub struct Mapping {
-    /// ROS topic name
-    pub topic: String,
-
-    /// LeRobot feature path (e.g., "observation.images.cam_high")
-    pub feature: String,
-
-    /// Mapping type
-    #[serde(default)]
-    pub mapping_type: MappingType,
-
-    /// Camera key for video directory naming (optional).
-    ///
-    /// If not specified, defaults to using the full feature path.
-    /// For example, feature="observation.images.cam_high" -> camera_key="observation.images.cam_high".
-    ///
-    /// Use this when you want a different camera key than the full feature path.
-    #[serde(default)]
-    pub camera_key: Option<String>,
-}
-
-impl Mapping {
-    /// Get the camera key for this mapping.
-    ///
-    /// Returns the explicitly configured `camera_key` if set,
-    /// otherwise returns the full feature path (config-driven, works with any naming).
-    ///
-    /// This allows flexible feature naming (e.g., "observation.images.cam_high",
-    /// "obsv.images.cam_r", "my.camera") without hard-coded prefix assumptions.
-    pub fn camera_key(&self) -> String {
-        self.camera_key
-            .clone()
-            .unwrap_or_else(|| self.feature.clone())
+impl std::ops::Deref for DatasetConfig {
+    type Target = DatasetBaseConfig;
+    fn deref(&self) -> &DatasetBaseConfig {
+        &self.base
     }
 }
 
-/// Type of data being mapped.
-#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum MappingType {
-    /// Image data (camera)
-    Image,
-    /// State/joint data
-    #[default]
-    State,
-    /// Action data
-    Action,
-    /// Timestamp data
-    Timestamp,
+impl std::ops::DerefMut for DatasetConfig {
+    fn deref_mut(&mut self) -> &mut DatasetBaseConfig {
+        &mut self.base
+    }
 }
 
 /// Video encoding configuration.

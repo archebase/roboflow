@@ -332,6 +332,9 @@ pub struct ImageData {
 
     /// Whether data is already encoded (e.g., JPEG/PNG).
     pub is_encoded: bool,
+
+    /// Whether this is depth image data.
+    pub is_depth: bool,
 }
 
 impl ImageData {
@@ -363,6 +366,7 @@ impl ImageData {
             data,
             original_timestamp: 0,
             is_encoded: false,
+            is_depth: false,
         })
     }
 
@@ -390,6 +394,7 @@ impl ImageData {
             data,
             original_timestamp: 0,
             is_encoded: false,
+            is_depth: false,
         }
     }
 
@@ -411,6 +416,7 @@ impl ImageData {
             data,
             original_timestamp: timestamp,
             is_encoded: false,
+            is_depth: false,
         }
     }
 
@@ -422,6 +428,19 @@ impl ImageData {
             data,
             original_timestamp: 0,
             is_encoded: true,
+            is_depth: false,
+        }
+    }
+
+    /// Create new depth image data.
+    pub fn depth(width: u32, height: u32, data: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            data,
+            original_timestamp: 0,
+            is_encoded: false,
+            is_depth: true,
         }
     }
 

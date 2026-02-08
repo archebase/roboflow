@@ -381,7 +381,7 @@ impl Robocodec<WithOutput> {
                 config.batcher.target_size = chunk_size;
 
                 if let Some(threads) = self.threads {
-                    config.compression.num_threads = threads;
+                    config.compression.threads = threads;
                 }
 
                 let pipeline = HyperPipeline::new(config)?;
@@ -396,7 +396,7 @@ impl Robocodec<WithOutput> {
             config.batcher.target_size = chunk_size;
 
             if let Some(threads) = self.threads {
-                config.compression.num_threads = threads;
+                config.compression.threads = threads;
             }
 
             let pipeline = HyperPipeline::new(config)?;
@@ -457,7 +457,7 @@ impl Robocodec<WithOutput> {
                 config.batcher.target_size = chunk_size;
 
                 if let Some(threads) = self.threads {
-                    config.compression.num_threads = threads;
+                    config.compression.threads = threads;
                 }
 
                 let result = HyperPipeline::new(config)
@@ -491,7 +491,7 @@ impl Robocodec<WithOutput> {
                 config.batcher.target_size = chunk_size;
 
                 if let Some(threads) = self.threads {
-                    config.compression.num_threads = threads;
+                    config.compression.threads = threads;
                 }
 
                 let result = HyperPipeline::new(config)

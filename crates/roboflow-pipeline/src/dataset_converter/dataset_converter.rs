@@ -24,14 +24,11 @@ use tracing::{info, instrument};
 use robocodec::CodecValue;
 use robocodec::RoboReader;
 use roboflow_core::{Result, RoboflowError};
+use roboflow_dataset::common::config::{Mapping, MappingType};
 use roboflow_dataset::common::{AlignedFrame, ImageData};
-use roboflow_dataset::kps::config::{
-    KpsConfig, Mapping as KpsMapping, MappingType as KpsMappingType,
-};
-use roboflow_dataset::lerobot::config::{
-    LerobotConfig, Mapping as LerobotMapping, MappingType as LerobotMappingType,
-};
-use roboflow_dataset::{DatasetFormat, create_writer};
+use roboflow_dataset::kps::config::KpsConfig;
+use roboflow_dataset::lerobot::config::LerobotConfig;
+use roboflow_dataset::{DatasetFormat, DatasetWriter, create_writer};
 
 /// Direct dataset converter.
 ///
@@ -118,38 +115,89 @@ impl DatasetConverter {
     }
 
     /// Convert to KPS format.
-    fn convert_kps<P: AsRef<Path>>(self, input_path: P) -> Result<DatasetConverterStats> {
-        let input_path = input_path.as_ref();
-
+    fn convert_kps(self, input_path: &Path) -> Result<DatasetConverterStats> {
         // Get KPS config
         let kps_config = self
             .kps_config
             .as_ref()
             .ok_or_else(|| RoboflowError::parse("DatasetConverter", "KPS config required"))?;
 
-        // Use the FPS from config if available
         let fps = kps_config.dataset.fps;
 
-        // Create the dataset writer (already initialized via builder)
+        // Create the dataset writer
         let config = roboflow_dataset::DatasetConfig::Kps(kps_config.clone());
-        let mut writer = create_writer(&self.output_dir, None, None, &config).map_err(
+        let writer = create_writer(&self.output_dir, None, None, &config).map_err(
             |e: roboflow_core::RoboflowError| {
                 RoboflowError::encode("DatasetConverter", e.to_string())
             },
         )?;
 
+        // Build topic -> mapping lookup
+        let topic_mappings: HashMap<String, Mapping> = kps_config
+            .mappings
+            .iter()
+            .map(|m| (m.topic.clone(), m.clone()))
+            .collect();
+
+        self.convert_common(input_path, writer, topic_mappings, fps, false)
+    }
+
+    /// Convert to LeRobot format.
+    fn convert_lerobot(self, input_path: &Path) -> Result<DatasetConverterStats> {
+        // Get LeRobot config
+        let lerobot_config = self
+            .lerobot_config
+            .as_ref()
+            .ok_or_else(|| RoboflowError::parse("DatasetConverter", "LeRobot config required"))?;
+
+        let fps = lerobot_config.dataset.fps;
+
+        // Create the dataset writer
+        let config = roboflow_dataset::DatasetConfig::Lerobot(lerobot_config.clone());
+        let writer = create_writer(&self.output_dir, None, None, &config).map_err(
+            |e: roboflow_core::RoboflowError| {
+                RoboflowError::encode("DatasetConverter", e.to_string())
+            },
+        )?;
+
+        // Build topic -> mapping lookup
+        let topic_mappings: HashMap<String, Mapping> = lerobot_config
+            .mappings
+            .iter()
+            .map(|m| (m.topic.clone(), m.clone()))
+            .collect();
+
+        // LeRobot treats unrecognized mapping types (OtherSensor, Audio) as state data
+        self.convert_common(input_path, writer, topic_mappings, fps, true)
+    }
+
+    /// Shared conversion loop used by both KPS and LeRobot paths.
+    ///
+    /// Handles reader setup, frame alignment, frame sorting/truncation,
+    /// writing to the dataset writer, and finalization.
+    ///
+    /// # Arguments
+    ///
+    /// * `input_path` - Path to the input BAG/MCAP file
+    /// * `writer` - Pre-configured dataset writer
+    /// * `topic_mappings` - Topic-to-mapping lookup table
+    /// * `fps` - Target frames per second for frame alignment
+    /// * `fallback_to_state` - If `true`, unrecognized mapping types are
+    ///   treated as state data (LeRobot behaviour). If `false`, they are
+    ///   silently ignored (KPS behaviour).
+    fn convert_common(
+        &self,
+        input_path: &Path,
+        mut writer: Box<dyn DatasetWriter>,
+        topic_mappings: HashMap<String, Mapping>,
+        fps: u32,
+        fallback_to_state: bool,
+    ) -> Result<DatasetConverterStats> {
         // Open input file
         let path_str = input_path
             .to_str()
             .ok_or_else(|| RoboflowError::parse("Path", "Invalid UTF-8 path"))?;
         let reader = RoboReader::open(path_str)?;
-
-        // Build topic -> mapping lookup
-        let topic_mappings: HashMap<String, KpsMapping> = kps_config
-            .mappings
-            .iter()
-            .map(|m| (m.topic.clone(), m.clone()))
-            .collect();
 
         // State for building aligned frames
         let mut frame_buffer: HashMap<u64, AlignedFrame> = HashMap::new();
@@ -195,7 +243,7 @@ impl DatasetConverter {
             // Extract and add data based on mapping type
             let msg = &timestamped_msg.message;
             match &mapping.mapping_type {
-                KpsMappingType::Image => {
+                MappingType::Image => {
                     if let Some(img) = Self::extract_image(msg) {
                         frame.add_image(
                             mapping.feature.clone(),
@@ -206,23 +254,29 @@ impl DatasetConverter {
                         );
                     }
                 }
-                KpsMappingType::State => {
+                MappingType::State => {
                     if let Some(values) = Self::extract_float_array(msg) {
                         frame.add_state(mapping.feature.clone(), values);
                     }
                 }
-                KpsMappingType::Action => {
+                MappingType::Action => {
                     if let Some(values) = Self::extract_float_array(msg) {
                         frame.add_action(mapping.feature.clone(), values);
                     }
                 }
-                KpsMappingType::Timestamp => {
+                MappingType::Timestamp => {
                     frame.add_timestamp(
                         mapping.feature.clone(),
                         timestamped_msg.log_time.unwrap_or(0),
                     );
                 }
-                _ => {}
+                // OtherSensor, Audio, and any future variants:
+                // LeRobot treats them as state data; KPS ignores them.
+                _ => {
+                    if fallback_to_state && let Some(values) = Self::extract_float_array(msg) {
+                        frame.add_state(mapping.feature.clone(), values);
+                    }
+                }
             }
         }
 
@@ -261,159 +315,6 @@ impl DatasetConverter {
             frames_written = frames.len(),
             duration_sec = duration.as_secs_f64(),
             "Dataset conversion complete"
-        );
-
-        Ok(DatasetConverterStats {
-            frames_written: frames.len(),
-            images_encoded: stats.images_encoded,
-            output_bytes: stats.output_bytes,
-            duration_sec: duration.as_secs_f64(),
-        })
-    }
-
-    /// Convert to LeRobot format.
-    fn convert_lerobot<P: AsRef<Path>>(self, input_path: P) -> Result<DatasetConverterStats> {
-        let input_path = input_path.as_ref();
-
-        // Get LeRobot config
-        let lerobot_config = self
-            .lerobot_config
-            .as_ref()
-            .ok_or_else(|| RoboflowError::parse("DatasetConverter", "LeRobot config required"))?;
-
-        // Use the FPS from config
-        let fps = lerobot_config.dataset.fps;
-
-        // Create the dataset writer
-        let config = roboflow_dataset::DatasetConfig::Lerobot(lerobot_config.clone());
-        let mut writer = create_writer(&self.output_dir, None, None, &config).map_err(
-            |e: roboflow_core::RoboflowError| {
-                RoboflowError::encode("DatasetConverter", e.to_string())
-            },
-        )?;
-
-        // Open input file
-        let path_str = input_path
-            .to_str()
-            .ok_or_else(|| RoboflowError::parse("Path", "Invalid UTF-8 path"))?;
-        let reader = RoboReader::open(path_str)?;
-
-        // Build topic -> mapping lookup
-        let topic_mappings: HashMap<String, LerobotMapping> = lerobot_config
-            .mappings
-            .iter()
-            .map(|m| (m.topic.clone(), m.clone()))
-            .collect();
-
-        // State for building aligned frames
-        let mut frame_buffer: HashMap<u64, AlignedFrame> = HashMap::new();
-        let mut frame_count: usize = 0;
-        let start_time = std::time::Instant::now();
-
-        // Process decoded messages
-        let frame_interval_ns = 1_000_000_000 / fps as u64;
-
-        info!(mappings = topic_mappings.len(), "Processing messages");
-
-        for msg_result in reader.decoded()? {
-            let timestamped_msg = msg_result?;
-
-            // Find mapping for this topic
-            let mapping = match topic_mappings.get(&timestamped_msg.channel.topic) {
-                Some(m) => m,
-                None => continue, // Skip unmapped topics
-            };
-
-            // Align timestamp to frame boundary
-            let aligned_timestamp =
-                Self::align_to_frame(timestamped_msg.log_time.unwrap_or(0), frame_interval_ns);
-
-            // Get or create frame - track new frames for max_frames limit
-            let is_new = !frame_buffer.contains_key(&aligned_timestamp);
-            let frame = frame_buffer.entry(aligned_timestamp).or_insert_with(|| {
-                let idx = frame_count;
-                if is_new {
-                    frame_count += 1;
-                }
-                AlignedFrame::new(idx, aligned_timestamp)
-            });
-
-            // Check max frames after potentially adding a new frame
-            if let Some(max) = self.max_frames
-                && frame_count > max
-            {
-                info!("Reached max frames limit: {}", max);
-                break;
-            }
-
-            // Extract and add data based on mapping type
-            let msg = &timestamped_msg.message;
-            match &mapping.mapping_type {
-                LerobotMappingType::Image => {
-                    if let Some(img) = Self::extract_image(msg) {
-                        frame.add_image(
-                            mapping.feature.clone(),
-                            ImageData {
-                                original_timestamp: timestamped_msg.log_time.unwrap_or(0),
-                                ..img
-                            },
-                        );
-                    }
-                }
-                LerobotMappingType::State => {
-                    if let Some(values) = Self::extract_float_array(msg) {
-                        frame.add_state(mapping.feature.clone(), values);
-                    }
-                }
-                LerobotMappingType::Action => {
-                    if let Some(values) = Self::extract_float_array(msg) {
-                        frame.add_action(mapping.feature.clone(), values);
-                    }
-                }
-                LerobotMappingType::Timestamp => {
-                    frame.add_timestamp(
-                        mapping.feature.clone(),
-                        timestamped_msg.log_time.unwrap_or(0),
-                    );
-                }
-            }
-        }
-
-        // Sort frames by timestamp and write
-        let mut frames: Vec<_> = frame_buffer.into_values().collect();
-        frames.sort_by_key(|f| f.timestamp);
-
-        // Truncate to max_frames if specified
-        if let Some(max) = self.max_frames
-            && frames.len() > max
-        {
-            tracing::info!(
-                original_count = frames.len(),
-                max,
-                "Truncating frames to max_frames limit"
-            );
-            frames.truncate(max);
-        }
-
-        // Update frame indices after sorting
-        for (i, frame) in frames.iter_mut().enumerate() {
-            frame.frame_index = i;
-        }
-
-        info!(frames = frames.len(), "Writing frames to dataset");
-
-        for frame in &frames {
-            writer.write_frame(frame)?;
-        }
-
-        // Finalize and get stats
-        let stats = writer.finalize()?;
-        let duration = start_time.elapsed();
-
-        info!(
-            frames_written = frames.len(),
-            duration_sec = duration.as_secs_f64(),
-            "LeRobot dataset conversion complete"
         );
 
         Ok(DatasetConverterStats {
@@ -512,6 +413,7 @@ impl DatasetConverter {
             data: image_data,
             original_timestamp: 0,
             is_encoded,
+            is_depth: false,
         })
     }
 }

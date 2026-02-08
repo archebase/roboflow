@@ -14,7 +14,9 @@
 use std::fs;
 
 use roboflow::LerobotDatasetConfig as DatasetConfig;
-use roboflow::{ImageData, LerobotConfig, LerobotWriter, LerobotWriterTrait, VideoConfig};
+use roboflow::{
+    DatasetBaseConfig, ImageData, LerobotConfig, LerobotWriter, LerobotWriterTrait, VideoConfig,
+};
 
 /// Create a test output directory.
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
@@ -29,9 +31,11 @@ fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
 fn test_config() -> LerobotConfig {
     LerobotConfig {
         dataset: DatasetConfig {
-            name: "test_dataset".to_string(),
-            fps: 30,
-            robot_type: Some("test_robot".to_string()),
+            base: DatasetBaseConfig {
+                name: "test_dataset".to_string(),
+                fps: 30,
+                robot_type: Some("test_robot".to_string()),
+            },
             env_type: None,
         },
         mappings: vec![],

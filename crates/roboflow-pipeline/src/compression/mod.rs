@@ -2,10 +2,11 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Parallel compression utilities.
+//! Compression utilities.
 
 mod compress;
-mod parallel;
 
-pub use compress::{ChunkToCompress, CompressedDataChunk, CompressionPool};
-pub use parallel::ParallelCompressor;
+pub use compress::{
+    ChunkToCompress, CompressedDataChunk, CompressionPool, compress_data, compress_with,
+    create_zstd_compressor,
+};

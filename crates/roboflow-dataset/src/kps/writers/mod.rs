@@ -13,10 +13,12 @@ pub mod audio_writer;
 pub mod base;
 pub mod parquet;
 
-pub use base::{KpsWriterError, MessageExtractor};
+pub use base::MessageExtractor;
 
 // Re-export common types used by KPS writers
-pub use crate::common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats};
+pub use crate::common::{
+    AlignedFrame, AudioData, DatasetWriter, DatasetWriterError, ImageData, WriterStats,
+};
 
 // Re-export streaming writers (Parquet is always available)
 pub use audio_writer::{AudioWriter, AudioWriterFactory};

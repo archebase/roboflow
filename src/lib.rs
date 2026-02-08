@@ -89,6 +89,7 @@ pub use roboflow_pipeline::{
 // Dataset is now provided by roboflow-dataset crate
 pub use roboflow_dataset::{
     DatasetConfig, DatasetFormat, DatasetWriter, ImageData,
+    common::DatasetBaseConfig,
     kps::{
         ParquetKpsWriter,
         config::{KpsConfig, Mapping, MappingType, OutputFormat},

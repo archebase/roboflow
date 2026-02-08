@@ -3,16 +3,7 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 
 //! Core pipeline data structures.
-//!
-//! This module contains the fundamental data structures used throughout
-//! the pipeline: MessageChunk, CompressedChunk, MessageArena, and BufferPool.
 
 pub mod buffer_pool;
-pub mod chunk;
-
-// Re-export arena types from robocodec
-pub use robocodec::types::arena::{ArenaSlice, MessageArena};
-pub use robocodec::types::arena_pool::{ArenaPool, PooledArena, global_pool};
 
 pub use buffer_pool::BufferPool;
-pub use chunk::{ArenaMessage, CompressedChunk, MessageChunk};

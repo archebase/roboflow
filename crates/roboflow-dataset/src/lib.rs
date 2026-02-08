@@ -129,9 +129,11 @@ impl DatasetConfig {
             }),
             DatasetFormat::Lerobot => Self::Lerobot(lerobot::LerobotConfig {
                 dataset: lerobot::DatasetConfig {
-                    name,
-                    fps,
-                    robot_type,
+                    base: common::DatasetBaseConfig {
+                        name,
+                        fps,
+                        robot_type,
+                    },
                     env_type: None,
                 },
                 mappings: Vec::new(),

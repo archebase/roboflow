@@ -646,6 +646,7 @@ impl StreamingDatasetConverter {
                                     crate::lerobot::config::MappingType::State => "state",
                                     crate::lerobot::config::MappingType::Action => "action",
                                     crate::lerobot::config::MappingType::Timestamp => "timestamp",
+                                    _ => "state",
                                 },
                             },
                         );
@@ -681,9 +682,11 @@ mod tests {
         // Basic test that the converter can be created
         let lerobot_config = crate::lerobot::config::LerobotConfig {
             dataset: crate::lerobot::config::DatasetConfig {
-                name: "test".to_string(),
-                fps: 30,
-                robot_type: None,
+                base: crate::common::config::DatasetBaseConfig {
+                    name: "test".to_string(),
+                    fps: 30,
+                    robot_type: None,
+                },
                 env_type: None,
             },
             mappings: vec![],

@@ -16,31 +16,6 @@ use robocodec::CodecValue;
 use robocodec::io::metadata::ChannelInfo;
 use roboflow_core::Result;
 
-/// Error type for Kps writer operations.
-#[derive(Debug, thiserror::Error)]
-pub enum KpsWriterError {
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("HDF5 error: {0}")]
-    Hdf5(String),
-
-    #[error("Parquet error: {0}")]
-    Parquet(String),
-
-    #[error("Encoding error: {0}")]
-    Encoding(String),
-
-    #[error("Invalid message data: {0}")]
-    InvalidData(String),
-
-    #[error("Channel not found: {0}")]
-    ChannelNotFound(String),
-
-    #[error("Feature not mapped: {0}")]
-    FeatureNotMapped(String),
-}
-
 /// Unified Kps writer trait.
 ///
 /// This trait defines the interface for writing Kps datasets in different
@@ -184,6 +159,7 @@ impl MessageExtractor {
             data: image_data,
             original_timestamp: 0, // Set by caller
             is_encoded,
+            is_depth: false,
         })
     }
 }

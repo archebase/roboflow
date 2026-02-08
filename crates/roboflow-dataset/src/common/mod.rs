@@ -16,6 +16,7 @@
 //! - [`ProgressSender`] - Channel-based progress reporting
 
 pub mod base;
+pub mod config;
 pub mod parquet_base;
 pub mod progress;
 pub mod video;
@@ -24,6 +25,9 @@ pub mod video;
 pub use base::{
     AlignedFrame, AudioData, DatasetWriter, DatasetWriterError, ImageData, WriterStats,
 };
+
+// Re-export shared config types
+pub use config::{DatasetBaseConfig, Mapping, MappingType};
 
 // Re-export parquet utilities
 pub use parquet_base::{FeatureStats, ParquetWriterBase, calculate_stats};

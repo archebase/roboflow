@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::config::CompressionConfig;
 use crate::types::buffer_pool::BufferPool;
 use roboflow_core::Result;
 
@@ -192,31 +193,7 @@ impl Default for TransformConfig {
     }
 }
 
-/// Stage 5: Compression configuration.
-#[derive(Debug, Clone)]
-pub struct CompressionConfig {
-    /// Number of compression threads (default: num_cpus)
-    pub num_threads: usize,
-    /// ZSTD compression level (default: 3)
-    pub compression_level: i32,
-    /// ZSTD window log (None = auto-detect)
-    pub window_log: Option<u32>,
-    /// Buffer pool for compression output
-    pub buffer_pool: BufferPool,
-}
-
-impl Default for CompressionConfig {
-    fn default() -> Self {
-        Self {
-            num_threads: std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(8),
-            compression_level: 3,
-            window_log: None,
-            buffer_pool: BufferPool::new(),
-        }
-    }
-}
+// Stage 5: CompressionConfig is imported from crate::config (unified).
 
 /// Stage 6: Packetizer configuration.
 #[derive(Debug, Clone)]
@@ -346,7 +323,7 @@ impl HyperPipelineBuilder {
     /// Set number of compression threads.
     pub fn compression_threads(mut self, threads: usize) -> Self {
         let mut config = self.compression.unwrap_or_default();
-        config.num_threads = threads;
+        config.threads = threads;
         self.compression = Some(config);
         self
     }

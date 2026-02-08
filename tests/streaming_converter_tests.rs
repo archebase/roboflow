@@ -41,9 +41,11 @@ fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
 fn test_lerobot_config() -> LerobotConfig {
     LerobotConfig {
         dataset: DatasetConfig {
-            name: "test_streaming".to_string(),
-            fps: 30,
-            robot_type: Some("test_robot".to_string()),
+            base: roboflow::DatasetBaseConfig {
+                name: "test_streaming".to_string(),
+                fps: 30,
+                robot_type: Some("test_robot".to_string()),
+            },
             env_type: None,
         },
         mappings: vec![

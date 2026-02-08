@@ -17,29 +17,24 @@
 //! # Example
 //!
 //! ```no_run
-//! use roboflow_dataset::streaming::pipeline::{StreamingDatasetPipeline, PipelineBuilder};
+//! use roboflow_dataset::streaming::StreamingDatasetConverter;
 //! use roboflow_dataset::lerobot::config::LerobotConfig;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let lerobot_config = LerobotConfig::default();
+//! let output_dir = std::env::temp_dir().join("roboflow-output");
 //!
-//! let pipeline = PipelineBuilder::new()
-//!     .input_path("input.bag")
-//!     .lerobot_config(lerobot_config)
-//!     .high_throughput()
-//!     .build()?;
-//!
-//! let report = pipeline.run()?;
+//! let converter = StreamingDatasetConverter::new_lerobot(output_dir, lerobot_config)?;
+//! let stats = converter.convert("input.bag")?;
 //! println!("Processed {} frames at {:.1} fps",
-//!     report.frames_written,
-//!     report.throughput_fps
+//!     stats.frames_written,
+//!     stats.throughput_fps()
 //! );
 //! # Ok(())
 //! # }
 //! ```
 
 mod config;
-mod orchestrator;
 mod stage;
 pub mod stages;
 mod types;
@@ -48,7 +43,6 @@ pub use config::{
     AlignerConfig, DecoderConfig, PipelineConfig, TransformerConfig, UploadConfig,
     VideoEncoderConfig, VideoEncoderPreset,
 };
-pub use orchestrator::{PipelineBuilder, StreamingDatasetPipeline};
 pub use stage::ChannelConfig;
 pub use types::{
     CodecValue, DatasetFrame, DecodedMessage, EncodedVideo, ParquetRow, PipelineError,

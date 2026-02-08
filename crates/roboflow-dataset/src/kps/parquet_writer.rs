@@ -319,14 +319,6 @@ impl ParquetKpsWriter {
         self.image_shapes.insert(topic, (width, height));
     }
 
-    /// Record the dimension of a state topic.
-    // TODO: This method is used in tests but not in production code yet.
-    // It will be used when state data processing is fully implemented.
-    #[allow(dead_code)]
-    fn record_state_dimension(&mut self, topic: String, dim: usize) {
-        self.state_shapes.insert(topic, dim);
-    }
-
     /// Get the output directory path.
     pub fn output_dir(&self) -> &Path {
         &self.output_dir
@@ -393,11 +385,8 @@ mod tests {
 
         let mut writer = ParquetKpsWriter::create(&temp_dir, 0).unwrap();
 
-        // This would normally be called internally, but we test the method
         writer.record_image_shape("camera_0".to_string(), 640, 480);
-        writer.record_state_dimension("joints".to_string(), 7);
 
         assert_eq!(writer.image_shapes().get("camera_0"), Some(&(640, 480)));
-        assert_eq!(writer.state_shapes().get("joints"), Some(&7));
     }
 }

@@ -141,20 +141,20 @@ impl UploadCoordinatorStage {
             let storage_path = std::path::Path::new(&storage_key);
 
             // Read file content
-            let content = std::fs::read(&video.local_path).map_err(|e| {
-                PipelineError::ExecutionFailed {
+            let content =
+                std::fs::read(&video.local_path).map_err(|e| PipelineError::ExecutionFailed {
                     stage: "UploadCoordinator".to_string(),
                     reason: format!("failed to read video file: {e}"),
-                }
-            })?;
+                })?;
 
             // Create writer and upload
-            let mut writer = storage.writer(storage_path).map_err(|e| {
-                PipelineError::ExecutionFailed {
-                    stage: "UploadCoordinator".to_string(),
-                    reason: format!("failed to create storage writer: {e}"),
-                }
-            })?;
+            let mut writer =
+                storage
+                    .writer(storage_path)
+                    .map_err(|e| PipelineError::ExecutionFailed {
+                        stage: "UploadCoordinator".to_string(),
+                        reason: format!("failed to create storage writer: {e}"),
+                    })?;
 
             writer
                 .write_all(&content)

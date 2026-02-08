@@ -37,10 +37,7 @@
 
 pub mod config;
 pub mod orchestrator;
-pub mod stages;
-pub mod types;
 pub mod utils;
 
 pub use config::{HyperPipelineBuilder, HyperPipelineConfig};
 pub use orchestrator::{HyperPipeline, HyperPipelineReport};
-pub use types::*;

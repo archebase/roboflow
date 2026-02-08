@@ -65,7 +65,7 @@ pub use task_info::{ActionSegment, KeyFrame, LabelInfo, TaskInfo, TaskInfoBuilde
 
 // Re-export streaming writer types
 pub use writers::{
-    AlignedFrame, AudioData, DatasetWriter, ImageData, KpsWriterError, MessageExtractor,
+    AlignedFrame, AudioData, DatasetWriter, DatasetWriterError, ImageData, MessageExtractor,
     WriterStats, create_kps_writer,
 };
 

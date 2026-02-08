@@ -407,9 +407,10 @@ impl HyperPipelineConfigBuilder {
 
     /// Build the actual HyperPipelineConfig.
     pub fn build(self) -> crate::hyper::HyperPipelineConfig {
+        use crate::config::CompressionConfig;
         use crate::hyper::config::{
-            BatcherConfig, CompressionConfig, PacketizerConfig, ParserConfig, PrefetcherConfig,
-            TransformConfig, WriterConfig,
+            BatcherConfig, PacketizerConfig, ParserConfig, PrefetcherConfig, TransformConfig,
+            WriterConfig,
         };
 
         info!(
@@ -443,10 +444,10 @@ impl HyperPipelineConfigBuilder {
                 num_threads: self.transform_threads,
             },
             compression: CompressionConfig {
-                num_threads: self.compression_threads,
+                threads: self.compression_threads,
                 compression_level: self.compression_level,
                 window_log: None, // Will be auto-detected by orchestrator
-                buffer_pool: crate::types::buffer_pool::BufferPool::new(),
+                ..CompressionConfig::default()
             },
             packetizer: PacketizerConfig {
                 enable_crc: true,

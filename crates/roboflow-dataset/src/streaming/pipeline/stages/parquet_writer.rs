@@ -125,9 +125,11 @@ impl ParquetWriterStage {
         // Create lerobot config
         let lerobot_config = crate::lerobot::config::LerobotConfig {
             dataset: crate::lerobot::config::DatasetConfig {
-                name: "pipeline".to_string(),
-                fps: self.config.fps,
-                robot_type: None,
+                base: crate::common::config::DatasetBaseConfig {
+                    name: "pipeline".to_string(),
+                    fps: self.config.fps,
+                    robot_type: None,
+                },
                 env_type: None,
             },
             mappings: vec![],
@@ -164,6 +166,7 @@ impl ParquetWriterStage {
                                     data: data.clone(),
                                     original_timestamp: (frame.timestamp * 1_000_000_000.0) as u64,
                                     is_encoded: false,
+                                    is_depth: false,
                                 },
                             )
                         })

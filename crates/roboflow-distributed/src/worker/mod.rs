@@ -694,7 +694,7 @@ impl Worker {
     /// Loads the configuration from TiKV using the config_hash stored in the work unit.
     /// Uses an LRU cache to reduce TiKV round-trips for frequently used configs.
     async fn create_lerobot_config(&self, unit: &WorkUnit) -> Result<LerobotConfig, TikvError> {
-        use roboflow_dataset::lerobot::config::DatasetConfig;
+        use roboflow_dataset::lerobot::config::{DatasetBaseConfig, DatasetConfig};
 
         let config_hash = &unit.config_hash;
 
@@ -708,9 +708,11 @@ impl Worker {
             );
             return Ok(LerobotConfig {
                 dataset: DatasetConfig {
-                    name: format!("roboflow-episode-{}", unit.id),
-                    fps: 30,
-                    robot_type: Some("robot".to_string()),
+                    base: DatasetBaseConfig {
+                        name: format!("roboflow-episode-{}", unit.id),
+                        fps: 30,
+                        robot_type: Some("robot".to_string()),
+                    },
                     env_type: None,
                 },
                 mappings: Vec::new(),

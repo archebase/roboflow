@@ -162,26 +162,6 @@ roboflow-distributed = { workspace = true }
 
 # Binaries
 [[bin]]
-name = "convert"
-path = "src/bin/convert.rs"
-
-[[bin]]
-name = "extract"
-path = "src/bin/extract.rs"
-
-[[bin]]
-name = "inspect"
-path = "src/bin/inspect.rs"
-
-[[bin]]
-name = "schema"
-path = "src/bin/schema.rs"
-
-[[bin]]
-name = "search"
-path = "src/bin/search.rs"
-
-[[bin]]
 name = "roboflow"
 path = "src/bin/roboflow.rs"
 

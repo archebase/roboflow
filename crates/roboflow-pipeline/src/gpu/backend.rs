@@ -83,7 +83,12 @@ pub trait CompressorBackend: Send + Sync {
 }
 
 /// CPU compression backend using multi-threaded ZSTD.
+///
+/// Delegates to [`crate::compression::CompressionPool`] for the actual
+/// compression work, keeping this type as a thin adapter that implements
+/// the [`CompressorBackend`] trait.
 pub struct CpuCompressor {
+    pool: crate::compression::CompressionPool,
     compression_level: u32,
     threads: u32,
 }
@@ -91,7 +96,17 @@ pub struct CpuCompressor {
 impl CpuCompressor {
     /// Create a new CPU compressor with the given settings.
     pub fn new(compression_level: u32, threads: u32) -> Self {
+        use crate::config::CompressionConfig;
+
+        let config = CompressionConfig {
+            enabled: true,
+            threads: threads as usize,
+            compression_level: compression_level as i32,
+            ..CompressionConfig::default()
+        };
+
         Self {
+            pool: crate::compression::CompressionPool::from_config(config),
             compression_level,
             threads,
         }
@@ -99,70 +114,21 @@ impl CpuCompressor {
 
     /// Create a CPU compressor with default settings.
     pub fn default_config() -> Self {
-        Self {
-            compression_level: 3,
-            threads: crate::hardware::detect_cpu_count(),
-        }
+        Self::new(3, crate::hardware::detect_cpu_count())
     }
 }
 
 impl CompressorBackend for CpuCompressor {
     fn compress_chunk(&self, chunk: &ChunkToCompress) -> GpuResult<CompressedChunk> {
-        let mut compressor =
-            zstd::bulk::Compressor::new(self.compression_level as i32).map_err(|e| {
-                GpuCompressionError::CompressionFailed(format!(
-                    "Failed to create CPU compressor: {}",
-                    e
-                ))
-            })?;
-
-        let compressed = compressor.compress(&chunk.data).map_err(|e| {
-            GpuCompressionError::CompressionFailed(format!("CPU compression failed: {}", e))
-        })?;
-
-        Ok(CompressedChunk {
-            sequence: chunk.sequence,
-            channel_id: chunk.channel_id,
-            compressed_data: compressed.to_vec(),
-            original_size: chunk.data.len(),
-        })
+        self.pool
+            .compress_chunk(chunk)
+            .map_err(|e| GpuCompressionError::CompressionFailed(e.to_string()))
     }
 
     fn compress_parallel(&self, chunks: &[ChunkToCompress]) -> GpuResult<Vec<CompressedChunk>> {
-        use rayon::prelude::*;
-
-        if chunks.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let compression_level = self.compression_level as i32;
-
-        // Process chunks in parallel using rayon
-        let results: Result<Vec<_>, _> = chunks
-            .par_iter()
-            .map(|chunk| {
-                let mut compressor =
-                    zstd::bulk::Compressor::new(compression_level).map_err(|e| {
-                        GpuCompressionError::CompressionFailed(format!(
-                            "Failed to create compressor: {}",
-                            e
-                        ))
-                    })?;
-
-                let compressed = compressor.compress(&chunk.data).map_err(|e| {
-                    GpuCompressionError::CompressionFailed(format!("Compression failed: {}", e))
-                })?;
-
-                Ok(CompressedChunk {
-                    sequence: chunk.sequence,
-                    channel_id: chunk.channel_id,
-                    compressed_data: compressed.to_vec(),
-                    original_size: chunk.data.len(),
-                })
-            })
-            .collect();
-
-        results
+        self.pool
+            .compress_parallel(chunks)
+            .map_err(|e| GpuCompressionError::CompressionFailed(e.to_string()))
     }
 
     fn compressor_type(&self) -> CompressorType {

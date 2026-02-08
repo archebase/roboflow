@@ -106,13 +106,13 @@ impl FeatureTransformerStage {
                 states_extracted += 1;
             }
 
-            self.output_tx.send(dataset_frame).map_err(|e| {
-                PipelineError::ChannelError {
+            self.output_tx
+                .send(dataset_frame)
+                .map_err(|e| PipelineError::ChannelError {
                     from: "Transformer".to_string(),
                     to: "Writer".to_string(),
                     reason: e.to_string(),
-                }
-            })?;
+                })?;
 
             frames_produced += 1;
 

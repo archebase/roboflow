@@ -297,9 +297,11 @@ mod tests {
     fn test_config_validation_empty_input() {
         let lerobot_config = crate::lerobot::config::LerobotConfig {
             dataset: crate::lerobot::config::DatasetConfig {
-                name: "test".to_string(),
-                fps: 30,
-                robot_type: None,
+                base: crate::common::config::DatasetBaseConfig {
+                    name: "test".to_string(),
+                    fps: 30,
+                    robot_type: None,
+                },
                 env_type: None,
             },
             mappings: vec![],
@@ -314,9 +316,11 @@ mod tests {
     fn test_config_validation_zero_threads() {
         let lerobot_config = crate::lerobot::config::LerobotConfig {
             dataset: crate::lerobot::config::DatasetConfig {
-                name: "test".to_string(),
-                fps: 30,
-                robot_type: None,
+                base: crate::common::config::DatasetBaseConfig {
+                    name: "test".to_string(),
+                    fps: 30,
+                    robot_type: None,
+                },
                 env_type: None,
             },
             mappings: vec![],
@@ -332,9 +336,11 @@ mod tests {
     fn test_config_validation_cloud_without_prefix() {
         let lerobot_config = crate::lerobot::config::LerobotConfig {
             dataset: crate::lerobot::config::DatasetConfig {
-                name: "test".to_string(),
-                fps: 30,
-                robot_type: None,
+                base: crate::common::config::DatasetBaseConfig {
+                    name: "test".to_string(),
+                    fps: 30,
+                    robot_type: None,
+                },
                 env_type: None,
             },
             mappings: vec![],

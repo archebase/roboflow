@@ -320,6 +320,7 @@ impl FrameAlignmentBuffer {
                     data,
                     original_timestamp: timestamped_msg.log_time,
                     is_encoded: final_is_encoded,
+                    is_depth: false,
                 },
             );
         }
