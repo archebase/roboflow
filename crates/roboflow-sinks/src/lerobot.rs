@@ -4,28 +4,34 @@
 
 //! LeRobot sink implementation.
 //!
-//! This module provides a Sink implementation for writing datasets in LeRobot format.
+//! This sink writes robotics datasets in LeRobot v2.1 format by delegating
+//! to `roboflow_dataset::lerobot::LerobotWriter`. Handles episode boundaries,
+//! frame conversion (`DatasetFrame` → `AlignedFrame`), and cloud storage.
 
+use crate::convert::dataset_frame_to_aligned;
 use crate::{DatasetFrame, Sink, SinkCheckpoint, SinkConfig, SinkError, SinkResult, SinkStats};
+use roboflow_dataset::lerobot::{LerobotConfig, LerobotWriter};
 use std::collections::HashMap;
 
 /// LeRobot dataset sink.
 ///
-/// This sink writes robotics datasets in LeRobot v2.1 format,
-/// which is Hugging Face's robotics learning dataset format.
+/// Writes robotics datasets in LeRobot v2.1 format (Parquet + MP4 video).
+/// Delegates to the real `LerobotWriter` from `roboflow-dataset`.
 pub struct LerobotSink {
     /// Output directory path
     output_path: String,
-    /// Whether the sink has been initialized
-    initialized: bool,
+    /// The dataset writer (created during initialize)
+    writer: Option<LerobotWriter>,
+    /// Current episode index for boundary detection
+    current_episode: usize,
+    /// Whether we've seen any frames yet
+    has_frames: bool,
     /// Frames written counter
     frames_written: usize,
-    /// Episodes written counter
-    episodes_written: usize,
+    /// Episodes completed counter
+    episodes_completed: usize,
     /// Start time for duration calculation
     start_time: Option<std::time::Instant>,
-    /// Output bytes written
-    output_bytes: u64,
 }
 
 impl LerobotSink {
@@ -33,11 +39,12 @@ impl LerobotSink {
     pub fn new(path: impl Into<String>) -> SinkResult<Self> {
         Ok(Self {
             output_path: path.into(),
-            initialized: false,
+            writer: None,
+            current_episode: 0,
+            has_frames: false,
             frames_written: 0,
-            episodes_written: 0,
+            episodes_completed: 0,
             start_time: None,
-            output_bytes: 0,
         })
     }
 
@@ -50,73 +57,151 @@ impl LerobotSink {
             )),
         }
     }
+
+    /// Extract LerobotConfig from SinkConfig options, or create a minimal default.
+    fn extract_lerobot_config(config: &SinkConfig) -> LerobotConfig {
+        // Try to get config from options (set via SinkConfig::lerobot_with_config)
+        if let Some(lerobot_config) = config.get_option::<LerobotConfig>("lerobot_config") {
+            return lerobot_config;
+        }
+
+        // Extract fps from options if available
+        let fps = config.get_option::<u32>("fps").unwrap_or(30);
+        let name = config
+            .get_option::<String>("dataset_name")
+            .unwrap_or_else(|| "dataset".to_string());
+        let robot_type = config.get_option::<String>("robot_type");
+
+        // Create minimal config
+        LerobotConfig {
+            dataset: roboflow_dataset::lerobot::DatasetConfig {
+                base: roboflow_dataset::common::DatasetBaseConfig {
+                    name,
+                    fps,
+                    robot_type,
+                },
+                env_type: None,
+            },
+            mappings: Vec::new(),
+            video: Default::default(),
+            annotation_file: None,
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl Sink for LerobotSink {
-    async fn initialize(&mut self, _config: &SinkConfig) -> SinkResult<()> {
-        // Create output directory
-        let path = std::path::Path::new(&self.output_path);
-        std::fs::create_dir_all(path).map_err(|e| SinkError::CreateFailed {
-            path: path.to_path_buf(),
-            error: Box::new(e),
+    async fn initialize(&mut self, config: &SinkConfig) -> SinkResult<()> {
+        let lerobot_config = Self::extract_lerobot_config(config);
+
+        tracing::info!(
+            output = %self.output_path,
+            fps = lerobot_config.dataset.base.fps,
+            name = %lerobot_config.dataset.base.name,
+            "Initializing LeRobot sink"
+        );
+
+        let writer = LerobotWriter::new_local(&self.output_path, lerobot_config).map_err(|e| {
+            SinkError::CreateFailed {
+                path: self.output_path.clone().into(),
+                error: Box::new(e),
+            }
         })?;
 
-        self.initialized = true;
+        self.writer = Some(writer);
         self.start_time = Some(std::time::Instant::now());
 
         Ok(())
     }
 
     async fn write_frame(&mut self, frame: DatasetFrame) -> SinkResult<()> {
-        if !self.initialized {
-            return Err(SinkError::WriteFailed(
-                "Sink not initialized. Call initialize() first.".to_string(),
-            ));
+        let writer = self.writer.as_mut().ok_or_else(|| {
+            SinkError::WriteFailed("Sink not initialized. Call initialize() first.".to_string())
+        })?;
+
+        // Detect episode boundary
+        if self.has_frames && frame.episode_index != self.current_episode {
+            // Finish the previous episode (flush Parquet + encode video)
+            let task_index = frame.task_index;
+            writer.finish_episode(task_index).map_err(|e| {
+                SinkError::WriteFailed(format!("Failed to finish episode: {e}"))
+            })?;
+            self.episodes_completed += 1;
+
+            tracing::debug!(
+                episode = self.current_episode,
+                frames = self.frames_written,
+                "Episode completed"
+            );
         }
 
-        // This is a simplified implementation.
-        // A production implementation would:
-        // 1. Convert DatasetFrame to AlignedFrame
-        // 2. Use roboflow_dataset::lerobot::LerobotWriter to write the frame
-        // 3. Handle video encoding
-        // 4. Write Parquet files
+        self.current_episode = frame.episode_index;
+        self.has_frames = true;
 
-        // For now, just track the frame
+        // Convert DatasetFrame → AlignedFrame and write
+        let aligned = dataset_frame_to_aligned(&frame);
+
+        use roboflow_dataset::DatasetWriter;
+        writer.write_frame(&aligned).map_err(|e| {
+            SinkError::WriteFailed(format!("LerobotWriter write_frame failed: {e}"))
+        })?;
+
         self.frames_written += 1;
-
-        // Check for episode boundary (simple heuristic: frame_index reset)
-        if frame.frame_index == 0 && self.frames_written > 1 {
-            self.episodes_written += 1;
-        }
 
         Ok(())
     }
 
     async fn flush(&mut self) -> SinkResult<()> {
-        // Flush any buffered data
+        // Writer handles buffering internally
         Ok(())
     }
 
     async fn finalize(&mut self) -> SinkResult<SinkStats> {
+        let writer = self.writer.as_mut().ok_or_else(|| {
+            SinkError::WriteFailed("Sink not initialized".to_string())
+        })?;
+
+        use roboflow_dataset::DatasetWriter;
+        let writer_stats = writer.finalize().map_err(|e| {
+            SinkError::WriteFailed(format!("LerobotWriter finalize failed: {e}"))
+        })?;
+
         let duration = self
             .start_time
             .map(|t| t.elapsed().as_secs_f64())
             .unwrap_or(0.0);
 
+        tracing::info!(
+            frames = writer_stats.frames_written,
+            images = writer_stats.images_encoded,
+            episodes = self.episodes_completed + 1,
+            bytes = writer_stats.output_bytes,
+            duration_sec = duration,
+            "LeRobot sink finalized"
+        );
+
         Ok(SinkStats {
-            frames_written: self.frames_written,
-            episodes_written: self.episodes_written,
+            frames_written: writer_stats.frames_written,
+            episodes_written: self.episodes_completed + 1,
             duration_sec: duration,
-            total_bytes: Some(self.output_bytes),
-            metrics: HashMap::new(),
+            total_bytes: Some(writer_stats.output_bytes),
+            metrics: HashMap::from([
+                (
+                    "images_encoded".to_string(),
+                    serde_json::json!(writer_stats.images_encoded),
+                ),
+                (
+                    "state_records".to_string(),
+                    serde_json::json!(writer_stats.state_records),
+                ),
+            ]),
         })
     }
 
     async fn checkpoint(&self) -> SinkResult<SinkCheckpoint> {
         Ok(SinkCheckpoint {
             last_frame_index: self.frames_written,
-            last_episode_index: self.episodes_written,
+            last_episode_index: self.current_episode,
             checkpoint_time: chrono::Utc::now().timestamp(),
             data: HashMap::new(),
         })
@@ -151,5 +236,23 @@ mod tests {
         let config = SinkConfig::kps("/tmp/output");
         let sink = LerobotSink::from_config(&config);
         assert!(sink.is_err());
+    }
+
+    #[test]
+    fn test_extract_default_config() {
+        let config = SinkConfig::lerobot("/tmp/output");
+        let lerobot_config = LerobotSink::extract_lerobot_config(&config);
+        assert_eq!(lerobot_config.dataset.base.fps, 30);
+        assert_eq!(lerobot_config.dataset.base.name, "dataset");
+    }
+
+    #[test]
+    fn test_extract_config_with_options() {
+        let config = SinkConfig::lerobot("/tmp/output")
+            .with_option("fps", serde_json::json!(60))
+            .with_option("dataset_name", serde_json::json!("my_robot"));
+        let lerobot_config = LerobotSink::extract_lerobot_config(&config);
+        assert_eq!(lerobot_config.dataset.base.fps, 60);
+        assert_eq!(lerobot_config.dataset.base.name, "my_robot");
     }
 }

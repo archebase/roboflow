@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 
 use roboflow_core::{Result, RoboflowError};
 use roboflow_sinks::{
-    lerobot::LerobotSink, DatasetFrame, ImageData, ImageFormat, Sink, SinkConfig, SinkStats,
+    kps::KpsSink, lerobot::LerobotSink, DatasetFrame, ImageData, ImageFormat, Sink, SinkConfig,
+    SinkStats,
 };
 use roboflow_sources::{
     BagSource, McapSource, RrdSource, Source, SourceConfig, TimestampedMessage,
@@ -136,11 +137,9 @@ impl Pipeline {
             SinkType::Lerobot { path } => Box::new(LerobotSink::new(path).map_err(|e| {
                 RoboflowError::other(format!("Failed to create LeRobot sink: {}", e))
             })?),
-            SinkType::Kps { .. } => {
-                return Err(RoboflowError::other(
-                    "KPS sink not yet implemented in Pipeline".to_string(),
-                ));
-            }
+            SinkType::Kps { path } => Box::new(KpsSink::new(path).map_err(|e| {
+                RoboflowError::other(format!("Failed to create KPS sink: {}", e))
+            })?),
             SinkType::Zarr { .. } => {
                 return Err(RoboflowError::other(
                     "Zarr sink not yet implemented in Pipeline".to_string(),

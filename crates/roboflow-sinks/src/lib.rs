@@ -4,6 +4,7 @@
 #![warn(unused_crate_dependencies)]
 
 mod config;
+mod convert;
 mod error;
 mod registry;
 
