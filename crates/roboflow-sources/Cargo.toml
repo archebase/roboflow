@@ -1,0 +1,22 @@
+[package]
+name = "roboflow-sources"
+version = "0.2.0"
+edition = "2024"
+authors = ["ArcheBase Authors"]
+license = "MulanPSL-2.0"
+repository = "https://github.com/archebase/roboflow"
+description = "Source plugins for roboflow data pipeline"
+
+[dependencies]
+robocodec = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+async-trait = { workspace = true }
+
+# Optional: HDF5 support
+hdf5 = { git = "https://github.com/archebase/hdf5-rs", optional = true }
+
+[features]
+default = []
+hdf5 = ["dep:hdf5"]

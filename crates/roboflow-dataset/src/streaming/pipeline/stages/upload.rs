@@ -1,6 +1,5 @@
 // Upload coordinator stage - streaming upload to S3/OSS
 
-use std::io::Write;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
@@ -137,36 +136,16 @@ impl UploadCoordinatorStage {
                 "Uploading video"
             );
 
-            // Upload file using storage.writer()
+            // Upload file using storage.upload_file() which uses parallel multipart
+            // upload for cloud backends (OSS/S3) and simple copy for local storage.
             let storage_path = std::path::Path::new(&storage_key);
 
-            // Read file content
-            let content =
-                std::fs::read(&video.local_path).map_err(|e| PipelineError::ExecutionFailed {
-                    stage: "UploadCoordinator".to_string(),
-                    reason: format!("failed to read video file: {e}"),
-                })?;
-
-            // Create writer and upload
-            let mut writer =
-                storage
-                    .writer(storage_path)
-                    .map_err(|e| PipelineError::ExecutionFailed {
-                        stage: "UploadCoordinator".to_string(),
-                        reason: format!("failed to create storage writer: {e}"),
-                    })?;
-
-            writer
-                .write_all(&content)
+            storage
+                .upload_file(&video.local_path, storage_path)
                 .map_err(|e| PipelineError::ExecutionFailed {
                     stage: "UploadCoordinator".to_string(),
-                    reason: format!("failed to write to storage: {e}"),
+                    reason: format!("failed to upload file: {e}"),
                 })?;
-
-            writer.flush().map_err(|e| PipelineError::ExecutionFailed {
-                stage: "UploadCoordinator".to_string(),
-                reason: format!("failed to flush storage writer: {e}"),
-            })?;
 
             // Delete local file after successful upload
             std::fs::remove_file(&video.local_path).ok();

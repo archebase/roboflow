@@ -88,7 +88,7 @@ impl Default for BatchMetadata {
         Self {
             name: String::new(),
             display_name: None,
-            namespace: "default".to_string(),
+            namespace: "jobs".to_string(),
             submitted_by: None,
             labels: HashMap::new(),
             annotations: HashMap::new(),
@@ -248,7 +248,7 @@ impl BatchSpec {
             metadata: BatchMetadata {
                 name: name.into(),
                 display_name: None,
-                namespace: "default".to_string(),
+                namespace: "jobs".to_string(),
                 submitted_by: None,
                 labels: HashMap::new(),
                 annotations: HashMap::new(),
@@ -486,7 +486,7 @@ mod tests {
             "s3://out/".to_string(),
         );
 
-        assert_eq!(spec.key(), "default:my-batch");
+        assert_eq!(spec.key(), "jobs:my-batch");
     }
 
     #[test]

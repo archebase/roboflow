@@ -1,0 +1,21 @@
+[package]
+name = "roboflow-sinks"
+version = "0.2.0"
+edition = "2024"
+authors = ["ArcheBase Authors"]
+license = "MulanPSL-2.0"
+repository = "https://github.com/archebase/roboflow"
+description = "Sink plugins for roboflow data pipeline"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+chrono = { workspace = true }
+async-trait = { workspace = true }
+polars = { version = "0.41", features = ["parquet"], optional = true }
+roboflow-dataset = { path = "../roboflow-dataset", version = "0.2.0" }
+
+[features]
+default = []
+parquet = ["dep:polars"]

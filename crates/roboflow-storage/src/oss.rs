@@ -691,6 +691,73 @@ impl Storage for OssStorage {
 
         Ok(Box::new(reader))
     }
+
+    fn download_file(&self, remote_path: &Path, local_path: &Path) -> Result<u64> {
+        let object_size = self.size(remote_path)?;
+        let config = crate::StreamingConfig::default();
+
+        tracing::info!(
+            remote_path = %remote_path.display(),
+            local_path = %local_path.display(),
+            object_size,
+            chunk_size = config.chunk_size,
+            "Downloading file via streaming range requests"
+        );
+
+        let mut reader = crate::streaming::StreamingOssReader::new(
+            self.async_storage.object_store(),
+            self.runtime_handle(),
+            self.async_storage.path_to_key(remote_path),
+            object_size,
+            &config,
+        )?;
+
+        let file = std::fs::File::create(local_path).map_err(StorageError::Io)?;
+        let mut writer = std::io::BufWriter::with_capacity(4 * 1024 * 1024, file);
+        let bytes = std::io::copy(&mut reader, &mut writer).map_err(StorageError::Io)?;
+        writer.flush().map_err(StorageError::Io)?;
+
+        tracing::info!(total_bytes = bytes, "Streaming download complete");
+
+        Ok(bytes)
+    }
+
+    fn upload_file(&self, local_path: &Path, remote_path: &Path) -> Result<u64> {
+        use crate::multipart_parallel::{ParallelUploadConfig, upload_multipart_parallel};
+
+        let mut file = std::fs::File::open(local_path)?;
+        let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let key = self.async_storage.path_to_key(remote_path);
+        let config = ParallelUploadConfig::default();
+
+        tracing::info!(
+            local_path = %local_path.display(),
+            remote_path = %remote_path.display(),
+            file_size,
+            part_size = config.part_size,
+            concurrency = config.concurrency,
+            "Uploading file via parallel multipart"
+        );
+
+        let stats = upload_multipart_parallel(
+            &self.async_storage.object_store(),
+            &self.runtime_handle(),
+            &key,
+            &mut file,
+            Some(&config),
+            None,
+        )?;
+
+        tracing::info!(
+            total_bytes = stats.total_bytes,
+            total_parts = stats.total_parts,
+            duration_sec = stats.total_duration.as_secs_f64(),
+            throughput_mb_s = stats.avg_bytes_per_sec / (1024.0 * 1024.0),
+            "Parallel multipart upload complete"
+        );
+
+        Ok(stats.total_bytes)
+    }
 }
 
 impl std::fmt::Debug for OssStorage {

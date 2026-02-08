@@ -38,15 +38,34 @@ pub fn download_with_progress(
     // Get file size for progress tracking
     let total_bytes = storage.size(remote_path)?;
 
-    // Open remote reader
-    let mut reader = storage.reader(remote_path)?;
+    // Try streaming_reader first (uses HTTP range requests, avoids loading
+    // the entire file into memory). Falls back to reader() if not supported.
+    let streaming_config = roboflow_storage::StreamingConfig::default();
+    let mut reader: Box<dyn Read + Send> =
+        match storage.streaming_reader(remote_path, streaming_config) {
+            Ok(r) => {
+                tracing::info!(
+                    remote_path = %remote_path.display(),
+                    total_bytes,
+                    "Using streaming reader for download (range-request chunks)"
+                );
+                r
+            }
+            Err(_) => {
+                tracing::debug!(
+                    remote_path = %remote_path.display(),
+                    "Streaming reader not available, falling back to reader()"
+                );
+                storage.reader(remote_path)?
+            }
+        };
 
-    // Create local file with buffered writer
+    // Create local file with buffered writer (4MB buffer for better disk throughput)
     let file = std::fs::File::create(local_path).map_err(StorageError::Io)?;
-    let mut writer = BufWriter::with_capacity(1024 * 1024, file); // 1MB buffer
+    let mut writer = BufWriter::with_capacity(4 * 1024 * 1024, file);
 
-    // Download in chunks
-    const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
+    // Download in chunks (4MB read buffer matches the write buffer)
+    const CHUNK_SIZE: usize = 4 * 1024 * 1024;
     let mut buffer = vec![0u8; CHUNK_SIZE];
     let mut bytes_downloaded = 0u64;
 

@@ -88,6 +88,7 @@ pub use alignment::{FrameAlignmentBuffer, PartialFrame};
 pub use backpressure::{BackpressureHandler, BackpressureStrategy};
 pub use completion::FrameCompletionCriteria;
 pub use config::{FeatureRequirement, LateMessageStrategy, StreamingConfig};
+#[allow(deprecated)]
 pub use converter::StreamingDatasetConverter;
 pub use stats::{AlignmentStats, StreamingStats};
 pub use temp_file::TempFileManager;

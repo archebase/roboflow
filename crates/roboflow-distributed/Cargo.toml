@@ -2,19 +2,20 @@
 name = "roboflow-distributed"
 version = "0.2.0"
 edition = "2024"
-authors = ["Strata Contributors"]
+authors = ["ArcheBase Authors"]
 license = "MulanPSL-2.0"
 repository = "https://github.com/archebase/roboflow"
 description = "Distributed coordination for roboflow - TiKV backend"
-
-[features]
-default = []
-
 
 [dependencies]
 roboflow-core = { path = "../roboflow-core", version = "0.2.0" }
 roboflow-storage = { path = "../roboflow-storage", version = "0.2.0" }
 roboflow-dataset = { path = "../roboflow-dataset", version = "0.2.0" }
+
+# Pipeline API (Source/Sink abstraction)
+roboflow-pipeline = { path = "../roboflow-pipeline", version = "0.2.0", features = ["dataset"] }
+roboflow-sources = { path = "../roboflow-sources", version = "0.2.0" }
+roboflow-sinks = { path = "../roboflow-sinks", version = "0.2.0" }
 
 # TiKV client
 tikv-client = "0.3"

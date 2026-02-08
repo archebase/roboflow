@@ -2233,27 +2233,9 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
 dependencies = [
  "either",
 ]
@@ -3657,7 +3639,7 @@ checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes",
  "heck",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "log",
  "multimap",
  "once_cell",
@@ -3677,7 +3659,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.114",
@@ -3690,7 +3672,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.114",
@@ -4123,7 +4105,7 @@ dependencies = [
 [[package]]
 name = "robocodec"
 version = "0.1.0"
-source = "git+https://github.com/archebase/robocodec?branch=main#965a3225b2cbaae14f89e97a5d35cd06b6d7315a"
+source = "git+https://github.com/archebase/robocodec?branch=fix%2Fs3-signer-host-header-port#ac3302be766afa98b64ed150de7f18f512e1013c"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -4218,6 +4200,8 @@ dependencies = [
  "roboflow-distributed",
  "roboflow-hdf5",
  "roboflow-pipeline",
+ "roboflow-sinks",
+ "roboflow-sources",
  "roboflow-storage",
  "rosbag",
  "serde",
@@ -4271,6 +4255,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",
+ "tokio",
  "toml",
  "tracing",
  "uuid",
@@ -4291,6 +4276,9 @@ dependencies = [
  "pretty_assertions",
  "roboflow-core",
  "roboflow-dataset",
+ "roboflow-pipeline",
+ "roboflow-sinks",
+ "roboflow-sources",
  "roboflow-storage",
  "serde",
  "serde_json",
@@ -4322,6 +4310,7 @@ dependencies = [
 name = "roboflow-pipeline"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
  "bumpalo",
  "bytemuck",
  "byteorder",
@@ -4339,10 +4328,38 @@ dependencies = [
  "robocodec",
  "roboflow-core",
  "roboflow-dataset",
+ "roboflow-sinks",
+ "roboflow-sources",
  "tempfile",
  "thiserror 1.0.69",
+ "tokio",
  "tracing",
  "zstd",
+]
+
+[[package]]
+name = "roboflow-sinks"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "polars",
+ "roboflow-dataset",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "roboflow-sources"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "hdf5",
+ "robocodec",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -5775,7 +5792,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

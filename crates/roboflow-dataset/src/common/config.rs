@@ -14,7 +14,7 @@
 //! - [`Mapping`] - Topic-to-feature mapping with type information
 //! - [`MappingType`] - Superset enum of all mapping types across formats
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Common dataset metadata configuration.
 ///
@@ -29,7 +29,7 @@ use serde::Deserialize;
 /// fps = 30
 /// robot_type = "panda"
 /// ```
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DatasetBaseConfig {
     /// Dataset name.
     pub name: String,
@@ -56,7 +56,7 @@ pub struct DatasetBaseConfig {
 /// type = "image"
 /// camera_key = "cam_high"
 /// ```
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Mapping {
     /// ROS/MCAP topic name or pattern.
     pub topic: String,
@@ -95,7 +95,7 @@ impl Mapping {
 /// This is the superset of all mapping types across KPS and LeRobot formats.
 /// - Common: Image, State, Action, Timestamp
 /// - KPS-specific: OtherSensor, Audio
-#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum MappingType {
     /// Image data (camera).

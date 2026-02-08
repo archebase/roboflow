@@ -45,6 +45,9 @@ crossbeam-channel = "0.5"
 num_cpus = "1.16"
 rayon = "1.10"
 
+# Async runtime (for S3 streaming decoder)
+tokio = { version = "1", features = ["rt"] }
+
 # Error handling
 anyhow = "1.0"
 

@@ -105,11 +105,15 @@ impl ScannerConfig {
 
     /// Create scanner configuration from environment variables.
     ///
+    /// - `SCANNER_BATCH_NAMESPACE`: Batch namespace to scan (default: "jobs")
     /// - `SCANNER_SCAN_INTERVAL_SECS`: Scan interval in seconds (default: 60)
     /// - `SCANNER_BATCH_SIZE`: Batch size for job operations (default: 100)
     /// - `SCANNER_MAX_BATCHES_PER_CYCLE`: Max batches to process per cycle (default: 10)
     pub fn from_env() -> Result<Self, String> {
         use std::env;
+
+        let batch_namespace =
+            env::var("SCANNER_BATCH_NAMESPACE").unwrap_or_else(|_| String::from("jobs"));
 
         let scan_interval = env::var("SCANNER_SCAN_INTERVAL_SECS")
             .ok()
@@ -127,7 +131,7 @@ impl ScannerConfig {
             .unwrap_or(10);
 
         Ok(Self {
-            batch_namespace: String::from("jobs"),
+            batch_namespace,
             scan_interval: Duration::from_secs(scan_interval),
             batch_size,
             max_batches_per_cycle,
@@ -676,6 +680,14 @@ impl Scanner {
                     let all_pairs: Vec<(Vec<u8>, Vec<u8>)> =
                         work_unit_pairs.into_iter().chain(pending_pairs).collect();
 
+                    // Debug: log the keys being written
+                    for (k, _) in &all_pairs {
+                        tracing::info!(
+                            key = %String::from_utf8_lossy(k),
+                            "Writing key to TiKV"
+                        );
+                    }
+
                     if let Err(e) = self.tikv.batch_put(all_pairs).await {
                         tracing::error!(
                             batch_id = %batch_id,
@@ -685,6 +697,29 @@ impl Scanner {
                         self.metrics.inc_scan_errors();
                         return Err(e);
                     }
+
+                    // Debug: verify pending keys were actually written
+                    let verify_prefix = WorkUnitKeys::pending_prefix();
+                    match self.tikv.scan(verify_prefix.clone(), 10).await {
+                        Ok(results) => {
+                            tracing::info!(
+                                prefix = %String::from_utf8_lossy(&verify_prefix),
+                                results = results.len(),
+                                "Verification scan for pending keys after batch_put"
+                            );
+                            for (k, v) in &results {
+                                tracing::info!(
+                                    key = %String::from_utf8_lossy(k),
+                                    value = %String::from_utf8_lossy(v),
+                                    "Found pending key"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "Verification scan failed");
+                        }
+                    }
+
                     created += chunk.len() as u64;
                 }
                 created

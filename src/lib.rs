@@ -73,10 +73,24 @@ pub mod core {
 // =============================================================================
 // Pipeline is now provided by roboflow-pipeline crate
 pub use roboflow_pipeline::{
-    DatasetConverter, DatasetConverterStats,
     auto_config::PerformanceMode,
     config::CompressionConfig,
     hyper::{HyperPipeline, HyperPipelineConfig, HyperPipelineReport},
+};
+
+// =============================================================================
+// Pipeline API: Source/Sink abstraction
+// =============================================================================
+#[cfg(feature = "sources")]
+pub use roboflow_sources::{
+    Source, SourceConfig, SourceError, SourceMetadata, SourceRegistry, SourceResult,
+    TimestampedMessage,
+};
+
+#[cfg(feature = "sinks")]
+pub use roboflow_sinks::{
+    DatasetFrame, ImageData, ImageFormat, Sink, SinkCheckpoint, SinkConfig, SinkError,
+    SinkRegistry, SinkResult, SinkStats,
 };
 
 // =============================================================================
@@ -88,8 +102,10 @@ pub use roboflow_pipeline::{
 // Dataset structures
 // =============================================================================
 // Dataset is now provided by roboflow-dataset crate
+#[allow(deprecated)]
+pub use roboflow_dataset::streaming::StreamingDatasetConverter;
 pub use roboflow_dataset::{
-    DatasetConfig, DatasetFormat, DatasetWriter, ImageData,
+    DatasetConfig, DatasetFormat, DatasetWriter,
     common::DatasetBaseConfig,
     kps::{
         ParquetKpsWriter,
@@ -103,7 +119,6 @@ pub use roboflow_dataset::{
         LerobotConfig, LerobotWriter, LerobotWriterTrait,
         config::{DatasetConfig as LerobotDatasetConfig, VideoConfig},
     },
-    streaming::StreamingDatasetConverter,
 };
 
 // Re-export the full kps module for test access

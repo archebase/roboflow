@@ -14,8 +14,6 @@ use std::sync::Arc;
 
 use roboflow_storage::{LocalStorage, Storage, StorageError};
 
-use super::download::download_to_temp;
-
 /// RAII guard for temporary input files.
 ///
 /// Manages the lifecycle of a temporary file used for processing cloud inputs.
@@ -85,13 +83,26 @@ impl TempFileManager {
             });
         }
 
-        // Cloud storage: download to temp file
-        let temp_path = download_to_temp(&*input_storage, input_path, temp_dir)?;
+        // Cloud storage: download to temp file using streaming reads
+        // This uses storage.download_file() which for cloud backends uses
+        // range-request streaming (avoids loading the entire object into memory).
+        let file_name = input_path
+            .file_name()
+            .ok_or_else(|| StorageError::invalid_path(input_path.display().to_string()))?;
+        let unique_name = format!(
+            "{}_{}",
+            uuid::Uuid::new_v4().simple(),
+            file_name.to_string_lossy()
+        );
+        std::fs::create_dir_all(temp_dir).map_err(StorageError::Io)?;
+        let temp_path = temp_dir.join(&unique_name);
+
+        input_storage.download_file(input_path, &temp_path)?;
 
         tracing::debug!(
             input = %input_path.display(),
             temp = %temp_path.display(),
-            "Downloaded cloud input to temp file"
+            "Downloaded cloud input to temp file via streaming reads"
         );
 
         Ok(Self {

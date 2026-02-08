@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
+#![allow(deprecated)]
+
 //! Streaming converter integration tests.
 //!
 //! These tests validate the streaming dataset converter functionality:

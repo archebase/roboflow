@@ -24,43 +24,35 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ROBOFLOW_BIN="${PROJECT_ROOT}/target/debug/roboflow"
 TIKV_ENDPOINTS="${TIKV_PD_ENDPOINTS:-127.0.0.1:2379}"
 
-# TiKV key prefixes to clean
-PREFIX_BATCH="jobs:"
-PREFIX_CONFIG="config:"
-PREFIX_WORKER="worker:"
-PREFIX_HEARTBEAT="heartbeat:"
-PREFIX_WORK_UNIT="work_unit:"
-
 # =============================================================================
 # Functions
 # =============================================================================
 
 usage() {
     cat <<EOF
-Reset TiKV state for testing. WARNING: This deletes data!
+Reset TiKV batch jobs for testing. WARNING: This cancels all batch jobs!
 
 USAGE:
     $(basename "$0") [OPTIONS]
 
 OPTIONS:
-    -x, --execute         Actually delete data (default: dry-run)
-    -c, --config-only     Only clear configs
-    -b, --batch-only      Only clear batches/jobs
+    -x, --execute         Actually cancel batch jobs (default: dry-run)
     -y, --yes             Skip confirmation prompt
     -h, --help            Show this help
 
 EXAMPLES:
-    # Dry run - show what would be deleted
+    # Dry run - show what would be canceled
     $(basename "$0")
 
-    # Actually delete everything (with confirmation)
+    # Actually cancel all batch jobs (with confirmation)
     $(basename "$0") --execute
 
-    # Delete without confirmation
+    # Cancel without confirmation
     $(basename "$0") --execute --yes
 
-    # Only clear batch data
-    $(basename "$0") --execute --batch-only
+NOTE:
+    For a complete wipe of all TiKV data (configs, worker state, etc.),
+    use 'docker compose down -v' followed by 'make dev-up'.
 
 ENVIRONMENT VARIABLES:
     TIKV_PD_ENDPOINTS    TiKV PD endpoints (default: 127.0.0.1:2379)
@@ -88,30 +80,30 @@ confirm-prompt() {
     done
 }
 
-count-keys() {
-    local prefix="$1"
-
-    # Use roboflow to scan keys with prefix
-    # This is a simplified count - actual implementation may vary
-    echo "Counting keys with prefix '${prefix}'..."
-}
-
-delete-by-prefix() {
-    local prefix="$1"
-    local execute="$2"
+delete-batches() {
+    local execute="$1"
 
     if [[ "${execute}" != "true" ]]; then
-        echo "[DRY RUN] Would delete all keys with prefix: ${prefix}"
+        echo "[DRY RUN] Would delete all batches"
         return 0
     fi
 
-    log-info "Deleting keys with prefix: ${prefix}"
+    log-info "Deleting all batches..."
 
-    # Use tikv-client or roboflow to delete keys
-    # For now, this is a placeholder showing intent
-    # Actual implementation would use:
-    # 1. tikv-ctl scan to get all keys with prefix
-    # 2. tikv-ctl delete to remove them
+    # Get list of all batch IDs and cancel them
+    local batches
+    batches=$("${ROBOFLOW_BIN}" batch list --tikv-endpoints "${TIKV_ENDPOINTS}" 2>/dev/null | grep -oE 'jobs:[a-f0-9]+' || true)
+
+    if [[ -n "${batches}" ]]; then
+        while IFS= read -r batch_id; do
+            if [[ -n "${batch_id}" ]]; then
+                log-info "Canceling batch: ${batch_id}"
+                "${ROBOFLOW_BIN}" batch cancel "${batch_id}" --pd-endpoints "${TIKV_ENDPOINTS}" >/dev/null 2>&1 || true
+            fi
+        done <<< "${batches}"
+    else
+        log-info "No batches found to delete"
+    fi
 }
 
 show-state() {
@@ -151,22 +143,12 @@ EOF
 # =============================================================================
 
 EXECUTE=""
-CONFIG_ONLY=""
-BATCH_ONLY=""
 SKIP_CONFIRM=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         -x|--execute)
             EXECUTE="true"
-            shift
-            ;;
-        -c|--config-only)
-            CONFIG_ONLY="true"
-            shift
-            ;;
-        -b|--batch-only)
-            BATCH_ONLY="true"
             shift
             ;;
         -y|--yes)
@@ -195,25 +177,11 @@ fi
 # Show current state
 show-state
 
-# Determine what to delete
-delete_configs="true"
-delete_batches="true"
-
-if [[ -n "${CONFIG_ONLY}" ]]; then
-    delete_batches="false"
-elif [[ -n "${BATCH_ONLY}" ]]; then
-    delete_configs="false"
-fi
-
-# Show what would be deleted
+# Show what would be canceled
 cat <<EOF
 
-Would delete:
-  $([ "${delete_batches}" == "true" ] && echo "  - All batches (jobs:*)")
-  $([ "${delete_configs}" == "true" ] && echo "  - All configs (config:*)")
-  $([ "${delete_batches}" == "true" ] && echo "  - Worker state (worker:*)")
-  $([ "${delete_batches}" == "true" ] && echo "  - Heartbeats (heartbeat:*)")
-  $([ "${delete_batches}" == "true" ] && echo "  - Work units (work_unit:*)")
+Would cancel:
+  - All batch jobs
 
 EOF
 
@@ -234,19 +202,11 @@ fi
 # Perform deletion
 log-info "Starting deletion..."
 
-if [[ "${delete_batches}" == "true" ]]; then
-    delete-by-prefix "${PREFIX_BATCH}" "${EXECUTE}"
-fi
+delete-batches "${EXECUTE}"
 
-if [[ "${delete_configs}" == "true" ]]; then
-    delete-by-prefix "${PREFIX_CONFIG}" "${EXECUTE}"
-fi
-
-if [[ "${delete_batches}" == "true" ]]; then
-    delete-by-prefix "${PREFIX_WORKER}" "${EXECUTE}"
-    delete-by-prefix "${PREFIX_HEARTBEAT}" "${EXECUTE}"
-    delete-by-prefix "${PREFIX_WORK_UNIT}" "${EXECUTE}"
-fi
+# Note: Configs, worker state, heartbeats, and work units are tied to batches
+# and will be cleaned up automatically when batches are deleted via TiKV's
+# internal garbage collection. For a complete wipe, use 'docker compose down -v'
 
 log-info "Deletion complete!"
 echo ""

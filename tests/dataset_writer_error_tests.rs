@@ -14,11 +14,11 @@
 use std::fs;
 
 use roboflow::{
-    DatasetBaseConfig, DatasetWriter, ImageData, LerobotConfig,
-    LerobotDatasetConfig as DatasetConfig, LerobotWriter, LerobotWriterTrait, VideoConfig,
+    DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig as DatasetConfig,
+    LerobotWriter, LerobotWriterTrait, VideoConfig,
 };
 
-use roboflow_dataset::AlignedFrame;
+use roboflow_dataset::{AlignedFrame, ImageData};
 
 /// Create a test output directory.
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {

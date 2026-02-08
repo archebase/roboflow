@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use tracing::{info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::DatasetFormat;
 use crate::common::DatasetWriter;
@@ -66,6 +66,31 @@ impl ProgressCallback for NoOpCallback {
 /// The converter supports both local and cloud storage backends:
 /// - **Input storage**: Downloads cloud files to temp directory before processing
 /// - **Output storage**: Writes output files directly to the configured backend
+///
+/// # Deprecation Notice
+///
+/// **This type is deprecated**. Please migrate to the new pipeline-v2 API:
+///
+/// ```rust,no_run
+/// // Old (deprecated)
+/// let converter = StreamingDatasetConverter::new_lerobot(output_dir, config)?;
+/// let stats = converter.convert(input_file)?;
+///
+/// // New (recommended)
+/// let source = roboflow_sources::SourceConfig::mcap(input_file);
+/// let sink = roboflow_sinks::SinkConfig::lerobot(output_dir);
+/// let stats = roboflow_pipeline::Pipeline::run(source, sink).await?;
+/// ```
+///
+/// The new API provides:
+/// - Better separation of concerns (Source/Sink abstraction)
+/// - Easier to extend with new formats
+/// - More flexible pipeline configuration
+/// - Better testability
+#[deprecated(
+    since = "0.2.0",
+    note = "Use the pipeline-v2 API (Source/Sink traits) instead"
+)]
 pub struct StreamingDatasetConverter {
     /// Output directory (local buffer for temporary files)
     output_dir: PathBuf,
@@ -95,6 +120,7 @@ pub struct StreamingDatasetConverter {
     progress_callback: Option<Arc<dyn ProgressCallback>>,
 }
 
+#[allow(deprecated)]
 impl StreamingDatasetConverter {
     /// Create a new streaming converter for KPS format.
     pub fn new_kps<P: AsRef<Path>>(
@@ -229,101 +255,11 @@ impl StreamingDatasetConverter {
 
     /// Extract the object key from a cloud storage URL.
     ///
-    /// For example:
-    /// - `s3://my-bucket/path/to/file.bag` → `path/to/file.bag`
-    /// - `oss://my-bucket/file.bag` → `file.bag`
-    ///
-    /// Returns `None` if the URL is not a valid S3/OSS URL.
-    fn extract_cloud_key(url: &str) -> Option<&str> {
-        let rest = if let Some(r) = url.strip_prefix("s3://") {
-            r
-        } else if let Some(r) = url.strip_prefix("oss://") {
-            r
-        } else {
-            return None;
-        };
-
-        // Find the first '/' to split bucket/key
-        rest.find('/').map(|idx| &rest[idx + 1..])
-    }
-
-    /// Create cloud storage backend from URL for S3/OSS inputs.
-    ///
-    /// This is used when the converter receives an S3 or OSS URL directly
-    /// (without input_storage being set by the worker).
-    fn create_cloud_storage(&self, url: &str) -> Result<Arc<dyn Storage>> {
-        use roboflow_storage::{OssConfig, OssStorage};
-        use std::env;
-
-        // Parse URL to get bucket from the URL
-        let rest = if let Some(r) = url.strip_prefix("s3://") {
-            r
-        } else if let Some(r) = url.strip_prefix("oss://") {
-            r
-        } else {
-            return Err(roboflow_core::RoboflowError::other(format!(
-                "Unsupported cloud storage URL: {}",
-                url
-            )));
-        };
-
-        // Split bucket/key - we only need the bucket for storage creation
-        let (bucket, _key) = rest.split_once('/').ok_or_else(|| {
-            roboflow_core::RoboflowError::other(format!("Invalid cloud URL: {}", url))
-        })?;
-
-        // Get credentials from environment
-        let access_key_id = env::var("AWS_ACCESS_KEY_ID")
-            .or_else(|_| env::var("OSS_ACCESS_KEY_ID"))
-            .map_err(|_| roboflow_core::RoboflowError::other(
-                "Cloud storage credentials not found. Set AWS_ACCESS_KEY_ID or OSS_ACCESS_KEY_ID".to_string(),
-            ))?;
-
-        let access_key_secret = env::var("AWS_SECRET_ACCESS_KEY")
-            .or_else(|_| env::var("OSS_ACCESS_KEY_SECRET"))
-            .map_err(|_| roboflow_core::RoboflowError::other(
-                "Cloud storage credentials not found. Set AWS_SECRET_ACCESS_KEY or OSS_ACCESS_KEY_SECRET".to_string(),
-            ))?;
-
-        // Get endpoint from environment or construct from URL
-        let endpoint = env::var("AWS_ENDPOINT_URL")
-            .or_else(|_| env::var("OSS_ENDPOINT"))
-            .unwrap_or_else(|_| {
-                // For MinIO or local testing, default to localhost
-                if url.contains("127.0.0.1") || url.contains("localhost") {
-                    "http://127.0.0.1:9000".to_string()
-                } else {
-                    "https://s3.amazonaws.com".to_string()
-                }
-            });
-
-        let region = env::var("AWS_REGION").ok();
-
-        // Create OSS config
-        let mut oss_config =
-            OssConfig::new(bucket, endpoint.clone(), access_key_id, access_key_secret);
-        if let Some(reg) = region {
-            oss_config = oss_config.with_region(reg);
-        }
-        // Enable HTTP if endpoint uses http://
-        if endpoint.starts_with("http://") {
-            oss_config = oss_config.with_allow_http(true);
-        }
-
-        // Create OssStorage
-        let storage = OssStorage::with_config(oss_config.clone()).map_err(|e| {
-            roboflow_core::RoboflowError::other(format!(
-                "Failed to create cloud storage for bucket '{}' with endpoint '{}': {}",
-                bucket,
-                oss_config.endpoint_url(),
-                e
-            ))
-        })?;
-
-        Ok(Arc::new(storage) as Arc<dyn Storage>)
-    }
-
     /// Convert input file to dataset format.
+    ///
+    /// For cloud URLs (s3://, oss://), uses robocodec's S3 streaming to read
+    /// messages directly from cloud storage via HTTP range requests -- no temp
+    /// files are created.  For local files, uses RoboReader as before.
     #[instrument(skip_all, fields(
         input = %input_path.as_ref().display(),
         output = %self.output_dir.display(),
@@ -339,21 +275,28 @@ impl StreamingDatasetConverter {
             "Starting streaming dataset conversion"
         );
 
-        let start_time = Instant::now();
-
         // Detect if input_path is a cloud storage URL (s3:// or oss://)
         let input_path_str = input_path.to_string_lossy();
         let is_cloud_url =
             input_path_str.starts_with("s3://") || input_path_str.starts_with("oss://");
 
-        // Handle cloud input: download to temp file if needed
+        if is_cloud_url {
+            // Direct S3 streaming path -- no temp files
+            self.convert_from_s3(&input_path_str)
+        } else {
+            // Local file path -- use RoboReader
+            self.convert_from_local(input_path)
+        }
+    }
+
+    /// Convert from a local file using RoboReader.
+    fn convert_from_local(self, input_path: &Path) -> Result<StreamingStats> {
+        let start_time = Instant::now();
+
+        // Resolve input storage
         let input_storage = if let Some(storage) = &self.input_storage {
             storage.clone()
-        } else if is_cloud_url {
-            // Create cloud storage for S3/OSS URLs
-            self.create_cloud_storage(&input_path_str)?
         } else {
-            // Default to LocalStorage for local files
             Arc::new(LocalStorage::new(
                 input_path.parent().unwrap_or(Path::new(".")),
             )) as Arc<dyn Storage>
@@ -366,15 +309,8 @@ impl StreamingDatasetConverter {
             .unwrap_or_else(std::env::temp_dir);
 
         // For local storage, pass just the filename (not full path)
-        // to avoid duplication when joining with the storage root
-        // For cloud storage (S3/OSS), extract just the object key from the URL
         let storage_path = if input_storage.as_any().is::<LocalStorage>() {
             input_path.file_name().unwrap_or(input_path.as_os_str())
-        } else if is_cloud_url {
-            // Extract just the key from s3://bucket/key or oss://bucket/key
-            Self::extract_cloud_key(&input_path_str)
-                .map(std::ffi::OsStr::new)
-                .unwrap_or(input_path.as_os_str())
         } else {
             input_path.as_os_str()
         };
@@ -396,25 +332,14 @@ impl StreamingDatasetConverter {
             input = %input_path.display(),
             process_path = %process_path.display(),
             is_temp = _temp_manager.is_temp(),
-            "Processing input file"
+            "Processing input file (local)"
         );
 
-        // Create the dataset writer (already initialized via builder)
         let mut writer = self.create_writer()?;
-
-        // Create alignment buffer
         let mut aligner = FrameAlignmentBuffer::new(self.config.clone());
-
-        // Create backpressure handler
         let mut backpressure = BackpressureHandler::from_config(&self.config);
-
-        // Build topic mappings
         let topic_mappings = self.build_topic_mappings()?;
 
-        // Open input file
-        // NOTE: RoboReader decodes BAG/MCAP files directly to TimestampedDecodedMessage.
-        // There is NO intermediate MCAP conversion - neither in memory nor on disk.
-        // BAG format is parsed natively, messages are decoded directly to HashMap<String, CodecValue>.
         let path_str = process_path
             .to_str()
             .ok_or_else(|| roboflow_core::RoboflowError::parse("Path", "Invalid UTF-8 path"))?;
@@ -425,7 +350,6 @@ impl StreamingDatasetConverter {
             "Starting message processing"
         );
 
-        // Stream messages
         let mut stats = StreamingStats::default();
         let mut unmapped_warning_shown: std::collections::HashSet<String> =
             std::collections::HashSet::new();
@@ -434,11 +358,9 @@ impl StreamingDatasetConverter {
             let msg_result = msg_result?;
             stats.messages_processed += 1;
 
-            // Find mapping for this topic
             let mapping = match topic_mappings.get(&msg_result.channel.topic) {
                 Some(m) => m,
                 None => {
-                    // Log warning once per unmapped topic to avoid spam
                     if unmapped_warning_shown.insert(msg_result.channel.topic.clone()) {
                         tracing::warn!(
                             topic = %msg_result.channel.topic,
@@ -450,72 +372,29 @@ impl StreamingDatasetConverter {
                 }
             };
 
-            // Convert to our TimestampedMessage type
             let msg = crate::streaming::alignment::TimestampedMessage {
                 log_time: msg_result.log_time.unwrap_or(0),
                 message: msg_result.message,
             };
 
-            // Process message through alignment buffer
             let completed_frames = aligner.process_message(&msg, &mapping.feature);
+            self.write_frames(
+                &completed_frames,
+                &mut writer,
+                &mut stats,
+                &mut backpressure,
+                &aligner,
+                &start_time,
+            )?;
 
-            // Write completed frames immediately
-            for frame in completed_frames {
-                writer.write_frame(&frame)?;
-                stats.frames_written += 1;
+            self.apply_backpressure_if_needed(
+                &mut aligner,
+                &mut writer,
+                &mut stats,
+                &mut backpressure,
+            )?;
 
-                // Call progress callback for checkpointing
-                if let Some(ref callback) = self.progress_callback
-                    && let Err(e) = callback.on_frame_written(
-                        stats.frames_written as u64,
-                        stats.messages_processed as u64,
-                        writer.as_any(),
-                    )
-                {
-                    return Err(roboflow_core::RoboflowError::other(format!(
-                        "Progress callback failed: {}",
-                        e
-                    )));
-                }
-
-                // Update memory estimate
-                backpressure.update_memory_estimate(&aligner);
-            }
-
-            // Apply backpressure if needed
-            if backpressure.should_apply_backpressure(&aligner) && !backpressure.is_in_cooldown() {
-                info!(
-                    buffer_size = aligner.len(),
-                    memory_mb = backpressure.memory_mb(),
-                    "Applying backpressure"
-                );
-
-                let force_completed = aligner.flush();
-                for frame in force_completed {
-                    writer.write_frame(&frame)?;
-                    stats.frames_written += 1;
-                    stats.force_completed_frames += 1;
-
-                    // Call progress callback for checkpointing
-                    if let Some(ref callback) = self.progress_callback
-                        && let Err(e) = callback.on_frame_written(
-                            stats.frames_written as u64,
-                            stats.messages_processed as u64,
-                            writer.as_any(),
-                        )
-                    {
-                        return Err(roboflow_core::RoboflowError::other(format!(
-                            "Progress callback failed: {}",
-                            e
-                        )));
-                    }
-                }
-
-                backpressure.record_backpressure();
-            }
-
-            // Progress reporting every 1000 messages
-            if stats.messages_processed % 1000 == 0 {
+            if stats.messages_processed.is_multiple_of(1000) {
                 let elapsed = start_time.elapsed().as_secs_f64();
                 let throughput = stats.messages_processed as f64 / elapsed;
                 info!(
@@ -528,7 +407,464 @@ impl StreamingDatasetConverter {
             }
         }
 
-        // Flush remaining frames
+        self.finalize_conversion(aligner, writer, stats, start_time)
+    }
+
+    /// Convert from S3/OSS using direct streaming -- no temp files.
+    ///
+    /// Uses robocodec's S3Client + format-specific streaming parsers to stream
+    /// messages directly from cloud storage via HTTP range requests, preserving
+    /// message timing metadata (log_time, sequence).
+    fn convert_from_s3(self, url: &str) -> Result<StreamingStats> {
+        use robocodec::FormatReader as _;
+        use robocodec::encoding::CodecFactory;
+        use robocodec::io::s3::{S3Client, S3Reader};
+
+        use crate::streaming::pipeline::stages::decoder::{
+            build_s3_reader_config, build_schema_cache, decode_raw_message,
+            parse_cloud_url_to_s3_location,
+        };
+
+        let start_time = Instant::now();
+
+        info!(url = %url, "Starting S3 streaming conversion (no temp files)");
+
+        let location = parse_cloud_url_to_s3_location(url).map_err(|e| {
+            roboflow_core::RoboflowError::other(format!("Failed to parse S3 URL: {e}"))
+        })?;
+        info!(
+            bucket = %location.bucket(),
+            key = %location.key(),
+            endpoint = ?location.endpoint(),
+            region = ?location.region(),
+            resolved_url = %location.url(),
+            "S3 location parsed"
+        );
+        let config = build_s3_reader_config().map_err(|e| {
+            roboflow_core::RoboflowError::other(format!("Failed to build S3 config: {e}"))
+        })?;
+        info!(
+            has_credentials = config.credentials().is_some(),
+            "S3 reader config built"
+        );
+
+        // Create a tokio runtime for async S3 operations
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| {
+                roboflow_core::RoboflowError::other(format!("Failed to create async runtime: {e}"))
+            })?;
+
+        rt.block_on(async {
+            // Phase 1: S3Reader initialization (two-tier header scan for channels)
+            let reader = S3Reader::open_with_config(location.clone(), config.clone())
+                .await
+                .map_err(|e| {
+                    roboflow_core::RoboflowError::other(format!(
+                        "Failed to open S3 reader for '{}': {e}",
+                        url
+                    ))
+                })?;
+
+            let channels = reader.channels().clone();
+            let file_size = reader.file_size();
+            let format = reader.format();
+
+            info!(
+                url = %url,
+                format = ?format,
+                channels = channels.len(),
+                file_size,
+                "S3 reader initialized, streaming messages"
+            );
+
+            // Phase 2: Create S3Client for chunk-level streaming with timestamps
+            let client = S3Client::new(config).map_err(|e| {
+                roboflow_core::RoboflowError::other(format!("Failed to create S3 client: {e}"))
+            })?;
+
+            // Phase 3: Build codec infrastructure
+            let codec_factory = CodecFactory::new();
+            let schema_cache = build_schema_cache(&channels, &codec_factory);
+            let topic_mappings = self.build_topic_mappings()?;
+
+            info!(
+                topic_mappings = topic_mappings.len(),
+                topics = ?topic_mappings.keys().collect::<Vec<_>>(),
+                "Topic mappings built for S3 streaming"
+            );
+
+            let mut writer = self.create_writer()?;
+            let mut aligner = FrameAlignmentBuffer::new(self.config.clone());
+            let mut backpressure = BackpressureHandler::from_config(&self.config);
+            let mut stats = StreamingStats::default();
+            let mut unmapped_warning_shown: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+
+            // Phase 4: Stream chunks, decode, and align
+            let chunk_size: u64 = 10 * 1024 * 1024; // 10MB
+            let mut offset = 0u64;
+
+            match format {
+                robocodec::io::metadata::FileFormat::Mcap => {
+                    use robocodec::io::formats::mcap::streaming::McapS3Adapter;
+                    let mut adapter = McapS3Adapter::new();
+
+                    while offset < file_size {
+                        let fetch_size = chunk_size.min(file_size - offset);
+                        let chunk = client
+                            .fetch_range(&location, offset, fetch_size)
+                            .await
+                            .map_err(|e| {
+                                roboflow_core::RoboflowError::other(format!(
+                                    "S3 fetch failed at offset {offset}: {e}"
+                                ))
+                            })?;
+                        if chunk.is_empty() {
+                            break;
+                        }
+                        offset += chunk.len() as u64;
+
+                        let records = match adapter.process_chunk(&chunk) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                warn!(offset, error = %e, "MCAP parse error, skipping chunk");
+                                continue;
+                            }
+                        };
+
+                        for record in records {
+                            let Some(channel_info) = channels.get(&record.channel_id) else {
+                                continue;
+                            };
+
+                            let decoded_msg = decode_raw_message(
+                                &record.data,
+                                channel_info,
+                                &schema_cache,
+                                &codec_factory,
+                                record.log_time,
+                                Some(record.sequence),
+                            )
+                            .map_err(|e| {
+                                roboflow_core::RoboflowError::other(format!("Decode failed: {e}"))
+                            })?;
+
+                            stats.messages_processed += 1;
+                            self.process_decoded_message(
+                                &decoded_msg,
+                                &topic_mappings,
+                                &mut unmapped_warning_shown,
+                                &mut aligner,
+                                &mut writer,
+                                &mut stats,
+                                &mut backpressure,
+                                &start_time,
+                            )?;
+                        }
+                    }
+                }
+                robocodec::io::metadata::FileFormat::Bag => {
+                    use robocodec::encoding::CdrDecoder;
+                    use robocodec::io::formats::bag::stream::StreamingBagParser;
+                    let mut parser = StreamingBagParser::new();
+                    let mut total_records: u64 = 0;
+                    let mut total_chunks_fetched: u64 = 0;
+                    let mut channel_miss: u64 = 0;
+                    // ROS1 bag messages use ROS1 serialization (not standard CDR).
+                    // We need a CdrDecoder and parsed schemas for decode_headerless_ros1.
+                    let ros1_decoder = CdrDecoder::new();
+                    let mut ros1_schema_cache: HashMap<
+                        u16,
+                        robocodec::schema::MessageSchema,
+                    > = HashMap::new();
+                    let mut known_channel_count: usize = 0;
+
+                    while offset < file_size {
+                        let fetch_size = chunk_size.min(file_size - offset);
+                        let chunk = client
+                            .fetch_range(&location, offset, fetch_size)
+                            .await
+                            .map_err(|e| {
+                                roboflow_core::RoboflowError::other(format!(
+                                    "S3 fetch failed at offset {offset}: {e}"
+                                ))
+                            })?;
+                        if chunk.is_empty() {
+                            info!(offset, file_size, "Empty chunk received, stopping");
+                            break;
+                        }
+                        offset += chunk.len() as u64;
+                        total_chunks_fetched += 1;
+
+                        let records = match parser.parse_chunk(&chunk) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                warn!(offset, error = %e, "BAG parse error, skipping chunk");
+                                continue;
+                            }
+                        };
+
+                        if total_chunks_fetched <= 3 || total_chunks_fetched.is_multiple_of(50) {
+                            let bag_channels = parser.channels();
+                            info!(
+                                chunk = total_chunks_fetched,
+                                offset,
+                                records_in_chunk = records.len(),
+                                bag_channels = bag_channels.len(),
+                                total_records,
+                                "BAG streaming progress"
+                            );
+                        }
+
+                        let bag_channels = parser.channels();
+
+                        // Rebuild ROS1 schema cache when new channels are discovered
+                        if bag_channels.len() > known_channel_count {
+                            for (&id, ch) in &bag_channels {
+                                if ros1_schema_cache.contains_key(&id) {
+                                    continue;
+                                }
+                                if let Some(schema_text) = &ch.schema {
+                                    match robocodec::schema::parse_schema(
+                                        &ch.message_type,
+                                        schema_text,
+                                    ) {
+                                        Ok(parsed) => {
+                                            ros1_schema_cache.insert(id, parsed);
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                channel_id = id,
+                                                topic = %ch.topic,
+                                                error = %e,
+                                                "Failed to parse ROS1 schema, skipping channel"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            known_channel_count = bag_channels.len();
+                            debug!(
+                                known_channel_count,
+                                schemas = ros1_schema_cache.len(),
+                                "Rebuilt ROS1 schema cache with new BAG channels"
+                            );
+                        }
+
+                        for record in records {
+                            total_records += 1;
+                            let channel_id = record.conn_id as u16;
+                            let channel_info = bag_channels
+                                .get(&channel_id)
+                                .or_else(|| channels.get(&channel_id));
+                            let Some(channel_info) = channel_info else {
+                                channel_miss += 1;
+                                if channel_miss <= 5 {
+                                    info!(
+                                        conn_id = record.conn_id,
+                                        channel_id,
+                                        bag_channels = bag_channels.len(),
+                                        "No channel info for record"
+                                    );
+                                }
+                                continue;
+                            };
+
+                            // ROS1 bag messages use ROS1 serialization, not standard CDR.
+                            // We must use decode_headerless_ros1 (matching ParallelBagReader).
+                            let decoded_msg = decode_ros1_message(
+                                &record.data,
+                                channel_info,
+                                &ros1_schema_cache,
+                                &ros1_decoder,
+                                record.log_time,
+                            )
+                            .map_err(|e| {
+                                roboflow_core::RoboflowError::other(format!("Decode failed: {e}"))
+                            })?;
+
+                            stats.messages_processed += 1;
+                            self.process_decoded_message(
+                                &decoded_msg,
+                                &topic_mappings,
+                                &mut unmapped_warning_shown,
+                                &mut aligner,
+                                &mut writer,
+                                &mut stats,
+                                &mut backpressure,
+                                &start_time,
+                            )?;
+                        }
+                    }
+
+                    info!(
+                        total_chunks_fetched,
+                        total_records,
+                        channel_miss,
+                        messages_processed = stats.messages_processed,
+                        bag_channels = parser.channels().len(),
+                        bag_channel_topics = ?parser.channels().values().map(|c| &c.topic).collect::<Vec<_>>(),
+                        "BAG streaming complete"
+                    );
+                }
+                other => {
+                    return Err(roboflow_core::RoboflowError::other(format!(
+                        "S3 streaming not supported for format: {other:?}"
+                    )));
+                }
+            }
+
+            self.finalize_conversion(aligner, writer, stats, start_time)
+        })
+    }
+
+    /// Process a single decoded message through alignment + writing.
+    #[allow(clippy::too_many_arguments)]
+    fn process_decoded_message(
+        &self,
+        decoded_msg: &crate::streaming::pipeline::types::DecodedMessage,
+        topic_mappings: &MappingMap,
+        unmapped_warning_shown: &mut std::collections::HashSet<String>,
+        aligner: &mut FrameAlignmentBuffer,
+        writer: &mut Box<dyn DatasetWriter>,
+        stats: &mut StreamingStats,
+        backpressure: &mut BackpressureHandler,
+        start_time: &Instant,
+    ) -> Result<()> {
+        let mapping = match topic_mappings.get(&decoded_msg.topic) {
+            Some(m) => m,
+            None => {
+                if unmapped_warning_shown.insert(decoded_msg.topic.clone()) {
+                    tracing::warn!(
+                        topic = %decoded_msg.topic,
+                        "Message from unmapped topic will be ignored."
+                    );
+                }
+                aligner.stats_mut().record_unmapped_message();
+                return Ok(());
+            }
+        };
+
+        // Extract the decoded fields from the CodecValue::Struct wrapper
+        let message = match &decoded_msg.data {
+            robocodec::CodecValue::Struct(fields) => fields.clone(),
+            _ => std::collections::HashMap::new(),
+        };
+
+        let msg = crate::streaming::alignment::TimestampedMessage {
+            log_time: decoded_msg.log_time,
+            message,
+        };
+
+        let completed_frames = aligner.process_message(&msg, &mapping.feature);
+        self.write_frames(
+            &completed_frames,
+            writer,
+            stats,
+            backpressure,
+            aligner,
+            start_time,
+        )?;
+
+        self.apply_backpressure_if_needed(aligner, writer, stats, backpressure)?;
+
+        if stats.messages_processed.is_multiple_of(1000) {
+            let elapsed = start_time.elapsed().as_secs_f64();
+            let throughput = stats.messages_processed as f64 / elapsed;
+            info!(
+                messages = stats.messages_processed,
+                frames = stats.frames_written,
+                buffer = aligner.len(),
+                throughput = format!("{:.0} msg/s", throughput),
+                "Progress update"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Write completed frames to the writer.
+    fn write_frames(
+        &self,
+        frames: &[crate::common::AlignedFrame],
+        writer: &mut Box<dyn DatasetWriter>,
+        stats: &mut StreamingStats,
+        backpressure: &mut BackpressureHandler,
+        aligner: &FrameAlignmentBuffer,
+        _start_time: &Instant,
+    ) -> Result<()> {
+        for frame in frames {
+            writer.write_frame(frame)?;
+            stats.frames_written += 1;
+
+            if let Some(ref callback) = self.progress_callback
+                && let Err(e) = callback.on_frame_written(
+                    stats.frames_written as u64,
+                    stats.messages_processed as u64,
+                    writer.as_any(),
+                )
+            {
+                return Err(roboflow_core::RoboflowError::other(format!(
+                    "Progress callback failed: {}",
+                    e
+                )));
+            }
+
+            backpressure.update_memory_estimate(aligner);
+        }
+        Ok(())
+    }
+
+    /// Apply backpressure if needed by flushing the alignment buffer.
+    fn apply_backpressure_if_needed(
+        &self,
+        aligner: &mut FrameAlignmentBuffer,
+        writer: &mut Box<dyn DatasetWriter>,
+        stats: &mut StreamingStats,
+        backpressure: &mut BackpressureHandler,
+    ) -> Result<()> {
+        if backpressure.should_apply_backpressure(aligner) && !backpressure.is_in_cooldown() {
+            info!(
+                buffer_size = aligner.len(),
+                memory_mb = backpressure.memory_mb(),
+                "Applying backpressure"
+            );
+
+            let force_completed = aligner.flush();
+            for frame in force_completed {
+                writer.write_frame(&frame)?;
+                stats.frames_written += 1;
+                stats.force_completed_frames += 1;
+
+                if let Some(ref callback) = self.progress_callback
+                    && let Err(e) = callback.on_frame_written(
+                        stats.frames_written as u64,
+                        stats.messages_processed as u64,
+                        writer.as_any(),
+                    )
+                {
+                    return Err(roboflow_core::RoboflowError::other(format!(
+                        "Progress callback failed: {}",
+                        e
+                    )));
+                }
+            }
+
+            backpressure.record_backpressure();
+        }
+        Ok(())
+    }
+
+    /// Finalize conversion: flush remaining frames, finalize writer, compile stats.
+    fn finalize_conversion(
+        &self,
+        mut aligner: FrameAlignmentBuffer,
+        mut writer: Box<dyn DatasetWriter>,
+        mut stats: StreamingStats,
+        start_time: Instant,
+    ) -> Result<StreamingStats> {
         info!(
             remaining_frames = aligner.len(),
             "Flushing remaining frames"
@@ -541,14 +877,12 @@ impl StreamingDatasetConverter {
             stats.force_completed_frames += 1;
         }
 
-        // Finalize writer
         let writer_stats = writer.finalize()?;
 
-        // Compile final statistics
         stats.duration_sec = start_time.elapsed().as_secs_f64();
         stats.writer_stats = writer_stats;
         stats.avg_buffer_size = aligner.stats().peak_buffer_size as f32;
-        stats.peak_memory_mb = backpressure.memory_mb();
+        stats.peak_memory_mb = 0.0;
 
         info!(
             frames_written = stats.frames_written,
@@ -669,6 +1003,42 @@ struct Mapping {
     /// Data type for validation/routing (reserved for future use)
     /// Values: "image", "state", "action", "timestamp"
     _mapping_type: &'static str,
+}
+
+/// Decode a ROS1 bag message using the ROS1-specific headerless decoder.
+///
+/// ROS1 messages use a different serialization format from CDR (ROS2).
+/// This must be used instead of `decode_raw_message` for BAG file data.
+fn decode_ros1_message(
+    data: &[u8],
+    channel_info: &robocodec::ChannelInfo,
+    schema_cache: &HashMap<u16, robocodec::schema::MessageSchema>,
+    decoder: &robocodec::encoding::CdrDecoder,
+    log_time: u64,
+) -> Result<crate::streaming::pipeline::types::DecodedMessage> {
+    let schema = schema_cache.get(&channel_info.id).ok_or_else(|| {
+        roboflow_core::RoboflowError::other(format!(
+            "No ROS1 schema for channel {} (topic: {})",
+            channel_info.id, channel_info.topic
+        ))
+    })?;
+
+    let decoded_fields = decoder
+        .decode_headerless_ros1(schema, data, Some(&channel_info.message_type))
+        .map_err(|e| {
+            roboflow_core::RoboflowError::other(format!(
+                "ROS1 decode failed for topic {} (type: {}): {}",
+                channel_info.topic, channel_info.message_type, e
+            ))
+        })?;
+
+    Ok(crate::streaming::pipeline::types::DecodedMessage {
+        topic: channel_info.topic.clone(),
+        message_type: channel_info.message_type.clone(),
+        log_time,
+        sequence: None,
+        data: robocodec::CodecValue::Struct(decoded_fields),
+    })
 }
 
 #[cfg(test)]

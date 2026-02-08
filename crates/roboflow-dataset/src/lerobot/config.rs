@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use roboflow_core::Result;
 
@@ -20,7 +20,7 @@ pub use crate::common::config::Mapping;
 pub use crate::common::config::MappingType;
 
 /// LeRobot dataset configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LerobotConfig {
     /// Dataset metadata
     pub dataset: DatasetConfig,
@@ -140,7 +140,7 @@ impl LerobotConfig {
 /// let fps = config.fps;           // auto-derefs to base.fps
 /// let env = &config.env_type;     // direct field access
 /// ```
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DatasetConfig {
     /// Common dataset fields (name, fps, robot_type).
     #[serde(flatten)]
@@ -165,7 +165,7 @@ impl std::ops::DerefMut for DatasetConfig {
 }
 
 /// Video encoding configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VideoConfig {
     /// Video codec (default: libx264)
     #[serde(default = "default_codec")]

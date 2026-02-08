@@ -37,7 +37,7 @@
 mod config;
 mod stage;
 pub mod stages;
-mod types;
+pub(crate) mod types;
 
 pub use config::{
     AlignerConfig, DecoderConfig, PipelineConfig, TransformerConfig, UploadConfig,

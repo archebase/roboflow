@@ -8,7 +8,7 @@ pub mod upload;
 pub mod video_encoder;
 
 pub use aligner::FrameAlignerStage;
-pub use decoder::DecoderStage;
+pub use decoder::{DecoderStage, InputSource};
 pub use parquet_writer::{ParquetWriterConfig, ParquetWriterStage};
 pub use transformer::FeatureTransformerStage;
 pub use upload::UploadCoordinatorStage;

@@ -7,6 +7,8 @@ members = [
     "crates/roboflow-dataset",
     "crates/roboflow-hdf5",
     "crates/roboflow-pipeline",
+    "crates/roboflow-sources",
+    "crates/roboflow-sinks",
 ]
 resolver = "2"
 
@@ -18,9 +20,14 @@ roboflow-distributed = { path = "crates/roboflow-distributed", version = "0.2.0"
 roboflow-dataset = { path = "crates/roboflow-dataset", version = "0.2.0" }
 roboflow-hdf5 = { path = "crates/roboflow-hdf5", version = "0.2.0" }
 roboflow-pipeline = { path = "crates/roboflow-pipeline", version = "0.2.0" }
+roboflow-sources = { path = "crates/roboflow-sources", version = "0.2.0" }
+roboflow-sinks = { path = "crates/roboflow-sinks", version = "0.2.0" }
 
 # External dependencies
-robocodec = { git = "https://github.com/archebase/robocodec", branch = "main" }
+robocodec = { git = "https://github.com/archebase/robocodec", branch = "fix/s3-signer-host-header-port" }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+tokio = { version = "1.40", features = ["rt-multi-thread", "sync"] }
 
 [package]
 name = "roboflow"
@@ -41,6 +48,8 @@ roboflow-storage = { workspace = true }
 roboflow-dataset = { workspace = true }
 roboflow-pipeline = { workspace = true }
 roboflow-distributed = { workspace = true }
+roboflow-sources = { workspace = true, optional = true }
+roboflow-sinks = { workspace = true, optional = true }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -127,6 +136,11 @@ io-uring = { version = "0.7", optional = true }
 # Dataset features (optional, disabled by default)
 [features]
 default = []
+# Legacy dataset converter (deprecated, use roboflow-pipeline framework instead)
+dataset = ["roboflow-pipeline/dataset"]
+# Pipeline API (Source/Sink abstraction)
+sources = ["dep:roboflow-sources"]
+sinks = ["dep:roboflow-sinks"]
 dataset-hdf5 = ["dep:hdf5"]
 dataset-parquet = ["dep:polars"]
 dataset-depth = ["dep:png"]
@@ -164,6 +178,7 @@ roboflow-distributed = { workspace = true }
 [[bin]]
 name = "roboflow"
 path = "src/bin/roboflow.rs"
+required-features = ["sources", "sinks"]
 
 # Examples
 [[example]]

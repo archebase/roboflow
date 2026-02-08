@@ -175,9 +175,11 @@ impl Default for AlignerConfig {
 
 impl AlignerConfig {
     /// Get completion window in nanoseconds.
+    ///
+    /// Multiplies before dividing to avoid integer truncation.
+    /// e.g. at 30fps, 3 frames = (3 * 1_000_000_000) / 30 = 100_000_000 ns exactly.
     pub fn completion_window_ns(&self) -> u64 {
-        let frame_interval_ns = 1_000_000_000u64 / self.fps as u64;
-        frame_interval_ns * self.completion_window_frames as u64
+        (1_000_000_000u64 * self.completion_window_frames as u64) / self.fps as u64
     }
 }
 
@@ -347,10 +349,11 @@ mod tests {
             video: crate::lerobot::config::VideoConfig::default(),
             annotation_file: None,
         };
-        let config = PipelineConfig::new("input.bag", lerobot_config);
-        // Mock storage - we'd need a real storage for full test
-        // config.output_storage = Some(mock_storage);
-        assert!(config.validate().is_err()); // Missing prefix
+        let mut config = PipelineConfig::new("input.bag", lerobot_config);
+        // Set output_storage but leave output_prefix as None to trigger validation error
+        config.output_storage =
+            Some(Arc::new(roboflow_storage::LocalStorage::new("/tmp")) as Arc<dyn Storage>);
+        assert!(config.validate().is_err()); // Missing prefix with storage set
     }
 
     #[test]

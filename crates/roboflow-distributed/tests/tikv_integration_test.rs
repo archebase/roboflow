@@ -789,7 +789,6 @@ mod tests {
             let worker = Worker::new(
                 pod_id,
                 client.clone(),
-                storage.clone(),
                 WorkerConfig::new()
                     .with_poll_interval(Duration::from_millis(100))
                     .with_max_concurrent_jobs(1),

@@ -11,7 +11,8 @@
 
 use std::fs;
 
-use roboflow::{DatasetBaseConfig, ImageData, LerobotConfig, LerobotWriter, VideoConfig};
+use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig};
+use roboflow_dataset::ImageData;
 
 /// Create a test output directory using system temp.
 /// Using tempfile::tempdir() directly avoids:

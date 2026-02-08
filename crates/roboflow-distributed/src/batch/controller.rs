@@ -493,9 +493,24 @@ impl BatchController {
 
         // First, get a pending work unit key (outside transaction for scan)
         let pending_prefix_bytes = WorkUnitKeys::pending_prefix();
+        tracing::debug!(
+            prefix = %String::from_utf8_lossy(&pending_prefix_bytes),
+            prefix_hex = ?pending_prefix_bytes,
+            "claim_work_unit: scanning pending prefix"
+        );
         let pending = self.client.scan(pending_prefix_bytes.clone(), 1).await?;
 
+        tracing::debug!(results = pending.len(), "claim_work_unit: scan completed");
+
         if pending.is_empty() {
+            // Debug: also try a direct get for the known key pattern
+            let all_pending = self.client.scan(pending_prefix_bytes.clone(), 100).await?;
+            if !all_pending.is_empty() {
+                tracing::warn!(
+                    count = all_pending.len(),
+                    "claim_work_unit: limit=1 returned 0 but limit=100 returned results!"
+                );
+            }
             return Ok(None);
         }
 
@@ -507,7 +522,7 @@ impl BatchController {
         let pending_prefix = String::from_utf8_lossy(&pending_prefix_bytes);
         let pending_key_str = String::from_utf8_lossy(pending_key);
         let unit_id = match pending_key_str.strip_prefix(pending_prefix.as_ref()) {
-            Some(id) => id,
+            Some(id) => id.trim_start_matches('/'),
             None => {
                 tracing::warn!(
                     pending_key = %pending_key_str,

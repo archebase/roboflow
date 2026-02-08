@@ -101,7 +101,7 @@ mod tests {
             vec!["s3://bucket/*.bag".to_string()],
             "output/".to_string(),
         );
-        assert_eq!(batch_id_from_spec(&spec), "default:my-batch");
+        assert_eq!(batch_id_from_spec(&spec), "jobs:my-batch");
     }
 
     #[test]

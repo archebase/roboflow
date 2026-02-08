@@ -441,10 +441,9 @@ async fn run_health_check() -> HealthCheckResult {
 async fn run_worker(
     pod_id: String,
     tikv: Arc<roboflow_distributed::TikvClient>,
-    storage: Arc<dyn roboflow_storage::Storage>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = WorkerConfig::new();
-    let mut worker = Worker::new(pod_id, tikv, storage, config)?;
+    let mut worker = Worker::new(pod_id, tikv, config)?;
 
     worker.run().await.map_err(|e| e.into())
 }
@@ -467,7 +466,6 @@ async fn run_finalizer(
 async fn run_unified(
     pod_id: String,
     tikv: Arc<roboflow_distributed::TikvClient>,
-    storage: Arc<dyn roboflow_storage::Storage>,
     cancel: CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let worker_config = WorkerConfig::new();
@@ -482,12 +480,7 @@ async fn run_unified(
     let cancel_clone = cancel.clone();
 
     // Create worker, finalizer, and reaper
-    let mut worker = Worker::new(
-        format!("{}-worker", pod_id),
-        tikv.clone(),
-        storage,
-        worker_config,
-    )?;
+    let mut worker = Worker::new(format!("{}-worker", pod_id), tikv.clone(), worker_config)?;
 
     let finalizer = Finalizer::new(
         format!("{}-finalizer", pod_id),
@@ -600,7 +593,12 @@ async fn run_unified(
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
-    let command = parse_args(&args)?;
+    let command = parse_args(&args).unwrap_or_else(|e| {
+        if !e.is_empty() {
+            eprintln!("{}", e);
+        }
+        std::process::exit(1);
+    });
 
     // Initialize tracing
     tracing_subscriber::fmt()
@@ -611,13 +609,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match command {
         Command::Submit { args } => {
-            commands::run_submit_command(&args).await?;
+            if let Err(e) = commands::run_submit_command(&args).await {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
         }
         Command::Jobs { args } => {
-            commands::run_jobs_command(&args).await?;
+            if let Err(e) = commands::run_jobs_command(&args).await {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
         }
         Command::Batch { args } => {
-            commands::run_batch_command(&args).await?;
+            if let Err(e) = commands::run_batch_command(&args).await {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
         }
         Command::Run { role, pod_id } => {
             let role = role
@@ -633,7 +640,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
 
             let tikv = Arc::new(create_tikv().await?);
-            let storage = create_storage()?;
             let cancel = CancellationToken::new();
             let cancel_clone = cancel.clone();
 
@@ -653,7 +659,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             match role {
                 Role::Worker => {
-                    run_worker(pod_id, tikv, storage).await?;
+                    run_worker(pod_id, tikv).await?;
                 }
                 Role::Finalizer => {
                     let batch_controller = Arc::new(BatchController::with_client(tikv.clone()));
@@ -662,7 +668,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .await?;
                 }
                 Role::Unified => {
-                    run_unified(pod_id, tikv, storage, cancel).await?;
+                    run_unified(pod_id, tikv, cancel).await?;
                 }
             }
         }

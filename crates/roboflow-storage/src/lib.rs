@@ -419,6 +419,54 @@ mod error {
             ))
         }
 
+        /// Upload a local file to storage efficiently.
+        ///
+        /// For cloud backends, this uses parallel multipart upload for large files,
+        /// providing significantly better throughput than `writer()` for files over
+        /// 100MB. For local storage, this is a simple file copy.
+        ///
+        /// # Arguments
+        ///
+        /// * `local_path` - Path to the local file to upload
+        /// * `remote_path` - Destination path in storage
+        ///
+        /// # Returns
+        ///
+        /// Total bytes uploaded.
+        fn upload_file(&self, local_path: &Path, remote_path: &Path) -> StorageResult<u64> {
+            // Default implementation: read file and write via writer()
+            let content = std::fs::read(local_path)?;
+            let size = content.len() as u64;
+            let mut writer = self.writer(remote_path)?;
+            writer.write_all(&content)?;
+            writer.flush()?;
+            Ok(size)
+        }
+
+        /// Download a storage object to a local file efficiently.
+        ///
+        /// For cloud backends, this uses streaming range-request reads to avoid
+        /// loading the entire object into memory. For local storage, this is a
+        /// simple file copy.
+        ///
+        /// # Arguments
+        ///
+        /// * `remote_path` - Path to the object in storage
+        /// * `local_path` - Destination path on local filesystem
+        ///
+        /// # Returns
+        ///
+        /// Total bytes downloaded.
+        fn download_file(&self, remote_path: &Path, local_path: &Path) -> StorageResult<u64> {
+            // Default implementation: read via reader() and write to file
+            let mut reader = self.reader(remote_path)?;
+            let file = std::fs::File::create(local_path)?;
+            let mut writer = std::io::BufWriter::with_capacity(4 * 1024 * 1024, file);
+            let bytes = std::io::copy(&mut reader, &mut writer)?;
+            writer.flush()?;
+            Ok(bytes)
+        }
+
         /// Get this storage as `Any` for downcasting.
         ///
         /// This enables checking the concrete type of a `dyn Storage` trait object,

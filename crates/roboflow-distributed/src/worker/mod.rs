@@ -23,7 +23,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use super::batch::{BatchController, WorkUnit};
-use super::merge::MergeCoordinator;
 use super::shutdown::ShutdownHandler;
 use super::tikv::{
     TikvError,
@@ -31,7 +30,6 @@ use super::tikv::{
     client::TikvClient,
     schema::{HeartbeatRecord, WorkerStatus},
 };
-use roboflow_storage::{Storage, StorageFactory};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
@@ -39,10 +37,12 @@ use tokio_util::sync::CancellationToken;
 use lru::LruCache;
 
 // Dataset conversion imports
-use roboflow_dataset::{
-    lerobot::{LerobotConfig, VideoConfig},
-    streaming::StreamingDatasetConverter,
-};
+use roboflow_dataset::lerobot::{LerobotConfig, VideoConfig};
+
+// Pipeline-v2 imports
+use roboflow_pipeline::framework::{CheckpointCallback, DistributedExecutor, PipelineConfig};
+use roboflow_sinks::SinkConfig;
+use roboflow_sources::SourceConfig;
 
 // Re-export module items for use within the worker module
 pub use checkpoint::WorkerCheckpointCallback;
@@ -57,15 +57,12 @@ pub struct Worker {
     pod_id: String,
     tikv: Arc<TikvClient>,
     checkpoint_manager: CheckpointManager,
-    storage: Arc<dyn Storage>,
-    storage_factory: StorageFactory,
     config: WorkerConfig,
     metrics: Arc<WorkerMetrics>,
     shutdown_handler: ShutdownHandler,
     cancellation_token: Arc<CancellationToken>,
     job_registry: Arc<RwLock<JobRegistry>>,
     config_cache: Arc<Mutex<LruCache<String, roboflow_dataset::lerobot::LerobotConfig>>>,
-    merge_coordinator: MergeCoordinator,
     batch_controller: BatchController,
 }
 
@@ -73,13 +70,9 @@ impl Worker {
     pub fn new(
         pod_id: impl Into<String>,
         tikv: Arc<TikvClient>,
-        storage: Arc<dyn Storage>,
         config: WorkerConfig,
     ) -> Result<Self, TikvError> {
         let pod_id = pod_id.into();
-
-        // Create storage factory from storage URL (for creating output storage backends)
-        let storage_factory = StorageFactory::new();
 
         // Create checkpoint manager with config from WorkerConfig
         let checkpoint_config = CheckpointConfig {
@@ -89,10 +82,6 @@ impl Worker {
         };
         let checkpoint_manager = CheckpointManager::new(tikv.clone(), checkpoint_config);
 
-        // Create merge coordinator for distributed dataset merge operations
-        use super::merge::MergeCoordinator;
-        let merge_coordinator = MergeCoordinator::new(tikv.clone());
-
         // Create batch controller for work unit processing
         let batch_controller = BatchController::with_client(tikv.clone());
 
@@ -100,8 +89,6 @@ impl Worker {
             pod_id,
             tikv,
             checkpoint_manager,
-            storage,
-            storage_factory,
             config,
             metrics: Arc::new(WorkerMetrics::new()),
             shutdown_handler: ShutdownHandler::new(),
@@ -110,7 +97,6 @@ impl Worker {
             config_cache: Arc::new(Mutex::new(LruCache::new(
                 std::num::NonZeroUsize::new(100).unwrap(), // Cache up to 100 configs
             ))),
-            merge_coordinator,
             batch_controller,
         })
     }
@@ -179,405 +165,199 @@ impl Worker {
         }
     }
 
-    /// Process a work unit from a batch job.
+    /// Process a work unit using the new Pipeline API.
     ///
-    /// This processes files from a batch work unit, converting them to the output format.
-    /// The conversion pipeline (StreamingDatasetConverter, CheckpointManager, etc.)
-    /// operates the same way as before, just using WorkUnit data directly.
-    async fn process_work_unit(&self, unit: &WorkUnit) -> ProcessingResult {
+    /// This method uses the Source/Sink abstraction for dataset conversion.
+    async fn process_work_unit_with_pipeline(&self, unit: &WorkUnit) -> ProcessingResult {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
         tracing::info!(
             pod_id = %self.pod_id,
             unit_id = %unit.id,
             batch_id = %unit.batch_id,
             files = unit.files.len(),
-            "Processing work unit"
+            "Processing work unit with Pipeline API"
         );
 
-        // For single-file work units, process the file directly
-        if let Some(source_url) = unit.primary_source() {
-            // Check for existing checkpoint
-            let unit_id = &unit.id;
-            match self.tikv.get_checkpoint(unit_id).await {
-                Ok(Some(checkpoint)) => {
-                    tracing::info!(
-                        pod_id = %self.pod_id,
-                        unit_id = %unit_id,
-                        last_frame = checkpoint.last_frame,
-                        total_frames = checkpoint.total_frames,
-                        progress = checkpoint.progress_percent(),
-                        "Resuming work unit from checkpoint"
-                    );
-                    // Note: Checkpoint-based resume will be implemented in a follow-up issue.
-                    // For Phase 1, we start from beginning even if checkpoint exists.
-                }
-                Ok(None) => {
-                    tracing::debug!(
-                        pod_id = %self.pod_id,
-                        unit_id = %unit_id,
-                        "No existing checkpoint found, starting from beginning"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        pod_id = %self.pod_id,
-                        unit_id = %unit_id,
-                        error = %e,
-                        "Failed to fetch checkpoint - starting from beginning (progress may be lost)"
-                    );
-                }
-            }
-
-            // Use source_url directly - work units are self-contained.
-            // The converter detects storage type from the URL scheme (s3://, oss://, file://, or local path).
-            tracing::info!(
-                pod_id = %self.pod_id,
-                unit_id = %unit_id,
-                source_url = %source_url,
-                "Processing work unit with source URL"
-            );
-
-            let input_path = PathBuf::from(&source_url);
-
-            // Build the output path for this work unit
-            let output_path = self.build_output_path(unit);
-
-            // Determine output storage and prefix for staging
-            // When output_storage_url is configured, use cloud storage with staging pattern
-            let (output_storage, staging_prefix) = if let Some(storage_url) =
-                &self.config.output_storage_url
-            {
-                // Create output storage from configured URL
-                match self.storage_factory.create(storage_url) {
-                    Ok(storage) => {
-                        // Staging pattern: {storage_url}/staging/{unit_id}/worker_{pod_id}/
-                        // Each worker writes to its own subdirectory for isolation
-                        let staging_prefix = format!("staging/{}/worker_{}", unit_id, self.pod_id);
-                        tracing::info!(
-                            storage_url = %storage_url,
-                            staging_prefix = %staging_prefix,
-                            "Using cloud storage with staging pattern"
-                        );
-                        (Some(storage), Some(staging_prefix))
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            storage_url = %storage_url,
-                            error = %e,
-                            "Failed to create output storage, falling back to local storage"
-                        );
-                        (None, None)
-                    }
-                }
-            } else {
-                (None, None)
-            };
-
-            tracing::info!(
-                input = %input_path.display(),
-                output = %output_path.display(),
-                cloud_output = staging_prefix.is_some(),
-                "Starting conversion"
-            );
-
-            // Create the LeRobot configuration
-            let lerobot_config = match self.create_lerobot_config(unit).await {
-                Ok(config) => config,
-                Err(e) => {
-                    let error_msg =
-                        format!("Failed to load config for work unit {}: {}", unit.id, e);
-                    tracing::error!(
-                        unit_id = %unit.id,
-                        original_error = %e,
-                        "Failed to load LeRobot config"
-                    );
-                    return ProcessingResult::Failed { error: error_msg };
-                }
-            };
-
-            // Create streaming converter with storage backends
-            // For cloud storage inputs, pass None for input_storage to let converter
-            // download the file. For local storage, pass self.storage for fast path.
-            let is_cloud_storage =
-                source_url.starts_with("s3://") || source_url.starts_with("oss://");
-            let input_storage = if is_cloud_storage {
-                None
-            } else {
-                Some(self.storage.clone())
-            };
-
-            // Use cloud output storage if configured, otherwise use local storage
-            let output_storage_for_converter = output_storage
-                .clone()
-                .or_else(|| Some(self.storage.clone()));
-
-            let mut converter = match StreamingDatasetConverter::new_lerobot_with_storage(
-                &output_path,
-                lerobot_config,
-                input_storage,
-                output_storage_for_converter,
-            ) {
-                Ok(c) => c,
-                Err(e) => {
-                    let error_msg = format!(
-                        "Failed to create converter for work unit {} (input: {}, output: {}): {}",
-                        unit.id,
-                        input_path.display(),
-                        output_path.display(),
-                        e
-                    );
-                    tracing::error!(
-                        unit_id = %unit.id,
-                        input = %input_path.display(),
-                        output = %output_path.display(),
-                        original_error = %e,
-                        "Converter creation failed"
-                    );
-                    return ProcessingResult::Failed { error: error_msg };
-                }
-            };
-
-            // Set staging prefix if using cloud storage
-            if let Some(ref prefix) = staging_prefix {
-                converter = converter.with_output_prefix(prefix.clone());
-            }
-
-            // Add checkpoint callback if enabled
-            // Estimate total frames from source file size.
-            // Heuristic: ~100KB per frame for typical robotics data (images + state).
-            // This is approximate; actual frame count is updated as we process.
-            let estimated_frame_size = 100_000; // 100KB per frame
-            let total_frames = (unit.total_size() / estimated_frame_size).max(1);
-
-            // Create cancellation token for this work unit
-            let cancel_token = self.cancellation_token.child_token();
-            let cancel_token_for_monitor = Arc::new(cancel_token.clone());
-            let cancel_token_for_callback = Arc::new(cancel_token.clone());
-
-            // Create progress callback with cancellation token
-            let checkpoint_callback = Arc::new(WorkerCheckpointCallback {
-                job_id: unit_id.clone(),
-                pod_id: self.pod_id.clone(),
-                total_frames,
-                checkpoint_manager: self.checkpoint_manager.clone(),
-                last_checkpoint_frame: Arc::new(AtomicU64::new(0)),
-                last_checkpoint_time: Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
-                shutdown_flag: self.shutdown_handler.flag_clone(),
-                cancellation_token: Some(cancel_token_for_callback),
-            });
-            converter = converter.with_progress_callback(checkpoint_callback);
-
-            // Register this work unit with the cancellation monitor
-            {
-                let mut registry = self.job_registry.write().await;
-                registry.register(unit_id.clone(), cancel_token_for_monitor);
-            }
-            tracing::debug!(
-                unit_id = %unit_id,
-                "Registered work unit with cancellation monitor"
-            );
-
-            // Run the conversion with a timeout to prevent indefinite hangs.
-            // Note: This is a synchronous operation that may take significant time.
-            // We use spawn_blocking to avoid starving the async runtime.
-            // A cancellation token is used to attempt cooperative cancellation on timeout.
-            use std::time::Duration;
-            const CONVERSION_TIMEOUT: Duration = Duration::from_secs(3600); // 1 hour
-
-            let unit_id_clone = unit_id.clone();
-            let cancel_token_for_timeout = cancel_token.clone();
-            let job_registry_for_cleanup = self.job_registry.clone();
-
-            let conversion_task = tokio::task::spawn_blocking(move || {
-                // Guard cancels the token when dropped (on task completion)
-                let _guard = cancel_token.drop_guard();
-                converter.convert(input_path)
-            });
-
-            let stats = match tokio::time::timeout(CONVERSION_TIMEOUT, conversion_task).await {
-                Ok(Ok(Ok(stats))) => {
-                    // Unregister from cancellation monitor
-                    let mut registry = job_registry_for_cleanup.write().await;
-                    registry.unregister(&unit_id_clone);
-                    stats
-                }
-                Ok(Ok(Err(e))) => {
-                    // Unregister from cancellation monitor
-                    let mut registry = job_registry_for_cleanup.write().await;
-                    registry.unregister(&unit_id_clone);
-
-                    let error_msg =
-                        format!("Conversion failed for work unit {}: {}", unit_id_clone, e);
-                    tracing::error!(
-                        unit_id = %unit_id_clone,
-                        original_error = %e,
-                        "Work unit processing failed"
-                    );
-                    return ProcessingResult::Failed { error: error_msg };
-                }
-                Ok(Err(join_err)) => {
-                    // Unregister from cancellation monitor
-                    let mut registry = job_registry_for_cleanup.write().await;
-                    registry.unregister(&unit_id_clone);
-
-                    // Check if this was a cancellation (not timeout)
-                    if join_err.is_cancelled() {
-                        // Cancellation is handled via the cancellation token
-                        tracing::info!(
-                            unit_id = %unit_id_clone,
-                            "Work unit was cancelled"
-                        );
-                        return ProcessingResult::Cancelled;
-                    }
-
-                    let error_msg = format!(
-                        "Conversion task panicked for work unit {}: {}",
-                        unit_id_clone, join_err
-                    );
-                    tracing::error!(
-                        unit_id = %unit_id_clone,
-                        join_error = %join_err,
-                        "Work unit processing task failed"
-                    );
-                    return ProcessingResult::Failed { error: error_msg };
-                }
-                Err(_) => {
-                    // Unregister from cancellation monitor
-                    let mut registry = job_registry_for_cleanup.write().await;
-                    registry.unregister(&unit_id_clone);
-
-                    // Timeout: request cancellation to potentially stop the blocking work
-                    cancel_token_for_timeout.cancel();
-                    let error_msg = format!(
-                        "Conversion timed out after {:?} for work unit {}",
-                        CONVERSION_TIMEOUT, unit_id_clone
-                    );
-                    tracing::error!(
-                        unit_id = %unit_id_clone,
-                        timeout_secs = CONVERSION_TIMEOUT.as_secs(),
-                        "Work unit processing timed out"
-                    );
-                    return ProcessingResult::Failed { error: error_msg };
-                }
-            };
-
-            tracing::info!(
-                unit_id = %unit_id,
-                frames_written = stats.frames_written,
-                messages = stats.messages_processed,
-                duration_sec = stats.duration_sec,
-                "Work unit processing complete"
-            );
-
-            // Register staging completion and try to claim merge task
-            // This is only done when using cloud storage with staging pattern
-            if let Some(prefix) = &staging_prefix {
-                // Full staging path includes the storage URL
-                let storage_url = self.config.output_storage_url.as_deref().unwrap_or("");
-                let staging_path = format!("{}/{}", storage_url, prefix);
-
-                tracing::info!(
-                    unit_id = %unit_id,
-                    staging_path = %staging_path,
-                    frame_count = stats.frames_written,
-                    "Registering staging completion"
-                );
-
-                // Register that this worker has completed staging
-                if let Err(e) = self
-                    .merge_coordinator
-                    .register_staging_complete(
-                        unit_id,
-                        &self.pod_id,
-                        staging_path,
-                        stats.frames_written as u64,
-                    )
-                    .await
-                {
-                    tracing::error!(
-                        unit_id = %unit_id,
-                        error = %e,
-                        "Failed to register staging completion - data may be orphaned in staging"
-                    );
-                    return ProcessingResult::Failed {
-                        error: format!("Staging registration failed: {}", e),
-                    };
-                } else {
-                    // Try to claim the merge task
-                    tracing::info!(
-                        unit_id = %unit_id,
-                        expected_workers = self.config.expected_workers,
-                        merge_output = %self.config.merge_output_path,
-                        "Attempting to claim merge task"
-                    );
-
-                    match self
-                        .merge_coordinator
-                        .try_claim_merge(
-                            unit_id,
-                            self.config.expected_workers,
-                            self.config.merge_output_path.clone(),
-                        )
-                        .await
-                    {
-                        Ok(super::merge::MergeResult::Success {
-                            output_path,
-                            total_frames,
-                        }) => {
-                            tracing::info!(
-                                unit_id = %unit_id,
-                                output_path = %output_path,
-                                total_frames,
-                                "Merge completed successfully"
-                            );
-                        }
-                        Ok(super::merge::MergeResult::NotClaimed) => {
-                            tracing::debug!(
-                                unit_id = %unit_id,
-                                "Merge task claimed by another worker"
-                            );
-                        }
-                        Ok(super::merge::MergeResult::NotFound) => {
-                            tracing::warn!(
-                                unit_id = %unit_id,
-                                "Batch not found for merge"
-                            );
-                        }
-                        Ok(super::merge::MergeResult::NotReady) => {
-                            tracing::debug!(
-                                unit_id = %unit_id,
-                                "Merge not ready, waiting for more workers"
-                            );
-                        }
-                        Ok(super::merge::MergeResult::Failed { error }) => {
-                            tracing::error!(
-                                unit_id = %unit_id,
-                                error = %error,
-                                "Merge failed"
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                unit_id = %unit_id,
-                                error = %e,
-                                "Failed to claim merge task"
-                            );
-                        }
-                    }
-                }
-            }
-
-            ProcessingResult::Success
+        // Get the primary source file
+        let source_url = if let Some(url) = unit.primary_source() {
+            url
         } else {
-            // Multi-file work units - process each file
-            tracing::warn!(
-                unit_id = %unit.id,
-                file_count = unit.files.len(),
-                "Multi-file work units not yet supported"
-            );
-            ProcessingResult::Failed {
-                error: "Multi-file work units not yet supported".to_string(),
+            let error_msg = format!("Work unit {} has no primary source", unit.id);
+            tracing::error!(unit_id = %unit.id, "No primary source");
+            return ProcessingResult::Failed { error: error_msg };
+        };
+
+        let output_path = self.build_output_path(unit);
+        let unit_id = unit.id.clone();
+
+        // Check for existing checkpoint
+        match self.tikv.get_checkpoint(&unit_id).await {
+            Ok(Some(checkpoint)) => {
+                tracing::info!(
+                    pod_id = %self.pod_id,
+                    unit_id = %unit_id,
+                    last_frame = checkpoint.last_frame,
+                    "Resuming from checkpoint"
+                );
+            }
+            Ok(None) => {
+                tracing::debug!(unit_id = %unit_id, "No checkpoint, starting fresh");
+            }
+            Err(e) => {
+                tracing::warn!(unit_id = %unit_id, error = %e, "Failed to get checkpoint");
             }
         }
+
+        // Load LeRobot config
+        let lerobot_config = match self.create_lerobot_config(unit).await {
+            Ok(config) => config,
+            Err(e) => {
+                let error_msg = format!("Failed to load config for work unit {}: {}", unit.id, e);
+                tracing::error!(unit_id = %unit.id, error = %e, "Config load failed");
+                return ProcessingResult::Failed { error: error_msg };
+            }
+        };
+
+        // Create source config from input file
+        let source_config = if source_url.ends_with(".mcap") {
+            SourceConfig::mcap(source_url)
+        } else if source_url.ends_with(".bag") {
+            SourceConfig::bag(source_url)
+        } else {
+            SourceConfig::mcap(source_url)
+        };
+
+        // Create sink config for output with LeRobot config
+        let sink_config = SinkConfig::lerobot_with_config(
+            output_path.to_string_lossy().to_string(),
+            &lerobot_config,
+        );
+
+        // Build topic mappings from config
+        let mut topic_mappings = HashMap::new();
+        for mapping in &lerobot_config.mappings {
+            topic_mappings.insert(mapping.topic.clone(), mapping.feature.clone());
+        }
+
+        let pipeline_config = PipelineConfig {
+            source: source_config,
+            sink: sink_config,
+            fps: lerobot_config.dataset.fps,
+            max_frames: None,
+            checkpoint_interval: Some(Duration::from_secs(30)),
+            topic_mappings,
+        };
+
+        // Create cancellation token
+        let cancel_token = self.cancellation_token.child_token();
+        let cancel_token_for_monitor = Arc::new(cancel_token.clone());
+        let cancel_token_for_callback = Arc::new(cancel_token.clone());
+
+        // Register with cancellation monitor
+        {
+            let mut registry = self.job_registry.write().await;
+            registry.register(unit_id.clone(), cancel_token_for_monitor);
+        }
+
+        // Create checkpoint callback (placeholder for future integration)
+        let estimated_frame_size = 100_000;
+        let total_frames = (unit.total_size() / estimated_frame_size).max(1);
+        let _total_frames = total_frames; // Used by callback
+
+        let callback_inner = Arc::new(WorkerCheckpointCallback {
+            job_id: unit_id.clone(),
+            pod_id: self.pod_id.clone(),
+            total_frames,
+            checkpoint_manager: self.checkpoint_manager.clone(),
+            last_checkpoint_frame: Arc::new(AtomicU64::new(0)),
+            last_checkpoint_time: Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
+            shutdown_flag: self.shutdown_handler.flag_clone(),
+            cancellation_token: Some(cancel_token_for_callback),
+        });
+
+        // Create a simple checkpoint callback wrapper
+        // Note: The pipeline-v2 doesn't yet support arbitrary checkpoint callbacks during execution
+        // This is stored for future integration when the pipeline supports progress callbacks
+        let checkpoint_callback: CheckpointCallback = Arc::new({
+            let _callback_inner = callback_inner;
+            move |_frame_index: usize, _total: usize| {
+                // Placeholder for future checkpoint integration
+                // The pipeline currently uses its own internal checkpointing mechanism
+            }
+        });
+
+        // Create executor with checkpoint callback
+        let executor = DistributedExecutor::new(Duration::from_secs(30))
+            .with_checkpoint_callback(checkpoint_callback);
+
+        // Run with timeout
+        const CONVERSION_TIMEOUT: Duration = Duration::from_secs(3600);
+
+        let unit_id_clone = unit_id.clone();
+        let job_registry_for_cleanup = self.job_registry.clone();
+        let cancel_token_for_timeout = cancel_token.clone();
+
+        let pipeline_task = tokio::task::spawn(async move {
+            let _guard = cancel_token.drop_guard();
+            executor.execute(pipeline_config).await
+        });
+
+        let report = match tokio::time::timeout(CONVERSION_TIMEOUT, pipeline_task).await {
+            Ok(Ok(Ok(report))) => {
+                let mut registry = job_registry_for_cleanup.write().await;
+                registry.unregister(&unit_id_clone);
+                report
+            }
+            Ok(Ok(Err(e))) => {
+                let mut registry = job_registry_for_cleanup.write().await;
+                registry.unregister(&unit_id_clone);
+
+                let error_msg = format!(
+                    "Pipeline execution failed for work unit {}: {}",
+                    unit_id_clone, e
+                );
+                tracing::error!(unit_id = %unit_id_clone, error = %e, "Pipeline failed");
+                return ProcessingResult::Failed { error: error_msg };
+            }
+            Ok(Err(join_err)) => {
+                let mut registry = job_registry_for_cleanup.write().await;
+                registry.unregister(&unit_id_clone);
+
+                if join_err.is_cancelled() {
+                    return ProcessingResult::Cancelled;
+                }
+
+                let error_msg = format!(
+                    "Pipeline task panicked for work unit {}: {}",
+                    unit_id_clone, join_err
+                );
+                tracing::error!(unit_id = %unit_id_clone, join_error = %join_err, "Task panicked");
+                return ProcessingResult::Failed { error: error_msg };
+            }
+            Err(_) => {
+                let mut registry = job_registry_for_cleanup.write().await;
+                registry.unregister(&unit_id_clone);
+
+                cancel_token_for_timeout.cancel();
+                let error_msg = format!("Pipeline timed out for work unit {}", unit_id_clone);
+                tracing::error!(unit_id = %unit_id_clone, "Pipeline timed out");
+                return ProcessingResult::Failed { error: error_msg };
+            }
+        };
+
+        tracing::info!(
+            unit_id = %unit.id,
+            frames_written = report.frames_written,
+            episodes = report.episodes_written,
+            messages = report.messages_processed,
+            duration_sec = report.duration_sec,
+            fps = report.fps,
+            "Work unit complete with Pipeline API"
+        );
+
+        ProcessingResult::Success
     }
 
     /// Complete a work unit.
@@ -936,8 +716,10 @@ impl Worker {
                         break;
                     }
 
-                    // Process the work unit
-                    let result = self.process_work_unit(&unit).await;
+                    // Process the work unit using the pipeline-v2 API.
+                    // For cloud URLs, the source streams data directly from S3/OSS
+                    // via robocodec's S3Reader -- no prefetch or temp files needed.
+                    let result = self.process_work_unit_with_pipeline(&unit).await;
 
                     match result {
                         ProcessingResult::Success => {
