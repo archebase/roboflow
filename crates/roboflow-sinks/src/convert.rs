@@ -125,10 +125,7 @@ mod tests {
             .insert("observation.gripper".to_string(), vec![0.5]);
 
         let aligned = dataset_frame_to_aligned(&frame);
-        assert_eq!(
-            aligned.states.get("observation.gripper"),
-            Some(&vec![0.5])
-        );
+        assert_eq!(aligned.states.get("observation.gripper"), Some(&vec![0.5]));
     }
 
     #[test]

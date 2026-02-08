@@ -130,9 +130,9 @@ impl Sink for KpsSink {
         if frame.episode_index != self.current_episode {
             // Finalize current writer and create new one for new episode
             use roboflow_dataset::DatasetWriter;
-            let _ = writer.finalize().map_err(|e| {
-                SinkError::WriteFailed(format!("Failed to finalize episode: {e}"))
-            })?;
+            let _ = writer
+                .finalize()
+                .map_err(|e| SinkError::WriteFailed(format!("Failed to finalize episode: {e}")))?;
             self.episodes_completed += 1;
             self.current_episode = frame.episode_index;
 
@@ -146,18 +146,15 @@ impl Sink for KpsSink {
                     SinkError::WriteFailed(format!("Failed to create writer for episode: {e}"))
                 })?;
 
-            tracing::debug!(
-                episode = self.current_episode,
-                "Started new KPS episode"
-            );
+            tracing::debug!(episode = self.current_episode, "Started new KPS episode");
         }
 
         let aligned = dataset_frame_to_aligned(&frame);
 
         use roboflow_dataset::DatasetWriter;
-        writer.write_frame(&aligned).map_err(|e| {
-            SinkError::WriteFailed(format!("KPS write_frame failed: {e}"))
-        })?;
+        writer
+            .write_frame(&aligned)
+            .map_err(|e| SinkError::WriteFailed(format!("KPS write_frame failed: {e}")))?;
 
         self.frames_written += 1;
 
@@ -169,14 +166,15 @@ impl Sink for KpsSink {
     }
 
     async fn finalize(&mut self) -> SinkResult<SinkStats> {
-        let writer = self.writer.as_mut().ok_or_else(|| {
-            SinkError::WriteFailed("Sink not initialized".to_string())
-        })?;
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| SinkError::WriteFailed("Sink not initialized".to_string()))?;
 
         use roboflow_dataset::DatasetWriter;
-        let writer_stats = writer.finalize().map_err(|e| {
-            SinkError::WriteFailed(format!("KPS finalize failed: {e}"))
-        })?;
+        let writer_stats = writer
+            .finalize()
+            .map_err(|e| SinkError::WriteFailed(format!("KPS finalize failed: {e}")))?;
 
         let duration = self
             .start_time

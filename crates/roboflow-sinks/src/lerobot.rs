@@ -123,9 +123,9 @@ impl Sink for LerobotSink {
         if self.has_frames && frame.episode_index != self.current_episode {
             // Finish the previous episode (flush Parquet + encode video)
             let task_index = frame.task_index;
-            writer.finish_episode(task_index).map_err(|e| {
-                SinkError::WriteFailed(format!("Failed to finish episode: {e}"))
-            })?;
+            writer
+                .finish_episode(task_index)
+                .map_err(|e| SinkError::WriteFailed(format!("Failed to finish episode: {e}")))?;
             self.episodes_completed += 1;
 
             tracing::debug!(
@@ -157,14 +157,15 @@ impl Sink for LerobotSink {
     }
 
     async fn finalize(&mut self) -> SinkResult<SinkStats> {
-        let writer = self.writer.as_mut().ok_or_else(|| {
-            SinkError::WriteFailed("Sink not initialized".to_string())
-        })?;
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| SinkError::WriteFailed("Sink not initialized".to_string()))?;
 
         use roboflow_dataset::DatasetWriter;
-        let writer_stats = writer.finalize().map_err(|e| {
-            SinkError::WriteFailed(format!("LerobotWriter finalize failed: {e}"))
-        })?;
+        let writer_stats = writer
+            .finalize()
+            .map_err(|e| SinkError::WriteFailed(format!("LerobotWriter finalize failed: {e}")))?;
 
         let duration = self
             .start_time

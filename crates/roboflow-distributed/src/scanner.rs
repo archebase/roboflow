@@ -50,8 +50,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use super::batch::{
-    BatchKeys, BatchPhase, BatchSpec, BatchStatus, DiscoveryStatus, WorkFile, WorkUnit,
-    WorkUnitKeys,
+    BatchIndexKeys, BatchKeys, BatchPhase, BatchSpec, BatchStatus, DiscoveryStatus, WorkFile,
+    WorkUnit, WorkUnitKeys,
 };
 use super::tikv::{TikvError, client::TikvClient, locks::LockManager};
 use roboflow_storage::{ObjectMetadata, StorageError, StorageFactory};
@@ -340,11 +340,13 @@ impl Scanner {
         format!("{:016x}", hasher.finish())
     }
 
-    /// Check which hashes already have work units.
+    /// Check which hashes already have work units for this batch.
     ///
-    /// Checks work unit keys directly since work unit IDs are file hashes.
+    /// Checks actual work unit keys (`/roboflow/v1/batch/workunits/{batch_id}/{unit_id}`)
+    /// to determine if a work unit was already created for this file in this batch.
     async fn check_existing_work_units(
         &self,
+        batch_id: &str,
         hashes: &[String],
     ) -> Result<HashSet<String>, TikvError> {
         if hashes.is_empty() {
@@ -353,12 +355,11 @@ impl Scanner {
 
         let mut existing = HashSet::new();
 
-        // Need batch_id to construct work unit keys, but we don't have it yet.
-        // Use pending queue as a lightweight existence check.
+        // Check work unit keys scoped to this batch
         for chunk in hashes.chunks(self.config.batch_size) {
             let keys: Vec<Vec<u8>> = chunk
                 .iter()
-                .map(|hash| WorkUnitKeys::pending(hash))
+                .map(|hash| WorkUnitKeys::unit(batch_id, hash))
                 .collect();
 
             let results = self.tikv.batch_get(keys).await?;
@@ -409,33 +410,54 @@ impl Scanner {
         )
     }
 
-    /// Get pending batches from TiKV.
+    /// Get pending batches from TiKV using the phase index.
+    ///
+    /// Scans the phase index for Pending and Discovering batches instead of
+    /// scanning all specs. This is O(active batches) instead of O(total batches),
+    /// which is critical for long-running clusters where batch records accumulate.
+    ///
+    /// The scan uses a generous limit (1000) because index entries are tiny
+    /// (empty values) and there may be stale entries from before the index was
+    /// maintained. The actual number of batches returned is capped by
+    /// `max_batches_per_cycle`.
     async fn get_pending_batches(
         &self,
     ) -> Result<Vec<(String, BatchSpec, BatchStatus)>, TikvError> {
         let mut batches = Vec::new();
 
-        // Scan all batch specs
-        let prefix = BatchKeys::specs_prefix();
-        let results = self
-            .tikv
-            .scan(prefix, self.config.max_batches_per_cycle as u32)
-            .await?;
+        // Scan phase index for Pending and Discovering batches only.
+        // Use a generous scan limit since index entries are tiny and stale
+        // entries need to be skipped. max_batches_per_cycle limits the
+        // number of batches we actually process.
+        const INDEX_SCAN_LIMIT: u32 = 1000;
 
-        for (key, _value) in results {
-            // Extract batch_id from key
-            let key_str = String::from_utf8_lossy(&key);
-            // Key format: /roboflow/v1/batch/specs/{batch_id}
-            if let Some(batch_id) = key_str.split('/').next_back() {
+        for phase in [BatchPhase::Pending, BatchPhase::Discovering] {
+            let prefix = BatchIndexKeys::phase_prefix(phase);
+            let results = self.tikv.scan(prefix, INDEX_SCAN_LIMIT).await?;
+
+            for (key, _value) in results {
+                let key_str = String::from_utf8_lossy(&key);
+                // Key format: /roboflow/v1/batch/index/phase/{phase}/{batch_id}
+                let batch_id = match key_str.split('/').next_back() {
+                    Some(id) => id.to_string(),
+                    None => continue,
+                };
+
                 // Get batch spec
-                let spec_key = BatchKeys::spec(batch_id);
+                let spec_key = BatchKeys::spec(&batch_id);
                 let spec_data = match self.tikv.get(spec_key).await? {
                     Some(d) => d,
-                    None => continue,
+                    None => {
+                        tracing::warn!(batch_id = %batch_id, "Spec not found for indexed batch - stale index entry");
+                        continue;
+                    }
                 };
                 let spec: BatchSpec = match serde_yaml::from_slice(&spec_data) {
                     Ok(s) => s,
-                    Err(_) => continue,
+                    Err(e) => {
+                        tracing::warn!(batch_id = %batch_id, error = %e, "Failed to deserialize batch spec");
+                        continue;
+                    }
                 };
 
                 // Skip if not in our namespace
@@ -443,17 +465,40 @@ impl Scanner {
                     continue;
                 }
 
-                // Get batch status
-                let status_key = BatchKeys::status(batch_id);
+                // Get batch status and verify phase (stale index tolerance)
+                let status_key = BatchKeys::status(&batch_id);
                 let status: BatchStatus = match self.tikv.get(status_key).await? {
                     Some(d) => bincode::deserialize(&d).unwrap_or_default(),
                     None => BatchStatus::new(),
                 };
 
-                // Only process Pending or Discovering batches
+                // Verify actual phase matches — index may be stale
                 if matches!(status.phase, BatchPhase::Pending | BatchPhase::Discovering) {
-                    batches.push((batch_id.to_string(), spec, status));
+                    batches.push((batch_id, spec, status));
+                } else {
+                    // Clean up stale index entry
+                    let stale_key = BatchIndexKeys::phase(phase, &batch_id);
+                    if let Err(e) = self.tikv.delete(stale_key).await {
+                        tracing::warn!(
+                            batch_id = %batch_id,
+                            indexed_phase = ?phase,
+                            actual_phase = ?status.phase,
+                            error = %e,
+                            "Failed to clean up stale phase index entry"
+                        );
+                    } else {
+                        tracing::debug!(
+                            batch_id = %batch_id,
+                            indexed_phase = ?phase,
+                            actual_phase = ?status.phase,
+                            "Cleaned up stale phase index entry"
+                        );
+                    }
                 }
+            }
+
+            if batches.len() >= self.config.max_batches_per_cycle {
+                break;
             }
         }
 
@@ -575,6 +620,14 @@ impl Scanner {
             status.discovery_status = Some(DiscoveryStatus::new(total_sources));
             // Save status immediately after transition to ensure progress is visible
             self.save_batch_status(batch_id, &status).await?;
+            // Update phase index: Pending -> Discovering
+            super::batch::update_phase_index(
+                &self.tikv,
+                batch_id,
+                BatchPhase::Pending,
+                BatchPhase::Discovering,
+            )
+            .await?;
         }
 
         // Track which sources we've already processed
@@ -583,6 +636,15 @@ impl Scanner {
             .as_ref()
             .map(|d| d.sources_scanned as usize)
             .unwrap_or(0);
+
+        tracing::info!(
+            batch_id = %batch_id,
+            sources_total = spec.spec.sources.len(),
+            sources_processed = sources_processed,
+            phase = ?status.phase,
+            has_discovery_status = status.discovery_status.is_some(),
+            "process_batch: starting source iteration"
+        );
 
         // Process each source that hasn't been processed yet
         for source in spec.spec.sources.iter().skip(sources_processed) {
@@ -626,8 +688,8 @@ impl Scanner {
 
             let hashes: Vec<String> = file_hashes.iter().map(|(_, h)| h.clone()).collect();
 
-            // Check existing work units
-            let existing = match self.check_existing_work_units(&hashes).await {
+            // Check existing work units for this batch
+            let existing = match self.check_existing_work_units(batch_id, &hashes).await {
                 Ok(e) => e,
                 Err(e) => {
                     tracing::error!(
@@ -672,25 +734,27 @@ impl Scanner {
                             .map_err(|e| TikvError::Serialization(e.to_string()))?;
                         work_unit_pairs.push((unit_key, unit_data));
 
-                        // Add to pending queue
-                        let pending_key = WorkUnitKeys::pending(&work_unit.id);
+                        // Add to pending queue (scoped by batch_id to prevent cross-batch interference)
+                        let pending_key = WorkUnitKeys::pending(batch_id, &work_unit.id);
                         let pending_data = work_unit.batch_id.as_bytes().to_vec();
                         pending_pairs.push((pending_key, pending_data));
                     }
 
                     // Batch put work units and pending entries together
                     let all_pairs: Vec<(Vec<u8>, Vec<u8>)> =
-                        work_unit_pairs.into_iter().chain(pending_pairs).collect();
+                        work_unit_pairs.into_iter().chain(pending_pairs.clone()).collect();
 
-                    // Debug: log the keys being written
-                    for (k, _) in &all_pairs {
+                    // Log pending keys being written
+                    for (pk, _) in &pending_pairs {
                         tracing::info!(
-                            key = %String::from_utf8_lossy(k),
-                            "Writing key to TiKV"
+                            batch_id = %batch_id,
+                            pending_key = %String::from_utf8_lossy(pk),
+                            "Writing pending queue entry"
                         );
                     }
 
                     if let Err(e) = self.tikv.batch_put(all_pairs).await {
+                        tracing::error!(batch_id = %batch_id, error = %e, "batch_put FAILED for work units + pending");
                         tracing::error!(
                             batch_id = %batch_id,
                             error = %e,
@@ -700,26 +764,42 @@ impl Scanner {
                         return Err(e);
                     }
 
-                    // Debug: verify pending keys were actually written
-                    let verify_prefix = WorkUnitKeys::pending_prefix();
-                    match self.tikv.scan(verify_prefix.clone(), 10).await {
-                        Ok(results) => {
-                            tracing::info!(
-                                prefix = %String::from_utf8_lossy(&verify_prefix),
-                                results = results.len(),
-                                "Verification scan for pending keys after batch_put"
-                            );
-                            for (k, v) in &results {
-                                tracing::info!(
-                                    key = %String::from_utf8_lossy(k),
-                                    value = %String::from_utf8_lossy(v),
-                                    "Found pending key"
-                                );
-                            }
+                    // Verify pending keys were written successfully
+                    for (pk, _) in &pending_pairs {
+                        match self.tikv.get(pk.clone()).await {
+                            Ok(Some(_)) => tracing::info!(
+                                batch_id = %batch_id,
+                                pending_key = %String::from_utf8_lossy(pk),
+                                "VERIFIED: pending key exists in TiKV"
+                            ),
+                            Ok(None) => tracing::error!(
+                                batch_id = %batch_id,
+                                pending_key = %String::from_utf8_lossy(pk),
+                                "MISSING: pending key NOT found in TiKV after batch_put!"
+                            ),
+                            Err(e) => tracing::error!(
+                                batch_id = %batch_id,
+                                pending_key = %String::from_utf8_lossy(pk),
+                                error = %e,
+                                "ERROR: failed to verify pending key"
+                            ),
                         }
-                        Err(e) => {
-                            tracing::error!(error = %e, "Verification scan failed");
-                        }
+                    }
+
+                    // Also verify via scan
+                    let scan_prefix = WorkUnitKeys::pending_prefix();
+                    match self.tikv.scan(scan_prefix.clone(), 10).await {
+                        Ok(results) => tracing::info!(
+                            batch_id = %batch_id,
+                            scan_prefix = %String::from_utf8_lossy(&scan_prefix),
+                            results = results.len(),
+                            "SCAN verification of pending prefix"
+                        ),
+                        Err(e) => tracing::error!(
+                            batch_id = %batch_id,
+                            error = %e,
+                            "SCAN verification failed"
+                        ),
                     }
 
                     created += chunk.len() as u64;
@@ -765,11 +845,30 @@ impl Scanner {
                     sources = total_sources,
                     "No files found during discovery, marking batch as failed"
                 );
+                self.save_batch_status(batch_id, &status).await?;
+                // Update phase index: Discovering -> Failed
+                super::batch::update_phase_index(
+                    &self.tikv,
+                    batch_id,
+                    BatchPhase::Discovering,
+                    BatchPhase::Failed,
+                )
+                .await?;
             } else {
+                // Set work_units_total so is_complete() and progress() work correctly
+                status.set_work_units_total(jobs_created as u32);
                 // Transition to Running - work units were created successfully
                 status.transition_to(BatchPhase::Running);
+                self.save_batch_status(batch_id, &status).await?;
+                // Update phase index: Discovering -> Running
+                super::batch::update_phase_index(
+                    &self.tikv,
+                    batch_id,
+                    BatchPhase::Discovering,
+                    BatchPhase::Running,
+                )
+                .await?;
             }
-            self.save_batch_status(batch_id, &status).await?;
         }
 
         self.metrics.inc_files_discovered(files_discovered);

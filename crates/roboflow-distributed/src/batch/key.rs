@@ -86,20 +86,36 @@ impl WorkUnitKeys {
 
     /// Create a key for a pending work unit index entry.
     ///
-    /// Format: `/roboflow/v1/batch/pending/{unit_id}`
-    pub fn pending(unit_id: &str) -> Vec<u8> {
+    /// Format: `/roboflow/v1/batch/pending/{batch_id}/{unit_id}`
+    ///
+    /// The batch_id is included to scope pending keys per batch,
+    /// preventing cross-batch interference when the same file is
+    /// submitted across multiple batches (same unit_id hash).
+    pub fn pending(batch_id: &str, unit_id: &str) -> Vec<u8> {
         KeyBuilder::new()
             .push("batch")
             .push("pending")
+            .push(batch_id)
             .push(unit_id)
             .build()
     }
 
-    /// Create a prefix for pending work units.
+    /// Create a prefix for all pending work units (across all batches).
     ///
     /// Format: `/roboflow/v1/batch/pending/`
     pub fn pending_prefix() -> Vec<u8> {
         KeyBuilder::new().push("batch").push("pending").build()
+    }
+
+    /// Create a prefix for pending work units of a specific batch.
+    ///
+    /// Format: `/roboflow/v1/batch/pending/{batch_id}/`
+    pub fn pending_batch_prefix(batch_id: &str) -> Vec<u8> {
+        KeyBuilder::new()
+            .push("batch")
+            .push("pending")
+            .push(batch_id)
+            .build()
     }
 }
 
@@ -287,9 +303,9 @@ mod tests {
 
     #[test]
     fn test_work_unit_keys_pending() {
-        let key = WorkUnitKeys::pending("unit-456");
+        let key = WorkUnitKeys::pending("batch-123", "unit-456");
         let key_str = String::from_utf8(key).unwrap();
-        assert!(key_str.contains("/batch/pending/unit-456"));
+        assert!(key_str.contains("/batch/pending/batch-123/unit-456"));
     }
 
     #[test]

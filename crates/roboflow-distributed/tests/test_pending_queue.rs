@@ -36,7 +36,7 @@ async fn test_pending_queue_workflow() {
     );
 
     // Add to pending queue
-    let pending_key = WorkUnitKeys::pending(unit_id);
+    let pending_key = WorkUnitKeys::pending(batch_id, unit_id);
     let pending_data = batch_id.as_bytes().to_vec();
     tikv.put(pending_key.clone(), pending_data).await.unwrap();
 

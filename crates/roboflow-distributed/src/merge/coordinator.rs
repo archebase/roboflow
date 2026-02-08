@@ -423,6 +423,15 @@ impl MergeCoordinator {
         // Simple CAS: write new status
         self.tikv.put(status_key.clone(), new_data.clone()).await?;
 
+        // Update phase index: Running -> Merging
+        crate::batch::update_phase_index(
+            &self.tikv,
+            job_id,
+            BatchPhase::Running,
+            BatchPhase::Merging,
+        )
+        .await?;
+
         // Step 4: Verify we won the race by reading back
         let verify_data = self.tikv.get(status_key.clone()).await?;
         let verified = match verify_data {
@@ -478,6 +487,14 @@ impl MergeCoordinator {
                 let retry_data = bincode::serialize(&retry_status)
                     .map_err(|e| TikvError::Serialization(e.to_string()))?;
                 let _ = self.tikv.put(status_key, retry_data).await;
+                // Update phase index: Merging -> Running (rollback)
+                let _ = crate::batch::update_phase_index(
+                    &self.tikv,
+                    job_id,
+                    BatchPhase::Merging,
+                    BatchPhase::Running,
+                )
+                .await;
                 return Ok(MergeResult::NotReady);
             }
         }
@@ -561,6 +578,7 @@ impl MergeCoordinator {
         };
 
         // Transition Merging → Failed
+        let old_phase = status.phase;
         status.transition_to(BatchPhase::Failed);
         status.error = Some(error.to_string());
 
@@ -568,6 +586,10 @@ impl MergeCoordinator {
             bincode::serialize(&status).map_err(|e| TikvError::Serialization(e.to_string()))?;
 
         self.tikv.put(status_key, new_data).await?;
+
+        // Update phase index
+        let _ = crate::batch::update_phase_index(&self.tikv, job_id, old_phase, BatchPhase::Failed)
+            .await;
 
         // Also mark merge state as failed
         let merge_key = Self::merge_state_key(job_id);
@@ -619,6 +641,15 @@ impl MergeCoordinator {
             bincode::serialize(&status).map_err(|e| TikvError::Serialization(e.to_string()))?;
 
         self.tikv.put(status_key, new_data).await?;
+
+        // Update phase index: Merging -> Complete
+        let _ = crate::batch::update_phase_index(
+            &self.tikv,
+            job_id,
+            BatchPhase::Merging,
+            BatchPhase::Complete,
+        )
+        .await;
 
         // Also mark merge state as complete
         let merge_key = Self::merge_state_key(job_id);

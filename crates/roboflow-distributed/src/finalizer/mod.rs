@@ -141,6 +141,15 @@ impl Finalizer {
             // Check if all work units are complete
             // Calculate total from completed + failed
             let total_done = batch.files_completed + batch.files_failed;
+            tracing::debug!(
+                batch_id = %batch.id,
+                phase = ?batch.phase,
+                files_total = batch.files_total,
+                files_completed = batch.files_completed,
+                files_failed = batch.files_failed,
+                total_done = total_done,
+                "Finalizer: evaluating batch"
+            );
             if total_done >= batch.files_total && batch.files_total > 0 {
                 // Get the spec to get output path
                 match self.batch_controller.get_batch_spec(&batch.id).await {
@@ -242,11 +251,16 @@ impl Finalizer {
             None => return Err(TikvError::Other("Batch status not found".to_string())),
         };
 
+        let old_phase = status.phase;
         status.transition_to(BatchPhase::Complete);
 
         let new_data =
             bincode::serialize(&status).map_err(|e| TikvError::Serialization(e.to_string()))?;
         self.tikv.put(key, new_data).await?;
+
+        // Update phase index
+        super::batch::update_phase_index(&self.tikv, batch_id, old_phase, BatchPhase::Complete)
+            .await?;
 
         info!(batch_id = %batch_id, "Batch marked complete");
 
@@ -264,12 +278,17 @@ impl Finalizer {
             None => return Err(TikvError::Other("Batch status not found".to_string())),
         };
 
+        let old_phase = status.phase;
         status.transition_to(BatchPhase::Failed);
         status.error = Some(error);
 
         let new_data =
             bincode::serialize(&status).map_err(|e| TikvError::Serialization(e.to_string()))?;
         self.tikv.put(key, new_data).await?;
+
+        // Update phase index
+        super::batch::update_phase_index(&self.tikv, batch_id, old_phase, BatchPhase::Failed)
+            .await?;
 
         info!(batch_id = %batch_id, "Batch marked failed");
 

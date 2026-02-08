@@ -6,24 +6,27 @@
 //!
 //! Provides connection pooling and basic CRUD operations for TiKV.
 //!
-//! # Atomicity Guarantees
+//! # MVCC & TSO Awareness
 //!
-//! This client uses TiKV's optimistic transactions. Each CRUD operation
-//! (`get`, `put`, `delete`, `scan`) executes in its own transaction.
+//! TiKV uses MVCC (Multi-Version Concurrency Control) with a Timestamp
+//! Oracle (TSO) from PD. Every transaction gets a `start_ts` that determines
+//! its snapshot. The PD client **batches** TSO allocations for efficiency,
+//! which means `begin_optimistic()` may return a transaction whose `start_ts`
+//! predates recently committed writes — causing **stale reads**.
 //!
-//! High-level operations like `claim_job`, `acquire_lock`, `release_lock`,
-//! `complete_job`, `fail_job`, and `cas` all use **single transactions**
-//! for both read and write, providing atomicity. If two workers race to
-//! perform conflicting operations, TiKV's optimistic concurrency control
-//! will detect the conflict and one transaction will fail with a write
-//! conflict error.
+//! To avoid this, we use three strategies:
 //!
-//! # Retry Behavior
+//! - **Read-only operations** (`get`, `scan`, `batch_get`): Use
+//!   `current_timestamp()` + `snapshot()` to obtain a guaranteed-fresh TSO
+//!   directly from PD, bypassing the batched cache.
 //!
-//! Write conflicts are automatically retried with exponential backoff.
-//! The `max_retries` and `retry_base_delay_ms` configuration values control
-//! retry behavior. If all retries are exhausted, a `Retryable` error is
-//! returned.
+//! - **Read-then-write operations** (`transactional_claim`, `cas`,
+//!   `acquire_lock`, `release_lock`): Use **pessimistic transactions**
+//!   (`begin_pessimistic()`) which acquire row locks on read and always
+//!   see the latest committed state.
+//!
+//! - **Write-only operations** (`put`, `delete`, `batch_put`): Use
+//!   optimistic transactions — no read means no stale-snapshot risk.
 //!
 //! # Scan Behavior
 //!
@@ -92,6 +95,8 @@ impl TikvClient {
     }
 
     /// Get a value by key.
+    ///
+    /// Uses a fresh TSO snapshot to guarantee visibility of all committed writes.
     pub async fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>> {
         // Check circuit breaker state before attempting operation
         if !self.circuit_breaker.is_call_permitted() {
@@ -105,20 +110,20 @@ impl TikvClient {
                 TikvError::ConnectionFailed("TiKV client not initialized".to_string())
             })?;
 
-            let mut txn = inner.begin_optimistic().await.map_err(|e| {
-                // Record failure for circuit breaker
+            // Get a fresh timestamp directly from PD (bypasses TSO batch cache)
+            let ts = inner.current_timestamp().await.map_err(|e| {
                 self.circuit_breaker.record_failure();
                 TikvError::ClientError(e.to_string())
             })?;
 
-            let result = txn.get(key).await.map_err(|e| {
-                // Record failure for circuit breaker
-                self.circuit_breaker.record_failure();
-                TikvError::ClientError(e.to_string())
-            })?;
+            // Snapshot is read-only; use Warn drop-check to avoid panic on drop
+            let mut snap = inner.snapshot(
+                ts,
+                tikv_client::TransactionOptions::new_optimistic()
+                    .drop_check(tikv_client::CheckLevel::Warn),
+            );
 
-            txn.commit().await.map_err(|e| {
-                // Record failure for circuit breaker
+            let result = snap.get(key).await.map_err(|e| {
                 self.circuit_breaker.record_failure();
                 TikvError::ClientError(e.to_string())
             })?;
@@ -199,8 +204,8 @@ impl TikvClient {
 
     /// Scan keys with a prefix.
     ///
-    /// Uses an exclusive range to match all keys starting with the prefix.
-    /// The scan is limited to `limit` results.
+    /// Uses a fresh TSO snapshot to guarantee visibility of all committed writes.
+    /// Returns keys in lexicographic order, limited to `limit` results.
     pub async fn scan(&self, prefix: Vec<u8>, limit: u32) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         tracing::debug!(
             limit = limit,
@@ -213,26 +218,31 @@ impl TikvClient {
                 TikvError::ConnectionFailed("TiKV client not initialized".to_string())
             })?;
 
-            let mut txn = inner
-                .begin_optimistic()
+            // Get a fresh timestamp directly from PD (bypasses TSO batch cache)
+            let ts = inner
+                .current_timestamp()
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
+            // Snapshot is read-only; use Warn drop-check to avoid panic on drop
+            let mut snap = inner.snapshot(
+                ts,
+                tikv_client::TransactionOptions::new_optimistic()
+                    .drop_check(tikv_client::CheckLevel::Warn),
+            );
+
             // Create a proper prefix scan range using exclusive upper bound.
             // We append 0xFF to ensure the scan range includes all keys with the prefix.
-            // Using 0xFF instead of 0x00 because null byte comes before regular ASCII chars.
             let mut scan_end = prefix.clone();
             scan_end.push(0xFF);
 
-            // Use exclusive range (..) instead of inclusive (..=) for correctness
-            let iter = txn
+            let iter = snap
                 .scan(prefix.clone()..scan_end, limit)
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
             // Collect the iterator into a Vec
-            // Note: The .into() conversion from Key to Vec<u8> is necessary but triggers
-            // clippy::useless_conversion as a false positive. The allow attribute is justified.
+            #[allow(clippy::useless_conversion)]
             let result: Vec<(Vec<u8>, Vec<u8>)> = iter
                 .map(|pair| {
                     #[allow(clippy::useless_conversion)]
@@ -243,10 +253,6 @@ impl TikvClient {
                 })
                 .collect();
 
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
             tracing::debug!(limit = limit, results = result.len(), "Scan completed");
 
             Ok(result)
@@ -254,29 +260,35 @@ impl TikvClient {
     }
 
     /// Batch get multiple keys.
+    ///
+    /// Uses a fresh TSO snapshot to guarantee visibility of all committed writes.
     pub async fn batch_get(&self, keys: Vec<Vec<u8>>) -> Result<Vec<Option<Vec<u8>>>> {
         {
             let inner = self.inner.as_ref().ok_or_else(|| {
                 TikvError::ConnectionFailed("TiKV client not initialized".to_string())
             })?;
 
-            let mut txn = inner
-                .begin_optimistic()
+            // Get a fresh timestamp directly from PD (bypasses TSO batch cache)
+            let ts = inner
+                .current_timestamp()
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
+            // Snapshot is read-only; use Warn drop-check to avoid panic on drop
+            let mut snap = inner.snapshot(
+                ts,
+                tikv_client::TransactionOptions::new_optimistic()
+                    .drop_check(tikv_client::CheckLevel::Warn),
+            );
+
             let mut results = Vec::new();
             for key in &keys {
-                let value = txn
+                let value = snap
                     .get(key.clone())
                     .await
                     .map_err(|e| TikvError::ClientError(e.to_string()))?;
                 results.push(value);
             }
-
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
             Ok(results)
         }
@@ -310,11 +322,8 @@ impl TikvClient {
 
     /// Compare-And-Swap (CAS) operation for atomic updates.
     ///
-    /// This uses a single transaction to read the current value, check the version,
-    /// and write the new value if the version matches. Returns `Ok(true)` if the
-    /// operation succeeded, `Ok(false)` if the version mismatched (key exists with
-    /// different version, or key doesn't exist with expected_version != 0), or
-    /// `Err` if there was a connection error.
+    /// Uses a **pessimistic transaction** to read-then-write atomically,
+    /// ensuring the read always sees the latest committed state.
     pub async fn cas(
         &self,
         key: Vec<u8>,
@@ -329,7 +338,7 @@ impl TikvClient {
             })?;
 
             let mut txn = inner
-                .begin_optimistic()
+                .begin_pessimistic()
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
@@ -389,7 +398,8 @@ impl TikvClient {
     /// - Some(new_data) if the work unit was successfully claimed
     /// - None if the work unit couldn't be claimed
     ///
-    /// All operations happen in a single transaction for atomicity.
+    /// Uses a **pessimistic transaction** so the read acquires a lock and
+    /// always sees the latest committed state (no stale TSO batch issue).
     pub async fn transactional_claim<F>(
         &self,
         work_unit_key: Vec<u8>,
@@ -408,7 +418,7 @@ impl TikvClient {
         })?;
 
         let mut txn = inner
-            .begin_optimistic()
+            .begin_pessimistic()
             .await
             .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
@@ -468,9 +478,8 @@ impl TikvClient {
 
     /// Acquire a distributed lock (atomic operation within a single transaction).
     ///
-    /// This uses a single transaction to read the lock, check if it's available,
-    /// and write the new lock record. If two workers race to acquire the same lock,
-    /// TiKV's optimistic concurrency will detect the write conflict and one will fail.
+    /// Uses a **pessimistic transaction** so the read acquires a row lock,
+    /// preventing race conditions between concurrent lock acquisition attempts.
     pub async fn acquire_lock(
         &self,
         resource: &str,
@@ -491,7 +500,7 @@ impl TikvClient {
 
             let key = LockKeys::lock(resource);
             let mut txn = inner
-                .begin_optimistic()
+                .begin_pessimistic()
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
@@ -576,8 +585,7 @@ impl TikvClient {
 
     /// Release a distributed lock (atomic operation within a single transaction).
     ///
-    /// This uses a single transaction to read the lock, verify ownership, and delete it.
-    /// Only the owner of the lock can release it.
+    /// Uses a **pessimistic transaction** to read-verify-delete atomically.
     pub async fn release_lock(&self, resource: &str, owner: &str) -> Result<bool> {
         tracing::debug!(
             resource = %resource,
@@ -592,7 +600,7 @@ impl TikvClient {
 
             let key = LockKeys::lock(resource);
             let mut txn = inner
-                .begin_optimistic()
+                .begin_pessimistic()
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 

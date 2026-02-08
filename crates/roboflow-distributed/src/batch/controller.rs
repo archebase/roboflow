@@ -89,32 +89,70 @@ impl BatchController {
         }
     }
 
-    /// Reconcile all pending batch jobs.
+    /// Reconcile all active batch jobs.
     ///
-    /// This scans for batch specs and reconciles each one.
-    /// Returns an error if any batch failed to reconcile.
+    /// Uses the phase index to find only active batches instead of scanning
+    /// all specs. This is O(active batches) instead of O(total batches),
+    /// which is critical for long-running clusters where batch records
+    /// accumulate over time.
     pub async fn reconcile_all(&self) -> Result<(), TikvError> {
-        // Scan for all batch specs
-        let prefix = BatchKeys::specs_prefix();
-        let specs = self
-            .client
-            .scan(prefix, self.config.max_batches_per_loop as u32)
-            .await?;
+        // Scan phase indexes for active (non-terminal) phases only.
+        // This avoids scanning thousands of old Complete/Failed/Cancelled specs.
+        let active_phases = [
+            BatchPhase::Pending,
+            BatchPhase::Discovering,
+            BatchPhase::Running,
+            BatchPhase::Merging,
+            BatchPhase::Suspending,
+            BatchPhase::Suspended,
+        ];
 
-        tracing::debug!(count = specs.len(), "Found batch specs to reconcile");
+        let mut batch_ids = Vec::new();
+
+        // Use a generous scan limit since index entries are tiny and stale
+        // entries may exist. max_batches_per_loop limits actual processing.
+        const INDEX_SCAN_LIMIT: u32 = 1000;
+
+        for phase in active_phases {
+            let prefix = BatchIndexKeys::phase_prefix(phase);
+            let results = self.client.scan(prefix, INDEX_SCAN_LIMIT).await?;
+            for (key, _) in results {
+                let key_str = String::from_utf8_lossy(&key);
+                if let Some(batch_id) = key_str.split('/').next_back() {
+                    batch_ids.push(batch_id.to_string());
+                }
+            }
+            if batch_ids.len() >= self.config.max_batches_per_loop {
+                break;
+            }
+        }
+
+        tracing::debug!(count = batch_ids.len(), "Found active batches to reconcile");
 
         let mut failed_batches = Vec::new();
         let mut first_error: Option<TikvError> = None;
 
-        for (key, value) in specs {
-            if let Err(e) = self.reconcile_batch(&key, &value).await {
-                let key_str = String::from_utf8_lossy(&key).to_string();
+        for batch_id in batch_ids {
+            // Fetch the spec for this batch
+            let spec_key = BatchKeys::spec(&batch_id);
+            let spec_data = match self.client.get(spec_key.clone()).await? {
+                Some(d) => d,
+                None => {
+                    tracing::warn!(
+                        batch_id = %batch_id,
+                        "Spec not found for indexed batch - stale index entry"
+                    );
+                    continue;
+                }
+            };
+
+            if let Err(e) = self.reconcile_batch(&spec_key, &spec_data).await {
                 tracing::error!(
                     error = %e,
-                    key = %key_str,
+                    batch_id = %batch_id,
                     "Failed to reconcile batch"
                 );
-                failed_batches.push(key_str);
+                failed_batches.push(batch_id);
                 if first_error.is_none() {
                     first_error = Some(e);
                 }
@@ -135,6 +173,8 @@ impl BatchController {
     /// Reconcile a single batch job.
     ///
     /// This reads the spec and status, then drives the state forward.
+    /// Terminal-phase batches (Complete, Failed, Cancelled) are skipped
+    /// to avoid unnecessary TiKV writes and WriteConflict contention.
     async fn reconcile_batch(&self, _spec_key: &[u8], spec_data: &[u8]) -> Result<(), TikvError> {
         // Deserialize spec
         let spec: BatchSpec = serde_yaml::from_slice(spec_data)
@@ -153,11 +193,39 @@ impl BatchController {
             None => BatchStatus::new(),
         };
 
+        // Skip terminal phases — nothing to reconcile, avoid unnecessary writes
+        if matches!(
+            status.phase,
+            BatchPhase::Complete | BatchPhase::Failed | BatchPhase::Cancelled
+        ) {
+            tracing::debug!(
+                batch_id = %batch_id,
+                phase = ?status.phase,
+                "Skipping terminal-phase batch"
+            );
+            return Ok(());
+        }
+
+        let old_phase = status.phase;
+
+        tracing::info!(
+            batch_id = %batch_id,
+            phase = ?old_phase,
+            work_units_total = status.work_units_total,
+            work_units_completed = status.work_units_completed,
+            "reconcile_batch: read status from TiKV"
+        );
+
         // Reconcile based on current phase
         let new_status = self.reconcile_phase(&spec, status).await?;
 
         // Save updated status
         self.save_status(&batch_id, &new_status).await?;
+
+        // Update phase index if phase changed
+        if old_phase != new_status.phase {
+            super::update_phase_index(&self.client, &batch_id, old_phase, new_status.phase).await?;
+        }
 
         Ok(())
     }
@@ -304,6 +372,15 @@ impl BatchController {
             }
         }
 
+        tracing::info!(
+            batch_id = %batch_id,
+            work_units_total = status.work_units_total,
+            completed = completed,
+            failed = failed,
+            processing = processing,
+            "reconcile_running: work unit scan results"
+        );
+
         // Update counts
         status.work_units_completed = completed;
         status.work_units_failed = failed;
@@ -322,15 +399,20 @@ impl BatchController {
             return Ok(status);
         }
 
-        // Check if all work units are complete
-        if status.is_complete() {
-            status.transition_to(BatchPhase::Complete);
-            tracing::info!(
-                batch_id = %batch_id,
-                files_completed = status.files_completed,
-                "Batch job completed successfully"
-            );
+        // When all work units are done, if any failed the batch is Failed
+        // (e.g. 10 files, 1 failed -> Failed, not Complete).
+        if status.is_complete() && status.work_units_failed > 0 {
+            status.transition_to(BatchPhase::Failed);
+            status.error = Some(format!(
+                "{} of {} work units failed",
+                status.work_units_failed,
+                status.work_units_total
+            ));
+            return Ok(status);
         }
+
+        // When all work units completed successfully, leave in Running for the
+        // finalizer to trigger merge (Running -> Merging -> Complete).
 
         Ok(status)
     }
@@ -476,8 +558,12 @@ impl BatchController {
             return Ok(false);
         }
 
+        let old_phase = status.phase;
         status.transition_to(BatchPhase::Cancelled);
         self.save_status(batch_id, &status).await?;
+
+        // Update phase index
+        super::update_phase_index(&self.client, batch_id, old_phase, BatchPhase::Cancelled).await?;
 
         tracing::info!(batch_id = %batch_id, "Batch job cancelled");
 
@@ -488,10 +574,12 @@ impl BatchController {
     ///
     /// This atomically claims a pending work unit and returns it.
     /// Uses a transaction to prevent race conditions.
+    ///
+    /// Pending key format: `/roboflow/v1/batch/pending/{batch_id}/{unit_id}`
     pub async fn claim_work_unit(&self, worker_id: &str) -> Result<Option<WorkUnit>, TikvError> {
         use bincode::{deserialize, serialize};
 
-        // First, get a pending work unit key (outside transaction for scan)
+        // Scan for the first pending work unit key
         let pending_prefix_bytes = WorkUnitKeys::pending_prefix();
         tracing::debug!(
             prefix = %String::from_utf8_lossy(&pending_prefix_bytes),
@@ -500,34 +588,75 @@ impl BatchController {
         );
         let pending = self.client.scan(pending_prefix_bytes.clone(), 1).await?;
 
-        tracing::debug!(results = pending.len(), "claim_work_unit: scan completed");
+        tracing::debug!(
+            results = pending.len(),
+            "claim_work_unit: scan completed"
+        );
 
+        // DEBUG: Also try a direct get for the known key pattern
         if pending.is_empty() {
-            // Debug: also try a direct get for the known key pattern
-            let all_pending = self.client.scan(pending_prefix_bytes.clone(), 100).await?;
-            if !all_pending.is_empty() {
-                tracing::warn!(
-                    count = all_pending.len(),
-                    "claim_work_unit: limit=1 returned 0 but limit=100 returned results!"
-                );
+            // List all batches in Running phase from phase index
+            let running_prefix = super::BatchIndexKeys::phase_prefix(super::BatchPhase::Running);
+            let running = self.client.scan(running_prefix, 10).await?;
+            for (k, _) in &running {
+                let key_str = String::from_utf8_lossy(k);
+                if let Some(batch_id) = key_str.split('/').next_back() {
+                    // Try to scan pending keys for this batch
+                    let batch_pending = self.client.scan(
+                        WorkUnitKeys::pending_batch_prefix(batch_id), 10
+                    ).await?;
+                    tracing::info!(
+                        batch_id = %batch_id,
+                        pending_count = batch_pending.len(),
+                        "claim_work_unit: checked pending for running batch"
+                    );
+                    // If found via batch prefix, also try the global prefix
+                    if !batch_pending.is_empty() {
+                        for (pk, _) in &batch_pending {
+                            tracing::info!(
+                                key = %String::from_utf8_lossy(pk),
+                                "claim_work_unit: found pending via batch prefix!"
+                            );
+                            // Also try a direct get
+                            let direct = self.client.get(pk.clone()).await?;
+                            tracing::info!(
+                                exists = direct.is_some(),
+                                "claim_work_unit: direct get result"
+                            );
+                        }
+                    }
+                }
             }
+
             return Ok(None);
         }
 
-        let (pending_key, batch_id_bytes) = &pending[0];
-        let batch_id = String::from_utf8_lossy(batch_id_bytes);
+        let (pending_key, _batch_id_bytes) = &pending[0];
 
-        // Extract unit_id from pending key
-        // Reuse the same prefix_bytes to avoid duplicate function calls
+        // Parse batch_id and unit_id from the pending key.
+        // Key format: /roboflow/v1/batch/pending/{batch_id}/{unit_id}
         let pending_prefix = String::from_utf8_lossy(&pending_prefix_bytes);
         let pending_key_str = String::from_utf8_lossy(pending_key);
-        let unit_id = match pending_key_str.strip_prefix(pending_prefix.as_ref()) {
-            Some(id) => id.trim_start_matches('/'),
+        let suffix = match pending_key_str.strip_prefix(pending_prefix.as_ref()) {
+            Some(s) => s.trim_start_matches('/'),
             None => {
                 tracing::warn!(
                     pending_key = %pending_key_str,
                     expected_prefix = %pending_prefix,
                     "Invalid pending key format"
+                );
+                return Ok(None);
+            }
+        };
+
+        // suffix = "{batch_id}/{unit_id}"
+        let (batch_id, unit_id) = match suffix.split_once('/') {
+            Some((b, u)) => (b, u),
+            None => {
+                tracing::warn!(
+                    pending_key = %pending_key_str,
+                    suffix = %suffix,
+                    "Invalid pending key: expected batch_id/unit_id"
                 );
                 return Ok(None);
             }
@@ -642,7 +771,7 @@ impl BatchController {
         // If retryable, add back to pending queue AFTER saving
         // This ensures claimed workers always see the failed state
         if unit.status == WorkUnitStatus::Failed {
-            let pending_key = WorkUnitKeys::pending(unit_id);
+            let pending_key = WorkUnitKeys::pending(batch_id, unit_id);
             let pending_data = batch_id.as_bytes().to_vec();
             self.client.put(pending_key, pending_data).await?;
         }
@@ -669,6 +798,7 @@ pub struct BatchSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::StateLifecycle;
     use chrono::Utc;
 
     #[test]
@@ -695,5 +825,54 @@ mod tests {
 
         let serialized = serde_json::to_string(&summary).unwrap();
         assert!(serialized.contains("Running"));
+    }
+
+    /// Phase workflow: Pending -> Discovering -> Running -> Merging -> Complete.
+    /// The controller must NOT transition Running -> Complete; only the merge
+    /// coordinator does Merging -> Complete after the merge finishes.
+    #[test]
+    fn test_phase_workflow_transitions() {
+        // Pending -> Discovering: valid (controller/scanner)
+        assert!(BatchPhase::Pending.can_transition_to(&BatchPhase::Discovering));
+
+        // Discovering -> Running: valid (scanner after work units created)
+        assert!(BatchPhase::Discovering.can_transition_to(&BatchPhase::Running));
+
+        // Running -> Merging: valid (finalizer/merge coordinator claims merge)
+        assert!(BatchPhase::Running.can_transition_to(&BatchPhase::Merging));
+
+        // Running -> Complete: INVALID - controller must not skip merge
+        assert!(!BatchPhase::Running.can_transition_to(&BatchPhase::Complete));
+
+        // Merging -> Complete: valid (merge coordinator after merge done)
+        assert!(BatchPhase::Merging.can_transition_to(&BatchPhase::Complete));
+    }
+
+    #[test]
+    fn test_is_complete_requires_all_work_units_done() {
+        let mut status = BatchStatus::new();
+        assert!(!status.is_complete(), "empty status not complete");
+
+        status.set_work_units_total(2);
+        status.work_units_completed = 1;
+        assert!(!status.is_complete(), "1/2 done not complete");
+
+        status.work_units_completed = 2;
+        assert!(status.is_complete(), "2/2 done is complete");
+
+        status.work_units_completed = 1;
+        status.work_units_failed = 1;
+        assert!(status.is_complete(), "1 done + 1 failed = all done (batch should be Failed, not Complete)");
+    }
+
+    /// When any work unit fails, the batch should transition to Failed, not Complete.
+    #[test]
+    fn test_any_failure_fails_batch() {
+        let mut status = BatchStatus::new();
+        status.set_work_units_total(10);
+        status.work_units_completed = 9;
+        status.work_units_failed = 1;
+        assert!(status.is_complete(), "all 10 done");
+        assert!(status.work_units_failed > 0, "1 failed -> batch should be Failed");
     }
 }

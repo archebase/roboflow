@@ -133,19 +133,20 @@ impl Pipeline {
 
         // Create sink based on config type
         use roboflow_sinks::SinkType;
-        let sink: Box<dyn Sink> = match &config.sink.sink_type {
-            SinkType::Lerobot { path } => Box::new(LerobotSink::new(path).map_err(|e| {
-                RoboflowError::other(format!("Failed to create LeRobot sink: {}", e))
-            })?),
-            SinkType::Kps { path } => Box::new(KpsSink::new(path).map_err(|e| {
-                RoboflowError::other(format!("Failed to create KPS sink: {}", e))
-            })?),
-            SinkType::Zarr { .. } => {
-                return Err(RoboflowError::other(
-                    "Zarr sink not yet implemented in Pipeline".to_string(),
-                ));
-            }
-        };
+        let sink: Box<dyn Sink> =
+            match &config.sink.sink_type {
+                SinkType::Lerobot { path } => Box::new(LerobotSink::new(path).map_err(|e| {
+                    RoboflowError::other(format!("Failed to create LeRobot sink: {}", e))
+                })?),
+                SinkType::Kps { path } => Box::new(KpsSink::new(path).map_err(|e| {
+                    RoboflowError::other(format!("Failed to create KPS sink: {}", e))
+                })?),
+                SinkType::Zarr { .. } => {
+                    return Err(RoboflowError::other(
+                        "Zarr sink not yet implemented in Pipeline".to_string(),
+                    ));
+                }
+            };
 
         Ok(Self {
             source,

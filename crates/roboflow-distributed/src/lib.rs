@@ -44,7 +44,7 @@ pub use batch::{
     API_VERSION, BatchController, BatchIndexKeys, BatchKeys, BatchMetadata, BatchPhase, BatchSpec,
     BatchSpecError, BatchStatus, BatchSummary, ControllerConfig, DiscoveryStatus, FailedWorkUnit,
     KIND_BATCH_JOB, PartitionStrategy, SourceUrl, WorkFile, WorkUnit, WorkUnitConfig,
-    WorkUnitError, WorkUnitStatus, WorkUnitSummary,
+    WorkUnitError, WorkUnitStatus, WorkUnitSummary, update_phase_index,
 };
 
 // Re-export public types from catalog (metadata storage)
