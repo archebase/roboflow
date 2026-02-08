@@ -198,10 +198,5 @@ name = "lerobot_convert"
 path = "examples/rust/lerobot_convert.rs"
 required-features = ["dataset-parquet"]
 
-[[example]]
-name = "lerobot_bench"
-path = "examples/rust/lerobot_bench.rs"
-required-features = ["dataset-parquet"]
-
 [profile.release]
 debug = true

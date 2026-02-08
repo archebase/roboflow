@@ -80,6 +80,7 @@ pub mod completion;
 pub mod config;
 pub mod converter;
 pub mod download;
+pub mod pipeline;
 pub mod stats;
 pub mod temp_file;
 
