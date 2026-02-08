@@ -37,7 +37,7 @@ use tokio_util::sync::CancellationToken;
 use lru::LruCache;
 
 // Dataset conversion imports
-use roboflow_dataset::lerobot::{LerobotConfig, VideoConfig};
+use roboflow_dataset::lerobot::LerobotConfig;
 
 // Pipeline-v2 imports
 use roboflow_pipeline::framework::{CheckpointCallback, DistributedExecutor, PipelineConfig};
@@ -193,22 +193,31 @@ impl Worker {
         let unit_id = unit.id.clone();
 
         // Check for existing checkpoint
-        match self.tikv.get_checkpoint(&unit_id).await {
+        // NOTE: Checkpoint resumption is not yet fully implemented.
+        // The Pipeline API doesn't support starting from a specific frame offset.
+        // When a checkpoint exists, we log it but the pipeline will start from frame 0.
+        // The checkpoint callback will save progress during execution, enabling
+        // future resumption when the Pipeline supports frame_offset.
+        let _checkpoint_frame = match self.tikv.get_checkpoint(&unit_id).await {
             Ok(Some(checkpoint)) => {
-                tracing::info!(
+                tracing::warn!(
                     pod_id = %self.pod_id,
                     unit_id = %unit_id,
                     last_frame = checkpoint.last_frame,
-                    "Resuming from checkpoint"
+                    "Found checkpoint but Pipeline API doesn't support resuming from offset. \
+                     Starting from frame 0. Progress will be saved during execution."
                 );
+                Some(checkpoint.last_frame)
             }
             Ok(None) => {
                 tracing::debug!(unit_id = %unit_id, "No checkpoint, starting fresh");
+                None
             }
             Err(e) => {
                 tracing::warn!(unit_id = %unit_id, error = %e, "Failed to get checkpoint");
+                None
             }
-        }
+        };
 
         // Load LeRobot config
         let lerobot_config = match self.create_lerobot_config(unit).await {
@@ -474,31 +483,24 @@ impl Worker {
     /// Loads the configuration from TiKV using the config_hash stored in the work unit.
     /// Uses an LRU cache to reduce TiKV round-trips for frequently used configs.
     async fn create_lerobot_config(&self, unit: &WorkUnit) -> Result<LerobotConfig, TikvError> {
-        use roboflow_dataset::lerobot::config::{DatasetBaseConfig, DatasetConfig};
-
         let config_hash = &unit.config_hash;
 
-        // Skip empty hash (special case for "default" or legacy behavior)
+        // Empty config_hash is a critical error - without mappings, the pipeline
+        // will produce no frames, which is not a valid outcome
         if config_hash.is_empty() || config_hash == "default" {
-            tracing::warn!(
+            let error_msg = format!(
+                "Work unit {} has no valid config_hash (config_hash is empty or 'default'). \
+                 This indicates a bug in the batch submission - config_hash must reference \
+                 a valid configuration stored in TiKV.",
+                unit.id
+            );
+            tracing::error!(
                 pod_id = %self.pod_id,
                 unit_id = %unit.id,
                 config_hash = %config_hash,
-                "Using default empty config (will produce no frames)"
+                "Invalid config_hash - failing work unit"
             );
-            return Ok(LerobotConfig {
-                dataset: DatasetConfig {
-                    base: DatasetBaseConfig {
-                        name: format!("roboflow-episode-{}", unit.id),
-                        fps: 30,
-                        robot_type: Some("robot".to_string()),
-                    },
-                    env_type: None,
-                },
-                mappings: Vec::new(),
-                video: VideoConfig::default(),
-                annotation_file: None,
-            });
+            return Err(TikvError::Other(error_msg));
         }
 
         // Check cache first

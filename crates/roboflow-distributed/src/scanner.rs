@@ -573,6 +573,8 @@ impl Scanner {
             // Initialize discovery status
             let total_sources = spec.spec.sources.len() as u32;
             status.discovery_status = Some(DiscoveryStatus::new(total_sources));
+            // Save status immediately after transition to ensure progress is visible
+            self.save_batch_status(batch_id, &status).await?;
         }
 
         // Track which sources we've already processed
@@ -749,8 +751,24 @@ impl Scanner {
             .unwrap_or(0);
 
         if processed >= total_sources {
-            // Transition to Running
-            status.transition_to(BatchPhase::Running);
+            // Check if any work units were actually created
+            if jobs_created == 0 && files_discovered == 0 {
+                // No files found in any source - mark as failed rather than running
+                // This prevents the batch from hanging in Running state with no work
+                status.transition_to(BatchPhase::Failed);
+                status.error = Some(format!(
+                    "No files discovered from {} source(s)",
+                    total_sources
+                ));
+                tracing::warn!(
+                    batch_id = %batch_id,
+                    sources = total_sources,
+                    "No files found during discovery, marking batch as failed"
+                );
+            } else {
+                // Transition to Running - work units were created successfully
+                status.transition_to(BatchPhase::Running);
+            }
             self.save_batch_status(batch_id, &status).await?;
         }
 
