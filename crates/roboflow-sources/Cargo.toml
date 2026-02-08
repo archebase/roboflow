@@ -13,6 +13,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
 async-trait = { workspace = true }
+tokio = { workspace = true }
+tracing = "0.1"
 
 # Optional: HDF5 support
 hdf5 = { git = "https://github.com/archebase/hdf5-rs", optional = true }

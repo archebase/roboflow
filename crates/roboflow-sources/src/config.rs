@@ -31,6 +31,14 @@ impl SourceConfig {
         }
     }
 
+    /// Create a Rerun Data (.rrd) source configuration.
+    pub fn rrd(path: impl Into<String>) -> Self {
+        Self {
+            source_type: SourceType::Rrd { path: path.into() },
+            options: HashMap::new(),
+        }
+    }
+
     /// Create an HDF5 source configuration.
     #[cfg(feature = "hdf5")]
     pub fn hdf5(path: impl Into<String>) -> Self {
@@ -45,6 +53,7 @@ impl SourceConfig {
         match &self.source_type {
             SourceType::Mcap { path } => path,
             SourceType::Bag { path } => path,
+            SourceType::Rrd { path } => path,
             #[cfg(feature = "hdf5")]
             SourceType::Hdf5 { path } => path,
         }
@@ -81,6 +90,11 @@ pub enum SourceType {
         /// Path to the bag file
         path: String,
     },
+    /// Rerun Data (.rrd) file format
+    Rrd {
+        /// Path to the .rrd file
+        path: String,
+    },
     /// HDF5 file format (when feature is enabled)
     #[cfg(feature = "hdf5")]
     Hdf5 {
@@ -95,6 +109,7 @@ impl SourceType {
         match self {
             Self::Mcap { .. } => "mcap",
             Self::Bag { .. } => "bag",
+            Self::Rrd { .. } => "rrd",
             #[cfg(feature = "hdf5")]
             Self::Hdf5 { .. } => "hdf5",
         }
@@ -105,6 +120,7 @@ impl SourceType {
         match self {
             Self::Mcap { path } => path,
             Self::Bag { path } => path,
+            Self::Rrd { path } => path,
             #[cfg(feature = "hdf5")]
             Self::Hdf5 { path } => path,
         }

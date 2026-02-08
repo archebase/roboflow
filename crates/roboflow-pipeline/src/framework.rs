@@ -16,7 +16,9 @@ use roboflow_core::{Result, RoboflowError};
 use roboflow_sinks::{
     lerobot::LerobotSink, DatasetFrame, ImageData, ImageFormat, Sink, SinkConfig, SinkStats,
 };
-use roboflow_sources::{McapSource, Source, SourceConfig, TimestampedMessage};
+use roboflow_sources::{
+    BagSource, McapSource, RrdSource, Source, SourceConfig, TimestampedMessage,
+};
 use tracing::{debug, info, instrument, warn};
 
 /// Checkpoint callback type for progress reporting.
@@ -120,11 +122,12 @@ impl Pipeline {
             SourceType::Mcap { path } => Box::new(McapSource::new(path).map_err(|e| {
                 RoboflowError::other(format!("Failed to create MCAP source: {}", e))
             })?),
-            SourceType::Bag { .. } => {
-                return Err(RoboflowError::other(
-                    "Bag source not yet fully implemented - use MCAP format".to_string(),
-                ));
-            }
+            SourceType::Bag { path } => Box::new(BagSource::new(path).map_err(|e| {
+                RoboflowError::other(format!("Failed to create Bag source: {}", e))
+            })?),
+            SourceType::Rrd { path } => Box::new(RrdSource::new(path).map_err(|e| {
+                RoboflowError::other(format!("Failed to create RRD source: {}", e))
+            })?),
         };
 
         // Create sink based on config type

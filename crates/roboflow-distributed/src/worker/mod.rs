@@ -234,6 +234,8 @@ impl Worker {
             SourceConfig::mcap(source_url)
         } else if source_url.ends_with(".bag") {
             SourceConfig::bag(source_url)
+        } else if source_url.ends_with(".rrd") {
+            SourceConfig::rrd(source_url)
         } else {
             SourceConfig::mcap(source_url)
         };

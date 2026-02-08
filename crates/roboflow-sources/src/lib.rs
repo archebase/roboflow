@@ -5,10 +5,12 @@
 
 mod bag;
 mod config;
+mod decode;
 mod error;
 pub mod mcap;
 mod metadata;
 mod registry;
+mod rrd;
 
 pub use bag::BagSource;
 pub use config::{SourceConfig, SourceType};
@@ -16,6 +18,7 @@ pub use error::{SourceError, SourceResult};
 pub use mcap::McapSource;
 pub use metadata::{SourceMetadata, TopicMetadata};
 pub use registry::{SourceRegistry, create_source, global_registry, register_source};
+pub use rrd::RrdSource;
 
 use async_trait::async_trait;
 use robocodec::CodecValue;
