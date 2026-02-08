@@ -7,6 +7,6 @@
 mod compress;
 
 pub use compress::{
-    ChunkToCompress, CompressedDataChunk, CompressionPool, compress_data, compress_with,
-    create_zstd_compressor,
+    compress_data, compress_with, create_zstd_compressor, ChunkToCompress, CompressedDataChunk,
+    CompressionPool,
 };

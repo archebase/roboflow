@@ -73,10 +73,10 @@ pub mod core {
 // =============================================================================
 // Pipeline is now provided by roboflow-pipeline crate
 pub use roboflow_pipeline::{
+    DatasetConverter, DatasetConverterStats,
     auto_config::PerformanceMode,
     config::CompressionConfig,
     hyper::{HyperPipeline, HyperPipelineConfig, HyperPipelineReport},
-    DatasetConverter, DatasetConverterStats,
 };
 
 // =============================================================================

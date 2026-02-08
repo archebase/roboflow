@@ -9,8 +9,8 @@
 //! - Channel metrics tracking
 //! - Stage statistics collection
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::thread;
 
 use roboflow_core::{Result, RoboflowError};
