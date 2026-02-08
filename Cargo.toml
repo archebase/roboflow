@@ -165,13 +165,6 @@ roboflow-distributed = { workspace = true }
 name = "roboflow"
 path = "src/bin/roboflow.rs"
 
-# Benchmarks
-[[bench]]
-name = "profiler"
-path = "benches/profiler.rs"
-harness = false
-required-features = ["profiling"]
-
 # Examples
 [[example]]
 name = "lerobot_convert"

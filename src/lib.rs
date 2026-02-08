@@ -18,13 +18,14 @@
 //! ## Example
 //!
 //! ```no_run
-//! use roboflow::Robocodec;
+//! use roboflow::{HyperPipeline, HyperPipelineConfig};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Convert between formats
-//! Robocodec::open(vec!["input.bag"])?
-//!     .write_to("output.mcap")
-//!     .run()?;
+//! // Convert between formats using hyper pipeline
+//! let config = HyperPipelineConfig::new("input.bag", "output.bag");
+//! let pipeline = HyperPipeline::new(config)?;
+//! let report = pipeline.run()?;
+//! println!("Throughput: {:.2} MB/s", report.throughput_mb_s);
 //! # Ok(())
 //! # }
 //! ```
@@ -74,8 +75,8 @@ pub mod core {
 pub use roboflow_pipeline::{
     auto_config::PerformanceMode,
     config::CompressionConfig,
-    fluent::{BatchReport, CompressionPreset, PipelineMode, ReadOptions, Robocodec},
     hyper::{HyperPipeline, HyperPipelineConfig, HyperPipelineReport},
+    DatasetConverter, DatasetConverterStats,
 };
 
 // =============================================================================

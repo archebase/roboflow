@@ -233,11 +233,11 @@ impl DatasetConverter {
             });
 
             // Check max frames after potentially adding a new frame
-            if let Some(max) = self.max_frames
-                && frame_count > max
-            {
-                info!("Reached max frames limit: {}", max);
-                break;
+            if let Some(max) = self.max_frames {
+                if frame_count > max {
+                    info!("Reached max frames limit: {}", max);
+                    break;
+                }
             }
 
             // Extract and add data based on mapping type
@@ -273,8 +273,10 @@ impl DatasetConverter {
                 // OtherSensor, Audio, and any future variants:
                 // LeRobot treats them as state data; KPS ignores them.
                 _ => {
-                    if fallback_to_state && let Some(values) = Self::extract_float_array(msg) {
-                        frame.add_state(mapping.feature.clone(), values);
+                    if fallback_to_state {
+                        if let Some(values) = Self::extract_float_array(msg) {
+                            frame.add_state(mapping.feature.clone(), values);
+                        }
                     }
                 }
             }
@@ -285,15 +287,15 @@ impl DatasetConverter {
         frames.sort_by_key(|f| f.timestamp);
 
         // Truncate to max_frames if specified
-        if let Some(max) = self.max_frames
-            && frames.len() > max
-        {
-            tracing::info!(
-                original_count = frames.len(),
-                max,
-                "Truncating frames to max_frames limit"
-            );
-            frames.truncate(max);
+        if let Some(max) = self.max_frames {
+            if frames.len() > max {
+                tracing::info!(
+                    original_count = frames.len(),
+                    max,
+                    "Truncating frames to max_frames limit"
+                );
+                frames.truncate(max);
+            }
         }
 
         // Update frame indices after sorting

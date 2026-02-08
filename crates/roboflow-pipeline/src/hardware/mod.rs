@@ -281,10 +281,10 @@ fn detect_memory_linux() -> u64 {
             if line.starts_with("MemTotal:") {
                 // Format: "MemTotal:       16384000 kB"
                 let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2
-                    && let Ok(kb) = parts[1].parse::<u64>()
-                {
-                    return kb * 1024;
+                if parts.len() >= 2 {
+                    if let Ok(kb) = parts[1].parse::<u64>() {
+                        return kb * 1024;
+                    }
                 }
             }
         }

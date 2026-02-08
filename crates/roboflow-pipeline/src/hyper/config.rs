@@ -415,7 +415,7 @@ impl HyperPipelineConfig {
         use crate::auto_config::PipelineAutoConfig;
 
         let auto_config = PipelineAutoConfig::auto(mode);
-        auto_config.to_hyper_config(input_path, output_path).build()
+        auto_config.to_hyper_config(input_path, output_path)
     }
 }
 

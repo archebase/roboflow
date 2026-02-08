@@ -168,12 +168,9 @@ impl CompressionConfig {
         }
     }
 
-    /// High throughput configuration.
+    /// High throughput configuration (alias for [`Self::max_throughput`]).
     pub fn high_throughput() -> Self {
-        Self {
-            compression_level: LOW_COMPRESSION_LEVEL,
-            ..Self::auto_detect()
-        }
+        Self::max_throughput()
     }
 
     /// Balanced configuration.

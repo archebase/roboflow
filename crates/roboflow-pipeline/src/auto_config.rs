@@ -8,7 +8,7 @@
 //! based on detected hardware capabilities and performance targets.
 
 use crate::hardware::HardwareInfo;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tracing::{debug, info};
 
 /// Performance mode for the pipeline.
@@ -41,7 +41,7 @@ pub enum PerformanceMode {
 
 impl PerformanceMode {
     /// Get the ZSTD compression level for this performance mode.
-    pub fn compression_level(&self) -> i32 {
+    pub const fn compression_level(&self) -> i32 {
         match self {
             PerformanceMode::Throughput => 1,      // Fastest
             PerformanceMode::Balanced => 3,        // Good balance
@@ -50,7 +50,7 @@ impl PerformanceMode {
     }
 
     /// Batch size multiplier relative to suggested size.
-    pub fn batch_multiplier(&self) -> f64 {
+    pub const fn batch_multiplier(&self) -> f64 {
         match self {
             PerformanceMode::Throughput => 2.0,      // 2x batch size
             PerformanceMode::Balanced => 1.0,        // 1x batch size
@@ -59,7 +59,7 @@ impl PerformanceMode {
     }
 
     /// Channel capacity multiplier.
-    pub fn channel_multiplier(&self) -> f64 {
+    pub const fn channel_multiplier(&self) -> f64 {
         match self {
             PerformanceMode::Throughput => 2.0,
             PerformanceMode::Balanced => 1.0,
@@ -67,8 +67,8 @@ impl PerformanceMode {
         }
     }
 
-    /// Whether to reserve CPU cores for other stages.
-    pub fn reserve_cores(&self) -> usize {
+    /// Number of CPU cores to reserve for other stages.
+    pub const fn reserve_cores(&self) -> usize {
         match self {
             PerformanceMode::Throughput => 4, // Reserve for other stages
             PerformanceMode::Balanced => 2,
@@ -309,8 +309,59 @@ impl PipelineAutoConfig {
         &self,
         input_path: impl AsRef<Path>,
         output_path: impl AsRef<Path>,
-    ) -> HyperPipelineConfigBuilder {
-        HyperPipelineConfigBuilder::from_auto_config(self, input_path, output_path)
+    ) -> crate::hyper::HyperPipelineConfig {
+        use crate::config::CompressionConfig;
+        use crate::hyper::config::{
+            BatcherConfig, PacketizerConfig, ParserConfig, PrefetcherConfig, TransformConfig,
+            WriterConfig,
+        };
+
+        info!(
+            input = %input_path.as_ref().display(),
+            output = %output_path.as_ref().display(),
+            compression_threads = self.effective_compression_threads(),
+            batch_size_mb = self.effective_batch_size() / (1024 * 1024),
+            channel_capacity = self.effective_channel_capacity(),
+            "Building HyperPipelineConfig from auto-config"
+        );
+
+        crate::hyper::HyperPipelineConfig {
+            input_path: input_path.as_ref().to_path_buf(),
+            output_path: output_path.as_ref().to_path_buf(),
+            prefetcher: PrefetcherConfig {
+                block_size: self.effective_prefetch_block_size(),
+                prefetch_ahead: 4,
+                platform_hints: crate::hyper::config::PlatformHints::auto(),
+            },
+            parser: ParserConfig {
+                num_threads: self.effective_parser_threads(),
+                buffer_pool: crate::types::buffer_pool::BufferPool::new(),
+            },
+            batcher: BatcherConfig {
+                target_size: self.effective_batch_size(),
+                max_messages: 250_000,
+                num_threads: self.effective_batcher_threads(),
+            },
+            transform: TransformConfig {
+                enabled: true,
+                num_threads: self.effective_transform_threads(),
+            },
+            compression: CompressionConfig {
+                threads: self.effective_compression_threads(),
+                compression_level: self.effective_compression_level(),
+                window_log: None,
+                ..CompressionConfig::default()
+            },
+            packetizer: PacketizerConfig {
+                enable_crc: true,
+                num_threads: self.effective_packetizer_threads(),
+            },
+            writer: WriterConfig {
+                buffer_size: self.effective_writer_buffer_size(),
+                flush_interval: 4,
+            },
+            channel_capacity: self.effective_channel_capacity(),
+        }
     }
 
     /// Print configuration summary (useful for debugging).
@@ -354,111 +405,6 @@ impl PipelineAutoConfig {
 impl Default for PipelineAutoConfig {
     fn default() -> Self {
         Self::balanced()
-    }
-}
-
-/// Builder for creating HyperPipelineConfig from PipelineAutoConfig.
-pub struct HyperPipelineConfigBuilder {
-    /// Input file path.
-    pub input_path: PathBuf,
-    /// Output file path.
-    pub output_path: PathBuf,
-    /// Prefetch block size.
-    pub prefetch_block_size: usize,
-    /// Parser threads.
-    pub parser_threads: usize,
-    /// Batcher config.
-    pub batcher_threads: usize,
-    pub batch_size: usize,
-    /// Transform threads.
-    pub transform_threads: usize,
-    /// Compression config.
-    pub compression_threads: usize,
-    pub compression_level: i32,
-    /// Packetizer threads.
-    pub packetizer_threads: usize,
-    /// Writer buffer size.
-    pub writer_buffer_size: usize,
-    /// Channel capacity.
-    pub channel_capacity: usize,
-}
-
-impl HyperPipelineConfigBuilder {
-    fn from_auto_config(
-        config: &PipelineAutoConfig,
-        input_path: impl AsRef<Path>,
-        output_path: impl AsRef<Path>,
-    ) -> Self {
-        Self {
-            input_path: input_path.as_ref().to_path_buf(),
-            output_path: output_path.as_ref().to_path_buf(),
-            prefetch_block_size: config.effective_prefetch_block_size(),
-            parser_threads: config.effective_parser_threads(),
-            batcher_threads: config.effective_batcher_threads(),
-            batch_size: config.effective_batch_size(),
-            transform_threads: config.effective_transform_threads(),
-            compression_threads: config.effective_compression_threads(),
-            compression_level: config.effective_compression_level(),
-            packetizer_threads: config.effective_packetizer_threads(),
-            writer_buffer_size: config.effective_writer_buffer_size(),
-            channel_capacity: config.effective_channel_capacity(),
-        }
-    }
-
-    /// Build the actual HyperPipelineConfig.
-    pub fn build(self) -> crate::hyper::HyperPipelineConfig {
-        use crate::config::CompressionConfig;
-        use crate::hyper::config::{
-            BatcherConfig, PacketizerConfig, ParserConfig, PrefetcherConfig, TransformConfig,
-            WriterConfig,
-        };
-
-        info!(
-            input = %self.input_path.display(),
-            output = %self.output_path.display(),
-            compression_threads = self.compression_threads,
-            batch_size_mb = self.batch_size / (1024 * 1024),
-            channel_capacity = self.channel_capacity,
-            "Building HyperPipelineConfig from auto-config"
-        );
-
-        crate::hyper::HyperPipelineConfig {
-            input_path: self.input_path,
-            output_path: self.output_path,
-            prefetcher: PrefetcherConfig {
-                block_size: self.prefetch_block_size,
-                prefetch_ahead: 4,
-                platform_hints: crate::hyper::config::PlatformHints::auto(),
-            },
-            parser: ParserConfig {
-                num_threads: self.parser_threads,
-                buffer_pool: crate::types::buffer_pool::BufferPool::new(),
-            },
-            batcher: BatcherConfig {
-                target_size: self.batch_size,
-                max_messages: 250_000,
-                num_threads: self.batcher_threads,
-            },
-            transform: TransformConfig {
-                enabled: true,
-                num_threads: self.transform_threads,
-            },
-            compression: CompressionConfig {
-                threads: self.compression_threads,
-                compression_level: self.compression_level,
-                window_log: None, // Will be auto-detected by orchestrator
-                ..CompressionConfig::default()
-            },
-            packetizer: PacketizerConfig {
-                enable_crc: true,
-                num_threads: self.packetizer_threads,
-            },
-            writer: WriterConfig {
-                buffer_size: self.writer_buffer_size,
-                flush_interval: 4,
-            },
-            channel_capacity: self.channel_capacity,
-        }
     }
 }
 
