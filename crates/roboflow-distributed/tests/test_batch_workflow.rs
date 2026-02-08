@@ -15,8 +15,8 @@
 //! bypass the merge step. Only the merge coordinator does Merging -> Complete.
 
 use roboflow_distributed::batch::{
-    batch_id_from_spec, BatchController, BatchIndexKeys, BatchKeys, BatchPhase, BatchSpec,
-    BatchStatus, WorkFile, WorkUnit, WorkUnitKeys, WorkUnitStatus,
+    BatchController, BatchIndexKeys, BatchKeys, BatchPhase, BatchSpec, BatchStatus, WorkFile,
+    WorkUnit, WorkUnitKeys, WorkUnitStatus, batch_id_from_spec,
 };
 use roboflow_distributed::tikv::client::TikvClient;
 use std::sync::Arc;
@@ -81,7 +81,11 @@ async fn test_controller_does_not_skip_merge_phase() {
     controller.reconcile_all().await.unwrap();
 
     // Read back status
-    let updated = tikv.get(BatchKeys::status(batch_id)).await.unwrap().unwrap();
+    let updated = tikv
+        .get(BatchKeys::status(batch_id))
+        .await
+        .unwrap()
+        .unwrap();
     let status: BatchStatus = bincode::deserialize(&updated).unwrap();
 
     assert_eq!(
@@ -96,6 +100,8 @@ async fn test_controller_does_not_skip_merge_phase() {
     // Cleanup
     let _ = tikv.delete(BatchKeys::spec(batch_id)).await;
     let _ = tikv.delete(BatchKeys::status(batch_id)).await;
-    let _ = tikv.delete(BatchIndexKeys::phase(BatchPhase::Running, batch_id)).await;
+    let _ = tikv
+        .delete(BatchIndexKeys::phase(BatchPhase::Running, batch_id))
+        .await;
     let _ = tikv.delete(unit_key).await;
 }

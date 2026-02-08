@@ -741,8 +741,10 @@ impl Scanner {
                     }
 
                     // Batch put work units and pending entries together
-                    let all_pairs: Vec<(Vec<u8>, Vec<u8>)> =
-                        work_unit_pairs.into_iter().chain(pending_pairs.clone()).collect();
+                    let all_pairs: Vec<(Vec<u8>, Vec<u8>)> = work_unit_pairs
+                        .into_iter()
+                        .chain(pending_pairs.clone())
+                        .collect();
 
                     // Log pending keys being written
                     for (pk, _) in &pending_pairs {

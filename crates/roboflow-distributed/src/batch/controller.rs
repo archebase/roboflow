@@ -405,8 +405,7 @@ impl BatchController {
             status.transition_to(BatchPhase::Failed);
             status.error = Some(format!(
                 "{} of {} work units failed",
-                status.work_units_failed,
-                status.work_units_total
+                status.work_units_failed, status.work_units_total
             ));
             return Ok(status);
         }
@@ -588,10 +587,7 @@ impl BatchController {
         );
         let pending = self.client.scan(pending_prefix_bytes.clone(), 1).await?;
 
-        tracing::debug!(
-            results = pending.len(),
-            "claim_work_unit: scan completed"
-        );
+        tracing::debug!(results = pending.len(), "claim_work_unit: scan completed");
 
         // DEBUG: Also try a direct get for the known key pattern
         if pending.is_empty() {
@@ -602,9 +598,10 @@ impl BatchController {
                 let key_str = String::from_utf8_lossy(k);
                 if let Some(batch_id) = key_str.split('/').next_back() {
                     // Try to scan pending keys for this batch
-                    let batch_pending = self.client.scan(
-                        WorkUnitKeys::pending_batch_prefix(batch_id), 10
-                    ).await?;
+                    let batch_pending = self
+                        .client
+                        .scan(WorkUnitKeys::pending_batch_prefix(batch_id), 10)
+                        .await?;
                     tracing::info!(
                         batch_id = %batch_id,
                         pending_count = batch_pending.len(),
@@ -662,7 +659,7 @@ impl BatchController {
             }
         };
 
-        let work_unit_key = WorkUnitKeys::unit(&batch_id, unit_id);
+        let work_unit_key = WorkUnitKeys::unit(batch_id, unit_id);
 
         // Use transaction helper for atomic claim operation
         let result = self
@@ -862,7 +859,10 @@ mod tests {
 
         status.work_units_completed = 1;
         status.work_units_failed = 1;
-        assert!(status.is_complete(), "1 done + 1 failed = all done (batch should be Failed, not Complete)");
+        assert!(
+            status.is_complete(),
+            "1 done + 1 failed = all done (batch should be Failed, not Complete)"
+        );
     }
 
     /// When any work unit fails, the batch should transition to Failed, not Complete.
@@ -873,6 +873,9 @@ mod tests {
         status.work_units_completed = 9;
         status.work_units_failed = 1;
         assert!(status.is_complete(), "all 10 done");
-        assert!(status.work_units_failed > 0, "1 failed -> batch should be Failed");
+        assert!(
+            status.work_units_failed > 0,
+            "1 failed -> batch should be Failed"
+        );
     }
 }
