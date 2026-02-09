@@ -11,5 +11,5 @@
 mod detection;
 mod strategy;
 
-pub use detection::{detect_hardware, HardwareCapabilities};
+pub use detection::{HardwareCapabilities, detect_hardware};
 pub use strategy::{PipelineStrategy, StrategySelection};

@@ -62,7 +62,7 @@ pub use config::{DecoderBackendType as ImageDecoderBackendType, ImageDecoderConf
 pub use factory::{DecodeStats, GpuDeviceInfo, ImageDecoderFactory};
 pub use format::ImageFormat;
 pub use memory::{AlignedImageBuffer, MemoryStrategy};
-pub use parallel::{decode_images_parallel, decode_images_parallel_with_dims, ParallelDecodeStats};
+pub use parallel::{ParallelDecodeStats, decode_images_parallel, decode_images_parallel_with_dims};
 
 /// Image decoding errors.
 #[derive(Debug, thiserror::Error)]

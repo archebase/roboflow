@@ -37,4 +37,14 @@ pub use parquet_base::{FeatureStats, ParquetWriterBase, calculate_stats};
 pub use progress::{ProgressReceiver, ProgressSender, ProgressUpdate};
 
 // Re-export image format detection
-pub use image_format::{can_passthrough, detect_image_format, ImageFormat};
+pub use image_format::{ImageFormat, can_passthrough, detect_image_format};
+
+// Re-export video utilities including hardware-accelerated encoders
+pub use video::{
+    DepthMkvEncoder, Mp4Encoder, NvencEncoder, VideoFrame, VideoFrameBuffer, VideoToolboxEncoder,
+    check_nvenc_available, check_videotoolbox_available,
+};
+
+// Platform-specific re-exports
+#[cfg(target_os = "macos")]
+pub use video::VideoToolboxEncoder as AppleVideoEncoder;

@@ -380,10 +380,7 @@ impl Mp4Encoder {
         let status = child.wait()?;
 
         if status.success() {
-            tracing::debug!(
-                frames = buffer.len(),
-                "Encoded MP4 using JPEG passthrough"
-            );
+            tracing::debug!(frames = buffer.len(), "Encoded MP4 using JPEG passthrough");
             Ok(())
         } else {
             let stderr_output = read_stderr(&mut child);
@@ -607,6 +604,365 @@ impl Mp4Encoder {
 }
 
 impl Default for Mp4Encoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Check if NVENC encoder is available.
+pub fn check_nvenc_available() -> bool {
+    std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-encoders"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .map(|o| {
+            let output = String::from_utf8_lossy(&o.stdout);
+            output.contains("h264_nvenc") || output.contains("hevc_nvenc")
+        })
+        .unwrap_or(false)
+}
+
+/// MP4 video encoder using NVIDIA NVENC hardware acceleration.
+///
+/// This encoder uses NVENC for GPU-accelerated H.264 encoding,
+/// providing significant performance improvements over CPU encoding.
+pub struct NvencEncoder {
+    config: VideoEncoderConfig,
+    ffmpeg_path: Option<PathBuf>,
+    device_id: Option<u32>,
+}
+
+impl NvencEncoder {
+    /// Create a new NVENC encoder with default configuration.
+    pub fn new() -> Self {
+        Self {
+            config: VideoEncoderConfig::default(),
+            ffmpeg_path: None,
+            device_id: None,
+        }
+    }
+
+    /// Create a new NVENC encoder with custom configuration.
+    pub fn with_config(config: VideoEncoderConfig) -> Self {
+        Self {
+            config,
+            ffmpeg_path: None,
+            device_id: None,
+        }
+    }
+
+    /// Set a custom path to the ffmpeg executable.
+    pub fn with_ffmpeg_path(mut self, path: impl AsRef<Path>) -> Self {
+        self.ffmpeg_path = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Set the CUDA device ID to use.
+    pub fn with_device(mut self, device_id: u32) -> Self {
+        self.device_id = Some(device_id);
+        self
+    }
+
+    /// Check if NVENC is available.
+    pub fn check_nvenc(&self) -> Result<(), VideoEncoderError> {
+        if !check_nvenc_available() {
+            return Err(VideoEncoderError::FfmpegNotFound);
+        }
+        Ok(())
+    }
+
+    /// Encode frames from a buffer using NVENC.
+    ///
+    /// This method pipes RGB frames to ffmpeg which uses NVENC
+    /// for hardware-accelerated H.264 encoding.
+    pub fn encode_buffer(
+        &self,
+        buffer: &VideoFrameBuffer,
+        output_path: &Path,
+    ) -> Result<(), VideoEncoderError> {
+        if buffer.is_empty() {
+            return Err(VideoEncoderError::NoFrames);
+        }
+
+        self.check_nvenc()?;
+
+        let (width, height) = buffer
+            .dimensions()
+            .ok_or(VideoEncoderError::InvalidFrameData)?;
+
+        let ffmpeg_path = self.ffmpeg_path.as_deref().unwrap_or(Path::new("ffmpeg"));
+
+        // Build ffmpeg command for NVENC encoding
+        let mut cmd = Command::new(ffmpeg_path);
+        cmd.arg("-y")
+            .arg("-hide_banner")
+            // GPU acceleration
+            .args(["-hwaccel", "cuda"])
+            .args(["-hwaccel_output_format", "cuda"]);
+
+        // Set device if specified
+        if let Some(device) = self.device_id {
+            cmd.args(["-gpu", &device.to_string()]);
+        }
+
+        // Input: raw RGB from stdin
+        cmd.args(["-f", "rawvideo"])
+            .args(["-pix_fmt", "rgb24"])
+            .args(["-s", &format!("{}x{}", width, height)])
+            .args(["-r", &self.config.fps.to_string()])
+            .arg("-i")
+            .arg("-")
+            // NVENC encoding
+            .args(["-c:v", "h264_nvenc"])
+            .args(["-preset", "p4"]) // Slow, high quality
+            .args(["-tune", "ll"]) // Low latency
+            .args(["-b:v", "5M"])
+            .args(["-pix_fmt", "yuv420p"])
+            .arg(output_path);
+
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|_| VideoEncoderError::FfmpegNotFound)?;
+
+        // Write RGB frames to stdin
+        let write_result = if let Some(mut stdin) = child.stdin.take() {
+            let mut result = Ok(());
+            for frame in &buffer.frames {
+                if let Err(e) = stdin.write_all(&frame.data) {
+                    result = Err(e);
+                    break;
+                }
+            }
+            drop(stdin);
+            result
+        } else {
+            Ok(())
+        };
+
+        let read_stderr = |child: &mut std::process::Child| -> String {
+            child
+                .stderr
+                .take()
+                .map(|mut s| {
+                    let mut buf = String::new();
+                    use std::io::Read;
+                    s.read_to_string(&mut buf).ok();
+                    buf
+                })
+                .unwrap_or_default()
+        };
+
+        if let Err(write_err) = write_result {
+            let stderr_output = read_stderr(&mut child);
+            let _ = child.wait();
+
+            if !stderr_output.is_empty() {
+                tracing::error!(
+                    stderr = %stderr_output,
+                    "NVENC stderr output (encoding failed)"
+                );
+            }
+
+            return Err(VideoEncoderError::FfmpegFailed(
+                -1,
+                format!(
+                    "NVENC write failed: {}. stderr: {}",
+                    write_err, stderr_output
+                ),
+            ));
+        }
+
+        let status = child.wait()?;
+
+        if status.success() {
+            tracing::debug!(
+                frames = buffer.len(),
+                "Encoded MP4 using NVENC hardware acceleration"
+            );
+            Ok(())
+        } else {
+            let stderr_output = read_stderr(&mut child);
+            Err(VideoEncoderError::FfmpegFailed(
+                status.code().unwrap_or(-1),
+                format!("NVENC stderr: {}", stderr_output),
+            ))
+        }
+    }
+}
+
+impl Default for NvencEncoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Check if VideoToolbox encoder is available (macOS).
+#[cfg(target_os = "macos")]
+pub fn check_videotoolbox_available() -> bool {
+    // VideoToolbox is always available on macOS
+    true
+}
+
+/// MP4 video encoder using Apple VideoToolbox hardware acceleration.
+///
+/// This encoder uses VideoToolbox for GPU-accelerated H.264 encoding
+/// on macOS, providing significant performance improvements over CPU encoding.
+#[cfg(target_os = "macos")]
+pub struct VideoToolboxEncoder {
+    config: VideoEncoderConfig,
+    ffmpeg_path: Option<PathBuf>,
+}
+
+#[cfg(target_os = "macos")]
+impl VideoToolboxEncoder {
+    /// Create a new VideoToolbox encoder with default configuration.
+    pub fn new() -> Self {
+        Self {
+            config: VideoEncoderConfig::default(),
+            ffmpeg_path: None,
+        }
+    }
+
+    /// Create a new VideoToolbox encoder with custom configuration.
+    pub fn with_config(config: VideoEncoderConfig) -> Self {
+        Self {
+            config,
+            ffmpeg_path: None,
+        }
+    }
+
+    /// Set a custom path to the ffmpeg executable.
+    pub fn with_ffmpeg_path(mut self, path: impl AsRef<Path>) -> Self {
+        self.ffmpeg_path = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Check if VideoToolbox is available.
+    pub fn check_videotoolbox(&self) -> Result<(), VideoEncoderError> {
+        // VideoToolbox is always available on macOS
+        Ok(())
+    }
+
+    /// Encode frames from a buffer using VideoToolbox.
+    ///
+    /// This method pipes RGB frames to ffmpeg which uses VideoToolbox
+    /// for hardware-accelerated H.264 encoding.
+    pub fn encode_buffer(
+        &self,
+        buffer: &VideoFrameBuffer,
+        output_path: &Path,
+    ) -> Result<(), VideoEncoderError> {
+        if buffer.is_empty() {
+            return Err(VideoEncoderError::NoFrames);
+        }
+
+        self.check_videotoolbox()?;
+
+        let (width, height) = buffer
+            .dimensions()
+            .ok_or(VideoEncoderError::InvalidFrameData)?;
+
+        let ffmpeg_path = self.ffmpeg_path.as_deref().unwrap_or(Path::new("ffmpeg"));
+
+        // Build ffmpeg command for VideoToolbox encoding
+        let mut child = Command::new(ffmpeg_path)
+            .arg("-y")
+            .arg("-hide_banner")
+            // VideoToolbox hardware acceleration
+            .args(["-hwaccel", "videotoolbox"])
+            .args(["-pix_fmt", "videotoolbox_vlc"])
+            // Input: raw RGB from stdin
+            .args(["-f", "rawvideo"])
+            .args(["-pix_fmt", "rgb24"])
+            .args(["-s", &format!("{}x{}", width, height)])
+            .args(["-r", &self.config.fps.to_string()])
+            .arg("-i")
+            .arg("-")
+            // VideoToolbox encoding
+            .args(["-c:v", "h264_videotoolbox"])
+            .args(["-profile:v", "high"])
+            .args(["-level", "3.1"])
+            .args(["-q", "23"]) // Quality (0-51, lower is better)
+            .args(["-pix_fmt", "yuv420p"])
+            .arg(output_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|_| VideoEncoderError::FfmpegNotFound)?;
+
+        // Write RGB frames to stdin
+        let write_result = if let Some(mut stdin) = child.stdin.take() {
+            let mut result = Ok(());
+            for frame in &buffer.frames {
+                if let Err(e) = stdin.write_all(&frame.data) {
+                    result = Err(e);
+                    break;
+                }
+            }
+            drop(stdin);
+            result
+        } else {
+            Ok(())
+        };
+
+        let read_stderr = |child: &mut std::process::Child| -> String {
+            child
+                .stderr
+                .take()
+                .map(|mut s| {
+                    let mut buf = String::new();
+                    use std::io::Read;
+                    s.read_to_string(&mut buf).ok();
+                    buf
+                })
+                .unwrap_or_default()
+        };
+
+        if let Err(write_err) = write_result {
+            let stderr_output = read_stderr(&mut child);
+            let _ = child.wait();
+
+            if !stderr_output.is_empty() {
+                tracing::error!(
+                    stderr = %stderr_output,
+                    "VideoToolbox stderr output (encoding failed)"
+                );
+            }
+
+            return Err(VideoEncoderError::FfmpegFailed(
+                -1,
+                format!(
+                    "VideoToolbox write failed: {}. stderr: {}",
+                    write_err, stderr_output
+                ),
+            ));
+        }
+
+        let status = child.wait()?;
+
+        if status.success() {
+            tracing::debug!(
+                frames = buffer.len(),
+                "Encoded MP4 using VideoToolbox hardware acceleration"
+            );
+            Ok(())
+        } else {
+            let stderr_output = read_stderr(&mut child);
+            Err(VideoEncoderError::FfmpegFailed(
+                status.code().unwrap_or(-1),
+                format!("VideoToolbox stderr: {}", stderr_output),
+            ))
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Default for VideoToolboxEncoder {
     fn default() -> Self {
         Self::new()
     }

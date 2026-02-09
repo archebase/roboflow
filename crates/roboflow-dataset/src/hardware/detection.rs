@@ -133,11 +133,7 @@ impl HardwareCapabilities {
         if parts.is_empty() {
             format!("CPU only ({} cores)", self.cpu_cores)
         } else {
-            format!(
-                "{} + CPU ({} cores)",
-                parts.join(" + "),
-                self.cpu_cores
-            )
+            format!("{} + CPU ({} cores)", parts.join(" + "), self.cpu_cores)
         }
     }
 

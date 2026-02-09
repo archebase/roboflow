@@ -28,7 +28,8 @@ pub use crate::image::backend::DecodedImage;
 pub fn decode_images_parallel(images: &[(&[u8], ImageFormat)]) -> Vec<Option<DecodedImage>> {
     use crate::image::decode_compressed_image;
 
-    images.par_iter()
+    images
+        .par_iter()
         .map(|(data, format)| decode_compressed_image(data, *format).ok())
         .collect()
 }
@@ -49,21 +50,21 @@ pub fn decode_images_parallel_with_dims(
 ) -> Vec<Option<DecodedImage>> {
     use crate::image::decode_compressed_image;
 
-    images.par_iter()
+    images
+        .par_iter()
         .map(|(data, format, width, height)| {
             match decode_compressed_image(data, *format) {
                 Ok(img) => {
                     // Validate dimensions if provided
-                    if *width > 0 && *height > 0
-                        && (img.width != *width || img.height != *height) {
-                            tracing::warn!(
-                                expected_width = width,
-                                expected_height = height,
-                                actual_width = img.width,
-                                actual_height = img.height,
-                                "Dimension mismatch in decoded image"
-                            );
-                        }
+                    if *width > 0 && *height > 0 && (img.width != *width || img.height != *height) {
+                        tracing::warn!(
+                            expected_width = width,
+                            expected_height = height,
+                            actual_width = img.width,
+                            actual_height = img.height,
+                            "Dimension mismatch in decoded image"
+                        );
+                    }
                     Some(img)
                 }
                 Err(e) => {
