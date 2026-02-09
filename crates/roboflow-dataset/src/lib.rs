@@ -20,6 +20,9 @@ use std::path::Path;
 // Common dataset writing utilities
 pub mod common;
 
+// Hardware detection and strategy selection
+pub mod hardware;
+
 // LeRobot dataset format
 pub mod lerobot;
 

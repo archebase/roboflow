@@ -54,6 +54,7 @@ pub mod factory;
 pub mod format;
 pub mod gpu;
 pub mod memory;
+pub mod parallel;
 
 // Re-export commonly used types
 pub use backend::{DecodedImage, DecoderType, ImageDecoderBackend};
@@ -61,6 +62,7 @@ pub use config::{DecoderBackendType as ImageDecoderBackendType, ImageDecoderConf
 pub use factory::{DecodeStats, GpuDeviceInfo, ImageDecoderFactory};
 pub use format::ImageFormat;
 pub use memory::{AlignedImageBuffer, MemoryStrategy};
+pub use parallel::{decode_images_parallel, decode_images_parallel_with_dims, ParallelDecodeStats};
 
 /// Image decoding errors.
 #[derive(Debug, thiserror::Error)]

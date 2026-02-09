@@ -313,7 +313,12 @@ mod tests {
         let mut factory = ImageDecoderFactory::new(&config);
         let decoder = factory.get_decoder();
         assert!(decoder.is_available());
-        assert_eq!(decoder.decoder_type(), DecoderType::Cpu); // Falls back to CPU
+
+        // On macOS, Auto selects Apple backend; on other platforms, falls back to CPU
+        #[cfg(target_os = "macos")]
+        assert_eq!(decoder.decoder_type(), DecoderType::Apple);
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(decoder.decoder_type(), DecoderType::Cpu);
     }
 
     #[test]

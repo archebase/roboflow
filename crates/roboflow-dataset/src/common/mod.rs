@@ -17,6 +17,7 @@
 
 pub mod base;
 pub mod config;
+pub mod image_format;
 pub mod parquet_base;
 pub mod progress;
 pub mod video;
@@ -34,3 +35,6 @@ pub use parquet_base::{FeatureStats, ParquetWriterBase, calculate_stats};
 
 // Re-export progress utilities
 pub use progress::{ProgressReceiver, ProgressSender, ProgressUpdate};
+
+// Re-export image format detection
+pub use image_format::{can_passthrough, detect_image_format, ImageFormat};

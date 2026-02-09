@@ -93,6 +93,9 @@ pub struct VideoFrame {
 
     /// Raw image data (RGB8 format).
     pub data: Vec<u8>,
+
+    /// Whether this frame is already JPEG-encoded (for passthrough).
+    pub is_jpeg: bool,
 }
 
 impl VideoFrame {
@@ -102,19 +105,46 @@ impl VideoFrame {
             width,
             height,
             data,
+            is_jpeg: false,
+        }
+    }
+
+    /// Create a new video frame from JPEG-encoded data.
+    pub fn from_jpeg(width: u32, height: u32, jpeg_data: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            data: jpeg_data,
+            is_jpeg: true,
         }
     }
 
     /// Get the expected data size for this frame.
     pub fn expected_size(&self) -> usize {
-        (self.width * self.height * 3) as usize
+        if self.is_jpeg {
+            self.data.len() // JPEG data size is variable
+        } else {
+            (self.width * self.height * 3) as usize
+        }
     }
 
     /// Validate the frame data.
     pub fn validate(&self) -> Result<(), VideoEncoderError> {
-        let expected = self.expected_size();
-        if self.data.len() != expected {
-            return Err(VideoEncoderError::InvalidFrameData);
+        if self.is_jpeg {
+            // JPEG data: just check it's not empty and has valid header
+            if self.data.len() < 4 {
+                return Err(VideoEncoderError::InvalidFrameData);
+            }
+            // Check JPEG magic bytes
+            if self.data[0] != 0xFF || self.data[1] != 0xD8 || self.data[2] != 0xFF {
+                return Err(VideoEncoderError::InvalidFrameData);
+            }
+        } else {
+            // RGB data: check exact size
+            let expected = (self.width * self.height * 3) as usize;
+            if self.data.len() != expected {
+                return Err(VideoEncoderError::InvalidFrameData);
+            }
         }
         Ok(())
     }
@@ -235,6 +265,137 @@ impl Mp4Encoder {
     /// This method writes frames as PPM format to stdin of ffmpeg,
     /// which is a simple uncompressed format that ffmpeg can read.
     pub fn encode_buffer(
+        &self,
+        buffer: &VideoFrameBuffer,
+        output_path: &Path,
+    ) -> Result<(), VideoEncoderError> {
+        // Check if all frames are JPEG for passthrough optimization
+        let all_jpeg = buffer.frames.iter().all(|f| f.is_jpeg);
+        if all_jpeg && buffer.frames.len() > 1 {
+            return self.encode_jpeg_passthrough(buffer, output_path);
+        }
+
+        // Original PPM encoding path
+        self.encode_buffer_ppm(buffer, output_path)
+    }
+
+    /// Encode JPEG frames with passthrough optimization.
+    ///
+    /// This method pipes JPEG data directly to ffmpeg without intermediate
+    /// RGB conversion, providing significant performance improvement.
+    fn encode_jpeg_passthrough(
+        &self,
+        buffer: &VideoFrameBuffer,
+        output_path: &Path,
+    ) -> Result<(), VideoEncoderError> {
+        if buffer.is_empty() {
+            return Err(VideoEncoderError::NoFrames);
+        }
+
+        self.check_ffmpeg()?;
+
+        let (_width, _height) = buffer
+            .dimensions()
+            .ok_or(VideoEncoderError::InvalidFrameData)?;
+
+        let ffmpeg_path = self.ffmpeg_path.as_deref().unwrap_or(Path::new("ffmpeg"));
+
+        // Build ffmpeg command for MJPEG input
+        // Using -f mjpeg allows direct JPEG passthrough
+        let mut child = Command::new(ffmpeg_path)
+            .arg("-y") // Overwrite output
+            .arg("-f") // Input format: MJPEG
+            .arg("mjpeg")
+            .arg("-r")
+            .arg(self.config.fps.to_string())
+            .arg("-i")
+            .arg("-") // Read from stdin
+            .arg("-vf")
+            .arg("pad=ceil(iw/2)*2:ceil(ih/2)*2") // Ensure even dimensions for yuv420p
+            .arg("-c:v")
+            .arg(&self.config.codec)
+            .arg("-pix_fmt")
+            .arg(&self.config.pixel_format)
+            .arg("-preset")
+            .arg(&self.config.preset)
+            .arg("-crf")
+            .arg(self.config.crf.to_string())
+            .arg("-movflags")
+            .arg("+faststart")
+            .arg(output_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|_| VideoEncoderError::FfmpegNotFound)?;
+
+        // Write JPEG frames directly to stdin
+        let write_result = if let Some(mut stdin) = child.stdin.take() {
+            let mut result = Ok(());
+            for frame in &buffer.frames {
+                if let Err(e) = self.write_jpeg_frame(&mut stdin, frame) {
+                    result = Err(e);
+                    break;
+                }
+            }
+            drop(stdin);
+            result
+        } else {
+            Ok(())
+        };
+
+        let read_stderr = |child: &mut std::process::Child| -> String {
+            child
+                .stderr
+                .take()
+                .map(|mut s| {
+                    let mut buf = String::new();
+                    use std::io::Read;
+                    s.read_to_string(&mut buf).ok();
+                    buf
+                })
+                .unwrap_or_default()
+        };
+
+        if let Err(write_err) = write_result {
+            let stderr_output = read_stderr(&mut child);
+            let _ = child.wait();
+
+            if !stderr_output.is_empty() {
+                tracing::error!(
+                    stderr = %stderr_output,
+                    "ffmpeg stderr output (JPEG passthrough encoding failed)"
+                );
+            }
+
+            return Err(VideoEncoderError::FfmpegFailed(
+                -1,
+                format!(
+                    "JPEG passthrough write failed: {}. ffmpeg stderr: {}",
+                    write_err, stderr_output
+                ),
+            ));
+        }
+
+        let status = child.wait()?;
+
+        if status.success() {
+            tracing::debug!(
+                frames = buffer.len(),
+                "Encoded MP4 using JPEG passthrough"
+            );
+            Ok(())
+        } else {
+            let stderr_output = read_stderr(&mut child);
+            Err(VideoEncoderError::FfmpegFailed(
+                status.code().unwrap_or(-1),
+                format!("ffmpeg stderr: {}", stderr_output),
+            ))
+        }
+    }
+
+    /// Encode frames from a buffer using PPM format (original implementation).
+    fn encode_buffer_ppm(
         &self,
         buffer: &VideoFrameBuffer,
         output_path: &Path,
@@ -367,7 +528,19 @@ impl Mp4Encoder {
 
         // RGB data
         writer.write_all(&frame.data)?;
+        Ok(())
+    }
 
+    /// Write a single JPEG frame for passthrough.
+    ///
+    /// Writes the JPEG data directly without modification.
+    fn write_jpeg_frame(
+        &self,
+        writer: &mut impl Write,
+        frame: &VideoFrame,
+    ) -> Result<(), VideoEncoderError> {
+        // JPEG data is written as-is
+        writer.write_all(&frame.data)?;
         Ok(())
     }
 

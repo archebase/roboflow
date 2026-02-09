@@ -55,6 +55,9 @@ video = ["dep:ffmpeg-next"]
 # CUDA pinned memory for zero-copy GPU transfers (requires cudarc)
 cuda-pinned = []
 
+# GPU acceleration (NVIDIA CUDA, nvJPEG, NVENC)
+gpu = []
+
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3.10"
