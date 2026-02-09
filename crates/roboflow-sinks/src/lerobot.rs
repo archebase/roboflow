@@ -14,7 +14,9 @@
 
 use crate::convert::dataset_frame_to_aligned;
 use crate::{DatasetFrame, Sink, SinkCheckpoint, SinkConfig, SinkError, SinkResult, SinkStats};
-use roboflow_dataset::lerobot::{LerobotConfig, LerobotWriter};
+use roboflow_dataset::lerobot::LerobotConfig;
+use roboflow_dataset::lerobot::writer::LerobotWriter;
+use roboflow_dataset::lerobot::{CameraExtrinsic, CameraIntrinsic};
 use roboflow_storage::StorageUrl;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -186,6 +188,86 @@ impl Sink for LerobotSink {
 
         self.current_episode = frame.episode_index;
         self.has_frames = true;
+
+        // Extract camera info on first frame and set it on the writer
+        if self.frames_written == 0 && !frame.camera_info.is_empty() {
+            for (camera_name, info) in &frame.camera_info {
+                tracing::info!(
+                    camera = %camera_name,
+                    width = info.width,
+                    height = info.height,
+                    fx = info.k[0],
+                    fy = info.k[4],
+                    "Setting camera calibration"
+                );
+
+                // Create LeRobot CameraIntrinsic from ROS CameraInfo
+                let intrinsic = CameraIntrinsic {
+                    fx: info.k[0],
+                    fy: info.k[4],
+                    ppx: info.k[2],
+                    ppy: info.k[5],
+                    distortion_model: info.distortion_model.clone(),
+                    k1: info.d.first().copied().unwrap_or(0.0),
+                    k2: info.d.get(1).copied().unwrap_or(0.0),
+                    k3: info.d.get(4).copied().unwrap_or(0.0),
+                    p1: info.d.get(2).copied().unwrap_or(0.0),
+                    p2: info.d.get(3).copied().unwrap_or(0.0),
+                };
+
+                writer.set_camera_intrinsics(camera_name.clone(), intrinsic);
+
+                // Handle extrinsics from P matrix if available
+                // The P matrix (3x4 projection) contains extrinsic info when combined with K
+                // P = K [R|t] where R is rotation and t is translation
+                if let Some(p) = &info.p {
+                    // Extract extrinsics from P matrix using the relation: P = K * [R|t]
+                    // We need to compute [R|t] = K_inv * P
+                    let k = &info.k;
+
+                    // Compute K inverse (simplified - K is usually upper triangular for cameras)
+                    // K = [fx  0  cx]     K_inv = [1/fx    0     -cx/fx   ]
+                    //     [ 0 fy  cy]            [  0   1/fy  -cy/fy   ]
+                    //     [ 0  0   1]            [  0     0       1     ]
+                    let fx = k[0];
+                    let fy = k[4];
+                    let cx = k[2];
+                    let cy = k[5];
+
+                    // P is 3x4: [P0 P1 P2 P3] where each Pi is a column
+                    // After K_inv * P, we get [R|t]
+                    let r0 = [p[0] / fx, p[1] / fx, p[2] / fx];
+                    let r1 = [p[4] / fy, p[5] / fy, p[6] / fy];
+                    let r2 = [
+                        p[8] - p[0] * cx / fx - p[4] * cy / fy,
+                        p[9] - p[1] * cx / fx - p[5] * cy / fy,
+                        p[10] - p[2] * cx / fx - p[6] * cy / fy,
+                    ];
+                    let t = [
+                        p[3] / fx,
+                        p[7] / fy,
+                        p[11] - p[3] * cx / fx - p[7] * cy / fy,
+                    ];
+
+                    let rotation_matrix = [r0, r1, r2];
+
+                    let extrinsic = CameraExtrinsic::new(rotation_matrix, t);
+                    writer.set_camera_extrinsics(camera_name.clone(), extrinsic);
+
+                    tracing::debug!(
+                        camera = %camera_name,
+                        rotation = ?rotation_matrix,
+                        translation = ?t,
+                        "Set camera extrinsics from P matrix"
+                    );
+                } else if let Some(_r) = &info.r {
+                    tracing::debug!(
+                        camera = %camera_name,
+                        "Camera rectification matrix (R) available but P matrix needed for extrinsics"
+                    );
+                }
+            }
+        }
 
         // Convert DatasetFrame → AlignedFrame and write
         let aligned = dataset_frame_to_aligned(&frame);

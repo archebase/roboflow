@@ -24,4 +24,4 @@ pub use trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 pub use upload::EpisodeUploadCoordinator;
 pub use upload::{EpisodeFiles, UploadConfig, UploadProgress, UploadStats};
 pub use video_profiles::{Profile, QualityTier, ResolvedConfig, SpeedPreset, VideoEncodingProfile};
-pub use writer::{LerobotFrame, LerobotWriter};
+pub use writer::{CameraExtrinsic, CameraIntrinsic, LerobotFrame, LerobotWriter};

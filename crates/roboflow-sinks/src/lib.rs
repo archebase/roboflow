@@ -18,6 +18,29 @@ pub use registry::{SinkRegistry, create_sink, global_registry, register_sink};
 use async_trait::async_trait;
 use std::collections::HashMap;
 
+/// Camera calibration information extracted from sensor_msgs/CameraInfo.
+///
+/// Contains intrinsic parameters needed for camera calibration in dataset formats.
+#[derive(Debug, Clone)]
+pub struct CameraInfo {
+    /// Camera name/identifier
+    pub camera_name: String,
+    /// Image width
+    pub width: u32,
+    /// Image height
+    pub height: u32,
+    /// K matrix (3x3 row-major): [fx, 0, cx, 0, fy, cy, 0, 0, 1]
+    pub k: [f64; 9],
+    /// D vector (distortion coefficients): [k1, k2, t1, t2, k3]
+    pub d: Vec<f64>,
+    /// R matrix (3x3 row-major rectification matrix)
+    pub r: Option<[f64; 9]>,
+    /// P matrix (3x4 row-major projection matrix)
+    pub p: Option<[f64; 12]>,
+    /// Distortion model name (e.g., "plumb_bob", "rational_polynomial")
+    pub distortion_model: String,
+}
+
 /// A frame of data ready to be written to a dataset.
 ///
 /// This is the primary input type for all sinks, providing a unified
@@ -38,6 +61,8 @@ pub struct DatasetFrame {
     pub task_index: Option<usize>,
     /// Image data by feature name -> (width, height, data)
     pub images: HashMap<String, ImageData>,
+    /// Camera calibration info by camera name
+    pub camera_info: HashMap<String, CameraInfo>,
     /// Additional data fields
     pub additional_data: HashMap<String, Vec<f32>>,
 }
@@ -81,6 +106,7 @@ impl DatasetFrame {
             action: None,
             task_index: None,
             images: HashMap::new(),
+            camera_info: HashMap::new(),
             additional_data: HashMap::new(),
         }
     }
@@ -100,6 +126,12 @@ impl DatasetFrame {
     /// Add action data to the frame.
     pub fn with_action(mut self, action: Vec<f32>) -> Self {
         self.action = Some(action);
+        self
+    }
+
+    /// Add camera calibration info to the frame.
+    pub fn with_camera_info(mut self, camera_name: impl Into<String>, info: CameraInfo) -> Self {
+        self.camera_info.insert(camera_name.into(), info);
         self
     }
 }
@@ -277,6 +309,7 @@ mod tests {
         assert_eq!(frame.frame_index, 0);
         assert_eq!(frame.observation_state, Some(vec![1.0, 2.0, 3.0]));
         assert_eq!(frame.action, Some(vec![0.5]));
+        assert!(frame.camera_info.is_empty());
     }
 
     #[test]

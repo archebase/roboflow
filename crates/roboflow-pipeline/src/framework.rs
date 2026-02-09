@@ -20,7 +20,8 @@ use std::time::{Duration, Instant};
 
 use roboflow_core::{Result, RoboflowError};
 use roboflow_sinks::{
-    lerobot::LerobotSink, DatasetFrame, ImageData, ImageFormat, Sink, SinkConfig, SinkStats,
+    lerobot::LerobotSink, CameraInfo, DatasetFrame, ImageData, ImageFormat, Sink, SinkConfig,
+    SinkStats,
 };
 use roboflow_sources::{
     BagSource, McapSource, RrdSource, Source, SourceConfig, TimestampedMessage,
@@ -408,7 +409,30 @@ impl Pipeline {
                     // Check topic mapping to decide how to handle this struct
                     let feature = self.config.topic_mappings.get(&msg.topic);
 
-                    if feature
+                    // Camera info handling: check for K matrix (unique to CameraInfo)
+                    // We process this regardless of mapping since it provides metadata
+                    if map.contains_key("K") && map.contains_key("D") {
+                        // This looks like a CameraInfo message
+                        // Use the mapped feature name as the camera identifier, or derive from topic
+                        let camera_name = feature.cloned().unwrap_or_else(|| {
+                            msg.topic
+                                .replace('/', "_")
+                                .trim_start_matches('_')
+                                .to_string()
+                        });
+
+                        if let Some(info) = extract_camera_info_from_struct(map, camera_name) {
+                            tracing::debug!(
+                                camera = %info.camera_name,
+                                width = info.width,
+                                height = info.height,
+                                fx = info.k[0],
+                                fy = info.k[4],
+                                "Pipeline: extracted camera calibration info"
+                            );
+                            frame.camera_info.insert(info.camera_name.clone(), info);
+                        }
+                    } else if feature
                         .as_ref()
                         .is_some_and(|f| f.starts_with("observation.state") || f == &"action")
                     {
@@ -661,6 +685,147 @@ fn codec_value_to_u8(v: &robocodec::CodecValue) -> Option<u8> {
         }
         _ => None,
     }
+}
+
+/// Extract camera calibration info from a sensor_msgs/CameraInfo struct.
+///
+/// ROS CameraInfo message structure:
+/// - K: 3x3 intrinsic matrix [fx, 0, cx, 0, fy, cy, 0, 0, 1]
+/// - D: distortion coefficients [k1, k2, t1, t2, k3]
+/// - R: 3x3 rectification matrix
+/// - P: 3x4 projection matrix
+/// - distortion_model: string (e.g., "plumb_bob", "rational_polynomial")
+fn extract_camera_info_from_struct(
+    map: &std::collections::HashMap<String, robocodec::CodecValue>,
+    camera_name: String,
+) -> Option<CameraInfo> {
+    // Extract width and height
+    let width = map.get("width").and_then(|v| {
+        if let robocodec::CodecValue::UInt32(w) = v {
+            Some(*w)
+        } else if let robocodec::CodecValue::UInt64(w) = v {
+            Some(*w as u32)
+        } else {
+            None
+        }
+    })?;
+
+    let height = map.get("height").and_then(|v| {
+        if let robocodec::CodecValue::UInt32(h) = v {
+            Some(*h)
+        } else if let robocodec::CodecValue::UInt64(h) = v {
+            Some(*h as u32)
+        } else {
+            None
+        }
+    })?;
+
+    // Extract distortion model
+    let distortion_model = map
+        .get("distortion_model")
+        .and_then(|v| {
+            if let robocodec::CodecValue::String(s) = v {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "plumb_bob".to_string());
+
+    // Extract K matrix (3x3 intrinsic matrix)
+    let k = extract_f64_array_3x3(map.get("K")?)?;
+
+    // Extract D vector (distortion coefficients)
+    let d = extract_f64_vector(map.get("D")?);
+
+    // Extract R matrix (3x3 rectification matrix) - optional
+    let r = map.get("R").and_then(extract_f64_array_3x3);
+
+    // Extract P matrix (3x4 projection matrix) - optional
+    let p = map.get("P").and_then(extract_f64_array_3x4);
+
+    Some(CameraInfo {
+        camera_name,
+        width,
+        height,
+        k,
+        d,
+        r,
+        p,
+        distortion_model,
+    })
+}
+
+/// Extract a 3x3 f64 array from a CodecValue::Array.
+fn extract_f64_array_3x3(value: &robocodec::CodecValue) -> Option<[f64; 9]> {
+    let arr = match value {
+        robocodec::CodecValue::Array(a) => a,
+        _ => return None,
+    };
+
+    if arr.len() < 9 {
+        return None;
+    }
+
+    let mut result = [0.0f64; 9];
+    for (i, val) in arr.iter().take(9).enumerate() {
+        result[i] = match val {
+            robocodec::CodecValue::Float64(f) => *f,
+            robocodec::CodecValue::Float32(f) => *f as f64,
+            robocodec::CodecValue::Int32(i) => *i as f64,
+            robocodec::CodecValue::Int64(i) => *i as f64,
+            robocodec::CodecValue::UInt32(u) => *u as f64,
+            robocodec::CodecValue::UInt64(u) => *u as f64,
+            _ => return None,
+        };
+    }
+    Some(result)
+}
+
+/// Extract a 3x4 f64 array from a CodecValue::Array.
+fn extract_f64_array_3x4(value: &robocodec::CodecValue) -> Option<[f64; 12]> {
+    let arr = match value {
+        robocodec::CodecValue::Array(a) => a,
+        _ => return None,
+    };
+
+    if arr.len() < 12 {
+        return None;
+    }
+
+    let mut result = [0.0f64; 12];
+    for (i, val) in arr.iter().take(12).enumerate() {
+        result[i] = match val {
+            robocodec::CodecValue::Float64(f) => *f,
+            robocodec::CodecValue::Float32(f) => *f as f64,
+            robocodec::CodecValue::Int32(i) => *i as f64,
+            robocodec::CodecValue::Int64(i) => *i as f64,
+            robocodec::CodecValue::UInt32(u) => *u as f64,
+            robocodec::CodecValue::UInt64(u) => *u as f64,
+            _ => return None,
+        };
+    }
+    Some(result)
+}
+
+/// Extract a variable-length f64 vector from a CodecValue::Array.
+fn extract_f64_vector(value: &robocodec::CodecValue) -> Vec<f64> {
+    let arr = match value {
+        robocodec::CodecValue::Array(a) => a,
+        _ => return Vec::new(),
+    };
+
+    arr.iter()
+        .filter_map(|val| match val {
+            robocodec::CodecValue::Float64(f) => Some(*f),
+            robocodec::CodecValue::Float32(f) => Some(*f as f64),
+            robocodec::CodecValue::Int32(i) => Some(*i as f64),
+            robocodec::CodecValue::Int64(i) => Some(*i as f64),
+            robocodec::CodecValue::UInt32(u) => Some(*u as f64),
+            robocodec::CodecValue::UInt64(u) => Some(*u as f64),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Distributed executor for running pipelines in a distributed environment.

@@ -95,6 +95,7 @@ impl Mapping {
 /// This is the superset of all mapping types across KPS and LeRobot formats.
 /// - Common: Image, State, Action, Timestamp
 /// - KPS-specific: OtherSensor, Audio
+/// - Camera metadata: CameraInfo
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum MappingType {
@@ -111,6 +112,8 @@ pub enum MappingType {
     OtherSensor,
     /// Audio data. KPS-specific.
     Audio,
+    /// Camera calibration info (sensor_msgs/CameraInfo).
+    CameraInfo,
 }
 
 #[cfg(test)]

@@ -60,6 +60,13 @@ pub struct CameraIntrinsic {
 /// Camera extrinsic parameters in LeRobot format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CameraExtrinsic {
+    /// Extrinsic data wrapper (matches LeRobot format)
+    pub extrinsic: ExtrinsicData,
+}
+
+/// The actual extrinsic data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtrinsicData {
     /// 3x3 rotation matrix (row-major)
     pub rotation_matrix: Vec<Vec<f64>>,
     /// Translation vector [x, y, z]
@@ -70,12 +77,28 @@ impl CameraExtrinsic {
     /// Create extrinsic from rotation matrix and translation.
     pub fn new(rotation_matrix: [[f64; 3]; 3], translation: [f64; 3]) -> Self {
         Self {
-            rotation_matrix: vec![
-                rotation_matrix[0].to_vec(),
-                rotation_matrix[1].to_vec(),
-                rotation_matrix[2].to_vec(),
-            ],
-            translation_vector: translation.to_vec(),
+            extrinsic: ExtrinsicData {
+                rotation_matrix: vec![
+                    rotation_matrix[0].to_vec(),
+                    rotation_matrix[1].to_vec(),
+                    rotation_matrix[2].to_vec(),
+                ],
+                translation_vector: translation.to_vec(),
+            },
+        }
+    }
+
+    /// Create extrinsic from flat arrays.
+    pub fn from_arrays(rotation_matrix: [f64; 9], translation: [f64; 3]) -> Self {
+        Self {
+            extrinsic: ExtrinsicData {
+                rotation_matrix: vec![
+                    vec![rotation_matrix[0], rotation_matrix[1], rotation_matrix[2]],
+                    vec![rotation_matrix[3], rotation_matrix[4], rotation_matrix[5]],
+                    vec![rotation_matrix[6], rotation_matrix[7], rotation_matrix[8]],
+                ],
+                translation_vector: translation.to_vec(),
+            },
         }
     }
 }
