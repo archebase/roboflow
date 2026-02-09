@@ -8,63 +8,52 @@ repository = "https://github.com/archebase/roboflow"
 description = "Dataset writers for roboflow - LeRobot v2.1, Parquet (always available)"
 
 [dependencies]
-roboflow-core = { path = "../roboflow-core", version = "0.2.0" }
-roboflow-storage = { path = "../roboflow-storage", version = "0.2.0" }
-
-# Codec library (from workspace)
+# Internal crates
+roboflow-core = { workspace = true }
+roboflow-storage = { workspace = true }
 robocodec = { workspace = true }
 
-# Parquet - ALWAYS AVAILABLE (no feature flag)
+# Parquet (always available)
 polars = { version = "0.41", features = ["parquet"] }
-
-# Depth images
 png = "0.17"
 
-# Image decoding (JPEG/PNG) - optional but always enabled by default
-image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png"] }
+# Image decoding (required for LeRobot and streaming conversion)
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
-# Video encoding (FFmpeg) - optional, requires system library
+# Video encoding via FFmpeg (optional, requires system library)
 ffmpeg-next = { version = "6.1", optional = true }
-
-# Error handling
-thiserror = "1.0"
-
-# Logging
-tracing = "0.1"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 
-# UUID for episode IDs
-uuid = { version = "1.10", features = ["v4", "serde"] }
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
 
 # Concurrency
 crossbeam-channel = "0.5"
 num_cpus = "1.16"
 rayon = "1.10"
 
-# Async runtime (for S3 streaming decoder)
-tokio = { version = "1", features = ["rt"] }
+# Async runtime (S3 streaming decoder)
+tokio = { workspace = true }
 
-# Error handling
-anyhow = "1.0"
+# Episode IDs
+uuid = { version = "1.10", features = ["v4", "serde"] }
 
 [features]
-default = ["image-decode"]
+default = []
 
 # Enable video encoding via FFmpeg (requires ffmpeg installed on system)
 video = ["dep:ffmpeg-next"]
 
-# Image decoding (CPU-based, always available but can be explicitly enabled)
-image-decode = ["dep:image"]
-
-# GPU-accelerated decoding (Linux nvJPEG, macOS Apple hardware)
-gpu-decode = ["image-decode"]
-
 # CUDA pinned memory for zero-copy GPU transfers (requires cudarc)
-cuda-pinned = ["gpu-decode"]
+cuda-pinned = []
 
 [dev-dependencies]
 pretty_assertions = "1.4"

@@ -133,9 +133,10 @@ pprof = { version = "0.14", features = ["flamegraph", "cpp", "prost-codec", "fra
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.7", optional = true }
 
-# Dataset features (optional, disabled by default)
+# Dataset features
 [features]
-default = []
+# Include sources + sinks by default so the roboflow binary (submit, run, batch) is built with `cargo build`
+default = ["sources", "sinks"]
 # Legacy dataset converter (deprecated, use roboflow-pipeline framework instead)
 dataset = ["roboflow-pipeline/dataset"]
 # Pipeline API (Source/Sink abstraction)

@@ -6,7 +6,7 @@
 //!
 //! Provides automatic backend selection and GPU initialization with fallback,
 //! similar to `GpuCompressorFactory` in `roboflow-pipeline/gpu/factory.rs`.
-
+//!
 use super::{
     ImageError, Result,
     backend::{CpuImageDecoder, ImageDecoderBackend},
@@ -68,7 +68,7 @@ impl ImageDecoderFactory {
             ))),
 
             DecoderBackendType::Gpu => {
-                #[cfg(all(feature = "gpu-decode", target_os = "linux"))]
+                #[cfg(target_os = "linux")]
                 {
                     use super::gpu::GpuImageDecoder;
 
@@ -93,7 +93,7 @@ impl ImageDecoderFactory {
                         Err(e) => Err(e),
                     }
                 }
-                #[cfg(not(all(feature = "gpu-decode", target_os = "linux")))]
+                #[cfg(not(target_os = "linux"))]
                 {
                     if self.config.auto_fallback {
                         tracing::warn!("GPU decoding not supported on this platform. Using CPU.");
@@ -103,14 +103,14 @@ impl ImageDecoderFactory {
                         )))
                     } else {
                         Err(ImageError::GpuUnavailable(
-                            "GPU decoding requires 'gpu-decode' feature on Linux".to_string(),
+                            "GPU decoding is supported on Linux only".to_string(),
                         ))
                     }
                 }
             }
 
             DecoderBackendType::Apple => {
-                #[cfg(all(feature = "gpu-decode", target_os = "macos"))]
+                #[cfg(target_os = "macos")]
                 {
                     use super::apple::AppleImageDecoder;
 
@@ -132,7 +132,7 @@ impl ImageDecoderFactory {
                         Err(e) => Err(e),
                     }
                 }
-                #[cfg(not(all(feature = "gpu-decode", target_os = "macos")))]
+                #[cfg(not(target_os = "macos"))]
                 {
                     if self.config.auto_fallback {
                         tracing::warn!("Apple decoding not supported on this platform. Using CPU.");
@@ -142,7 +142,7 @@ impl ImageDecoderFactory {
                         )))
                     } else {
                         Err(ImageError::GpuUnavailable(
-                            "Apple decoding requires 'gpu-decode' feature on macOS".to_string(),
+                            "Apple hardware decoding is supported on macOS only".to_string(),
                         ))
                     }
                 }
@@ -152,18 +152,18 @@ impl ImageDecoderFactory {
                 // Auto-detect: prioritize GPU, then CPU
 
                 // Try Apple first on macOS
-                #[cfg(all(feature = "gpu-decode", target_os = "macos"))]
+                #[cfg(target_os = "macos")]
                 {
                     use super::apple::AppleImageDecoder;
 
                     if let Ok(decoder) = AppleImageDecoder::try_new(self.config.memory_strategy) {
-                        tracing::info!("Auto-detected Apple hardware decoder");
+                        tracing::debug!("Auto-detected Apple hardware decoder");
                         return Ok(Box::new(decoder));
                     }
                 }
 
                 // Try GPU on Linux
-                #[cfg(all(feature = "gpu-decode", target_os = "linux"))]
+                #[cfg(target_os = "linux")]
                 {
                     use super::gpu::GpuImageDecoder;
 
@@ -171,18 +171,13 @@ impl ImageDecoderFactory {
                         self.config.gpu_device.unwrap_or(0),
                         self.config.memory_strategy,
                     ) {
-                        tracing::info!("Auto-detected GPU decoder (nvJPEG)");
+                        tracing::debug!("Auto-detected GPU decoder (nvJPEG)");
                         return Ok(Box::new(decoder));
                     }
                 }
 
-                #[cfg(not(feature = "gpu-decode"))]
-                {
-                    tracing::debug!("GPU decode feature not enabled");
-                }
-
                 // Fallback to CPU
-                tracing::info!("Using CPU decoder (image crate)");
+                tracing::debug!("Using CPU decoder (image crate)");
                 Ok(Box::new(CpuImageDecoder::new(
                     self.config.memory_strategy,
                     self.config.cpu_threads,
@@ -194,7 +189,8 @@ impl ImageDecoderFactory {
     /// Get or create a decoder (cached).
     ///
     /// Returns a reference to the cached decoder if available,
-    /// otherwise creates and caches a new one.
+    /// otherwise creates and caches a new one. The backend is chosen once
+    /// at first use and does not change for the lifetime of this factory.
     ///
     /// This is useful for maintaining decoder state (e.g., CUDA context)
     /// across multiple decode operations.
@@ -219,11 +215,11 @@ impl ImageDecoderFactory {
 
     /// Check if GPU decoding is available on this system.
     pub fn is_gpu_available() -> bool {
-        #[cfg(all(feature = "gpu-decode", target_os = "linux"))]
+        #[cfg(target_os = "linux")]
         {
             super::gpu::GpuImageDecoder::is_available()
         }
-        #[cfg(not(all(feature = "gpu-decode", target_os = "linux")))]
+        #[cfg(not(target_os = "linux"))]
         {
             false
         }
@@ -231,11 +227,11 @@ impl ImageDecoderFactory {
 
     /// Check if Apple hardware decoding is available on this system.
     pub fn is_apple_available() -> bool {
-        #[cfg(all(feature = "gpu-decode", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             super::apple::AppleImageDecoder::is_available()
         }
-        #[cfg(not(all(feature = "gpu-decode", target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             false
         }
@@ -243,11 +239,11 @@ impl ImageDecoderFactory {
 
     /// Get information about available GPU devices.
     pub fn gpu_device_info() -> Vec<GpuDeviceInfo> {
-        #[cfg(all(feature = "gpu-decode", target_os = "linux"))]
+        #[cfg(target_os = "linux")]
         {
             super::gpu::GpuImageDecoder::device_info()
         }
-        #[cfg(not(all(feature = "gpu-decode", target_os = "linux")))]
+        #[cfg(not(target_os = "linux"))]
         {
             Vec::new()
         }

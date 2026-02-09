@@ -808,6 +808,9 @@ impl SyncOssWriter {
     }
 
     /// Upload the buffer to OSS.
+    ///
+    /// Runs the async put in a dedicated thread so we never call `block_on` from
+    /// within a tokio runtime thread (which would panic).
     fn upload(&mut self) -> Result<()> {
         if self.uploaded {
             return Ok(());
@@ -818,13 +821,28 @@ impl SyncOssWriter {
         let payload = object_store::PutPayload::from_bytes(bytes);
         let key = self.key.clone();
         let store = self.store.clone();
+        let runtime = self.runtime.clone();
 
-        self.runtime.block_on(async {
-            store
-                .put(&key, payload)
-                .await
-                .map_err(|e| StorageError::Cloud(format!("Failed to upload to OSS: {}", e)))
-        })?;
+        let result = std::thread::spawn(move || {
+            runtime.block_on(async move {
+                store
+                    .put(&key, payload)
+                    .await
+                    .map_err(|e| StorageError::Cloud(format!("Failed to upload to OSS: {}", e)))
+            })
+        })
+        .join();
+
+        match result {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(e) => {
+                return Err(StorageError::Other(format!(
+                    "OSS upload thread panicked: {:?}",
+                    e
+                )));
+            }
+        }
 
         self.uploaded = true;
         Ok(())

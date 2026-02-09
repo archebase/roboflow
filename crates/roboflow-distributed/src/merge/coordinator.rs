@@ -473,13 +473,14 @@ impl MergeCoordinator {
 
         // Update expected_workers and output_path
         state.expected_workers = expected_workers;
-        state.output_path = output_path;
+        state.output_path = output_path.clone();
 
         // Check if ready to merge (has staging paths)
         if !state.is_ready() {
-            // For single-worker mode, proceed anyway
+            // For single-worker mode, worker may have written directly to output_path
+            // without calling register_staging_complete. Treat output as the single staging path.
             if state.completed_workers == 0 && expected_workers == 1 {
-                // No workers registered - proceed with direct merge
+                state.add_worker("direct".to_string(), output_path.clone(), 0);
             } else {
                 // Transition back to Running and return NotReady
                 let mut retry_status = current_status;

@@ -504,44 +504,60 @@ impl TikvClient {
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
-            // Read current lock state in transaction
-            let acquired = match txn
-                .get(key.clone())
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?
-            {
-                Some(data) => {
-                    let existing: LockRecord = bincode::deserialize(&data)
-                        .map_err(|e| TikvError::Deserialization(e.to_string()))?;
+            // Run transactional logic; on any error we must rollback before returning
+            let body_result: Result<bool> = async {
+                let current = txn
+                    .get(key.clone())
+                    .await
+                    .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                let acquired = match current {
+                    Some(data) => {
+                        let existing: LockRecord = bincode::deserialize(&data)
+                            .map_err(|e| TikvError::Deserialization(e.to_string()))?;
 
-                    // Check ownership FIRST (regardless of expiration)
-                    // If we own the lock, extend it even if expired
-                    if existing.is_owned_by(owner) {
-                        let mut lock = existing;
-                        lock.extend(ttl_seconds);
-                        let new_data = bincode::serialize(&lock)
-                            .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                        txn.put(key, new_data)
-                            .await
-                            .map_err(|e| TikvError::ClientError(e.to_string()))?;
-                        tracing::debug!(
-                            resource = %resource,
-                            owner = %owner,
-                            new_version = lock.version,
-                            "Lock extended"
-                        );
-                        true
-                    } else if !existing.is_expired() {
-                        // Lock is held by someone else and not expired
-                        tracing::debug!(
-                            resource = %resource,
-                            owner = %owner,
-                            current_owner = %existing.owner,
-                            "Lock held by another owner"
-                        );
-                        false
-                    } else {
-                        // Lock expired and not owned by us, take it
+                        if existing.is_owned_by(owner) {
+                            let mut lock = existing;
+                            lock.extend(ttl_seconds);
+                            let new_data = bincode::serialize(&lock)
+                                .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                            txn.put(key, new_data)
+                                .await
+                                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                            tracing::debug!(
+                                resource = %resource,
+                                owner = %owner,
+                                new_version = lock.version,
+                                "Lock extended"
+                            );
+                            true
+                        } else if !existing.is_expired() {
+                            tracing::debug!(
+                                resource = %resource,
+                                owner = %owner,
+                                current_owner = %existing.owner,
+                                "Lock held by another owner"
+                            );
+                            false
+                        } else {
+                            let lock = LockRecord::new(
+                                resource.to_string(),
+                                owner.to_string(),
+                                ttl_seconds,
+                            );
+                            let data = bincode::serialize(&lock)
+                                .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                            txn.put(key, data)
+                                .await
+                                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                            tracing::info!(
+                                resource = %resource,
+                                owner = %owner,
+                                "Lock acquired (was expired)"
+                            );
+                            true
+                        }
+                    }
+                    None => {
                         let lock =
                             LockRecord::new(resource.to_string(), owner.to_string(), ttl_seconds);
                         let data = bincode::serialize(&lock)
@@ -552,34 +568,27 @@ impl TikvClient {
                         tracing::info!(
                             resource = %resource,
                             owner = %owner,
-                            "Lock acquired (was expired)"
+                            "Lock acquired (new lock)"
                         );
                         true
                     }
-                }
-                None => {
-                    // No lock exists, create new one
-                    let lock =
-                        LockRecord::new(resource.to_string(), owner.to_string(), ttl_seconds);
-                    let data = bincode::serialize(&lock)
-                        .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                    txn.put(key, data)
+                };
+                Ok(acquired)
+            }
+            .await;
+
+            match body_result {
+                Ok(acquired) => {
+                    txn.commit()
                         .await
                         .map_err(|e| TikvError::ClientError(e.to_string()))?;
-                    tracing::info!(
-                        resource = %resource,
-                        owner = %owner,
-                        "Lock acquired (new lock)"
-                    );
-                    true
+                    Ok(acquired)
                 }
-            };
-
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            Ok(acquired)
+                Err(e) => {
+                    let _ = txn.rollback().await;
+                    Err(e)
+                }
+            }
         }
     }
 
@@ -604,51 +613,62 @@ impl TikvClient {
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
-            let released = match txn
-                .get(key.clone())
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?
-            {
-                Some(data) => {
-                    let existing: LockRecord = bincode::deserialize(&data)
-                        .map_err(|e| TikvError::Deserialization(e.to_string()))?;
+            let body_result: Result<bool> = async {
+                let current = txn
+                    .get(key.clone())
+                    .await
+                    .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                let released = match current {
+                    Some(data) => {
+                        let existing: LockRecord = bincode::deserialize(&data)
+                            .map_err(|e| TikvError::Deserialization(e.to_string()))?;
 
-                    if existing.is_owned_by(owner) {
-                        txn.delete(key)
-                            .await
-                            .map_err(|e| TikvError::ClientError(e.to_string()))?;
-                        tracing::info!(
+                        if existing.is_owned_by(owner) {
+                            txn.delete(key)
+                                .await
+                                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                            tracing::info!(
+                                resource = %resource,
+                                owner = %owner,
+                                fencing_token = existing.fencing_token(),
+                                "Lock released"
+                            );
+                            true
+                        } else {
+                            tracing::warn!(
+                                resource = %resource,
+                                owner = %owner,
+                                actual_owner = %existing.owner,
+                                "Lock release failed: not the owner"
+                            );
+                            false
+                        }
+                    }
+                    None => {
+                        tracing::debug!(
                             resource = %resource,
                             owner = %owner,
-                            fencing_token = existing.fencing_token(),
-                            "Lock released"
-                        );
-                        true
-                    } else {
-                        tracing::warn!(
-                            resource = %resource,
-                            owner = %owner,
-                            actual_owner = %existing.owner,
-                            "Lock release failed: not the owner"
+                            "Lock release failed: lock not found"
                         );
                         false
                     }
-                }
-                None => {
-                    tracing::debug!(
-                        resource = %resource,
-                        owner = %owner,
-                        "Lock release failed: lock not found"
-                    );
-                    false
-                }
-            };
+                };
+                Ok(released)
+            }
+            .await;
 
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            Ok(released)
+            match body_result {
+                Ok(released) => {
+                    txn.commit()
+                        .await
+                        .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                    Ok(released)
+                }
+                Err(e) => {
+                    let _ = txn.rollback().await;
+                    Err(e)
+                }
+            }
         }
     }
 

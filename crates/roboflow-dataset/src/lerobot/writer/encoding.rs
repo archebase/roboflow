@@ -289,41 +289,106 @@ fn encode_videos_parallel(
     Ok((files, stats))
 }
 
+/// JPEG magic: FF D8 FF
+const JPEG_MAGIC: &[u8] = &[0xFF, 0xD8, 0xFF];
+/// PNG magic: 89 50 4E 47 0D 0A 1A 0A
+const PNG_MAGIC: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+/// Decode compressed image (JPEG/PNG) to RGB when `is_encoded` is true.
+/// Tries raw payload first, then skips an 8-byte header if present (e.g. ROS/serialization prefix).
+/// Returns None if decode fails.
+fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
+    if let Some(decoded) = try_decode_payload(&img.data) {
+        return Some(decoded);
+    }
+    // Some codecs (e.g. ROS bag CDR) prefix the image with an 8-byte header (e.g. zeros or length).
+    // Try skipping the first 8 bytes and decode again.
+    if img.data.len() > 8
+        && let Some(decoded) = try_decode_payload(&img.data[8..])
+    {
+        return Some(decoded);
+    }
+    None
+}
+
+/// Try to decode a byte slice as JPEG or PNG. Returns (width, height, rgb_data) on success.
+fn try_decode_payload(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    use crate::image::{ImageFormat, decode_compressed_image};
+
+    if data.is_empty() {
+        return None;
+    }
+    if data.starts_with(JPEG_MAGIC)
+        && let Ok(decoded) = decode_compressed_image(data, ImageFormat::Jpeg)
+    {
+        return Some((decoded.width, decoded.height, decoded.data));
+    }
+    if data.starts_with(PNG_MAGIC)
+        && let Ok(decoded) = decode_compressed_image(data, ImageFormat::Png)
+    {
+        return Some((decoded.width, decoded.height, decoded.data));
+    }
+    // Try both decoders when magic is missing (e.g. after skipping header)
+    if let Ok(decoded) = decode_compressed_image(data, ImageFormat::Jpeg) {
+        return Some((decoded.width, decoded.height, decoded.data));
+    }
+    if let Ok(decoded) = decode_compressed_image(data, ImageFormat::Png) {
+        return Some((decoded.width, decoded.height, decoded.data));
+    }
+    None
+}
+
 /// Static version of build_frame_buffer for use in parallel context.
 ///
 /// Returns (buffer, skipped_frame_count) where skipped frames are those
-/// that had dimension mismatches.
+/// that had dimension mismatches or failed to decode (when encoded).
+/// Compressed images (JPEG/PNG) are decoded to RGB before encoding to MP4.
 pub fn build_frame_buffer_static(images: &[ImageData]) -> Result<(VideoFrameBuffer, usize)> {
     let mut buffer = VideoFrameBuffer::new();
     let mut skipped = 0usize;
 
     for img in images {
-        if img.width > 0 && img.height > 0 {
-            let rgb_data = img.data.clone();
-            let video_frame = VideoFrame::new(img.width, img.height, rgb_data);
-            if let Err(e) = buffer.add_frame(video_frame) {
-                skipped += 1;
-                tracing::warn!(
-                    expected_width = buffer.width.unwrap_or(0),
-                    expected_height = buffer.height.unwrap_or(0),
-                    actual_width = img.width,
-                    actual_height = img.height,
-                    error = %e,
-                    "Frame dimension mismatch - skipping frame"
-                );
+        if img.width == 0 || img.height == 0 {
+            continue;
+        }
+
+        let (width, height, rgb_data) = if img.is_encoded {
+            match decode_image_to_rgb(img) {
+                Some((w, h, data)) => (w, h, data),
+                None => {
+                    skipped += 1;
+                    tracing::debug!(
+                        "Skipping encoded image (decode failed)"
+                    );
+                    continue;
+                }
             }
+        } else {
+            (img.width, img.height, img.data.clone())
+        };
+
+        let video_frame = VideoFrame::new(width, height, rgb_data);
+        if let Err(e) = buffer.add_frame(video_frame) {
+            skipped += 1;
+            tracing::warn!(
+                expected_width = buffer.width.unwrap_or(0),
+                expected_height = buffer.height.unwrap_or(0),
+                actual_width = width,
+                actual_height = height,
+                error = %e,
+                "Frame dimension mismatch - skipping frame"
+            );
         }
     }
 
-    // Fail if all frames were skipped
+    // When all frames were skipped, log and continue (no video for this camera, episode still succeeds)
     if !images.is_empty() && buffer.is_empty() {
-        return Err(roboflow_core::RoboflowError::encode(
-            "VideoEncoder",
-            format!(
-                "All {} frames skipped due to dimension mismatches - dataset may be corrupted",
-                images.len()
-            ),
-        ));
+        tracing::warn!(
+            frame_count = images.len(),
+            "All frames skipped for video (decode failed or dimension mismatch); \
+             check logs above for 'Compressed image decode failed' to fix. \
+             Parquet and other cameras will still be written."
+        );
     }
 
     Ok((buffer, skipped))

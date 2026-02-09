@@ -8,10 +8,10 @@ repository = "https://github.com/archebase/roboflow"
 description = "HDF5 dataset writer for roboflow - KPS v1.2 format (optional crate)"
 
 [dependencies]
-roboflow-core = { path = "../roboflow-core", version = "0.2.0" }
-roboflow-storage = { path = "../roboflow-storage", version = "0.2.0" }
+roboflow-core = { workspace = true }
+roboflow-storage = { workspace = true }
 
-# HDF5 - requires system library libhdf5-dev
+# HDF5 (requires system libhdf5-dev)
 hdf5 = { git = "https://github.com/archebase/hdf5-rs" }
 
 # Error handling

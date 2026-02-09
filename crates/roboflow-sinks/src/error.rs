@@ -18,7 +18,7 @@ pub enum SinkError {
     UnsupportedFormat(String),
 
     /// Failed to create the sink
-    #[error("Failed to create sink: {path}")]
+    #[error("Failed to create sink: {path}: {error}")]
     CreateFailed {
         /// Path that failed to create
         path: PathBuf,

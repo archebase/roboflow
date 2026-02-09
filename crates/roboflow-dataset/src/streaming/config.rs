@@ -6,8 +6,9 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use crate::image::ImageDecoderConfig;
+use crate::image::{ImageDecoderBackend, ImageDecoderConfig, ImageDecoderFactory};
 
 /// Streaming dataset converter configuration.
 #[derive(Debug, Clone)]
@@ -46,11 +47,14 @@ pub struct StreamingConfig {
     /// before being stored in the dataset. If None, compressed images
     /// are stored as-is.
     pub decoder_config: Option<ImageDecoderConfig>,
+
+    /// Pre-created shared decoder (used when set; avoids creating a decoder per alignment buffer).
+    /// Set by `resolve_decoder()` so the decoder is created once and reused.
+    pub shared_decoder: Option<Arc<dyn ImageDecoderBackend>>,
 }
 
 impl Default for StreamingConfig {
     fn default() -> Self {
-        #[cfg(feature = "image-decode")]
         use crate::image::ImageDecoderConfig;
 
         Self {
@@ -61,10 +65,8 @@ impl Default for StreamingConfig {
             late_message_strategy: LateMessageStrategy::WarnAndDrop,
             feature_requirements: HashMap::new(),
             temp_dir: None,
-            #[cfg(feature = "image-decode")]
             decoder_config: Some(ImageDecoderConfig::new()),
-            #[cfg(not(feature = "image-decode"))]
-            decoder_config: None,
+            shared_decoder: None,
         }
     }
 }
@@ -187,6 +189,23 @@ impl StreamingConfig {
         self
     }
 
+    /// Create the image decoder once and store it as shared_decoder.
+    ///
+    /// Call this when building config for a converter so that alignment buffers
+    /// reuse the same decoder instead of each creating their own (which would
+    /// call create_decoder many times). Returns a new config with
+    /// `shared_decoder` set and `decoder_config` cleared.
+    pub fn resolve_decoder(mut self) -> Self {
+        if let Some(ref decoder_config) = self.decoder_config {
+            let mut factory = ImageDecoderFactory::new(decoder_config);
+            if let Ok(decoder) = factory.create_decoder() {
+                self.shared_decoder = Some(Arc::from(decoder));
+                self.decoder_config = None;
+            }
+        }
+        self
+    }
+
     /// Calculate the completion window in nanoseconds.
     ///
     /// # Panics
@@ -251,6 +270,7 @@ mod tests {
             fps: 0,
             temp_dir: None,
             decoder_config: None,
+            shared_decoder: None,
             ..Default::default()
         };
         assert!(config.validate().is_err());

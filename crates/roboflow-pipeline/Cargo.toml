@@ -13,9 +13,10 @@ roboflow-core = { workspace = true }
 roboflow-dataset = { workspace = true, optional = true }
 roboflow-sources = { workspace = true }
 roboflow-sinks = { workspace = true }
-
-# External dependencies from robocodec (uses workspace version)
 robocodec = { workspace = true }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
 
 # Compression
 zstd = "0.13"
@@ -33,7 +34,7 @@ crossbeam-queue = "0.3"
 bumpalo = "3.16"
 bytemuck = "1.15"
 
-# Serialization
+# Serialization / low-level
 byteorder = "1.5"
 libc = "0.2"
 memmap2 = "0.9"
@@ -43,10 +44,6 @@ thiserror = "1.0"
 
 # Logging
 tracing = "0.1"
-
-# Async runtime
-tokio = { workspace = true }
-async-trait = { workspace = true }
 
 [features]
 # CPU feature detection (x86_64 only)

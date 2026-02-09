@@ -553,18 +553,8 @@ impl ImageDecoderFactory {
 # Existing features...
 video = ["dep:ffmpeg-next"]
 
-# Image decoding features
-image-decode = ["dep:image"]
-
-# GPU-accelerated image decoding (Linux only)
-gpu-decode = [
-    "image-decode",
-    "dep:cudarc",
-    "dep:image",  # for PNG fallback (nvJPEG doesn't support PNG)
-]
-
 # CUDA pinned memory (optional, for zero-copy transfers)
-cuda-pinned = ["gpu-decode", "dep:cudarc"]
+cuda-pinned = []
 ```
 
 ## Data Flow

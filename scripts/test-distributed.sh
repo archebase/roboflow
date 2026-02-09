@@ -28,14 +28,14 @@ export TIKV_PD_ENDPOINTS="${TIKV_PD_ENDPOINTS:-127.0.0.1:2379}"
 
 # Roboflow Configuration
 export ROBOFLOW_USER="${ROBOFLOW_USER:-$(whoami)}"
-export ROBOFLOW_OUTPUT_PREFIX="${ROBOFLOW_OUTPUT_PREFIX:-s3://roboflow-output/}"
+export ROBOFLOW_OUTPUT_PREFIX="${ROBOFLOW_OUTPUT_PREFIX:-s3://roboflow-datasets/}"
 
 # Logging
 export RUST_LOG="${RUST_LOG:-roboflow=debug,roboflow_distributed=debug,tikv_client=warn}"
 
 ROBOFLOW_BIN="${PROJECT_ROOT}/target/debug/roboflow"
 CONFIG_FILE="${CONFIG_FILE:-examples/rust/lerobot_config.toml}"
-OUTPUT_PREFIX="${ROBOFLOW_OUTPUT_PREFIX:-s3://roboflow-output/}"
+OUTPUT_PREFIX="${ROBOFLOW_OUTPUT_PREFIX:-s3://roboflow-datasets/}"
 
 # =============================================================================
 # Functions
@@ -121,7 +121,7 @@ S3/MinIO:
   Endpoint:   ${AWS_ENDPOINT_URL}
   Access Key: ${AWS_ACCESS_KEY_ID}
   Input:      s3://roboflow-raw/
-  Output:     s3://roboflow-output/
+  Output:     s3://roboflow-datasets/
 
 TiKV:
   PD Endpoints: ${TIKV_PD_ENDPOINTS}

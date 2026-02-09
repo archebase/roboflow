@@ -21,12 +21,14 @@ use crate::image::ImageError;
 
 /// Apple hardware-accelerated image decoder.
 #[cfg(target_os = "macos")]
+#[derive(Debug)]
 pub struct AppleImageDecoder {
     memory_strategy: MemoryStrategy,
 }
 
 /// Apple hardware-accelerated image decoder.
 #[cfg(not(target_os = "macos"))]
+#[derive(Debug)]
 pub struct AppleImageDecoder {
     memory_strategy: MemoryStrategy,
 }

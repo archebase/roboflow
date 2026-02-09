@@ -8,14 +8,24 @@ repository = "https://github.com/archebase/roboflow"
 description = "Sink plugins for roboflow data pipeline"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-thiserror = "1.0"
+roboflow-dataset = { workspace = true }
+roboflow-storage = { workspace = true }
+
 chrono = { workspace = true }
 async-trait = { workspace = true }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "1.0"
+
+# Logging
 tracing = "0.1"
+
+# Parquet (optional)
 polars = { version = "0.41", features = ["parquet"], optional = true }
-roboflow-dataset = { path = "../roboflow-dataset", version = "0.2.0" }
 
 [features]
 default = []

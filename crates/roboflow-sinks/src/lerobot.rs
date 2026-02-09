@@ -7,11 +7,17 @@
 //! This sink writes robotics datasets in LeRobot v2.1 format by delegating
 //! to `roboflow_dataset::lerobot::LerobotWriter`. Handles episode boundaries,
 //! frame conversion (`DatasetFrame` → `AlignedFrame`), and cloud storage.
+//!
+//! When the output path is `s3://` or `oss://`, the sink uses a local buffer
+//! for all file I/O (Parquet, FFmpeg video encoding) then uploads to cloud.
+//! FFmpeg cannot write to S3 URLs directly.
 
 use crate::convert::dataset_frame_to_aligned;
 use crate::{DatasetFrame, Sink, SinkCheckpoint, SinkConfig, SinkError, SinkResult, SinkStats};
 use roboflow_dataset::lerobot::{LerobotConfig, LerobotWriter};
+use roboflow_storage::StorageUrl;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 /// LeRobot dataset sink.
 ///
@@ -101,12 +107,55 @@ impl Sink for LerobotSink {
             "Initializing LeRobot sink"
         );
 
-        let writer = LerobotWriter::new_local(&self.output_path, lerobot_config).map_err(|e| {
-            SinkError::CreateFailed {
-                path: self.output_path.clone().into(),
+        let writer = if self.output_path.starts_with("s3://")
+            || self.output_path.starts_with("oss://")
+        {
+            // Cloud URL: use local buffer for all file I/O (Parquet + FFmpeg), then upload to S3/OSS.
+            // FFmpeg only accepts local paths; we must not pass s3:// to it.
+            let storage = roboflow_storage::StorageFactory::from_env()
+                .create(&self.output_path)
+                .map_err(|e| SinkError::CreateFailed {
+                    path: self.output_path.clone().into(),
+                    error: Box::new(e),
+                })?;
+
+            let output_prefix = StorageUrl::from_str(&self.output_path)
+                .ok()
+                .map(|u| u.path().trim_end_matches('/').to_string())
+                .unwrap_or_default();
+
+            let local_buffer = std::env::temp_dir().join("roboflow").join(format!(
+                "{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or(std::time::Duration::ZERO)
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&local_buffer).map_err(|e| SinkError::CreateFailed {
+                path: local_buffer.clone(),
                 error: Box::new(e),
-            }
-        })?;
+            })?;
+
+            tracing::info!(
+                output_prefix = %output_prefix,
+                local_buffer = %local_buffer.display(),
+                "Using local buffer for cloud output (videos/parquet written locally then uploaded)"
+            );
+
+            LerobotWriter::new(storage, output_prefix, &local_buffer, lerobot_config).map_err(
+                |e| SinkError::CreateFailed {
+                    path: self.output_path.clone().into(),
+                    error: Box::new(e),
+                },
+            )?
+        } else {
+            LerobotWriter::new_local(&self.output_path, lerobot_config).map_err(|e| {
+                SinkError::CreateFailed {
+                    path: self.output_path.clone().into(),
+                    error: Box::new(e),
+                }
+            })?
+        };
 
         self.writer = Some(writer);
         self.start_time = Some(std::time::Instant::now());

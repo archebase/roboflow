@@ -128,6 +128,7 @@ impl StreamingDatasetConverter {
         kps_config: crate::kps::config::KpsConfig,
         config: StreamingConfig,
     ) -> Result<Self> {
+        let config = config.resolve_decoder();
         Ok(Self {
             output_dir: output_dir.as_ref().to_path_buf(),
             format: DatasetFormat::Kps,
@@ -149,6 +150,7 @@ impl StreamingDatasetConverter {
         input_storage: Option<Arc<dyn Storage>>,
         output_storage: Option<Arc<dyn Storage>>,
     ) -> Result<Self> {
+        let config = config.resolve_decoder();
         Ok(Self {
             output_dir: output_dir.as_ref().to_path_buf(),
             format: DatasetFormat::Kps,
@@ -168,8 +170,10 @@ impl StreamingDatasetConverter {
         lerobot_config: crate::lerobot::config::LerobotConfig,
     ) -> Result<Self> {
         let fps = lerobot_config.dataset.fps;
-        // Require observation.state for LeRobot datasets
-        let config = StreamingConfig::with_fps(fps).require_feature("observation.state");
+        // Require observation.state for LeRobot datasets; resolve_decoder so one decoder is shared by all alignment buffers
+        let config = StreamingConfig::with_fps(fps)
+            .require_feature("observation.state")
+            .resolve_decoder();
         Ok(Self {
             output_dir: output_dir.as_ref().to_path_buf(),
             format: DatasetFormat::Lerobot,
@@ -191,8 +195,10 @@ impl StreamingDatasetConverter {
         output_storage: Option<Arc<dyn Storage>>,
     ) -> Result<Self> {
         let fps = lerobot_config.dataset.fps;
-        // Require observation.state for LeRobot datasets
-        let config = StreamingConfig::with_fps(fps).require_feature("observation.state");
+        // Require observation.state for LeRobot datasets; resolve_decoder so one decoder is shared
+        let config = StreamingConfig::with_fps(fps)
+            .require_feature("observation.state")
+            .resolve_decoder();
         Ok(Self {
             output_dir: output_dir.as_ref().to_path_buf(),
             format: DatasetFormat::Lerobot,

@@ -342,10 +342,10 @@ impl LerobotWriter {
         self.failed_encodings += encode_stats.failed_encodings;
         self.output_bytes += encode_stats.output_bytes;
 
-        eprintln!(
-            "[TIMING] finish_episode: parquet={:.1}ms, video={:.1}ms",
-            parquet_time.as_secs_f64() * 1000.0,
-            video_time.as_secs_f64() * 1000.0,
+        tracing::debug!(
+            parquet_ms = parquet_time.as_secs_f64() * 1000.0,
+            video_ms = video_time.as_secs_f64() * 1000.0,
+            "finish_episode timing"
         );
 
         // Queue upload via coordinator if available (non-blocking)
@@ -374,12 +374,63 @@ impl LerobotWriter {
                 })
                 .collect();
 
-            if let Err(e) = self.queue_episode_upload(&parquet_path, &video_paths) {
-                tracing::warn!(
-                    episode = self.episode_index,
-                    error = %e,
-                    "Failed to queue episode upload, files will remain local"
-                );
+            match self.queue_episode_upload(&parquet_path, &video_paths) {
+                Ok(_) => {}
+                Err(e) => {
+                    let hint = if e.to_string().contains("disconnected") {
+                        " (channel disconnected — coordinator may have been shut down, e.g. job cancelled)"
+                    } else {
+                        ""
+                    };
+                    tracing::warn!(
+                        episode = self.episode_index,
+                        error = %e,
+                        "Failed to queue episode upload, files will remain local{}",
+                        hint
+                    );
+                    // Fallback: upload this episode synchronously so data still reaches cloud
+                    if self.use_cloud_storage {
+                        if parquet_path.exists() {
+                            if let Err(upload_e) =
+                                upload::upload_parquet_file(self.storage.as_ref(), &parquet_path, &self.output_prefix)
+                            {
+                                tracing::error!(
+                                    episode = self.episode_index,
+                                    error = %upload_e,
+                                    "Fallback Parquet upload failed"
+                                );
+                            } else {
+                                tracing::info!(
+                                    episode = self.episode_index,
+                                    "Uploaded episode Parquet via fallback (coordinator unavailable)"
+                                );
+                            }
+                        }
+                        for (camera, path) in &video_paths {
+                            if path.exists() {
+                                if let Err(upload_e) = upload::upload_video_file(
+                                    self.storage.as_ref(),
+                                    path,
+                                    camera,
+                                    &self.output_prefix,
+                                ) {
+                                    tracing::error!(
+                                        episode = self.episode_index,
+                                        camera = %camera,
+                                        error = %upload_e,
+                                        "Fallback video upload failed"
+                                    );
+                                } else {
+                                    tracing::debug!(
+                                        episode = self.episode_index,
+                                        camera = %camera,
+                                        "Uploaded episode video via fallback"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -425,8 +476,19 @@ impl LerobotWriter {
     /// Encode videos for all cameras.
     fn encode_videos(&mut self) -> Result<(Vec<(PathBuf, String)>, EncodeStats)> {
         if self.image_buffers.is_empty() {
+            tracing::debug!(
+                episode_index = self.episode_index,
+                "Video skip: image_buffers empty (no add_image calls for this episode)"
+            );
             return Ok((Vec::new(), EncodeStats::default()));
         }
+        let total_images: usize = self.image_buffers.values().map(|v| v.len()).sum();
+        tracing::debug!(
+            episode_index = self.episode_index,
+            cameras = self.image_buffers.len(),
+            total_frames = total_images,
+            "Encoding videos"
+        );
 
         let videos_dir = self.output_dir.join("videos/chunk-000");
 
@@ -622,21 +684,26 @@ impl DatasetWriter for LerobotWriter {
             );
         }
 
-        // Flush pending uploads to cloud storage before completing
+        // Flush pending uploads to cloud storage; fail finalize if uploads don't complete or any failed
         if let Some(coordinator) = &self.upload_coordinator {
             tracing::info!("Waiting for pending cloud uploads to complete before finalize...");
-            match coordinator.flush() {
-                Ok(()) => {
-                    tracing::info!("All cloud uploads completed successfully");
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Some cloud uploads may not have completed before finalize. \
-                         Background uploads will continue after finalize returns."
-                    );
-                }
+            coordinator.flush().map_err(|e| {
+                roboflow_core::RoboflowError::other(format!(
+                    "Cloud upload flush failed: {e}. Not all data/video may have been written to sink."
+                ))
+            })?;
+            let stats = coordinator.stats();
+            if stats.failed_count > 0 {
+                return Err(roboflow_core::RoboflowError::other(format!(
+                    "{} cloud upload(s) failed. Data/video may be incomplete in sink.",
+                    stats.failed_count
+                )));
             }
+            tracing::info!(
+                files_uploaded = stats.total_files,
+                total_bytes = stats.total_bytes,
+                "All cloud uploads completed successfully"
+            );
         }
 
         Ok(WriterStats {

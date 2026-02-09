@@ -415,10 +415,8 @@ impl Pipeline {
             match msg.data {
                 robocodec::CodecValue::Array(ref arr) => {
                     // Convert CodecValue array to Vec<f32>
-                    let state: Vec<f32> = arr
-                        .iter()
-                        .filter_map(codec_value_element_to_f32)
-                        .collect();
+                    let state: Vec<f32> =
+                        arr.iter().filter_map(codec_value_element_to_f32).collect();
                     if !state.is_empty() {
                         let feature = self.config.topic_mappings.get(&msg.topic);
                         if feature.is_some_and(|f| f == "action") {
@@ -432,7 +430,10 @@ impl Pipeline {
                     // Check topic mapping to decide how to handle this struct
                     let feature = self.config.topic_mappings.get(&msg.topic);
 
-                    if feature.as_ref().is_some_and(|f| f.starts_with("observation.state") || f == &"action") {
+                    if feature
+                        .as_ref()
+                        .is_some_and(|f| f.starts_with("observation.state") || f == &"action")
+                    {
                         // State/action topic: extract numeric array from struct.
                         // For sensor_msgs/JointState, extract `position` field.
                         // Falls back to any float64/float32 array field.
@@ -445,8 +446,13 @@ impl Pipeline {
                                 }
                             }
                         }
-                    } else if let Some(robocodec::CodecValue::Bytes(data)) = map.get("data") {
-                        // Image data
+                    } else if let Some(image_bytes) = extract_image_bytes_from_struct(map) {
+                        // Image data (sensor_msgs/Image or sensor_msgs/CompressedImage)
+                        tracing::debug!(
+                            topic = %msg.topic,
+                            bytes = image_bytes.len(),
+                            "Pipeline: extracted image bytes for frame"
+                        );
                         let width = map
                             .get("width")
                             .and_then(|v: &robocodec::CodecValue| {
@@ -472,22 +478,38 @@ impl Pipeline {
                             })
                             .unwrap_or(480);
 
-                        let feature_name = feature
-                            .cloned()
-                            .unwrap_or_else(|| {
-                                msg.topic
-                                    .replace('/', "_")
-                                    .trim_start_matches('_')
-                                    .to_string()
-                            });
+                        let format = map
+                            .get("format")
+                            .and_then(|v: &robocodec::CodecValue| {
+                                if let robocodec::CodecValue::String(s) = v {
+                                    let s = s.to_lowercase();
+                                    if s.contains("jpeg") || s.contains("jpg") {
+                                        Some(ImageFormat::Jpeg)
+                                    } else if s.contains("png") {
+                                        Some(ImageFormat::Png)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(ImageFormat::Rgb8);
+
+                        let feature_name = feature.cloned().unwrap_or_else(|| {
+                            msg.topic
+                                .replace('/', "_")
+                                .trim_start_matches('_')
+                                .to_string()
+                        });
 
                         frame.images.insert(
                             feature_name,
                             ImageData {
                                 width,
                                 height,
-                                data: data.clone(),
-                                format: ImageFormat::Rgb8,
+                                data: image_bytes,
+                                format,
                             },
                         );
                     }
@@ -496,8 +518,53 @@ impl Pipeline {
             }
         }
 
+        if !frame.images.is_empty() {
+            tracing::debug!(
+                frame_index,
+                episode_index,
+                image_count = frame.images.len(),
+                "Pipeline: frame has images"
+            );
+        }
         Ok(frame)
     }
+}
+
+/// Extract raw image bytes from a struct message's "data" field.
+///
+/// Handles both `CodecValue::Bytes` and `CodecValue::Array` of UInt8
+/// (sensor_msgs/Image uses bytes; some codecs may decode uint8[] as array).
+fn extract_image_bytes_from_struct(
+    map: &std::collections::HashMap<String, robocodec::CodecValue>,
+) -> Option<Vec<u8>> {
+    let data = map.get("data")?;
+    let result = match data {
+        robocodec::CodecValue::Bytes(b) => Some(b.clone()),
+        robocodec::CodecValue::Array(arr) => {
+            let bytes: Vec<u8> = arr
+                .iter()
+                .filter_map(|v| {
+                    if let robocodec::CodecValue::UInt8(x) = v {
+                        Some(*x)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if bytes.is_empty() {
+                None
+            } else {
+                Some(bytes)
+            }
+        }
+        _ => {
+            tracing::debug!(
+                "Image struct 'data' is not Bytes or Array(UInt8); codec may use different format"
+            );
+            None
+        }
+    };
+    result
 }
 
 /// Extract a numeric state vector from a decoded struct message.

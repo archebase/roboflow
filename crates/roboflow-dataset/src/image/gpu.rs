@@ -23,13 +23,16 @@
 //! - nvJPEG handle creation and management
 //! - Batch decoding optimization for multiple images
 
+#[cfg(target_os = "linux")]
 use super::{
     ImageError, ImageFormat, Result,
     backend::{DecoderType, ImageDecoderBackend},
     memory::MemoryStrategy,
 };
 
-/// GPU decoder using NVIDIA nvJPEG library.
+/// GPU decoder using NVIDIA nvJPEG library (Linux only; on other platforms a CPU stub is re-exported).
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
 pub struct GpuImageDecoder {
     _device_id: u32, // For CUDA context initialization
     _memory_strategy: MemoryStrategy, // For CUDA pinned memory allocation
@@ -38,6 +41,7 @@ pub struct GpuImageDecoder {
                      // nvjpeg_handle: cudarc::nvjpeg::NvJpeg,
 }
 
+#[cfg(target_os = "linux")]
 impl GpuImageDecoder {
     /// Try to create a new nvJPEG decoder.
     ///
@@ -46,7 +50,7 @@ impl GpuImageDecoder {
     /// - CUDA context initialization
     /// - nvJPEG handle creation and management
     pub fn try_new(_device_id: u32, _memory_strategy: MemoryStrategy) -> Result<Self> {
-        #[cfg(all(feature = "gpu-decode", target_os = "linux"))]
+        #[cfg(target_os = "linux")]
         {
             // GPU decoding is not yet implemented.
             // See module-level documentation for implementation plan.
@@ -54,10 +58,10 @@ impl GpuImageDecoder {
                 "GPU decoding not yet implemented. See image::gpu module docs.".to_string(),
             ))
         }
-        #[cfg(not(all(feature = "gpu-decode", target_os = "linux")))]
+        #[cfg(not(target_os = "linux"))]
         {
             Err(ImageError::GpuUnavailable(
-                "GPU decoding requires 'gpu-decode' feature on Linux".to_string(),
+                "GPU decoding is supported on Linux only".to_string(),
             ))
         }
     }
@@ -77,6 +81,7 @@ impl GpuImageDecoder {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl ImageDecoderBackend for GpuImageDecoder {
     fn decode(&self, data: &[u8], format: ImageFormat) -> Result<super::backend::DecodedImage> {
         match format {
@@ -124,6 +129,7 @@ impl ImageDecoderBackend for GpuImageDecoder {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl GpuImageDecoder {
     /// Fallback to CPU decoding for unsupported formats.
     fn decode_cpu_fallback(
@@ -138,20 +144,14 @@ impl GpuImageDecoder {
     }
 }
 
-#[cfg(all(
-    feature = "gpu-decode",
-    not(target_os = "linux"),
-    not(all(
-        target_os = "macos",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    ))
-))]
+#[cfg(not(target_os = "linux"))]
 pub use super::backend::CpuImageDecoder as GpuImageDecoder;
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 
+    /// Tests the Linux GPU decoder stub (is_available/device_info only exist on Linux).
     #[test]
     fn test_gpu_decoder_not_available() {
         assert!(!GpuImageDecoder::is_available());

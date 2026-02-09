@@ -16,13 +16,10 @@
 //! - **[`config`]: Decoder configuration with builder pattern
 //! - **[`factory`]: Auto-detection and fallback management
 //! - **[`memory`]: GPU-friendly memory allocation strategies
-//! - **[`gpu`]: NVIDIA nvJPEG decoder (Linux only, feature-gated)
-//! - **[`apple`]: Apple hardware-accelerated decoder (macOS only, feature-gated)
+//! - **[`gpu`]: NVIDIA nvJPEG decoder (Linux only)
+//! - **[`apple`]: Apple hardware-accelerated decoder (macOS only)
 //!
-//! # Feature Flags
-//!
-//! - `image-decode`: Enables CPU-based JPEG/PNG decoding (always available)
-//! - `gpu-decode`: Enables GPU decoding (Linux only, requires CUDA)
+//! Image decoding (CPU + GPU/Apple when available) is always enabled for LeRobot and streaming conversion.
 //!
 //! # Usage
 //!
@@ -74,7 +71,7 @@ pub enum ImageError {
     #[error("Image decoding failed: {0}")]
     DecodeFailed(String),
 
-    #[error("Image decoding not enabled (compile with 'image-decode' feature)")]
+    #[error("Image decoding not enabled")]
     NotEnabled,
 
     #[error("Invalid image data: {0}")]
@@ -110,20 +107,10 @@ pub type Result<T> = std::result::Result<T, ImageError>;
 /// let rgb_image = decode_compressed_image(&jpeg_data, ImageFormat::Jpeg)?;
 /// ```
 pub fn decode_compressed_image(data: &[u8], format: ImageFormat) -> Result<DecodedImage> {
-    #[cfg(feature = "image-decode")]
-    {
-        use crate::image::{ImageDecoderConfig, ImageDecoderFactory};
+    use crate::image::{ImageDecoderConfig, ImageDecoderFactory};
 
-        let config = ImageDecoderConfig::new();
-        let mut factory = ImageDecoderFactory::new(&config);
-        let decoder = factory.get_decoder();
-        decoder.decode(data, format)
-    }
-
-    #[cfg(not(feature = "image-decode"))]
-    {
-        let _ = data;
-        let _ = format;
-        Err(ImageError::NotEnabled)
-    }
+    let config = ImageDecoderConfig::new();
+    let mut factory = ImageDecoderFactory::new(&config);
+    let decoder = factory.get_decoder();
+    decoder.decode(data, format)
 }

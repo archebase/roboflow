@@ -38,7 +38,7 @@ pub enum DecoderType {
 /// decoding implementations, enabling seamless fallback and
 /// platform-agnostic code. Similar to `CompressorBackend` in
 /// `roboflow-pipeline/gpu/backend.rs`.
-pub trait ImageDecoderBackend: Send + Sync {
+pub trait ImageDecoderBackend: Send + Sync + std::fmt::Debug {
     /// Decode a single image to RGB.
     ///
     /// # Arguments
@@ -206,6 +206,7 @@ impl DecodedImage {
 ///
 /// This decoder is always available and serves as the fallback
 /// when GPU or hardware-accelerated decoders are unavailable.
+#[derive(Debug)]
 pub struct CpuImageDecoder {
     memory_strategy: MemoryStrategy,
     _threads: usize, // Stored for future rayon thread pool configuration
@@ -231,30 +232,21 @@ impl CpuImageDecoder {
 
 impl ImageDecoderBackend for CpuImageDecoder {
     fn decode(&self, data: &[u8], format: ImageFormat) -> Result<DecodedImage> {
-        #[cfg(feature = "image-decode")]
-        {
-            match format {
-                ImageFormat::Jpeg => self.decode_jpeg(data),
-                ImageFormat::Png => self.decode_png(data),
-                ImageFormat::Rgb8 => {
-                    // Already RGB, but we need explicit dimensions from metadata.
-                    // The previous sqrt() approach was incorrect for non-square images.
-                    // Return an error directing the caller to provide dimensions explicitly.
-                    Err(ImageError::InvalidData(
-                        "RGB8 format requires explicit width/height from message metadata. \
-                         Use DecodedImage::new_with_dimensions() or extract dimensions from the ROS message.".to_string()
-                    ))
-                }
-                ImageFormat::Unknown => Err(ImageError::UnsupportedFormat(
-                    "Unknown format (cannot detect from magic bytes)".to_string(),
-                )),
+        match format {
+            ImageFormat::Jpeg => self.decode_jpeg(data),
+            ImageFormat::Png => self.decode_png(data),
+            ImageFormat::Rgb8 => {
+                // Already RGB, but we need explicit dimensions from metadata.
+                // The previous sqrt() approach was incorrect for non-square images.
+                // Return an error directing the caller to provide dimensions explicitly.
+                Err(ImageError::InvalidData(
+                    "RGB8 format requires explicit width/height from message metadata. \
+                     Use DecodedImage::new_with_dimensions() or extract dimensions from the ROS message.".to_string()
+                ))
             }
-        }
-
-        #[cfg(not(feature = "image-decode"))]
-        {
-            let _ = (data, format);
-            Err(ImageError::NotEnabled)
+            ImageFormat::Unknown => Err(ImageError::UnsupportedFormat(
+                "Unknown format (cannot detect from magic bytes)".to_string(),
+            )),
         }
     }
 
@@ -267,7 +259,6 @@ impl ImageDecoderBackend for CpuImageDecoder {
     }
 }
 
-#[cfg(feature = "image-decode")]
 impl CpuImageDecoder {
     fn decode_jpeg(&self, data: &[u8]) -> Result<DecodedImage> {
         use image::ImageDecoder;
@@ -347,7 +338,6 @@ mod tests {
         assert!(large.should_use_gpu());
     }
 
-    #[cfg(feature = "image-decode")]
     #[test]
     fn test_decode_jpeg_basic() {
         let decoder = CpuImageDecoder::default_config();
@@ -400,7 +390,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "image-decode")]
     #[test]
     fn test_decode_jpeg_truncated() {
         let decoder = CpuImageDecoder::default_config();
@@ -413,7 +402,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(feature = "image-decode")]
     #[test]
     fn test_decode_invalid_jpeg_magic_bytes() {
         let decoder = CpuImageDecoder::default_config();

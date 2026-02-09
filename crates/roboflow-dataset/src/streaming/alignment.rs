@@ -5,10 +5,11 @@
 //! Frame alignment with bounded memory footprint.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::common::AlignedFrame;
-use crate::image::{ImageDecoderFactory, ImageFormat};
+use crate::image::{ImageDecoderBackend, ImageDecoderFactory, ImageFormat};
 use crate::streaming::completion::FrameCompletionCriteria;
 use crate::streaming::config::StreamingConfig;
 use crate::streaming::stats::AlignmentStats;
@@ -89,8 +90,12 @@ pub struct FrameAlignmentBuffer {
     /// Statistics
     stats: AlignmentStats,
 
-    /// Image decoder factory (optional, for decoding CompressedImage messages)
+    /// Image decoder factory (optional, for decoding CompressedImage messages).
+    /// Used only when shared_decoder is None.
     decoder: Option<ImageDecoderFactory>,
+
+    /// Shared decoder (when set, used instead of creating one per buffer; avoids repeated create_decoder).
+    shared_decoder: Option<Arc<dyn ImageDecoderBackend>>,
 
     /// Next frame index to assign
     next_frame_index: usize,
@@ -100,10 +105,22 @@ pub struct FrameAlignmentBuffer {
 }
 
 impl FrameAlignmentBuffer {
+    fn decoder_from_config(
+        config: &StreamingConfig,
+    ) -> (Option<ImageDecoderFactory>, Option<Arc<dyn ImageDecoderBackend>>) {
+        if let Some(ref shared) = config.shared_decoder {
+            (None, Some(shared.clone()))
+        } else if let Some(ref dc) = config.decoder_config {
+            (Some(ImageDecoderFactory::new(dc)), None)
+        } else {
+            (None, None)
+        }
+    }
+
     /// Create a new frame alignment buffer.
     pub fn new(config: StreamingConfig) -> Self {
         let completion_criteria = Self::build_completion_criteria(&config);
-        let decoder = config.decoder_config.as_ref().map(ImageDecoderFactory::new);
+        let (decoder, shared_decoder) = Self::decoder_from_config(&config);
 
         Self {
             active_frames: BTreeMap::new(),
@@ -111,6 +128,7 @@ impl FrameAlignmentBuffer {
             completion_criteria,
             stats: AlignmentStats::new(),
             decoder,
+            shared_decoder,
             next_frame_index: 0,
             current_timestamp: 0,
         }
@@ -121,7 +139,7 @@ impl FrameAlignmentBuffer {
         config: StreamingConfig,
         criteria: FrameCompletionCriteria,
     ) -> Self {
-        let decoder = config.decoder_config.as_ref().map(ImageDecoderFactory::new);
+        let (decoder, shared_decoder) = Self::decoder_from_config(&config);
 
         Self {
             active_frames: BTreeMap::new(),
@@ -129,6 +147,7 @@ impl FrameAlignmentBuffer {
             completion_criteria: criteria,
             stats: AlignmentStats::new(),
             decoder,
+            shared_decoder,
             next_frame_index: 0,
             current_timestamp: 0,
         }
@@ -255,35 +274,37 @@ impl FrameAlignmentBuffer {
 
             // Try decoding if we have compressed data and a decoder
             if is_encoded {
-                if let Some(decoder) = &mut self.decoder {
-                    let format = ImageFormat::from_magic_bytes(data);
-                    if format != ImageFormat::Unknown {
-                        // SAFETY: We're in &mut self context, so we can call get_decoder
-                        // We need to explicitly reborrow to get mutable access
-                        match decoder.get_decoder().decode(data, format) {
-                            Ok(decoded) => {
-                                tracing::debug!(
-                                    width = decoded.width,
-                                    height = decoded.height,
-                                    feature = %feature_name,
-                                    "Decoded compressed image"
-                                );
-                                (Some(decoded.data), false)
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    error = %e,
-                                    feature = %feature_name,
-                                    "Failed to decode image, storing compressed"
-                                );
-                                (Some(data.clone()), true)
-                            }
-                        }
+                let format = ImageFormat::from_magic_bytes(data);
+                let decoded_result = if format != ImageFormat::Unknown {
+                    if let Some(shared) = &self.shared_decoder {
+                        Some(shared.decode(data, format))
+                    } else if let Some(decoder) = &mut self.decoder {
+                        Some(decoder.get_decoder().decode(data, format))
                     } else {
-                        (Some(data.clone()), true)
+                        None
                     }
                 } else {
-                    (Some(data.clone()), true)
+                    None
+                };
+                match decoded_result {
+                    Some(Ok(decoded)) => {
+                        tracing::debug!(
+                            width = decoded.width,
+                            height = decoded.height,
+                            feature = %feature_name,
+                            "Decoded compressed image"
+                        );
+                        (Some(decoded.data), false)
+                    }
+                    Some(Err(e)) => {
+                        tracing::warn!(
+                            error = %e,
+                            feature = %feature_name,
+                            "Failed to decode image, storing compressed"
+                        );
+                        (Some(data.clone()), true)
+                    }
+                    None => (Some(data.clone()), true),
                 }
             } else {
                 (Some(data.clone()), is_encoded)
