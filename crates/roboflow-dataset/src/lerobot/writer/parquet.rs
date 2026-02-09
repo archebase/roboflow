@@ -33,14 +33,16 @@ pub fn write_episode_parquet(
         return Ok((PathBuf::new(), 0));
     }
 
+    // Find the state dimension from the first frame that has observation_state.
+    // Early frames may contain only image/tf data before state messages arrive.
     let state_dim = frame_data
-        .first()
-        .and_then(|f| f.observation_state.as_ref())
+        .iter()
+        .find_map(|f| f.observation_state.as_ref())
         .map(|v| v.len())
         .ok_or_else(|| {
             RoboflowError::encode(
                 "LerobotWriter",
-                "Cannot determine state dimension: first frame has no observation_state",
+                "Cannot determine state dimension: no frame has observation_state",
             )
         })?;
 

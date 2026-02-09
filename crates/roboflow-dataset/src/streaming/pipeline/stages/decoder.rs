@@ -451,11 +451,23 @@ pub(crate) fn build_schema_cache(
     for (&id, ch) in channels {
         let encoding = factory.detect_encoding(&ch.encoding, ch.schema_encoding.as_deref());
         let schema = match encoding {
-            Encoding::Cdr => SchemaMetadata::cdr_with_encoding(
-                ch.message_type.clone(),
-                ch.schema.clone().unwrap_or_default(),
-                ch.schema_encoding.clone(),
-            ),
+            Encoding::Cdr => {
+                // ROS1 bags: decoder must use decode_headerless_ros1 (no CDR header, packed layout).
+                // If the reader set encoding to "ros1" but did not set schema_encoding, default to
+                // "ros1msg" so the codec takes the ROS1 path and avoids wrong-byte-offset errors.
+                let schema_encoding = ch.schema_encoding.clone().or_else(|| {
+                    if ch.encoding.to_lowercase().contains("ros1") {
+                        Some("ros1msg".to_string())
+                    } else {
+                        None
+                    }
+                });
+                SchemaMetadata::cdr_with_encoding(
+                    ch.message_type.clone(),
+                    ch.schema.clone().unwrap_or_default(),
+                    schema_encoding,
+                )
+            }
             Encoding::Protobuf => SchemaMetadata::protobuf(
                 ch.message_type.clone(),
                 ch.schema_data.clone().unwrap_or_default(),

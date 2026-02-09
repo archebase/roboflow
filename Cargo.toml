@@ -24,7 +24,7 @@ roboflow-sources = { path = "crates/roboflow-sources", version = "0.2.0" }
 roboflow-sinks = { path = "crates/roboflow-sinks", version = "0.2.0" }
 
 # External dependencies
-robocodec = { git = "https://github.com/archebase/robocodec", branch = "main" }
+robocodec = { git = "https://github.com/archebase/robocodec", branch = "fix/ros2-idl-array-alignment" }
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 tokio = { version = "1.40", features = ["rt-multi-thread", "sync"] }

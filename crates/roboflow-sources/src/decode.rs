@@ -158,7 +158,7 @@ async fn decode_s3_bag_async(
 
     let client = S3Client::new(config).map_err(|e| format!("S3 client error: {e}"))?;
     let codec_factory = CodecFactory::new();
-    let schema_cache = build_schema_cache(&channels, &codec_factory);
+    let mut schema_cache = build_schema_cache(&channels, &codec_factory);
 
     let chunk_size: u64 = 10 * 1024 * 1024;
     let mut offset = 0u64;
@@ -182,6 +182,23 @@ async fn decode_s3_bag_async(
             .map_err(|e| format!("BAG parse error: {e}"))?;
 
         let bag_channels = parser.channels();
+
+        // Dynamically update schema_cache for newly discovered channels.
+        // The initial header scan (1MB) may not discover all connection records;
+        // additional connections are found inside compressed chunks during streaming.
+        for (ch_id, ch_info) in &bag_channels {
+            if !schema_cache.contains_key(ch_id)
+                && let Some(schema) = build_schema_for_channel(ch_info, &codec_factory)
+            {
+                tracing::debug!(
+                    channel_id = ch_id,
+                    topic = %ch_info.topic,
+                    msg_type = %ch_info.message_type,
+                    "Schema cache updated for newly discovered channel"
+                );
+                schema_cache.insert(*ch_id, schema);
+            }
+        }
 
         for record in records {
             let channel_id = record.conn_id as u16;
@@ -384,11 +401,23 @@ pub(crate) fn build_schema_cache(
     for (&id, ch) in channels {
         let encoding = factory.detect_encoding(&ch.encoding, ch.schema_encoding.as_deref());
         let schema = match encoding {
-            Encoding::Cdr => SchemaMetadata::cdr_with_encoding(
-                ch.message_type.clone(),
-                ch.schema.clone().unwrap_or_default(),
-                ch.schema_encoding.clone(),
-            ),
+            Encoding::Cdr => {
+                // ROS1 bags: decoder must use decode_headerless_ros1 (no CDR header, packed layout).
+                // If the reader set encoding to "ros1" but did not set schema_encoding, default to
+                // "ros1msg" so the codec takes the ROS1 path and avoids wrong-byte-offset errors.
+                let schema_encoding = ch.schema_encoding.clone().or_else(|| {
+                    if ch.encoding.to_lowercase().contains("ros1") {
+                        Some("ros1msg".to_string())
+                    } else {
+                        None
+                    }
+                });
+                SchemaMetadata::cdr_with_encoding(
+                    ch.message_type.clone(),
+                    ch.schema.clone().unwrap_or_default(),
+                    schema_encoding,
+                )
+            }
             Encoding::Protobuf => SchemaMetadata::protobuf(
                 ch.message_type.clone(),
                 ch.schema_data.clone().unwrap_or_default(),
@@ -401,6 +430,45 @@ pub(crate) fn build_schema_cache(
         cache.insert(id, schema);
     }
     cache
+}
+
+/// Build schema metadata for a single channel.
+///
+/// Used to dynamically update the schema cache when new channels are discovered
+/// during streaming (channels not found in the initial header scan).
+fn build_schema_for_channel(
+    ch: &robocodec::ChannelInfo,
+    factory: &robocodec::encoding::CodecFactory,
+) -> Option<robocodec::encoding::SchemaMetadata> {
+    use robocodec::core::Encoding;
+    use robocodec::encoding::SchemaMetadata;
+
+    let encoding = factory.detect_encoding(&ch.encoding, ch.schema_encoding.as_deref());
+    let schema = match encoding {
+        Encoding::Cdr => {
+            let schema_encoding = ch.schema_encoding.clone().or_else(|| {
+                if ch.encoding.to_lowercase().contains("ros1") {
+                    Some("ros1msg".to_string())
+                } else {
+                    None
+                }
+            });
+            SchemaMetadata::cdr_with_encoding(
+                ch.message_type.clone(),
+                ch.schema.clone().unwrap_or_default(),
+                schema_encoding,
+            )
+        }
+        Encoding::Protobuf => SchemaMetadata::protobuf(
+            ch.message_type.clone(),
+            ch.schema_data.clone().unwrap_or_default(),
+        ),
+        Encoding::Json => SchemaMetadata::json(
+            ch.message_type.clone(),
+            ch.schema.clone().unwrap_or_default(),
+        ),
+    };
+    Some(schema)
 }
 
 /// Decode raw message bytes into a TimestampedMessage.

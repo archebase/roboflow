@@ -413,28 +413,40 @@ impl Pipeline {
         for msg in messages {
             // Convert based on message type
             match msg.data {
-                robocodec::CodecValue::Array(arr) => {
+                robocodec::CodecValue::Array(ref arr) => {
                     // Convert CodecValue array to Vec<f32>
                     let state: Vec<f32> = arr
                         .iter()
-                        .filter_map(|v| match v {
-                            robocodec::CodecValue::Float32(n) => Some(*n),
-                            robocodec::CodecValue::Float64(n) => Some(*n as f32),
-                            robocodec::CodecValue::Int32(n) => Some(*n as f32),
-                            robocodec::CodecValue::Int64(n) => Some(*n as f32),
-                            robocodec::CodecValue::UInt32(n) => Some(*n as f32),
-                            robocodec::CodecValue::UInt64(n) => Some(*n as f32),
-                            _ => None,
-                        })
+                        .filter_map(codec_value_element_to_f32)
                         .collect();
                     if !state.is_empty() {
-                        frame.observation_state = Some(state);
+                        let feature = self.config.topic_mappings.get(&msg.topic);
+                        if feature.is_some_and(|f| f == "action") {
+                            frame.action = Some(state);
+                        } else {
+                            frame.observation_state = Some(state);
+                        }
                     }
                 }
-                robocodec::CodecValue::Struct(map) => {
-                    // Look for image data
-                    if let Some(robocodec::CodecValue::Bytes(data)) = map.get("data") {
-                        // Extract image dimensions if available
+                robocodec::CodecValue::Struct(ref map) => {
+                    // Check topic mapping to decide how to handle this struct
+                    let feature = self.config.topic_mappings.get(&msg.topic);
+
+                    if feature.as_ref().is_some_and(|f| f.starts_with("observation.state") || f == &"action") {
+                        // State/action topic: extract numeric array from struct.
+                        // For sensor_msgs/JointState, extract `position` field.
+                        // Falls back to any float64/float32 array field.
+                        if let Some(state) = extract_state_from_struct(map) {
+                            if !state.is_empty() {
+                                if feature.is_some_and(|f| f == "action") {
+                                    frame.action = Some(state);
+                                } else {
+                                    frame.observation_state = Some(state);
+                                }
+                            }
+                        }
+                    } else if let Some(robocodec::CodecValue::Bytes(data)) = map.get("data") {
+                        // Image data
                         let width = map
                             .get("width")
                             .and_then(|v: &robocodec::CodecValue| {
@@ -460,13 +472,9 @@ impl Pipeline {
                             })
                             .unwrap_or(480);
 
-                        let feature_name = self
-                            .config
-                            .topic_mappings
-                            .get(&msg.topic)
+                        let feature_name = feature
                             .cloned()
                             .unwrap_or_else(|| {
-                                // Generate feature name from topic
                                 msg.topic
                                     .replace('/', "_")
                                     .trim_start_matches('_')
@@ -489,6 +497,61 @@ impl Pipeline {
         }
 
         Ok(frame)
+    }
+}
+
+/// Extract a numeric state vector from a decoded struct message.
+///
+/// Handles common robotics state message types:
+/// - `sensor_msgs/JointState`: extracts `position` field
+/// - Generic: falls back to the first array field containing numeric values
+fn extract_state_from_struct(
+    map: &std::collections::HashMap<String, robocodec::CodecValue>,
+) -> Option<Vec<f32>> {
+    // Priority 1: JointState `position` field (most common state message)
+    if let Some(arr) = map.get("position") {
+        if let Some(state) = codec_value_to_f32_vec(arr) {
+            if !state.is_empty() {
+                return Some(state);
+            }
+        }
+    }
+
+    // Priority 2: any other numeric array field (skip `name`, `header`, etc.)
+    for value in map.values() {
+        if let robocodec::CodecValue::Array(_) = value {
+            if let Some(state) = codec_value_to_f32_vec(value) {
+                if !state.is_empty() {
+                    return Some(state);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Convert a single numeric `CodecValue` element to `f32`.
+fn codec_value_element_to_f32(v: &robocodec::CodecValue) -> Option<f32> {
+    match v {
+        robocodec::CodecValue::Float32(n) => Some(*n),
+        robocodec::CodecValue::Float64(n) => Some(*n as f32),
+        robocodec::CodecValue::Int32(n) => Some(*n as f32),
+        robocodec::CodecValue::Int64(n) => Some(*n as f32),
+        robocodec::CodecValue::UInt32(n) => Some(*n as f32),
+        robocodec::CodecValue::UInt64(n) => Some(*n as f32),
+        _ => None,
+    }
+}
+
+/// Convert a `CodecValue` (expected to be an Array of numerics) into `Vec<f32>`.
+fn codec_value_to_f32_vec(value: &robocodec::CodecValue) -> Option<Vec<f32>> {
+    match value {
+        robocodec::CodecValue::Array(arr) => {
+            let v: Vec<f32> = arr.iter().filter_map(codec_value_element_to_f32).collect();
+            Some(v)
+        }
+        _ => None,
     }
 }
 
