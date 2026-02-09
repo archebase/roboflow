@@ -117,17 +117,17 @@ impl ImageDecoderFactory {
                     match AppleImageDecoder::try_new(self.config.memory_strategy) {
                         Ok(decoder) => {
                             tracing::info!("Using Apple hardware-accelerated decoder");
-                            return Ok(Box::new(decoder));
+                            Ok(Box::new(decoder))
                         }
                         Err(e) if self.config.auto_fallback => {
                             tracing::warn!(
                                 error = %e,
                                 "Apple decoder unavailable. Falling back to CPU."
                             );
-                            return Ok(Box::new(CpuImageDecoder::new(
+                            Ok(Box::new(CpuImageDecoder::new(
                                 self.config.memory_strategy,
                                 self.config.cpu_threads,
-                            )));
+                            )))
                         }
                         Err(e) => Err(e),
                     }

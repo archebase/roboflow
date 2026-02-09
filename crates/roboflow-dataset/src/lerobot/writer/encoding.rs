@@ -357,9 +357,7 @@ pub fn build_frame_buffer_static(images: &[ImageData]) -> Result<(VideoFrameBuff
                 Some((w, h, data)) => (w, h, data),
                 None => {
                     skipped += 1;
-                    tracing::debug!(
-                        "Skipping encoded image (decode failed)"
-                    );
+                    tracing::debug!("Skipping encoded image (decode failed)");
                     continue;
                 }
             }

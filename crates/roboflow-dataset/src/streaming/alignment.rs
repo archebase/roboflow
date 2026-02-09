@@ -107,7 +107,10 @@ pub struct FrameAlignmentBuffer {
 impl FrameAlignmentBuffer {
     fn decoder_from_config(
         config: &StreamingConfig,
-    ) -> (Option<ImageDecoderFactory>, Option<Arc<dyn ImageDecoderBackend>>) {
+    ) -> (
+        Option<ImageDecoderFactory>,
+        Option<Arc<dyn ImageDecoderBackend>>,
+    ) {
         if let Some(ref shared) = config.shared_decoder {
             (None, Some(shared.clone()))
         } else if let Some(ref dc) = config.decoder_config {
@@ -278,10 +281,10 @@ impl FrameAlignmentBuffer {
                 let decoded_result = if format != ImageFormat::Unknown {
                     if let Some(shared) = &self.shared_decoder {
                         Some(shared.decode(data, format))
-                    } else if let Some(decoder) = &mut self.decoder {
-                        Some(decoder.get_decoder().decode(data, format))
                     } else {
-                        None
+                        self.decoder
+                            .as_mut()
+                            .map(|decoder| decoder.get_decoder().decode(data, format))
                     }
                 } else {
                     None

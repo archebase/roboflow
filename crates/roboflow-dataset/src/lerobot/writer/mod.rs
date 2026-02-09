@@ -391,9 +391,11 @@ impl LerobotWriter {
                     // Fallback: upload this episode synchronously so data still reaches cloud
                     if self.use_cloud_storage {
                         if parquet_path.exists() {
-                            if let Err(upload_e) =
-                                upload::upload_parquet_file(self.storage.as_ref(), &parquet_path, &self.output_prefix)
-                            {
+                            if let Err(upload_e) = upload::upload_parquet_file(
+                                self.storage.as_ref(),
+                                &parquet_path,
+                                &self.output_prefix,
+                            ) {
                                 tracing::error!(
                                     episode = self.episode_index,
                                     error = %upload_e,

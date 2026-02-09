@@ -49,11 +49,11 @@
 use std::env;
 use std::sync::Arc;
 
+use futures::future::join_all;
 use roboflow_distributed::{
     BatchController, Finalizer, FinalizerConfig, MergeCoordinator, ReaperConfig, Scanner,
     ScannerConfig, Worker, WorkerConfig, ZombieReaper,
 };
-use futures::future::join_all;
 use roboflow_storage::StorageFactory;
 use tokio_util::sync::CancellationToken;
 
@@ -627,7 +627,8 @@ async fn run_unified(
         timeout_secs = SHUTDOWN_TIMEOUT_SECS,
         "Waiting for remaining tasks to shut down"
     );
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(SHUTDOWN_TIMEOUT_SECS);
+    let deadline =
+        tokio::time::Instant::now() + std::time::Duration::from_secs(SHUTDOWN_TIMEOUT_SECS);
     let mut join_fut = join_all(remaining_handles);
     tokio::select! {
         _ = tokio::time::sleep_until(deadline) => {
