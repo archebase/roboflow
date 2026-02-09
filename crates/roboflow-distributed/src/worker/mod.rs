@@ -4,7 +4,6 @@
 
 //! Worker actor for claiming and processing work units from TiKV batch queue.
 
-mod checkpoint;
 mod config;
 mod heartbeat;
 mod metrics;
@@ -19,14 +18,13 @@ pub use metrics::{ProcessingResult, WorkerMetrics, WorkerMetricsSnapshot};
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use super::batch::{BatchController, WorkUnit};
 use super::shutdown::ShutdownHandler;
 use super::tikv::{
     TikvError,
-    checkpoint::{CheckpointConfig, CheckpointManager},
     client::TikvClient,
     schema::{HeartbeatRecord, WorkerStatus},
 };
@@ -45,7 +43,6 @@ use roboflow_sinks::SinkConfig;
 use roboflow_sources::SourceConfig;
 
 // Re-export module items for use within the worker module
-pub use checkpoint::WorkerCheckpointCallback;
 pub use heartbeat::send_heartbeat_inner;
 pub use registry::JobRegistry;
 
@@ -56,7 +53,6 @@ pub const DEFAULT_CANCELLATION_CHECK_INTERVAL_SECS: u64 = 5;
 pub struct Worker {
     pod_id: String,
     tikv: Arc<TikvClient>,
-    checkpoint_manager: CheckpointManager,
     config: WorkerConfig,
     metrics: Arc<WorkerMetrics>,
     shutdown_handler: ShutdownHandler,
@@ -74,21 +70,12 @@ impl Worker {
     ) -> Result<Self, TikvError> {
         let pod_id = pod_id.into();
 
-        // Create checkpoint manager with config from WorkerConfig
-        let checkpoint_config = CheckpointConfig {
-            checkpoint_interval_frames: config.checkpoint_interval_frames,
-            checkpoint_interval_seconds: config.checkpoint_interval_seconds,
-            checkpoint_async: config.checkpoint_async,
-        };
-        let checkpoint_manager = CheckpointManager::new(tikv.clone(), checkpoint_config);
-
         // Create batch controller for work unit processing
         let batch_controller = BatchController::with_client(tikv.clone());
 
         Ok(Self {
             pod_id,
             tikv,
-            checkpoint_manager,
             config,
             metrics: Arc::new(WorkerMetrics::new()),
             shutdown_handler: ShutdownHandler::new(),
@@ -264,7 +251,6 @@ impl Worker {
         // Create cancellation token
         let cancel_token = self.cancellation_token.child_token();
         let cancel_token_for_monitor = Arc::new(cancel_token.clone());
-        let cancel_token_for_callback = Arc::new(cancel_token.clone());
 
         // Register with cancellation monitor
         {
@@ -272,27 +258,10 @@ impl Worker {
             registry.register(unit_id.clone(), cancel_token_for_monitor);
         }
 
-        // Create checkpoint callback (placeholder for future integration)
-        let estimated_frame_size = 100_000;
-        let total_frames = (unit.total_size() / estimated_frame_size).max(1);
-        let _total_frames = total_frames; // Used by callback
-
-        let callback_inner = Arc::new(WorkerCheckpointCallback {
-            job_id: unit_id.clone(),
-            pod_id: self.pod_id.clone(),
-            total_frames,
-            checkpoint_manager: self.checkpoint_manager.clone(),
-            last_checkpoint_frame: Arc::new(AtomicU64::new(0)),
-            last_checkpoint_time: Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
-            shutdown_flag: self.shutdown_handler.flag_clone(),
-            cancellation_token: Some(cancel_token_for_callback),
-        });
-
         // Create a simple checkpoint callback wrapper
         // Note: The pipeline-v2 doesn't yet support arbitrary checkpoint callbacks during execution
-        // This is stored for future integration when the pipeline supports progress callbacks
+        // This is a placeholder for future integration when the pipeline supports progress callbacks
         let checkpoint_callback: CheckpointCallback = Arc::new({
-            let _callback_inner = callback_inner;
             move |_frame_index: usize, _total: usize| {
                 // Placeholder for future checkpoint integration
                 // The pipeline currently uses its own internal checkpointing mechanism

@@ -102,8 +102,6 @@ pub use roboflow_sinks::{
 // Dataset structures
 // =============================================================================
 // Dataset is now provided by roboflow-dataset crate
-#[allow(deprecated)]
-pub use roboflow_dataset::streaming::StreamingDatasetConverter;
 pub use roboflow_dataset::{
     DatasetConfig, DatasetFormat, DatasetWriter,
     common::DatasetBaseConfig,
@@ -124,9 +122,8 @@ pub use roboflow_dataset::{
 // Re-export the full kps module for test access
 pub use roboflow_dataset::kps;
 
-// Re-export lerobot and streaming modules for test access
+// Re-export lerobot module for test access
 pub use roboflow_dataset::lerobot;
-pub use roboflow_dataset::streaming;
 
 // =============================================================================
 // Storage abstraction layer (always available via roboflow-storage)

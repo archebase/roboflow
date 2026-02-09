@@ -372,16 +372,22 @@ impl BatchController {
             }
         }
 
+        let scan_total = completed + failed + processing;
         tracing::info!(
             batch_id = %batch_id,
             work_units_total = status.work_units_total,
+            scan_total = scan_total,
             completed = completed,
             failed = failed,
             processing = processing,
             "reconcile_running: work unit scan results"
         );
 
-        // Update counts
+        // Update counts from scan. Ensure work_units_total matches reality so is_complete() works.
+        if scan_total > 0 {
+            status.set_work_units_total(scan_total);
+            status.set_files_total(scan_total);
+        }
         status.work_units_completed = completed;
         status.work_units_failed = failed;
         status.work_units_active = processing;

@@ -77,12 +77,15 @@ impl Finalizer {
                 );
 
                 match self.finalize_batch(&batch, &spec).await {
-                    Ok(_) => {
+                    Ok(true) => {
                         info!(
                             pod_id = %self.pod_id,
                             batch_id = %batch.id,
                             "Batch finalized successfully"
                         );
+                    }
+                    Ok(false) => {
+                        // NotReady / NotClaimed / NotFound - will retry next poll
                     }
                     Err(e) => {
                         error!(
@@ -175,11 +178,15 @@ impl Finalizer {
     }
 
     /// Finalize a batch by triggering merge and updating status.
+    ///
+    /// Returns `Ok(true)` if the batch was merged and marked complete,
+    /// `Ok(false)` if not ready / not claimed / not found (caller may retry),
+    /// `Err` on failure.
     async fn finalize_batch(
         &self,
         batch: &BatchSummary,
         spec: &BatchSpec,
-    ) -> Result<(), TikvError> {
+    ) -> Result<bool, TikvError> {
         info!(
             pod_id = %self.pod_id,
             batch_id = %batch.id,
@@ -210,6 +217,7 @@ impl Finalizer {
 
                 // Mark batch as complete
                 self.mark_batch_complete(&batch.id).await?;
+                Ok(true)
             }
             super::merge::MergeResult::NotFound => {
                 warn!(
@@ -217,6 +225,7 @@ impl Finalizer {
                     batch_id = %batch.id,
                     "Batch not found for merge"
                 );
+                Ok(false)
             }
             super::merge::MergeResult::NotClaimed => {
                 warn!(
@@ -224,6 +233,7 @@ impl Finalizer {
                     batch_id = %batch.id,
                     "Another finalizer claimed the merge"
                 );
+                Ok(false)
             }
             super::merge::MergeResult::NotReady => {
                 warn!(
@@ -231,13 +241,12 @@ impl Finalizer {
                     batch_id = %batch.id,
                     "Merge not ready, will retry"
                 );
+                Ok(false)
             }
             super::merge::MergeResult::Failed { error } => {
-                return Err(TikvError::Other(format!("Merge failed: {}", error)));
+                Err(TikvError::Other(format!("Merge failed: {}", error)))
             }
         }
-
-        Ok(())
     }
 
     /// Mark a batch as complete.

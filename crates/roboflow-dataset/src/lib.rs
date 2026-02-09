@@ -28,9 +28,6 @@ pub mod common;
 // LeRobot dataset format
 pub mod lerobot;
 
-// Streaming conversion (bounded memory footprint)
-pub mod streaming;
-
 // Image decoding (JPEG/PNG with GPU support)
 pub mod image;
 

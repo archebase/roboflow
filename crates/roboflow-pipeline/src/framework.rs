@@ -519,6 +519,8 @@ impl Pipeline {
 /// - `CodecValue::Bytes` - Standard binary data
 /// - `CodecValue::Array<UInt8>` - Decoded uint8 array
 /// - `CodecValue::Array<UInt32>` - Some codecs decode uint8[] as UInt32
+/// - `CodecValue::Array<Int8>` - Signed byte arrays
+/// - `CodecValue::Array<Int32>` - Some codecs use signed int32
 /// - `CodecValue::String` - Base64-encoded data (some codecs)
 /// - Nested arrays and other edge cases
 ///
@@ -536,15 +538,16 @@ fn extract_image_bytes_from_struct(
             // Handle UInt8 array (most common case)
             let bytes: Vec<u8> = arr
                 .iter()
-                .filter_map(|v| {
-                    if let robocodec::CodecValue::UInt8(x) = v {
-                        Some(*x)
-                    } else if let robocodec::CodecValue::UInt32(x) = v {
-                        // Some codecs decode uint8[] as UInt32
-                        Some(*x as u8)
-                    } else {
-                        None
-                    }
+                .filter_map(|v| match v {
+                    robocodec::CodecValue::UInt8(x) => Some(*x),
+                    robocodec::CodecValue::UInt16(x) => Some(*x as u8),
+                    robocodec::CodecValue::UInt32(x) => Some(*x as u8),
+                    robocodec::CodecValue::UInt64(x) => Some(*x as u8),
+                    robocodec::CodecValue::Int8(x) => Some(*x as u8),
+                    robocodec::CodecValue::Int16(x) => Some(*x as u8),
+                    robocodec::CodecValue::Int32(x) => Some(*x as u8),
+                    robocodec::CodecValue::Int64(x) => Some(*x as u8),
+                    _ => None,
                 })
                 .collect();
             if bytes.is_empty() {
@@ -553,12 +556,10 @@ fn extract_image_bytes_from_struct(
                     if let robocodec::CodecValue::Array(inner) = v {
                         let inner_bytes: Vec<u8> = inner
                             .iter()
-                            .filter_map(|inner_v| {
-                                if let robocodec::CodecValue::UInt8(x) = inner_v {
-                                    Some(*x)
-                                } else {
-                                    None
-                                }
+                            .filter_map(|inner_v| match inner_v {
+                                robocodec::CodecValue::UInt8(x) => Some(*x),
+                                robocodec::CodecValue::Int8(x) => Some(*x as u8),
+                                _ => None,
                             })
                             .collect();
                         if !inner_bytes.is_empty() {
@@ -581,8 +582,13 @@ fn extract_image_bytes_from_struct(
             None
         }
         other => {
+            // Get actual variant type name instead of enum type
+            let actual_type = other.type_name();
+            let available_fields: Vec<&str> = map.keys().map(|k| k.as_str()).collect();
+
             tracing::warn!(
-                value_type = std::any::type_name_of_val(other),
+                value_type = %actual_type,
+                available_fields = ?available_fields,
                 "Image struct 'data' has unsupported codec format; \
                  consider updating the codec to use Bytes or Array<UInt8>"
             );
