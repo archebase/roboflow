@@ -40,14 +40,6 @@ impl SinkConfig {
         }
     }
 
-    /// Create a KPS sink configuration.
-    pub fn kps(path: impl Into<String>) -> Self {
-        Self {
-            sink_type: SinkType::Kps { path: path.into() },
-            options: HashMap::new(),
-        }
-    }
-
     /// Create a Zarr sink configuration.
     pub fn zarr(path: impl Into<String>) -> Self {
         Self {
@@ -60,7 +52,6 @@ impl SinkConfig {
     pub fn path(&self) -> &str {
         match &self.sink_type {
             SinkType::Lerobot { path } => path,
-            SinkType::Kps { path } => path,
             SinkType::Zarr { path } => path,
         }
     }
@@ -91,11 +82,6 @@ pub enum SinkType {
         /// Path to the output directory
         path: String,
     },
-    /// KPS dataset format
-    Kps {
-        /// Path to the output directory
-        path: String,
-    },
     /// Zarr dataset format
     Zarr {
         /// Path to the output directory
@@ -108,7 +94,6 @@ impl SinkType {
     pub fn name(&self) -> &str {
         match self {
             Self::Lerobot { .. } => "lerobot",
-            Self::Kps { .. } => "kps",
             Self::Zarr { .. } => "zarr",
         }
     }
@@ -117,7 +102,6 @@ impl SinkType {
     pub fn path(&self) -> &str {
         match self {
             Self::Lerobot { path } => path,
-            Self::Kps { path } => path,
             Self::Zarr { path } => path,
         }
     }
@@ -138,13 +122,6 @@ mod tests {
     }
 
     #[test]
-    fn test_sink_config_kps() {
-        let config = SinkConfig::kps("/path/to/output");
-
-        assert_eq!(config.path(), "/path/to/output");
-    }
-
-    #[test]
     fn test_sink_type_name() {
         assert_eq!(
             SinkType::Lerobot {
@@ -152,13 +129,6 @@ mod tests {
             }
             .name(),
             "lerobot"
-        );
-        assert_eq!(
-            SinkType::Kps {
-                path: "test".to_string()
-            }
-            .name(),
-            "kps"
         );
         assert_eq!(
             SinkType::Zarr {

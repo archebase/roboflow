@@ -8,8 +8,6 @@
 //!
 //! This crate provides dataset format writers:
 //! - **LeRobot v2.1** - Modern parquet format (always available)
-//! - **KPS v1.2** - Knowledge Perspective Systems format (HDF5/Parquet)
-//! - **Streaming** - Bounded memory footprint conversion
 //!
 //! ## Design Philosophy
 //!
@@ -18,9 +16,6 @@
 
 use roboflow_core::Result;
 use std::path::Path;
-
-// KPS dataset format
-pub mod kps;
 
 // Common dataset writing utilities
 pub mod common;
@@ -45,30 +40,20 @@ pub use image::{
 /// Represents the supported output dataset formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DatasetFormat {
-    /// KPS format (HDF5 or Parquet)
-    Kps,
     /// LeRobot v2.1 format
     Lerobot,
 }
 
 /// Unified dataset configuration.
 ///
-/// This enum holds either KPS or LeRobot configuration, providing a
-/// format-agnostic way to create dataset writers at runtime.
+/// This enum holds LeRobot configuration.
 #[derive(Debug, Clone)]
 pub enum DatasetConfig {
-    /// KPS dataset configuration
-    Kps(kps::KpsConfig),
     /// LeRobot dataset configuration
     Lerobot(lerobot::LerobotConfig),
 }
 
 impl DatasetConfig {
-    /// Create a KPS dataset configuration.
-    pub fn kps(config: kps::KpsConfig) -> Self {
-        Self::Kps(config)
-    }
-
     /// Create a LeRobot dataset configuration.
     pub fn lerobot(config: lerobot::LerobotConfig) -> Self {
         Self::Lerobot(config)
@@ -77,12 +62,6 @@ impl DatasetConfig {
     /// Load configuration from a TOML file.
     pub fn from_file(path: impl AsRef<Path>, format: DatasetFormat) -> Result<Self> {
         match format {
-            DatasetFormat::Kps => {
-                let config = kps::KpsConfig::from_file(path.as_ref()).map_err(|e| {
-                    roboflow_core::RoboflowError::parse("DatasetConfig", e.to_string())
-                })?;
-                Ok(Self::Kps(config))
-            }
             DatasetFormat::Lerobot => {
                 let config = lerobot::LerobotConfig::from_file(path)?;
                 Ok(Self::Lerobot(config))
@@ -93,12 +72,6 @@ impl DatasetConfig {
     /// Parse configuration from a TOML string.
     pub fn from_toml(toml_str: &str, format: DatasetFormat) -> Result<Self> {
         match format {
-            DatasetFormat::Kps => {
-                let config: kps::KpsConfig = toml::from_str(toml_str).map_err(|e| {
-                    roboflow_core::RoboflowError::parse("DatasetConfig", e.to_string())
-                })?;
-                Ok(Self::Kps(config))
-            }
             DatasetFormat::Lerobot => {
                 let config = lerobot::LerobotConfig::from_toml(toml_str)?;
                 Ok(Self::Lerobot(config))
@@ -115,15 +88,6 @@ impl DatasetConfig {
     ) -> Self {
         let name = name.into();
         match format {
-            DatasetFormat::Kps => Self::Kps(kps::KpsConfig {
-                dataset: kps::DatasetConfig {
-                    name,
-                    fps,
-                    robot_type,
-                },
-                mappings: Vec::new(),
-                output: kps::OutputConfig::default(),
-            }),
             DatasetFormat::Lerobot => Self::Lerobot(lerobot::LerobotConfig {
                 dataset: lerobot::DatasetConfig {
                     base: common::DatasetBaseConfig {
@@ -143,7 +107,6 @@ impl DatasetConfig {
     /// Get the dataset format.
     pub fn format(&self) -> DatasetFormat {
         match self {
-            Self::Kps(_) => DatasetFormat::Kps,
             Self::Lerobot(_) => DatasetFormat::Lerobot,
         }
     }
@@ -151,40 +114,28 @@ impl DatasetConfig {
     /// Get the dataset name.
     pub fn name(&self) -> &str {
         match self {
-            Self::Kps(c) => &c.dataset.name,
-            Self::Lerobot(c) => &c.dataset.name,
+            Self::Lerobot(c) => &c.dataset.base.name,
         }
     }
 
     /// Get the frames per second.
     pub fn fps(&self) -> u32 {
         match self {
-            Self::Kps(c) => c.dataset.fps,
-            Self::Lerobot(c) => c.dataset.fps,
+            Self::Lerobot(c) => c.dataset.base.fps,
         }
     }
 
     /// Get the robot type.
     pub fn robot_type(&self) -> Option<&str> {
         match self {
-            Self::Kps(c) => c.dataset.robot_type.as_deref(),
-            Self::Lerobot(c) => c.dataset.robot_type.as_deref(),
+            Self::Lerobot(c) => c.dataset.base.robot_type.as_deref(),
         }
     }
 
-    /// Get the underlying KPS config, if this is a KPS config.
-    pub fn as_kps(&self) -> Option<&kps::KpsConfig> {
-        match self {
-            Self::Kps(c) => Some(c),
-            _ => None,
-        }
-    }
-
-    /// Get the underlying LeRobot config, if this is a LeRobot config.
+    /// Get the underlying LeRobot config.
     pub fn as_lerobot(&self) -> Option<&lerobot::LerobotConfig> {
         match self {
             Self::Lerobot(c) => Some(c),
-            _ => None,
         }
     }
 }
@@ -204,11 +155,6 @@ pub fn create_writer(
     config: &DatasetConfig,
 ) -> Result<Box<dyn DatasetWriter>> {
     match config {
-        DatasetConfig::Kps(kps_config) => {
-            use crate::kps::writers::create_kps_writer;
-            // KPS writer uses local storage for now
-            create_kps_writer(output_dir, 0, kps_config)
-        }
         DatasetConfig::Lerobot(lerobot_config) => {
             use crate::lerobot::LerobotWriter;
             // Use cloud storage if provided, otherwise use local storage

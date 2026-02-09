@@ -20,8 +20,7 @@ use std::time::{Duration, Instant};
 
 use roboflow_core::{Result, RoboflowError};
 use roboflow_sinks::{
-    kps::KpsSink, lerobot::LerobotSink, DatasetFrame, ImageData, ImageFormat, Sink, SinkConfig,
-    SinkStats,
+    lerobot::LerobotSink, DatasetFrame, ImageData, ImageFormat, Sink, SinkConfig, SinkStats,
 };
 use roboflow_sources::{
     BagSource, McapSource, RrdSource, Source, SourceConfig, TimestampedMessage,
@@ -139,20 +138,16 @@ impl Pipeline {
 
         // Create sink based on config type
         use roboflow_sinks::SinkType;
-        let sink: Box<dyn Sink> =
-            match &config.sink.sink_type {
-                SinkType::Lerobot { path } => Box::new(LerobotSink::new(path).map_err(|e| {
-                    RoboflowError::other(format!("Failed to create LeRobot sink: {}", e))
-                })?),
-                SinkType::Kps { path } => Box::new(KpsSink::new(path).map_err(|e| {
-                    RoboflowError::other(format!("Failed to create KPS sink: {}", e))
-                })?),
-                SinkType::Zarr { .. } => {
-                    return Err(RoboflowError::other(
-                        "Zarr sink not yet implemented in Pipeline".to_string(),
-                    ));
-                }
-            };
+        let sink: Box<dyn Sink> = match &config.sink.sink_type {
+            SinkType::Lerobot { path } => Box::new(LerobotSink::new(path).map_err(|e| {
+                RoboflowError::other(format!("Failed to create LeRobot sink: {}", e))
+            })?),
+            SinkType::Zarr { .. } => {
+                return Err(RoboflowError::other(
+                    "Zarr sink not yet implemented in Pipeline".to_string(),
+                ));
+            }
+        };
 
         Ok(Self {
             source,
@@ -429,73 +424,79 @@ impl Pipeline {
                                 }
                             }
                         }
-                    } else if let Some(image_bytes) = extract_image_bytes_from_struct(map) {
-                        // Image data (sensor_msgs/Image or sensor_msgs/CompressedImage)
-                        tracing::debug!(
-                            topic = %msg.topic,
-                            bytes = image_bytes.len(),
-                            "Pipeline: extracted image bytes for frame"
-                        );
-                        let width = map
-                            .get("width")
-                            .and_then(|v: &robocodec::CodecValue| {
-                                if let robocodec::CodecValue::UInt32(w) = v {
-                                    Some(*w)
-                                } else if let robocodec::CodecValue::UInt64(w) = v {
-                                    Some(*w as u32)
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or(640);
-                        let height = map
-                            .get("height")
-                            .and_then(|v: &robocodec::CodecValue| {
-                                if let robocodec::CodecValue::UInt32(h) = v {
-                                    Some(*h)
-                                } else if let robocodec::CodecValue::UInt64(h) = v {
-                                    Some(*h as u32)
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or(480);
-
-                        let format = map
-                            .get("format")
-                            .and_then(|v: &robocodec::CodecValue| {
-                                if let robocodec::CodecValue::String(s) = v {
-                                    let s = s.to_lowercase();
-                                    if s.contains("jpeg") || s.contains("jpg") {
-                                        Some(ImageFormat::Jpeg)
-                                    } else if s.contains("png") {
-                                        Some(ImageFormat::Png)
+                    } else if feature.as_ref().is_some_and(|f| f.contains("images")) {
+                        // Image topic: only extract if mapped as an image feature
+                        if let Some(image_bytes) = extract_image_bytes_from_struct(map, &msg.topic)
+                        {
+                            // Image data (sensor_msgs/Image or sensor_msgs/CompressedImage)
+                            tracing::debug!(
+                                topic = %msg.topic,
+                                bytes = image_bytes.len(),
+                                "Pipeline: extracted image bytes for frame"
+                            );
+                            let width = map
+                                .get("width")
+                                .and_then(|v: &robocodec::CodecValue| {
+                                    if let robocodec::CodecValue::UInt32(w) = v {
+                                        Some(*w)
+                                    } else if let robocodec::CodecValue::UInt64(w) = v {
+                                        Some(*w as u32)
                                     } else {
                                         None
                                     }
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or(ImageFormat::Rgb8);
+                                })
+                                .unwrap_or(640);
+                            let height = map
+                                .get("height")
+                                .and_then(|v: &robocodec::CodecValue| {
+                                    if let robocodec::CodecValue::UInt32(h) = v {
+                                        Some(*h)
+                                    } else if let robocodec::CodecValue::UInt64(h) = v {
+                                        Some(*h as u32)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(480);
 
-                        let feature_name = feature.cloned().unwrap_or_else(|| {
-                            msg.topic
-                                .replace('/', "_")
-                                .trim_start_matches('_')
-                                .to_string()
-                        });
+                            let format = map
+                                .get("format")
+                                .and_then(|v: &robocodec::CodecValue| {
+                                    if let robocodec::CodecValue::String(s) = v {
+                                        let s = s.to_lowercase();
+                                        if s.contains("jpeg") || s.contains("jpg") {
+                                            Some(ImageFormat::Jpeg)
+                                        } else if s.contains("png") {
+                                            Some(ImageFormat::Png)
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(ImageFormat::Rgb8);
 
-                        frame.images.insert(
-                            feature_name,
-                            ImageData {
-                                width,
-                                height,
-                                data: image_bytes,
-                                format,
-                            },
-                        );
+                            let feature_name = feature.cloned().unwrap_or_else(|| {
+                                msg.topic
+                                    .replace('/', "_")
+                                    .trim_start_matches('_')
+                                    .to_string()
+                            });
+
+                            frame.images.insert(
+                                feature_name,
+                                ImageData {
+                                    width,
+                                    height,
+                                    data: image_bytes,
+                                    format,
+                                },
+                            );
+                        }
+                        // If image extraction fails, silently skip - not all structs are images
                     }
+                    // If topic has no mapping or isn't a state/action/image type, skip it
                 }
                 _ => {}
             }
@@ -530,38 +531,20 @@ impl Pipeline {
 /// - Data is empty after extraction
 fn extract_image_bytes_from_struct(
     map: &std::collections::HashMap<String, robocodec::CodecValue>,
+    topic: &str,
 ) -> Option<Vec<u8>> {
     let data = map.get("data")?;
     let result = match data {
         robocodec::CodecValue::Bytes(b) => Some(b.clone()),
         robocodec::CodecValue::Array(arr) => {
-            // Handle UInt8 array (most common case)
-            let bytes: Vec<u8> = arr
-                .iter()
-                .filter_map(|v| match v {
-                    robocodec::CodecValue::UInt8(x) => Some(*x),
-                    robocodec::CodecValue::UInt16(x) => Some(*x as u8),
-                    robocodec::CodecValue::UInt32(x) => Some(*x as u8),
-                    robocodec::CodecValue::UInt64(x) => Some(*x as u8),
-                    robocodec::CodecValue::Int8(x) => Some(*x as u8),
-                    robocodec::CodecValue::Int16(x) => Some(*x as u8),
-                    robocodec::CodecValue::Int32(x) => Some(*x as u8),
-                    robocodec::CodecValue::Int64(x) => Some(*x as u8),
-                    _ => None,
-                })
-                .collect();
+            // Handle UInt8 array (most common case) - use helper for cleaner code
+            let bytes: Vec<u8> = arr.iter().filter_map(codec_value_to_u8).collect();
             if bytes.is_empty() {
                 // Try nested arrays (some codecs use Array<Array<UInt8>>)
                 for v in arr.iter() {
                     if let robocodec::CodecValue::Array(inner) = v {
-                        let inner_bytes: Vec<u8> = inner
-                            .iter()
-                            .filter_map(|inner_v| match inner_v {
-                                robocodec::CodecValue::UInt8(x) => Some(*x),
-                                robocodec::CodecValue::Int8(x) => Some(*x as u8),
-                                _ => None,
-                            })
-                            .collect();
+                        let inner_bytes: Vec<u8> =
+                            inner.iter().filter_map(codec_value_to_u8).collect();
                         if !inner_bytes.is_empty() {
                             return Some(inner_bytes);
                         }
@@ -575,6 +558,7 @@ fn extract_image_bytes_from_struct(
         robocodec::CodecValue::String(s) => {
             // Handle base64-encoded data (some codecs encode images as base64 strings)
             tracing::warn!(
+                topic = %topic,
                 string_len = s.len(),
                 "Image 'data' is String type - may be base64 encoded. \
                  Consider using codec that outputs Bytes or Array<UInt8> for better performance."
@@ -587,6 +571,7 @@ fn extract_image_bytes_from_struct(
             let available_fields: Vec<&str> = map.keys().map(|k| k.as_str()).collect();
 
             tracing::warn!(
+                topic = %topic,
                 value_type = %actual_type,
                 available_fields = ?available_fields,
                 "Image struct 'data' has unsupported codec format; \
@@ -648,6 +633,31 @@ fn codec_value_to_f32_vec(value: &robocodec::CodecValue) -> Option<Vec<f32>> {
         robocodec::CodecValue::Array(arr) => {
             let v: Vec<f32> = arr.iter().filter_map(codec_value_element_to_f32).collect();
             Some(v)
+        }
+        _ => None,
+    }
+}
+
+/// Extract u8 byte from any numeric CodecValue variant.
+///
+/// Handles all integer types with proper bounds checking:
+/// - Unsigned types (UInt8, UInt16, UInt32, UInt64) - checked against u8::MAX
+/// - Signed types (Int8, Int16, Int32, Int64) - checked for non-negative and u8::MAX
+fn codec_value_to_u8(v: &robocodec::CodecValue) -> Option<u8> {
+    match v {
+        robocodec::CodecValue::UInt8(x) => Some(*x),
+        robocodec::CodecValue::Int8(x) if *x >= 0 => Some(*x as u8),
+        robocodec::CodecValue::UInt16(x) if *x <= u8::MAX as u16 => Some(*x as u8),
+        robocodec::CodecValue::Int16(x) if *x >= 0 && (*x as u16) <= u8::MAX as u16 => {
+            Some(*x as u8)
+        }
+        robocodec::CodecValue::UInt32(x) if *x <= u8::MAX as u32 => Some(*x as u8),
+        robocodec::CodecValue::Int32(x) if *x >= 0 && (*x as u32) <= u8::MAX as u32 => {
+            Some(*x as u8)
+        }
+        robocodec::CodecValue::UInt64(x) if *x <= u8::MAX as u64 => Some(*x as u8),
+        robocodec::CodecValue::Int64(x) if *x >= 0 && (*x as u64) <= u8::MAX as u64 => {
+            Some(*x as u8)
         }
         _ => None,
     }

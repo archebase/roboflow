@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn test_lerobot_sink_invalid_config() {
-        let config = SinkConfig::kps("/tmp/output");
+        let config = SinkConfig::zarr("/tmp/output");
         let sink = LerobotSink::from_config(&config);
         assert!(sink.is_err());
     }

@@ -7,6 +7,7 @@
 //! Writes robotics data in LeRobot v2.1 format with:
 //! - Parquet files for frame data (one per episode)
 //! - MP4 videos for camera observations (one per camera per episode)
+//! - Camera parameters (intrinsic/extrinsic) in `parameters/` directory
 //! - Complete metadata files
 
 mod encoding;
@@ -25,10 +26,59 @@ use crate::lerobot::metadata::MetadataCollector;
 use crate::lerobot::trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 use crate::lerobot::video_profiles::ResolvedConfig;
 use roboflow_core::Result;
+use serde::{Deserialize, Serialize};
 
 pub use frame::LerobotFrame;
 
 use encoding::{EncodeStats, encode_videos};
+
+/// Camera intrinsic parameters in LeRobot format.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CameraIntrinsic {
+    /// Focal length x (pixels)
+    pub fx: f64,
+    /// Focal length y (pixels)
+    pub fy: f64,
+    /// Principal point x (pixels)
+    pub ppx: f64,
+    /// Principal point y (pixels)
+    pub ppy: f64,
+    /// Distortion model name
+    pub distortion_model: String,
+    /// k1 distortion coefficient
+    pub k1: f64,
+    /// k2 distortion coefficient
+    pub k2: f64,
+    /// k3 distortion coefficient
+    pub k3: f64,
+    /// p1 distortion coefficient
+    pub p1: f64,
+    /// p2 distortion coefficient
+    pub p2: f64,
+}
+
+/// Camera extrinsic parameters in LeRobot format.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CameraExtrinsic {
+    /// 3x3 rotation matrix (row-major)
+    pub rotation_matrix: Vec<Vec<f64>>,
+    /// Translation vector [x, y, z]
+    pub translation_vector: Vec<f64>,
+}
+
+impl CameraExtrinsic {
+    /// Create extrinsic from rotation matrix and translation.
+    pub fn new(rotation_matrix: [[f64; 3]; 3], translation: [f64; 3]) -> Self {
+        Self {
+            rotation_matrix: vec![
+                rotation_matrix[0].to_vec(),
+                rotation_matrix[1].to_vec(),
+                rotation_matrix[2].to_vec(),
+            ],
+            translation_vector: translation.to_vec(),
+        }
+    }
+}
 
 /// LeRobot v2.1 dataset writer.
 pub struct LerobotWriter {
@@ -58,6 +108,12 @@ pub struct LerobotWriter {
 
     /// Metadata collector
     metadata: MetadataCollector,
+
+    /// Camera intrinsic parameters (camera_name -> intrinsic params)
+    camera_intrinsics: HashMap<String, CameraIntrinsic>,
+
+    /// Camera extrinsic parameters (camera_name -> extrinsic params)
+    camera_extrinsics: HashMap<String, CameraExtrinsic>,
 
     /// Total frames written
     total_frames: usize,
@@ -115,10 +171,12 @@ impl LerobotWriter {
         let data_dir = output_dir.join("data/chunk-000");
         let videos_dir = output_dir.join("videos/chunk-000");
         let meta_dir = output_dir.join("meta");
+        let params_dir = output_dir.join("parameters");
 
         fs::create_dir_all(&data_dir)?;
         fs::create_dir_all(&videos_dir)?;
         fs::create_dir_all(&meta_dir)?;
+        fs::create_dir_all(&params_dir)?;
 
         // Create LocalStorage for backward compatibility
         let storage = std::sync::Arc::new(roboflow_storage::LocalStorage::new(output_dir));
@@ -135,6 +193,8 @@ impl LerobotWriter {
             frame_data: Vec::new(),
             image_buffers: HashMap::new(),
             metadata: MetadataCollector::new(),
+            camera_intrinsics: HashMap::new(),
+            camera_extrinsics: HashMap::new(),
             total_frames: 0,
             images_encoded: 0,
             skipped_frames: 0,
@@ -190,10 +250,12 @@ impl LerobotWriter {
         let data_dir = local_buffer.join("data/chunk-000");
         let videos_dir = local_buffer.join("videos/chunk-000");
         let meta_dir = local_buffer.join("meta");
+        let params_dir = local_buffer.join("parameters");
 
         fs::create_dir_all(&data_dir)?;
         fs::create_dir_all(&videos_dir)?;
         fs::create_dir_all(&meta_dir)?;
+        fs::create_dir_all(&params_dir)?;
 
         // Detect if this is cloud storage (not LocalStorage)
         use roboflow_storage::LocalStorage;
@@ -276,6 +338,8 @@ impl LerobotWriter {
             frame_data: Vec::new(),
             image_buffers: HashMap::new(),
             metadata: MetadataCollector::new(),
+            camera_intrinsics: HashMap::new(),
+            camera_extrinsics: HashMap::new(),
             total_frames: 0,
             images_encoded: 0,
             skipped_frames: 0,
@@ -623,6 +687,79 @@ impl LerobotWriter {
     pub fn failed_encodings(&self) -> usize {
         self.failed_encodings
     }
+
+    /// Set camera intrinsic parameters.
+    pub fn set_camera_intrinsics(&mut self, camera: String, intrinsic: CameraIntrinsic) {
+        self.camera_intrinsics.insert(camera, intrinsic);
+    }
+
+    /// Set camera extrinsic parameters.
+    pub fn set_camera_extrinsics(&mut self, camera: String, extrinsic: CameraExtrinsic) {
+        self.camera_extrinsics.insert(camera, extrinsic);
+    }
+
+    /// Write camera parameters to the parameters directory.
+    fn write_camera_parameters(&self) -> Result<()> {
+        if self.camera_intrinsics.is_empty() && self.camera_extrinsics.is_empty() {
+            return Ok(());
+        }
+
+        let params_dir = self.output_dir.join("parameters");
+
+        // Write intrinsics
+        for (camera, intrinsic) in &self.camera_intrinsics {
+            let filename = format!("{}_intrinsic.json", camera);
+            let filepath = params_dir.join(&filename);
+
+            let json = serde_json::to_string_pretty(intrinsic).map_err(|e| {
+                roboflow_core::RoboflowError::encode(
+                    "CameraParameters",
+                    format!("Failed to serialize intrinsic params for {}: {}", camera, e),
+                )
+            })?;
+
+            fs::write(&filepath, json).map_err(|e| {
+                roboflow_core::RoboflowError::encode(
+                    "CameraParameters",
+                    format!("Failed to write intrinsic params for {}: {}", filename, e),
+                )
+            })?;
+
+            tracing::debug!(
+                camera = %camera,
+                file = %filename,
+                "Wrote camera intrinsics"
+            );
+        }
+
+        // Write extrinsics
+        for (camera, extrinsic) in &self.camera_extrinsics {
+            let filename = format!("{}_extrinsic.json", camera);
+            let filepath = params_dir.join(&filename);
+
+            let json = serde_json::to_string_pretty(extrinsic).map_err(|e| {
+                roboflow_core::RoboflowError::encode(
+                    "CameraParameters",
+                    format!("Failed to serialize extrinsic params for {}: {}", camera, e),
+                )
+            })?;
+
+            fs::write(&filepath, json).map_err(|e| {
+                roboflow_core::RoboflowError::encode(
+                    "CameraParameters",
+                    format!("Failed to write extrinsic params for {}: {}", filename, e),
+                )
+            })?;
+
+            tracing::debug!(
+                camera = %camera,
+                file = %filename,
+                "Wrote camera extrinsics"
+            );
+        }
+
+        Ok(())
+    }
 }
 
 /// Implement the core DatasetWriter trait for LerobotWriter.
@@ -654,6 +791,9 @@ impl DatasetWriter for LerobotWriter {
         if !self.frame_data.is_empty() {
             self.finish_episode(None)?;
         }
+
+        // Write camera parameters
+        self.write_camera_parameters()?;
 
         // Write metadata files
         if self.use_cloud_storage {
@@ -955,10 +1095,12 @@ impl LerobotWriter {
         let data_dir = local_buffer.join("data/chunk-000");
         let videos_dir = local_buffer.join("videos/chunk-000");
         let meta_dir = local_buffer.join("meta");
+        let params_dir = local_buffer.join("parameters");
 
         fs::create_dir_all(&data_dir)?;
         fs::create_dir_all(&videos_dir)?;
         fs::create_dir_all(&meta_dir)?;
+        fs::create_dir_all(&params_dir)?;
 
         // Detect if this is cloud storage
         use roboflow_storage::LocalStorage;
@@ -999,6 +1141,8 @@ impl LerobotWriter {
             frame_data: Vec::new(),
             image_buffers: HashMap::new(),
             metadata: MetadataCollector::new(),
+            camera_intrinsics: HashMap::new(),
+            camera_extrinsics: HashMap::new(),
             total_frames: 0,
             images_encoded: 0,
             skipped_frames: 0,

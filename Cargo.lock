@@ -4171,7 +4171,6 @@ dependencies = [
  "crossbeam-channel",
  "crossbeam-queue",
  "futures",
- "hdf5",
  "hex",
  "hostname",
  "io-uring",
@@ -4198,7 +4197,6 @@ dependencies = [
  "roboflow-core",
  "roboflow-dataset",
  "roboflow-distributed",
- "roboflow-hdf5",
  "roboflow-pipeline",
  "roboflow-sinks",
  "roboflow-sources",
@@ -4291,19 +4289,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "roboflow-hdf5"
-version = "0.2.0"
-dependencies = [
- "hdf5",
- "pretty_assertions",
- "roboflow-core",
- "roboflow-storage",
- "tempfile",
- "thiserror 1.0.69",
- "tracing",
 ]
 
 [[package]]

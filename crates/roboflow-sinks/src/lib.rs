@@ -9,7 +9,6 @@ mod error;
 mod registry;
 
 // Sink implementations
-pub mod kps;
 pub mod lerobot;
 
 pub use config::{SinkConfig, SinkType};

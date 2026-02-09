@@ -105,22 +105,11 @@ pub use roboflow_sinks::{
 pub use roboflow_dataset::{
     DatasetConfig, DatasetFormat, DatasetWriter,
     common::DatasetBaseConfig,
-    kps::{
-        ParquetKpsWriter,
-        config::{KpsConfig, Mapping, MappingType, OutputFormat},
-        delivery_v12::{
-            SeriesDeliveryConfig, SeriesDeliveryConfigBuilder, StatisticsCollector, TaskInfo,
-            TaskStatistics, V12DeliveryBuilder,
-        },
-    },
     lerobot::{
         LerobotConfig, LerobotWriter, LerobotWriterTrait,
         config::{DatasetConfig as LerobotDatasetConfig, VideoConfig},
     },
 };
-
-// Re-export the full kps module for test access
-pub use roboflow_dataset::kps;
 
 // Re-export lerobot module for test access
 pub use roboflow_dataset::lerobot;
