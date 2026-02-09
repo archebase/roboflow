@@ -465,6 +465,7 @@ impl DatasetWriter for StreamingParquetWriter {
             state_records: self.state_records,
             output_bytes: self.output_bytes,
             duration_sec: duration,
+            decode_failures: 0, // KPS writer doesn't track decode failures separately
         })
     }
 

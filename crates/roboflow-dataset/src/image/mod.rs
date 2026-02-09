@@ -106,11 +106,24 @@ pub type Result<T> = std::result::Result<T, ImageError>;
 /// let jpeg_data = std::fs::read("image.jpg")?;
 /// let rgb_image = decode_compressed_image(&jpeg_data, ImageFormat::Jpeg)?;
 /// ```
-pub fn decode_compressed_image(data: &[u8], format: ImageFormat) -> Result<DecodedImage> {
-    use crate::image::{ImageDecoderConfig, ImageDecoderFactory};
+/// Process-wide shared decoder for decode_compressed_image so we don't create (and log) per frame.
+fn shared_decoder() -> &'static dyn ImageDecoderBackend {
+    use std::sync::OnceLock;
+    static DECODER: OnceLock<Box<dyn ImageDecoderBackend>> = OnceLock::new();
+    DECODER
+        .get_or_init(|| {
+            let config = ImageDecoderConfig::new();
+            let mut factory = ImageDecoderFactory::new(&config);
+            factory.create_decoder().unwrap_or_else(|_| {
+                Box::new(backend::CpuImageDecoder::new(
+                    memory::MemoryStrategy::Heap,
+                    1,
+                ))
+            })
+        })
+        .as_ref()
+}
 
-    let config = ImageDecoderConfig::new();
-    let mut factory = ImageDecoderFactory::new(&config);
-    let decoder = factory.get_decoder();
-    decoder.decode(data, format)
+pub fn decode_compressed_image(data: &[u8], format: ImageFormat) -> Result<DecodedImage> {
+    shared_decoder().decode(data, format)
 }

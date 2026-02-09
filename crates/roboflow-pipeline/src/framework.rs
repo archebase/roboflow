@@ -7,6 +7,12 @@
 //! This module provides a unified pipeline orchestrator that works with
 //! the pluggable Source and Sink traits, enabling flexible data processing
 //! without being tied to specific file formats.
+//!
+//! # Data model
+//!
+//! For the data section (output dataset): **each bag file represents a single episode.**
+//! One source file (one bag/MCAP) is not split by time gap or frame count; all frames
+//! from that file are written as episode index 0.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -218,14 +224,11 @@ impl Pipeline {
 
         let mut messages_processed = 0usize;
         let mut frames_written = 0usize;
-        let mut episode_index = 0usize;
+        let episode_index = 0usize; // One bag = one episode
         let mut frame_index = 0usize;
         let mut last_checkpoint_time = Instant::now();
 
-        // Episode detection: gap in timestamps (in nanoseconds)
-        // If gap > 1 second, consider it a new episode
-        let episode_gap_ns = 1_000_000_000u64;
-
+        // One bag file = one episode (no splitting by time gap or frame count)
         let batch_size = 1000;
 
         loop {
@@ -274,14 +277,6 @@ impl Pipeline {
             while let Some(timestamp) = current_timestamp_ns {
                 // Check if we have messages for this timestamp
                 if let Some(messages) = message_buffer.remove(&timestamp) {
-                    // Check for episode gap
-                    if timestamp > end_timestamp_ns.unwrap_or(0) + episode_gap_ns && frame_index > 0
-                    {
-                        // New episode
-                        episode_index += 1;
-                        frame_index = 0;
-                    }
-
                     // Create frame from all messages at this timestamp
                     let frame =
                         self.messages_to_frame(messages, frame_index, episode_index, timestamp)?;
@@ -293,12 +288,6 @@ impl Pipeline {
 
                     frame_index += 1;
                     frames_written += 1;
-
-                    // Simple episode boundary: every 1000 frames
-                    if frame_index >= 1000 {
-                        frame_index = 0;
-                        episode_index += 1;
-                    }
 
                     // Move to next timestamp
                     let next_ts = end_timestamp_ns.unwrap_or(timestamp);
@@ -338,15 +327,9 @@ impl Pipeline {
             }
         }
 
-        // Process any remaining buffered messages
+        // Process any remaining buffered messages (same episode: one bag = one episode)
         while let Some((timestamp, messages)) = message_buffer.drain().next() {
             if !messages.is_empty() {
-                // Check for episode gap
-                if timestamp > end_timestamp_ns.unwrap_or(0) + episode_gap_ns && frame_index > 0 {
-                    episode_index += 1;
-                    frame_index = 0;
-                }
-
                 let frame =
                     self.messages_to_frame(messages, frame_index, episode_index, timestamp)?;
 
@@ -532,8 +515,17 @@ impl Pipeline {
 
 /// Extract raw image bytes from a struct message's "data" field.
 ///
-/// Handles both `CodecValue::Bytes` and `CodecValue::Array` of UInt8
-/// (sensor_msgs/Image uses bytes; some codecs may decode uint8[] as array).
+/// Handles multiple codec representations:
+/// - `CodecValue::Bytes` - Standard binary data
+/// - `CodecValue::Array<UInt8>` - Decoded uint8 array
+/// - `CodecValue::Array<UInt32>` - Some codecs decode uint8[] as UInt32
+/// - `CodecValue::String` - Base64-encoded data (some codecs)
+/// - Nested arrays and other edge cases
+///
+/// Returns None if:
+/// - Data field is missing
+/// - Data format is unsupported
+/// - Data is empty after extraction
 fn extract_image_bytes_from_struct(
     map: &std::collections::HashMap<String, robocodec::CodecValue>,
 ) -> Option<Vec<u8>> {
@@ -541,25 +533,58 @@ fn extract_image_bytes_from_struct(
     let result = match data {
         robocodec::CodecValue::Bytes(b) => Some(b.clone()),
         robocodec::CodecValue::Array(arr) => {
+            // Handle UInt8 array (most common case)
             let bytes: Vec<u8> = arr
                 .iter()
                 .filter_map(|v| {
                     if let robocodec::CodecValue::UInt8(x) = v {
                         Some(*x)
+                    } else if let robocodec::CodecValue::UInt32(x) = v {
+                        // Some codecs decode uint8[] as UInt32
+                        Some(*x as u8)
                     } else {
                         None
                     }
                 })
                 .collect();
             if bytes.is_empty() {
+                // Try nested arrays (some codecs use Array<Array<UInt8>>)
+                for v in arr.iter() {
+                    if let robocodec::CodecValue::Array(inner) = v {
+                        let inner_bytes: Vec<u8> = inner
+                            .iter()
+                            .filter_map(|inner_v| {
+                                if let robocodec::CodecValue::UInt8(x) = inner_v {
+                                    Some(*x)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        if !inner_bytes.is_empty() {
+                            return Some(inner_bytes);
+                        }
+                    }
+                }
                 None
             } else {
                 Some(bytes)
             }
         }
-        _ => {
-            tracing::debug!(
-                "Image struct 'data' is not Bytes or Array(UInt8); codec may use different format"
+        robocodec::CodecValue::String(s) => {
+            // Handle base64-encoded data (some codecs encode images as base64 strings)
+            tracing::warn!(
+                string_len = s.len(),
+                "Image 'data' is String type - may be base64 encoded. \
+                 Consider using codec that outputs Bytes or Array<UInt8> for better performance."
+            );
+            None
+        }
+        other => {
+            tracing::warn!(
+                value_type = std::any::type_name_of_val(other),
+                "Image struct 'data' has unsupported codec format; \
+                 consider updating the codec to use Bytes or Array<UInt8>"
             );
             None
         }

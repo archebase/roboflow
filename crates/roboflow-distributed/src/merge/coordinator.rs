@@ -400,17 +400,29 @@ impl MergeCoordinator {
                 (status, data)
             }
             None => {
-                // Batch not found
+                tracing::debug!(job_id = %job_id, "try_claim_merge: batch not found in TiKV");
                 return Ok(MergeResult::NotFound);
             }
         };
 
         // Step 2: Check if batch is in Running phase and complete (claimable)
         if current_status.phase != BatchPhase::Running {
+            tracing::debug!(
+                job_id = %job_id,
+                phase = ?current_status.phase,
+                "try_claim_merge: batch not in Running phase (cannot claim)"
+            );
             return Ok(MergeResult::NotClaimed);
         }
 
         if !current_status.is_complete() {
+            tracing::debug!(
+                job_id = %job_id,
+                work_units_total = current_status.work_units_total,
+                work_units_completed = current_status.work_units_completed,
+                work_units_failed = current_status.work_units_failed,
+                "try_claim_merge: batch not complete (is_complete=false)"
+            );
             return Ok(MergeResult::NotReady);
         }
 
@@ -445,10 +457,16 @@ impl MergeCoordinator {
                 && let Ok(check_status) = bincode::deserialize::<BatchStatus>(&data)
                 && check_status.phase == BatchPhase::Merging
             {
-                // Someone else is merging
+                tracing::debug!(
+                    job_id = %job_id,
+                    "try_claim_merge: CAS verify failed, another instance is Merging"
+                );
                 return Ok(MergeResult::NotClaimed);
             }
-            // Something else went wrong, retry
+            tracing::debug!(
+                job_id = %job_id,
+                "try_claim_merge: CAS verify failed (status changed), will retry"
+            );
             return Ok(MergeResult::NotReady);
         }
 
@@ -480,9 +498,20 @@ impl MergeCoordinator {
             // For single-worker mode, worker may have written directly to output_path
             // without calling register_staging_complete. Treat output as the single staging path.
             if state.completed_workers == 0 && expected_workers == 1 {
+                tracing::debug!(
+                    job_id = %job_id,
+                    "try_claim_merge: single-worker mode, injecting direct staging path"
+                );
                 state.add_worker("direct".to_string(), output_path.clone(), 0);
             } else {
                 // Transition back to Running and return NotReady
+                tracing::debug!(
+                    job_id = %job_id,
+                    merge_status = ?state.status,
+                    completed_workers = state.completed_workers,
+                    expected_workers = expected_workers,
+                    "try_claim_merge: merge state not ready (rollback Running), will retry"
+                );
                 let mut retry_status = current_status;
                 retry_status.transition_to(BatchPhase::Running);
                 let retry_data = bincode::serialize(&retry_status)
@@ -503,6 +532,11 @@ impl MergeCoordinator {
         // Start merge
         let worker_id = format!("merge-{}", uuid::Uuid::new_v4());
         if let Err(e) = state.start_merge(worker_id.clone()) {
+            tracing::debug!(
+                job_id = %job_id,
+                error = %e,
+                "try_claim_merge: start_merge failed (merge state not ready)"
+            );
             // Failed to start merge - mark batch as failed
             let _ = self.fail_merge_with_status(job_id, &e.to_string()).await;
             return Ok(MergeResult::Failed { error: e });
@@ -536,6 +570,11 @@ impl MergeCoordinator {
         let actual_frames = match executor.execute(&state).await {
             Ok(frames) => frames,
             Err(e) => {
+                tracing::debug!(
+                    job_id = %job_id,
+                    error = %e,
+                    "try_claim_merge: merge execution failed"
+                );
                 // Mark merge as failed
                 let _ = self.fail_merge_with_status(job_id, &e.to_string()).await;
                 return Ok(MergeResult::Failed {

@@ -90,6 +90,9 @@ pub struct EncodeStats {
     pub skipped_frames: usize,
     /// Number of videos that failed to encode
     pub failed_encodings: usize,
+    /// Number of images that failed to decode (corrupted/unsupported format)
+    #[allow(dead_code)]
+    pub decode_failures: usize,
     /// Total output bytes
     pub output_bytes: u64,
 }
@@ -273,6 +276,7 @@ fn encode_videos_parallel(
         images_encoded: images_encoded.load(Ordering::Relaxed),
         skipped_frames: skipped_frames.load(Ordering::Relaxed),
         failed_encodings: failed_encodings.load(Ordering::Relaxed),
+        decode_failures: skipped_frames.load(Ordering::Relaxed), // Decode failures tracked as skips
         output_bytes: output_bytes.load(Ordering::Relaxed),
     };
 
@@ -295,19 +299,95 @@ const JPEG_MAGIC: &[u8] = &[0xFF, 0xD8, 0xFF];
 const PNG_MAGIC: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
 /// Decode compressed image (JPEG/PNG) to RGB when `is_encoded` is true.
-/// Tries raw payload first, then skips an 8-byte header if present (e.g. ROS/serialization prefix).
-/// Returns None if decode fails.
+///
+/// Tries multiple strategies:
+/// 1. Direct decode of raw payload
+/// 2. Skip 8-byte ROS CDR header
+/// 3. Skip 4-byte header
+/// 4. Try to find JPEG/PNG magic bytes in the data
+///
+/// Returns None if decode fails, with detailed logging for diagnosis.
 fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
+    // Strategy 1: Try direct decode
     if let Some(decoded) = try_decode_payload(&img.data) {
         return Some(decoded);
     }
-    // Some codecs (e.g. ROS bag CDR) prefix the image with an 8-byte header (e.g. zeros or length).
-    // Try skipping the first 8 bytes and decode again.
+
+    // Strategy 2: Some codecs (e.g. ROS bag CDR) prefix the image with an 8-byte header
     if img.data.len() > 8
         && let Some(decoded) = try_decode_payload(&img.data[8..])
     {
+        tracing::debug!(
+            original_len = img.data.len(),
+            "Decoded image after skipping 8-byte header"
+        );
         return Some(decoded);
     }
+
+    // Strategy 3: Try 4-byte header (some serialization formats)
+    if img.data.len() > 4
+        && let Some(decoded) = try_decode_payload(&img.data[4..])
+    {
+        tracing::debug!(
+            original_len = img.data.len(),
+            "Decoded image after skipping 4-byte header"
+        );
+        return Some(decoded);
+    }
+
+    // Strategy 4: Try to find JPEG/PNG magic bytes anywhere in the data
+    let data = &img.data;
+    if data.len() > 4 {
+        // Find JPEG magic (FF D8 FF)
+        if let Some(pos) = data
+            .windows(3)
+            .position(|w| w[0] == 0xFF && w[1] == 0xD8 && w[2] == 0xFF)
+            && let Some(decoded) = try_decode_payload(&data[pos..])
+        {
+            tracing::debug!(
+                skipped_bytes = pos,
+                "Decoded image after finding JPEG magic bytes"
+            );
+            return Some(decoded);
+        }
+        // Find PNG magic (89 50 4E 47)
+        if let Some(pos) = data
+            .windows(4)
+            .position(|w| w[0] == 0x89 && &w[1..4] == b"PNG")
+            && let Some(decoded) = try_decode_payload(&data[pos..])
+        {
+            tracing::debug!(
+                skipped_bytes = pos,
+                "Decoded image after finding PNG magic bytes"
+            );
+            return Some(decoded);
+        }
+    }
+
+    // All strategies failed - log detailed diagnostic info
+    tracing::warn!(
+        data_len = img.data.len(),
+        width = img.width,
+        height = img.height,
+        first_bytes = if data.len() >= 8 {
+            format!(
+                "{:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}",
+                data.first().unwrap_or(&0),
+                data.get(1).unwrap_or(&0),
+                data.get(2).unwrap_or(&0),
+                data.get(3).unwrap_or(&0),
+                data.get(4).unwrap_or(&0),
+                data.get(5).unwrap_or(&0),
+                data.get(6).unwrap_or(&0),
+                data.get(7).unwrap_or(&0)
+            )
+        } else {
+            "too short".to_string()
+        },
+        "Compressed image decode failed - data may be corrupted, truncated, or use unsupported format. \
+         Consider: 1) Check source file integrity, 2) Verify codec compatibility, 3) Enable debug logging for more details"
+    );
+
     None
 }
 
@@ -346,9 +426,12 @@ fn try_decode_payload(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 pub fn build_frame_buffer_static(images: &[ImageData]) -> Result<(VideoFrameBuffer, usize)> {
     let mut buffer = VideoFrameBuffer::new();
     let mut skipped = 0usize;
+    let mut decode_failures = 0usize;
 
     for img in images {
         if img.width == 0 || img.height == 0 {
+            tracing::debug!("Skipping image with zero dimensions");
+            skipped += 1;
             continue;
         }
 
@@ -356,8 +439,14 @@ pub fn build_frame_buffer_static(images: &[ImageData]) -> Result<(VideoFrameBuff
             match decode_image_to_rgb(img) {
                 Some((w, h, data)) => (w, h, data),
                 None => {
+                    decode_failures += 1;
                     skipped += 1;
-                    tracing::debug!("Skipping encoded image (decode failed)");
+                    tracing::debug!(
+                        width = img.width,
+                        height = img.height,
+                        data_len = img.data.len(),
+                        "Skipping encoded image (decode failed)"
+                    );
                     continue;
                 }
             }
@@ -383,9 +472,23 @@ pub fn build_frame_buffer_static(images: &[ImageData]) -> Result<(VideoFrameBuff
     if !images.is_empty() && buffer.is_empty() {
         tracing::warn!(
             frame_count = images.len(),
+            decode_failures,
             "All frames skipped for video (decode failed or dimension mismatch); \
-             check logs above for 'Compressed image decode failed' to fix. \
-             Parquet and other cameras will still be written."
+             Parquet and other cameras will still be written. \
+             Check image data integrity and codec compatibility."
+        );
+    }
+
+    // Log decode failure summary
+    if decode_failures > 0 {
+        tracing::warn!(
+            decode_failures,
+            total_frames = images.len(),
+            failure_rate = format!(
+                "{:.1}%",
+                (decode_failures as f64 / images.len() as f64) * 100.0
+            ),
+            "Image decode failures detected"
         );
     }
 

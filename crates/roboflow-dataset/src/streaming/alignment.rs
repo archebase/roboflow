@@ -200,12 +200,15 @@ impl FrameAlignmentBuffer {
                             );
                         }
                         CodecValue::Array(arr) => {
-                            // Handle encoded image data stored as UInt8 array
+                            // Handle encoded image data stored as UInt8 array (most common)
                             let bytes: Vec<u8> = arr
                                 .iter()
                                 .filter_map(|v| {
                                     if let CodecValue::UInt8(b) = v {
                                         Some(*b)
+                                    } else if let CodecValue::UInt32(b) = v {
+                                        // Some codecs decode uint8[] as UInt32
+                                        Some(*b as u8)
                                     } else {
                                         None
                                     }
@@ -221,10 +224,37 @@ impl FrameAlignmentBuffer {
                                     "Found image data field in Array format"
                                 );
                             } else {
-                                tracing::warn!(
-                                    feature = %feature_name,
-                                    "Image 'data' is Array but not UInt8 elements"
-                                );
+                                // Try nested arrays (some codecs use Array<Array<UInt8>>)
+                                for v in arr.iter() {
+                                    if let CodecValue::Array(inner) = v {
+                                        let inner_bytes: Vec<u8> = inner
+                                            .iter()
+                                            .filter_map(|inner_v| {
+                                                if let CodecValue::UInt8(x) = inner_v {
+                                                    Some(*x)
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .collect();
+                                        if !inner_bytes.is_empty() {
+                                            image_data = Some(inner_bytes);
+                                            tracing::debug!(
+                                                feature = %feature_name,
+                                                data_type = "Array<Array<UInt8>>",
+                                                "Found image data in nested Array format"
+                                            );
+                                            break;
+                                        }
+                                    }
+                                }
+                                if image_data.is_none() {
+                                    tracing::warn!(
+                                        feature = %feature_name,
+                                        array_len = arr.len(),
+                                        "Image 'data' is Array but no valid UInt8 elements found"
+                                    );
+                                }
                             }
                         }
                         other => {

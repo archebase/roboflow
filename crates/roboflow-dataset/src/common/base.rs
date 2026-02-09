@@ -273,6 +273,9 @@ pub struct WriterStats {
 
     /// Processing duration in seconds.
     pub duration_sec: f64,
+
+    /// Number of images that failed to decode (corrupted/unsupported).
+    pub decode_failures: usize,
 }
 
 impl WriterStats {
@@ -294,6 +297,16 @@ impl WriterStats {
     pub fn mb_per_sec(&self) -> f64 {
         if self.duration_sec > 0.0 {
             (self.output_bytes as f64 / (1024.0 * 1024.0)) / self.duration_sec
+        } else {
+            0.0
+        }
+    }
+
+    /// Get decode failure rate as percentage (0-100).
+    pub fn decode_failure_rate(&self) -> f64 {
+        let total = self.images_encoded + self.decode_failures;
+        if total > 0 {
+            (self.decode_failures as f64 / total as f64) * 100.0
         } else {
             0.0
         }

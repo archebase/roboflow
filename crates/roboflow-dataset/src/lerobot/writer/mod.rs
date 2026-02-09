@@ -714,6 +714,7 @@ impl DatasetWriter for LerobotWriter {
             state_records: self.total_frames * 2,
             output_bytes: self.output_bytes,
             duration_sec: duration,
+            decode_failures: self.failed_encodings,
         })
     }
 
