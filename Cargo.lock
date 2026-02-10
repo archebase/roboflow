@@ -4190,7 +4190,6 @@ dependencies = [
  "roboflow-core",
  "roboflow-dataset",
  "roboflow-distributed",
- "roboflow-pipeline",
  "roboflow-sinks",
  "roboflow-sources",
  "roboflow-storage",
@@ -4239,6 +4238,7 @@ dependencies = [
  "rayon",
  "robocodec",
  "roboflow-core",
+ "roboflow-sources",
  "roboflow-storage",
  "rsmpeg",
  "serde",
@@ -4266,7 +4266,6 @@ dependencies = [
  "pretty_assertions",
  "roboflow-core",
  "roboflow-dataset",
- "roboflow-pipeline",
  "roboflow-sinks",
  "roboflow-sources",
  "roboflow-storage",
@@ -4281,36 +4280,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "roboflow-pipeline"
-version = "0.2.0"
-dependencies = [
- "async-trait",
- "bumpalo",
- "bytemuck",
- "byteorder",
- "bzip2",
- "crc32fast",
- "criterion",
- "crossbeam",
- "crossbeam-channel",
- "crossbeam-queue",
- "libc",
- "lz4_flex",
- "memmap2 0.9.9",
- "pretty_assertions",
- "rayon",
- "robocodec",
- "roboflow-core",
- "roboflow-sinks",
- "roboflow-sources",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "zstd",
 ]
 
 [[package]]

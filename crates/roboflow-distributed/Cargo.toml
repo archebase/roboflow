@@ -11,7 +11,6 @@ description = "Distributed coordination for roboflow - TiKV backend"
 roboflow-core = { workspace = true }
 roboflow-storage = { workspace = true }
 roboflow-dataset = { workspace = true }
-roboflow-pipeline = { workspace = true }
 roboflow-sources = { workspace = true }
 roboflow-sinks = { workspace = true }
 

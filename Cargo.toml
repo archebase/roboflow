@@ -5,7 +5,6 @@ members = [
     "crates/roboflow-storage",
     "crates/roboflow-distributed",
     "crates/roboflow-dataset",
-    "crates/roboflow-pipeline",
     "crates/roboflow-sources",
     "crates/roboflow-sinks",
 ]
@@ -17,7 +16,6 @@ roboflow-core = { path = "crates/roboflow-core", version = "0.2.0" }
 roboflow-storage = { path = "crates/roboflow-storage", version = "0.2.0" }
 roboflow-distributed = { path = "crates/roboflow-distributed", version = "0.2.0" }
 roboflow-dataset = { path = "crates/roboflow-dataset", version = "0.2.0" }
-roboflow-pipeline = { path = "crates/roboflow-pipeline", version = "0.2.0" }
 roboflow-sources = { path = "crates/roboflow-sources", version = "0.2.0" }
 roboflow-sinks = { path = "crates/roboflow-sinks", version = "0.2.0" }
 
@@ -44,7 +42,6 @@ robocodec = { workspace = true }
 roboflow-core = { workspace = true }
 roboflow-storage = { workspace = true }
 roboflow-dataset = { workspace = true }
-roboflow-pipeline = { workspace = true }
 roboflow-distributed = { workspace = true }
 roboflow-sources = { workspace = true, optional = true }
 roboflow-sinks = { workspace = true, optional = true }

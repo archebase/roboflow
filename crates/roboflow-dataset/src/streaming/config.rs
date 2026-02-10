@@ -37,7 +37,7 @@ impl StreamingConfig {
     }
 
     /// Calculate default completion window based on FPS.
-    fn default_completion_window(fps: u32) -> u64 {
+    pub fn default_completion_window(fps: u32) -> u64 {
         // 3 frames at the given FPS
         let frame_interval_ns = 1_000_000_000u64 / fps as u64;
         frame_interval_ns * 3

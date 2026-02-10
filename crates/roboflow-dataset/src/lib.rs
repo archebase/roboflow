@@ -32,8 +32,20 @@ pub mod image;
 // Streaming frame alignment
 pub mod streaming;
 
+// Unified pipeline executor
+pub mod pipeline;
+
+// Zarr dataset format (experimental/example)
+pub mod zarr;
+
 // Re-export common types for convenience
 pub use common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats};
+
+// Re-export pipeline types
+pub use pipeline::{PipelineConfig, PipelineExecutor, PipelineStats};
+
+// Re-export zarr types
+pub use zarr::{ZarrConfig, ZarrWriter};
 
 // Re-export commonly used image types
 pub use image::{

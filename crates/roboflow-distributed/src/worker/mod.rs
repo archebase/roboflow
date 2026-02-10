@@ -37,10 +37,10 @@ use lru::LruCache;
 // Dataset conversion imports
 use roboflow_dataset::lerobot::LerobotConfig;
 
-// Pipeline-v2 imports
-use roboflow_pipeline::framework::{CheckpointCallback, DistributedExecutor, PipelineConfig};
-use roboflow_sinks::SinkConfig;
-use roboflow_sources::SourceConfig;
+// Pipeline imports (unified executor from roboflow-dataset)
+use roboflow_dataset::streaming::config::StreamingConfig;
+use roboflow_dataset::{PipelineConfig, PipelineExecutor};
+use roboflow_sources::{SourceConfig, create_source};
 
 // Re-export module items for use within the worker module
 pub use heartbeat::send_heartbeat_inner;
@@ -154,7 +154,7 @@ impl Worker {
 
     /// Process a work unit using the new Pipeline API.
     ///
-    /// This method uses the Source/Sink abstraction for dataset conversion.
+    /// This method uses the unified PipelineExecutor for dataset conversion.
     async fn process_work_unit_with_pipeline(&self, unit: &WorkUnit) -> ProcessingResult {
         use std::collections::HashMap;
         use std::sync::Arc;
@@ -164,7 +164,7 @@ impl Worker {
             unit_id = %unit.id,
             batch_id = %unit.batch_id,
             files = unit.files.len(),
-            "Processing work unit with Pipeline API"
+            "Processing work unit with PipelineExecutor"
         );
 
         // Get the primary source file
@@ -181,18 +181,16 @@ impl Worker {
 
         // Check for existing checkpoint
         // NOTE: Checkpoint resumption is not yet fully implemented.
-        // The Pipeline API doesn't support starting from a specific frame offset.
-        // When a checkpoint exists, we log it but the pipeline will start from frame 0.
-        // The checkpoint callback will save progress during execution, enabling
-        // future resumption when the Pipeline supports frame_offset.
+        // The PipelineExecutor doesn't support starting from a specific frame offset.
+        // When a checkpoint exists, we log it but processing will start from frame 0.
         let _checkpoint_frame = match self.tikv.get_checkpoint(&unit_id).await {
             Ok(Some(checkpoint)) => {
                 tracing::warn!(
                     pod_id = %self.pod_id,
                     unit_id = %unit_id,
                     last_frame = checkpoint.last_frame,
-                    "Found checkpoint but Pipeline API doesn't support resuming from offset. \
-                     Starting from frame 0. Progress will be saved during execution."
+                    "Found checkpoint but PipelineExecutor doesn't support resuming from offset. \
+                     Starting from frame 0."
                 );
                 Some(checkpoint.last_frame)
             }
@@ -227,11 +225,75 @@ impl Worker {
             SourceConfig::mcap(source_url)
         };
 
-        // Create sink config for output with LeRobot config
-        let sink_config = SinkConfig::lerobot_with_config(
-            output_path.to_string_lossy().to_string(),
-            &lerobot_config,
-        );
+        // Determine if we need cloud storage
+        let (has_cloud_storage, storage, output_prefix) =
+            if output_path.starts_with("s3://") || output_path.starts_with("oss://") {
+                use std::str::FromStr;
+                let output_path_str = output_path.to_string_lossy().to_string();
+                let storage: Arc<dyn roboflow_storage::Storage> =
+                    match roboflow_storage::StorageFactory::from_env().create(&output_path_str) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            return ProcessingResult::Failed {
+                                error: format!("Failed to create storage: {}", e),
+                            };
+                        }
+                    };
+                let storage_url = match roboflow_storage::StorageUrl::from_str(&output_path_str) {
+                    Ok(url) => url,
+                    Err(_) => {
+                        return ProcessingResult::Failed {
+                            error: format!("Failed to parse storage URL: {}", output_path_str),
+                        };
+                    }
+                };
+                let prefix = storage_url.path().trim_end_matches('/').to_string();
+                (true, storage, Some(prefix))
+            } else {
+                let local_storage: Arc<dyn roboflow_storage::Storage> =
+                    Arc::new(roboflow_storage::LocalStorage::new(&output_path));
+                (false, local_storage, None)
+            };
+
+        // Create the source
+        let source = match create_source(&source_config) {
+            Ok(s) => s,
+            Err(e) => {
+                return ProcessingResult::Failed {
+                    error: format!("Failed to create source: {}", e),
+                };
+            }
+        };
+
+        // Create the writer - use LerobotWriter directly for PipelineExecutor
+        let writer = if has_cloud_storage {
+            let prefix = output_prefix.as_deref().unwrap_or_default();
+            match roboflow_dataset::lerobot::LerobotWriter::new(
+                storage.clone(),
+                prefix.to_string(),
+                &output_path,
+                lerobot_config.clone(),
+            ) {
+                Ok(w) => w,
+                Err(e) => {
+                    return ProcessingResult::Failed {
+                        error: format!("Failed to create writer: {}", e),
+                    };
+                }
+            }
+        } else {
+            match roboflow_dataset::lerobot::LerobotWriter::new_local(
+                &output_path,
+                lerobot_config.clone(),
+            ) {
+                Ok(w) => w,
+                Err(e) => {
+                    return ProcessingResult::Failed {
+                        error: format!("Failed to create writer: {}", e),
+                    };
+                }
+            }
+        };
 
         // Build topic mappings from config
         let mut topic_mappings = HashMap::new();
@@ -239,14 +301,15 @@ impl Worker {
             topic_mappings.insert(mapping.topic.clone(), mapping.feature.clone());
         }
 
-        let pipeline_config = PipelineConfig {
-            source: source_config,
-            sink: sink_config,
-            fps: lerobot_config.dataset.fps,
-            max_frames: None,
-            checkpoint_interval: Some(Duration::from_secs(30)),
-            topic_mappings,
-        };
+        // Create pipeline configuration with streaming settings
+        let frame_interval_ns = 1_000_000_000u64 / lerobot_config.dataset.fps as u64;
+        let completion_window_ns = frame_interval_ns * 3;
+
+        let mut streaming_config = StreamingConfig::with_fps(lerobot_config.dataset.fps);
+        streaming_config.completion_window_ns = completion_window_ns;
+
+        let pipeline_config =
+            PipelineConfig::new(streaming_config).with_topic_mappings(topic_mappings);
 
         // Create cancellation token
         let cancel_token = self.cancellation_token.child_token();
@@ -258,19 +321,8 @@ impl Worker {
             registry.register(unit_id.clone(), cancel_token_for_monitor);
         }
 
-        // Create a simple checkpoint callback wrapper
-        // Note: The pipeline-v2 doesn't yet support arbitrary checkpoint callbacks during execution
-        // This is a placeholder for future integration when the pipeline supports progress callbacks
-        let checkpoint_callback: CheckpointCallback = Arc::new({
-            move |_frame_index: usize, _total: usize| {
-                // Placeholder for future checkpoint integration
-                // The pipeline currently uses its own internal checkpointing mechanism
-            }
-        });
-
-        // Create executor with checkpoint callback
-        let executor = DistributedExecutor::new(Duration::from_secs(30))
-            .with_checkpoint_callback(checkpoint_callback);
+        // Create pipeline executor with concrete writer type
+        let mut executor = PipelineExecutor::new(writer, pipeline_config);
 
         // Run with timeout
         const CONVERSION_TIMEOUT: Duration = Duration::from_secs(3600);
@@ -280,41 +332,80 @@ impl Worker {
         let cancel_token_for_timeout = cancel_token.clone();
 
         let pipeline_task = tokio::task::spawn(async move {
-            let _guard = cancel_token.drop_guard();
-            executor.execute(pipeline_config).await
+            let _guard = cancel_token.clone().drop_guard();
+
+            // Initialize source
+            let mut source = source;
+            let _ = source.initialize(&source_config).await;
+
+            // Process messages from source
+            let batch_size = 1000;
+            loop {
+                // Check for cancellation
+                if cancel_token.is_cancelled() {
+                    return Err(roboflow_core::RoboflowError::other(
+                        "Interrupted by shutdown".to_string(),
+                    ));
+                }
+
+                match source.read_batch(batch_size).await {
+                    Ok(Some(messages)) if !messages.is_empty() => {
+                        for msg in messages {
+                            executor.process_message(msg)?;
+                        }
+                    }
+                    Ok(Some(_)) => {
+                        // Empty batch, continue
+                        continue;
+                    }
+                    Ok(None) => {
+                        // End of stream
+                        break;
+                    }
+                    Err(e) => {
+                        return Err(roboflow_core::RoboflowError::other(format!(
+                            "Source read failed: {}",
+                            e
+                        )));
+                    }
+                }
+            }
+
+            // Finalize and get stats
+            executor.finalize()
         });
 
-        let report = match tokio::time::timeout(CONVERSION_TIMEOUT, pipeline_task).await {
-            Ok(Ok(Ok(report))) => {
+        let result = match tokio::time::timeout(CONVERSION_TIMEOUT, pipeline_task).await {
+            Ok(Ok(Ok(_stats))) => {
                 let mut registry = job_registry_for_cleanup.write().await;
                 registry.unregister(&unit_id_clone);
-                report
+                ProcessingResult::Success
             }
             Ok(Ok(Err(e))) => {
                 let mut registry = job_registry_for_cleanup.write().await;
                 registry.unregister(&unit_id_clone);
 
-                let error_msg = format!(
-                    "Pipeline execution failed for work unit {}: {}",
-                    unit_id_clone, e
-                );
-                tracing::error!(unit_id = %unit_id_clone, error = %e, "Pipeline failed");
-                return ProcessingResult::Failed { error: error_msg };
+                ProcessingResult::Failed {
+                    error: format!(
+                        "Pipeline execution failed for work unit {}: {}",
+                        unit_id_clone, e
+                    ),
+                }
             }
             Ok(Err(join_err)) => {
                 let mut registry = job_registry_for_cleanup.write().await;
                 registry.unregister(&unit_id_clone);
 
                 if join_err.is_cancelled() {
-                    return ProcessingResult::Cancelled;
+                    ProcessingResult::Cancelled
+                } else {
+                    ProcessingResult::Failed {
+                        error: format!(
+                            "Pipeline task panicked for work unit {}: {}",
+                            unit_id_clone, join_err
+                        ),
+                    }
                 }
-
-                let error_msg = format!(
-                    "Pipeline task panicked for work unit {}: {}",
-                    unit_id_clone, join_err
-                );
-                tracing::error!(unit_id = %unit_id_clone, join_error = %join_err, "Task panicked");
-                return ProcessingResult::Failed { error: error_msg };
             }
             Err(_) => {
                 let mut registry = job_registry_for_cleanup.write().await;
@@ -329,15 +420,10 @@ impl Worker {
 
         tracing::info!(
             unit_id = %unit.id,
-            frames_written = report.frames_written,
-            episodes = report.episodes_written,
-            messages = report.messages_processed,
-            duration_sec = report.duration_sec,
-            fps = report.fps,
-            "Work unit complete with Pipeline API"
+            "Work unit complete with PipelineExecutor"
         );
 
-        ProcessingResult::Success
+        result
     }
 
     /// Complete a work unit.

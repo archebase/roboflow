@@ -12,20 +12,21 @@
 //!
 //! - [`roboflow_core::CodecValue`] - Core value types
 //! - [`roboflow_core::RoboflowError`] - Error handling
-//! - [`pipeline`] - Parallel processing pipeline
-//! - [`dataset::kps`] - KPS dataset format (experimental)
+//! - [`roboflow_dataset`] - Dataset writers and pipeline executor
+//! - [`roboflow_sources`] - Data sources (MCAP, bag, etc.)
 //!
 //! ## Example
 //!
 //! ```no_run
-//! use roboflow::{HyperPipeline, HyperPipelineConfig};
+//! use roboflow_dataset::{PipelineExecutor, PipelineConfig};
+//! use roboflow_dataset::streaming::config::StreamingConfig;
+//! use roboflow_sources::SourceConfig;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Convert between formats using hyper pipeline
-//! let config = HyperPipelineConfig::new("input.bag", "output.bag");
-//! let pipeline = HyperPipeline::new(config)?;
-//! let report = pipeline.run()?;
-//! println!("Throughput: {:.2} MB/s", report.throughput_mb_s);
+//! // Process MCAP to LeRobot dataset
+//! let streaming_config = StreamingConfig::with_fps(30);
+//! let pipeline_config = PipelineConfig::new(streaming_config);
+//! let executor = PipelineExecutor::new(writer, pipeline_config);
 //! # Ok(())
 //! # }
 //! ```
@@ -67,16 +68,6 @@ pub mod core {
         SchemaProvider, TypeAccessor, TypeRegistry,
     };
 }
-
-// =============================================================================
-// Parallel processing pipeline
-// =============================================================================
-// Pipeline is now provided by roboflow-pipeline crate
-pub use roboflow_pipeline::{
-    auto_config::PerformanceMode,
-    config::CompressionConfig,
-    hyper::{HyperPipeline, HyperPipelineConfig, HyperPipelineReport},
-};
 
 // =============================================================================
 // Pipeline API: Source/Sink abstraction
