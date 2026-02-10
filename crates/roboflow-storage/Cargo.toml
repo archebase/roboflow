@@ -29,6 +29,9 @@ thiserror = "1.0"
 # Logging
 tracing = "0.1"
 
+# Temp file creation (for streaming uploads)
+tempfile = "3.10"
+
 # Concurrency
 crossbeam-channel = "0.5"
 

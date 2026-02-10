@@ -379,6 +379,52 @@ impl Storage for LocalStorage {
     }
 }
 
+// =============================================================================
+// Streaming Upload Support
+// =============================================================================
+
+impl crate::streaming_upload::StorageStreamingExt for LocalStorage {
+    fn put_multipart_stream(
+        &self,
+        path: &Path,
+    ) -> crate::StorageResult<Box<dyn crate::streaming_upload::MultipartUpload>> {
+        use crate::streaming_upload::LocalMultipartUpload;
+        use std::io::BufWriter;
+
+        let target_path = self.full_path(path)?;
+
+        // Create a temporary file in the same directory as the target
+        let temp_dir = target_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let temp_file = tempfile::Builder::new()
+            .prefix(".tmp_upload_")
+            .tempfile_in(temp_dir)
+            .map_err(crate::StorageError::Io)?;
+
+        let temp_path = temp_file.path().to_path_buf();
+
+        // Use keep() to prevent auto-deletion, returns (File, PathBuf)
+        let (file, _kept_path) = temp_file
+            .keep()
+            .map_err(|e| crate::StorageError::Io(e.into()))?;
+        let writer = BufWriter::new(file);
+
+        tracing::debug!(
+            target = %target_path.display(),
+            temp = %temp_path.display(),
+            "Created local multipart upload"
+        );
+
+        Ok(Box::new(LocalMultipartUpload::new(
+            writer,
+            temp_path,
+            target_path,
+        )))
+    }
+}
+
 impl SeekableStorage for LocalStorage {
     fn seekable_reader(&self, path: &Path) -> Result<Box<dyn SeekRead + Send + 'static>> {
         let full_path = self.full_path(path)?;

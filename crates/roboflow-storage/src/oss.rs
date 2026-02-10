@@ -780,6 +780,44 @@ impl Storage for OssStorage {
     }
 }
 
+// =============================================================================
+// Streaming Upload Support
+// =============================================================================
+
+impl crate::streaming_upload::StorageStreamingExt for OssStorage {
+    fn put_multipart_stream(
+        &self,
+        path: &Path,
+    ) -> crate::StorageResult<Box<dyn crate::streaming_upload::MultipartUpload>> {
+        use crate::streaming_upload::CloudMultipartUpload;
+        use object_store::WriteMultipart;
+
+        let key = self.async_storage.path_to_key(path);
+        let runtime = self.runtime_handle();
+
+        // Create multipart upload via object_store
+        let multipart_upload = runtime.block_on(async {
+            self.async_storage
+                .object_store()
+                .put_multipart(&key)
+                .await
+                .map_err(|e| crate::StorageError::Cloud(format!("put_multipart failed: {}", e)))
+        })?;
+
+        // Default chunk size of 5MB for streaming uploads
+        const DEFAULT_CHUNK_SIZE: usize = 5 * 1024 * 1024;
+        let upload = WriteMultipart::new_with_chunk_size(multipart_upload, DEFAULT_CHUNK_SIZE);
+
+        tracing::debug!(
+            key = %key.as_ref(),
+            chunk_size = DEFAULT_CHUNK_SIZE,
+            "Created streaming multipart upload"
+        );
+
+        Ok(Box::new(CloudMultipartUpload::new(upload, runtime)))
+    }
+}
+
 impl std::fmt::Debug for OssStorage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OssStorage")

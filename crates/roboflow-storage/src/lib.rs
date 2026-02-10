@@ -41,6 +41,7 @@ pub mod multipart_parallel;
 pub mod oss;
 pub mod retry;
 pub mod streaming;
+pub mod streaming_upload;
 pub mod url;
 
 // Re-export public types
@@ -62,6 +63,9 @@ pub use object_store;
 pub use object_store::path::Path as ObjectPath;
 pub use oss::{AsyncOssStorage, OssConfig, OssStorage};
 pub use retry::{RetryConfig, RetryingStorage, retry_with_backoff};
+pub use streaming_upload::{
+    CloudMultipartUpload, LocalMultipartUpload, MultipartUpload, StorageStreamingExt, UploadStats,
+};
 pub use url::StorageUrl;
 
 // Re-export from mod.rs
