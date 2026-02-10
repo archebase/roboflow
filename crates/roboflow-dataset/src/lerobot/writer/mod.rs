@@ -285,6 +285,12 @@ impl LerobotWriter {
         let is_local = storage.as_any().is::<LocalStorage>();
         let use_cloud_storage = !is_local;
 
+        tracing::info!(
+            is_local,
+            use_cloud_storage,
+            "Cloud storage detection result"
+        );
+
         // Create remote directories
         if !output_prefix.is_empty() {
             let data_prefix = format!("{}/data/chunk-000", output_prefix);
@@ -328,6 +334,7 @@ impl LerobotWriter {
 
         // Create upload coordinator for cloud storage
         let upload_coordinator = if use_cloud_storage {
+            tracing::info!("Creating upload coordinator for cloud storage...");
             let upload_config = crate::lerobot::upload::UploadConfig {
                 show_progress: false,
                 ..Default::default()
@@ -338,7 +345,10 @@ impl LerobotWriter {
                 upload_config,
                 None,
             ) {
-                Ok(coordinator) => Some(std::sync::Arc::new(coordinator)),
+                Ok(coordinator) => {
+                    tracing::info!("Upload coordinator created successfully");
+                    Some(std::sync::Arc::new(coordinator))
+                }
                 Err(e) => {
                     tracing::warn!(
                         error = %e,
@@ -348,6 +358,7 @@ impl LerobotWriter {
                 }
             }
         } else {
+            tracing::info!("Not creating upload coordinator (use_cloud_storage=false)");
             None
         };
 
@@ -371,8 +382,17 @@ impl LerobotWriter {
             output_bytes: 0,
             failed_encodings: 0,
             use_cloud_storage,
-            upload_coordinator,
+            upload_coordinator: upload_coordinator.clone(),
         })
+    }
+
+    /// Log the upload coordinator state for debugging
+    pub fn log_upload_state(&self) {
+        tracing::info!(
+            use_cloud_storage = self.use_cloud_storage,
+            has_upload_coordinator = self.upload_coordinator.is_some(),
+            "LerobotWriter upload state"
+        );
     }
 
     /// Add a frame to the current episode.
@@ -436,7 +456,17 @@ impl LerobotWriter {
         );
 
         // Queue upload via coordinator if available (non-blocking)
+        tracing::debug!(
+            has_upload_coordinator = self.upload_coordinator.is_some(),
+            use_cloud_storage = self.use_cloud_storage,
+            episode_index = self.episode_index,
+            "Checking upload coordinator availability"
+        );
         if self.upload_coordinator.is_some() {
+            tracing::info!(
+                episode = self.episode_index,
+                "Upload coordinator available, queuing episode upload..."
+            );
             // Reconstruct parquet path
             let parquet_path = self.output_dir.join(format!(
                 "data/chunk-000/episode_{:06}.parquet",
