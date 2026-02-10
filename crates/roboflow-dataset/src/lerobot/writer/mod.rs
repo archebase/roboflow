@@ -467,11 +467,13 @@ impl LerobotWriter {
                 episode = self.episode_index,
                 "Upload coordinator available, queuing episode upload..."
             );
+            eprintln!("DEBUG: About to reconstruct parquet path for episode {}", self.episode_index);
             // Reconstruct parquet path
             let parquet_path = self.output_dir.join(format!(
                 "data/chunk-000/episode_{:06}.parquet",
                 self.episode_index
             ));
+            eprintln!("DEBUG: parquet_path = {}", parquet_path.display());
 
             // Check if parquet file exists
             let parquet_exists = parquet_path.exists();
