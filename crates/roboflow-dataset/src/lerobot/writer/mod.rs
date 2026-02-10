@@ -15,6 +15,7 @@ mod flushing;
 mod frame;
 mod parquet;
 mod stats;
+mod streaming;
 mod upload;
 
 use std::collections::HashMap;
@@ -34,6 +35,7 @@ pub use frame::LerobotFrame;
 use encoding::{EncodeStats, encode_videos};
 
 pub use flushing::{ChunkMetadata, ChunkStats, FlushingConfig, IncrementalFlusher};
+pub use streaming::{StreamingEncodeStats, encode_videos_streaming};
 
 /// Camera intrinsic parameters in LeRobot format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -730,14 +732,63 @@ impl LerobotWriter {
         // Resolve the video configuration
         let resolved = ResolvedConfig::from_video_config(&self.config.video);
 
-        let (mut video_files, encode_stats) = encode_videos(
-            &camera_data,
-            self.episode_index,
-            &videos_dir,
-            &resolved,
-            self.config.dataset.fps,
-            self.use_cloud_storage,
-        )?;
+        // Use streaming encoder for cloud storage (OssStorage), batch encoder otherwise
+        let (mut video_files, encode_stats) = if self.use_cloud_storage
+            && self
+                .storage
+                .as_any()
+                .downcast_ref::<roboflow_storage::OssStorage>()
+                .is_some()
+        {
+            // Streaming upload directly to S3/OSS
+            tracing::info!(
+                episode_index = self.episode_index,
+                "Using streaming encoder for direct S3/OSS upload"
+            );
+            let runtime = tokio::runtime::Handle::try_current().map_err(|e| {
+                roboflow_core::RoboflowError::other(format!("No tokio runtime: {}", e))
+            })?;
+
+            let streaming_stats = encode_videos_streaming(
+                &camera_data,
+                self.episode_index,
+                &self.output_prefix,
+                &resolved,
+                self.config.dataset.fps,
+                self.storage.clone(),
+                runtime,
+            )?;
+
+            // Convert streaming stats to return format
+            let video_files: Vec<(PathBuf, String)> = streaming_stats
+                .video_urls
+                .into_iter()
+                .map(|(camera, url)| {
+                    // Use camera name as path for consistency (won't be used for local files)
+                    (PathBuf::from(&camera), url)
+                })
+                .collect();
+
+            let encode_stats = EncodeStats {
+                images_encoded: streaming_stats.images_encoded,
+                skipped_frames: streaming_stats.skipped_frames,
+                failed_encodings: streaming_stats.failed_encodings,
+                decode_failures: 0,
+                output_bytes: streaming_stats.output_bytes,
+            };
+
+            (video_files, encode_stats)
+        } else {
+            // Batch encoding with intermediate files
+            encode_videos(
+                &camera_data,
+                self.episode_index,
+                &videos_dir,
+                &resolved,
+                self.config.dataset.fps,
+                self.use_cloud_storage,
+            )?
+        };
 
         // Upload videos to cloud storage (without upload coordinator)
         if self.use_cloud_storage && self.upload_coordinator.is_none() && !video_files.is_empty() {

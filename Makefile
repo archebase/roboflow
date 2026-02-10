@@ -24,12 +24,11 @@ build-release: ## Build Rust library (release)
 test: ## Run Rust tests
 	@echo "Running Rust tests..."
 	cargo test
-	@echo "✓ Rust tests passed (run 'make test-all' for dataset features)"
+	@echo "✓ Rust tests passed"
 
-test-all: ## Run all tests including dataset features (requires HDF5)
-	@echo "Running all tests with all features..."
-	@echo "  (features: dataset-all)"
-	cargo test --features dataset-all
+test-all: ## Run all tests (alias for test)
+	@echo "Running all tests..."
+	cargo test
 	@echo "✓ All tests passed"
 
 # ============================================================================
@@ -47,7 +46,7 @@ coverage-rust: ## Run Rust tests with coverage (requires cargo-llvm-cov)
 	cargo llvm-cov --workspace --html --output-dir target/llvm-cov/html
 	cargo llvm-cov --workspace --lcov --output-path lcov.info
 	@echo ""
-	@echo "✓ Rust coverage report: target/llvm-cov/html/index.html (add --features dataset-all for dataset coverage)"
+	@echo "✓ Rust coverage report: target/llvm-cov/html/index.html"
 
 # ============================================================================
 # Code quality

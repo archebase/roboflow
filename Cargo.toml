@@ -134,14 +134,9 @@ io-uring = { version = "0.7", optional = true }
 [features]
 # Include sources + sinks by default so the roboflow binary (submit, run, batch) is built with `cargo build`
 default = ["sources", "sinks"]
-# Legacy dataset converter (deprecated, use roboflow-pipeline framework instead)
-dataset = ["roboflow-pipeline/dataset"]
 # Pipeline API (Source/Sink abstraction)
 sources = ["dep:roboflow-sources"]
 sinks = ["dep:roboflow-sinks"]
-dataset-parquet = ["dep:polars"]
-dataset-depth = ["dep:png"]
-dataset-all = ["dataset-parquet", "dataset-depth"]
 # Cloud storage support for Alibaba OSS and S3-compatible backends
 cloud-storage = ["dep:object_store", "dep:url", "dep:bytes"]
 # GPU compression (experimental)
@@ -180,7 +175,6 @@ required-features = ["sources", "sinks"]
 [[example]]
 name = "lerobot_convert"
 path = "examples/rust/lerobot_convert.rs"
-required-features = ["dataset-parquet"]
 
 [profile.release]
 debug = true

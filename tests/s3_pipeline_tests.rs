@@ -66,6 +66,7 @@ fn test_incremental_flushing_small_chunks() {
             max_memory_bytes: 0,     // Not using memory-based flushing
             incremental_video_encoding: true,
         },
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
@@ -115,6 +116,7 @@ fn test_incremental_flushing_memory_based() {
             max_memory_bytes: 100 * 1024, // 100KB limit
             incremental_video_encoding: true,
         },
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
@@ -161,6 +163,7 @@ fn test_multi_chunk_episode() {
             max_memory_bytes: 0,
             incremental_video_encoding: true,
         },
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
@@ -351,6 +354,7 @@ fn test_e2e_pipeline_local_storage() {
             max_memory_bytes: 0,
             incremental_video_encoding: true,
         },
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
     let target_dir = output_dir.path().join("output");
@@ -487,6 +491,7 @@ fn test_large_episode_incremental_flush() {
             max_memory_bytes: 0,
             incremental_video_encoding: true,
         },
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
@@ -537,6 +542,7 @@ fn test_multi_camera_mid_frame_flush_prevention() {
             max_memory_bytes: 0,
             incremental_video_encoding: true,
         },
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
@@ -602,6 +608,7 @@ fn test_multi_camera_incremental_flush_data_preservation() {
             max_memory_bytes: 0,
             incremental_video_encoding: true,
         },
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
@@ -676,6 +683,7 @@ fn test_multi_camera_memory_based_flushing() {
             max_memory_bytes: 150 * 1024, // 150KB limit
             incremental_video_encoding: true,
         },
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
@@ -739,6 +747,7 @@ fn test_exact_frame_count_after_incremental_flush() {
             max_memory_bytes: 0,
             incremental_video_encoding: true,
         },
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
@@ -809,6 +818,7 @@ fn test_flush_timing_between_frames_not_mid_frame() {
             max_memory_bytes: 0,
             incremental_video_encoding: true,
         },
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
@@ -887,6 +897,7 @@ fn test_single_camera_incremental_flush() {
             max_memory_bytes: 0,
             incremental_video_encoding: true,
         },
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
@@ -943,6 +954,7 @@ fn test_no_data_loss_with_many_small_flushes() {
             max_memory_bytes: 0,
             incremental_video_encoding: true,
         },
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();

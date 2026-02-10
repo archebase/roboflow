@@ -94,6 +94,7 @@ impl LerobotSink {
             video: Default::default(),
             annotation_file: None,
             flushing: roboflow_dataset::lerobot::FlushingConfig::default(),
+            streaming: roboflow_dataset::lerobot::config::StreamingConfig::default(),
         }
     }
 }

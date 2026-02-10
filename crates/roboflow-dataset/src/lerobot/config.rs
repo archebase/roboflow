@@ -40,6 +40,10 @@ pub struct LerobotConfig {
     /// Incremental flushing options for memory-bounded processing
     #[serde(default)]
     pub flushing: FlushingConfig,
+
+    /// S3 streaming encoder options
+    #[serde(default)]
+    pub streaming: StreamingConfig,
 }
 
 impl LerobotConfig {
@@ -73,6 +77,29 @@ impl LerobotConfig {
             return Err(roboflow_core::RoboflowError::parse(
                 "LerobotConfig",
                 format!("video.crf ({}) must be in range [0-51]", self.video.crf),
+            ));
+        }
+
+        // Validate streaming config
+        if self.streaming.ring_buffer_size == 0 {
+            return Err(roboflow_core::RoboflowError::parse(
+                "LerobotConfig",
+                "streaming.ring_buffer_size must be greater than 0",
+            ));
+        }
+
+        // Validate upload part size (5MB to 5GB)
+        const MIN_PART_SIZE: usize = 5 * 1024 * 1024;
+        const MAX_PART_SIZE: usize = 5 * 1024 * 1024 * 1024;
+        if self.streaming.upload_part_size < MIN_PART_SIZE
+            || self.streaming.upload_part_size > MAX_PART_SIZE
+        {
+            return Err(roboflow_core::RoboflowError::parse(
+                "LerobotConfig",
+                format!(
+                    "streaming.upload_part_size must be between {} and {} bytes",
+                    MIN_PART_SIZE, MAX_PART_SIZE
+                ),
             ));
         }
 
@@ -286,6 +313,50 @@ fn default_max_memory() -> usize {
 
 fn default_incremental_encoding() -> bool {
     true
+}
+
+/// S3 streaming encoder configuration.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct StreamingConfig {
+    /// Enable S3 streaming encoder (auto-detected if not specified)
+    #[serde(default)]
+    pub enabled: Option<bool>,
+
+    /// Ring buffer capacity in frames (default: 128)
+    #[serde(default = "default_ring_buffer_size")]
+    pub ring_buffer_size: usize,
+
+    /// Multipart upload part size in bytes (default: 16MB)
+    /// S3/OSS requires: 5MB <= part_size <= 5GB
+    #[serde(default = "default_upload_part_size")]
+    pub upload_part_size: usize,
+
+    /// Timeout for frame operations in seconds (default: 5)
+    #[serde(default = "default_buffer_timeout_secs")]
+    pub buffer_timeout_secs: u64,
+}
+
+impl Default for StreamingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: None,
+            ring_buffer_size: default_ring_buffer_size(),
+            upload_part_size: default_upload_part_size(),
+            buffer_timeout_secs: default_buffer_timeout_secs(),
+        }
+    }
+}
+
+fn default_ring_buffer_size() -> usize {
+    128
+}
+
+fn default_upload_part_size() -> usize {
+    16 * 1024 * 1024 // 16 MB
+}
+
+fn default_buffer_timeout_secs() -> u64 {
+    5
 }
 
 #[cfg(test)]

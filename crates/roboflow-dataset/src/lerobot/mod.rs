@@ -17,7 +17,10 @@ pub mod video_profiles;
 pub mod writer;
 
 pub use annotations::{AnnotationData, SkillMark};
-pub use config::{DatasetConfig, FlushingConfig, LerobotConfig, Mapping, MappingType, VideoConfig};
+pub use config::{
+    DatasetConfig, FlushingConfig, LerobotConfig, Mapping, MappingType, StreamingConfig,
+    VideoConfig,
+};
 pub use hardware::{HardwareBackend, HardwareConfig};
 pub use trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 

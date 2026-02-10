@@ -20,6 +20,8 @@ pub mod config;
 pub mod image_format;
 pub mod parquet_base;
 pub mod progress;
+pub mod ring_buffer;
+pub mod s3_encoder;
 pub mod video;
 
 // Re-export core types (shared across all formats)
@@ -38,6 +40,9 @@ pub use progress::{ProgressReceiver, ProgressSender, ProgressUpdate};
 
 // Re-export image format detection
 pub use image_format::{ImageFormat, can_passthrough, detect_image_format};
+
+// Re-export ring buffer for streaming frame processing
+pub use ring_buffer::{FrameRingBuffer, RingBufferError, RingBufferSnapshot};
 
 // Re-export video utilities including hardware-accelerated encoders
 pub use video::{

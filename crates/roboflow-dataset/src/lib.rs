@@ -104,6 +104,7 @@ impl DatasetConfig {
                 video: Default::default(),
                 annotation_file: None,
                 flushing: Default::default(),
+                streaming: Default::default(),
             }),
         }
     }

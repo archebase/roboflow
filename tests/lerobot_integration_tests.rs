@@ -41,6 +41,7 @@ fn test_config() -> LerobotConfig {
         video: VideoConfig::default(),
         annotation_file: None,
         flushing: roboflow::lerobot::FlushingConfig::default(),
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     }
 }
 

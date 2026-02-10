@@ -20,8 +20,9 @@ png = "0.17"
 # Image decoding (required for LeRobot and streaming conversion)
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
-# Video encoding via FFmpeg (optional, requires system library)
-ffmpeg-next = { version = "6.1", optional = true }
+# Video encoding via rsmpeg (optional, requires FFmpeg 8.x libraries)
+# Note: Requires FFMPEG_PKG_CONFIG_PATH or FFMPEG_LIBS_DIR to be set
+rsmpeg = { version = "0.18", optional = true, features = ["link_system_ffmpeg"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -49,8 +50,8 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 [features]
 default = []
 
-# Enable video encoding via FFmpeg (requires ffmpeg installed on system)
-video = ["dep:ffmpeg-next"]
+# Enable video encoding via rsmpeg (requires FFmpeg 6.x or 7.x installed)
+video = ["dep:rsmpeg"]
 
 # CUDA pinned memory for zero-copy GPU transfers (requires cudarc)
 cuda-pinned = []

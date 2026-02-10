@@ -49,6 +49,8 @@ pub use cached::{CacheConfig, CacheStats, CachedStorage, EvictionPolicy};
 pub use config_file::{ConfigError, RoboflowConfig};
 pub use factory::{StorageConfig, StorageFactory};
 pub use local::LocalStorage;
+
+// Re-export object_store for multipart upload
 pub use multipart::{
     MultipartConfig, MultipartStats, MultipartUploader, ProgressCallback, upload_multipart,
 };
@@ -56,6 +58,8 @@ pub use multipart_parallel::{
     ParallelMultipartStats, ParallelMultipartUploader, ParallelUploadConfig, UploadedPart,
     is_upload_expired, upload_multipart_parallel,
 };
+pub use object_store;
+pub use object_store::path::Path as ObjectPath;
 pub use oss::{AsyncOssStorage, OssConfig, OssStorage};
 pub use retry::{RetryConfig, RetryingStorage, retry_with_backoff};
 pub use url::StorageUrl;

@@ -45,6 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_memory_bytes: 0,
             incremental_video_encoding: true,
         },
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
     // Create writer

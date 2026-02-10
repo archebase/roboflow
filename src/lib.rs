@@ -107,7 +107,7 @@ pub use roboflow_dataset::{
     common::DatasetBaseConfig,
     lerobot::{
         LerobotConfig, LerobotWriter, LerobotWriterTrait,
-        config::{DatasetConfig as LerobotDatasetConfig, VideoConfig},
+        config::{DatasetConfig as LerobotDatasetConfig, StreamingConfig, VideoConfig},
     },
 };
 
