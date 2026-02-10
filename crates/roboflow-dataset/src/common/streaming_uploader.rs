@@ -514,12 +514,9 @@ mod tests {
     fn test_uploader_initial_state() {
         let store = Arc::new(object_store::memory::InMemory::new());
 
-        let uploader = StreamingUploader::new(
-            store,
-            ObjectPath::from("test.mp4"),
-            UploadConfig::default(),
-        )
-        .unwrap();
+        let uploader =
+            StreamingUploader::new(store, ObjectPath::from("test.mp4"), UploadConfig::default())
+                .unwrap();
 
         // Check initial state
         assert_eq!(uploader.buffer_size(), 0);
@@ -667,12 +664,9 @@ mod tests {
         let store = Arc::new(object_store::memory::InMemory::new());
         let runtime = tokio::runtime::Runtime::new().unwrap();
 
-        let uploader = StreamingUploader::new(
-            store,
-            ObjectPath::from("test.mp4"),
-            UploadConfig::default(),
-        )
-        .unwrap();
+        let uploader =
+            StreamingUploader::new(store, ObjectPath::from("test.mp4"), UploadConfig::default())
+                .unwrap();
 
         // Finalize without adding any data
         // This will fail because multipart wasn't initialized
@@ -685,12 +679,9 @@ mod tests {
     fn test_uploader_stats_tracking() {
         let store = Arc::new(object_store::memory::InMemory::new());
 
-        let uploader = StreamingUploader::new(
-            store,
-            ObjectPath::from("test.mp4"),
-            UploadConfig::default(),
-        )
-        .unwrap();
+        let uploader =
+            StreamingUploader::new(store, ObjectPath::from("test.mp4"), UploadConfig::default())
+                .unwrap();
 
         let stats = uploader.stats();
         assert_eq!(stats.parts_uploaded, 0);
@@ -707,11 +698,7 @@ mod tests {
 
         // Test minimum valid part size (5MB)
         let config = UploadConfig::default().with_part_size(5 * 1024 * 1024);
-        let uploader = StreamingUploader::new(
-            store,
-            ObjectPath::from("test.mp4"),
-            config,
-        );
+        let uploader = StreamingUploader::new(store, ObjectPath::from("test.mp4"), config);
         assert!(uploader.is_ok());
     }
 
@@ -721,11 +708,7 @@ mod tests {
 
         // Test maximum valid part size (5GB)
         let config = UploadConfig::default().with_part_size(5 * 1024 * 1024 * 1024);
-        let uploader = StreamingUploader::new(
-            store,
-            ObjectPath::from("test.mp4"),
-            config,
-        );
+        let uploader = StreamingUploader::new(store, ObjectPath::from("test.mp4"), config);
         assert!(uploader.is_ok());
     }
 
@@ -735,11 +718,7 @@ mod tests {
 
         // Test part size below minimum (5MB - 1 byte)
         let config = UploadConfig::default().with_part_size(5 * 1024 * 1024 - 1);
-        let uploader = StreamingUploader::new(
-            store,
-            ObjectPath::from("test.mp4"),
-            config,
-        );
+        let uploader = StreamingUploader::new(store, ObjectPath::from("test.mp4"), config);
         assert!(uploader.is_err());
     }
 
@@ -749,11 +728,7 @@ mod tests {
 
         // Test part size above maximum (5GB + 1 byte)
         let config = UploadConfig::default().with_part_size(5 * 1024 * 1024 * 1024 + 1);
-        let uploader = StreamingUploader::new(
-            store,
-            ObjectPath::from("test.mp4"),
-            config,
-        );
+        let uploader = StreamingUploader::new(store, ObjectPath::from("test.mp4"), config);
         assert!(uploader.is_err());
     }
 
@@ -765,12 +740,9 @@ mod tests {
     fn test_uploader_buffer_size_empty() {
         let store = Arc::new(object_store::memory::InMemory::new());
 
-        let uploader = StreamingUploader::new(
-            store,
-            ObjectPath::from("test.mp4"),
-            UploadConfig::default(),
-        )
-        .unwrap();
+        let uploader =
+            StreamingUploader::new(store, ObjectPath::from("test.mp4"), UploadConfig::default())
+                .unwrap();
 
         assert_eq!(uploader.buffer_size(), 0);
     }

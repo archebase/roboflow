@@ -812,10 +812,7 @@ mod tests {
         let s3_prefix = "s3://mybucket/datasets";
         let camera = "cam_high";
 
-        let expected_url = format!("{}/videos/{}.mp4",
-            s3_prefix.trim_end_matches('/'),
-            camera
-        );
+        let expected_url = format!("{}/videos/{}.mp4", s3_prefix.trim_end_matches('/'), camera);
 
         assert_eq!(expected_url, "s3://mybucket/datasets/videos/cam_high.mp4");
     }
@@ -825,10 +822,7 @@ mod tests {
         let s3_prefix = "s3://mybucket/datasets/";
         let camera = "cam_left";
 
-        let expected_url = format!("{}/videos/{}.mp4",
-            s3_prefix.trim_end_matches('/'),
-            camera
-        );
+        let expected_url = format!("{}/videos/{}.mp4", s3_prefix.trim_end_matches('/'), camera);
 
         assert_eq!(expected_url, "s3://mybucket/datasets/videos/cam_left.mp4");
     }
@@ -839,8 +833,7 @@ mod tests {
 
     #[test]
     fn test_coordinator_channel_capacity_in_config() {
-        let config = StreamingCoordinatorConfig::new()
-            .with_channel_capacity(16);
+        let config = StreamingCoordinatorConfig::new().with_channel_capacity(16);
 
         assert_eq!(config.frame_channel_capacity, 16);
     }
@@ -851,8 +844,8 @@ mod tests {
 
     #[test]
     fn test_coordinator_shutdown_timeout() {
-        let config = StreamingCoordinatorConfig::new()
-            .with_shutdown_timeout(Duration::from_secs(120));
+        let config =
+            StreamingCoordinatorConfig::new().with_shutdown_timeout(Duration::from_secs(120));
 
         assert_eq!(config.shutdown_timeout, Duration::from_secs(120));
     }
@@ -863,8 +856,7 @@ mod tests {
 
     #[test]
     fn test_coordinator_fps_configuration() {
-        let config = StreamingCoordinatorConfig::new()
-            .with_fps(24);
+        let config = StreamingCoordinatorConfig::new().with_fps(24);
 
         assert_eq!(config.fps, 24);
     }
