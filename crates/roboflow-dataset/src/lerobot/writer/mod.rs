@@ -473,6 +473,15 @@ impl LerobotWriter {
                 self.episode_index
             ));
 
+            // Check if parquet file exists
+            let parquet_exists = parquet_path.exists();
+            tracing::info!(
+                episode = self.episode_index,
+                parquet_path = %parquet_path.display(),
+                parquet_exists,
+                "Parquet file existence check"
+            );
+
             // Collect video paths from image_buffers
             let video_paths: Vec<(String, PathBuf)> = self
                 .image_buffers
@@ -487,9 +496,22 @@ impl LerobotWriter {
                         "videos/chunk-000/{}/episode_{:06}.mp4",
                         camera, self.episode_index
                     ));
+                    tracing::info!(
+                        episode = self.episode_index,
+                        camera = %camera,
+                        video_path = %video_path.display(),
+                        video_exists = video_path.exists(),
+                        "Video file existence check"
+                    );
                     (camera.clone(), video_path)
                 })
                 .collect();
+
+            tracing::info!(
+                episode = self.episode_index,
+                video_count = video_paths.len(),
+                "Calling queue_episode_upload"
+            );
 
             match self.queue_episode_upload(&parquet_path, &video_paths) {
                 Ok(_) => {
@@ -506,7 +528,7 @@ impl LerobotWriter {
                     } else {
                         ""
                     };
-                    tracing::warn!(
+                    tracing::error!(
                         episode = self.episode_index,
                         error = %e,
                         "Failed to queue episode upload, files will remain local{}",
@@ -653,6 +675,12 @@ impl LerobotWriter {
         parquet_path: &Path,
         video_paths: &[(String, PathBuf)],
     ) -> Result<bool> {
+        tracing::info!(
+            episode = self.episode_index,
+            parquet_path = %parquet_path.display(),
+            video_count = video_paths.len(),
+            "queue_episode_upload: called with coordinator"
+        );
         if let Some(coordinator) = &self.upload_coordinator {
             let episode_files = crate::lerobot::upload::EpisodeFiles {
                 parquet_path: parquet_path.to_path_buf(),
@@ -661,13 +689,36 @@ impl LerobotWriter {
                 episode_index: self.episode_index as u64,
             };
 
-            coordinator.queue_episode_upload(episode_files)?;
+            tracing::info!(
+                episode = self.episode_index,
+                "queue_episode_upload: calling coordinator.queue_episode_upload"
+            );
+            match coordinator.queue_episode_upload(episode_files) {
+                Ok(_) => {
+                    tracing::info!(
+                        episode = self.episode_index,
+                        "queue_episode_upload: coordinator.queue_episode_upload returned Ok"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        episode = self.episode_index,
+                        error = %e,
+                        "queue_episode_upload: coordinator.queue_episode_upload returned Err"
+                    );
+                    return Err(e);
+                }
+            }
             tracing::debug!(
                 episode = self.episode_index,
                 "Queued episode upload via coordinator"
             );
             Ok(true)
         } else {
+            tracing::warn!(
+                episode = self.episode_index,
+                "queue_episode_upload: no coordinator available"
+            );
             Ok(false)
         }
     }
