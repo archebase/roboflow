@@ -17,10 +17,7 @@
 //! - CUDA pinned memory for efficient CPU-GPU transfers
 //! - Batch decoding for multiple images
 
-#[cfg(all(target_os = "linux", feature = "cuda-pinned"))]
-use std::sync::Arc;
-
-#[cfg(all(target_os = "linux", feature = "cuda-pinned"))]
+#[cfg(target_os = "linux")]
 use super::{
     ImageError, ImageFormat, Result,
     backend::{DecodedImage, DecoderType, ImageDecoderBackend},
@@ -33,7 +30,6 @@ use super::{
 pub struct GpuImageDecoder {
     device_id: u32,
     memory_strategy: MemoryStrategy,
-    #[cfg(feature = "cuda-pinned")]
     cuda_available: bool,
 }
 
@@ -43,10 +39,8 @@ impl GpuImageDecoder {
     ///
     /// Returns error if CUDA device is not available or initialization fails.
     pub fn try_new(device_id: u32, memory_strategy: MemoryStrategy) -> Result<Self> {
-        #[cfg(feature = "cuda-pinned")]
-        let cuda_available = Self::check_cuda_available();
-
-        #[cfg(not(feature = "cuda-pinned"))]
+        // CUDA pinned memory feature has been removed
+        // GPU decoding is not available without the feature
         let cuda_available = false;
 
         Ok(Self {
@@ -56,63 +50,16 @@ impl GpuImageDecoder {
         })
     }
 
-    /// Check if CUDA/nvJPEG is available.
-    #[cfg(feature = "cuda-pinned")]
-    fn check_cuda_available() -> bool {
-        // Check for nvidia-smi and CUDA libraries
-        std::process::Command::new("nvidia-smi")
-            .arg("-L")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    }
-
     /// Check if nvJPEG is available.
     pub fn is_available() -> bool {
-        #[cfg(feature = "cuda-pinned")]
-        {
-            Self::check_cuda_available()
-        }
-        #[cfg(not(feature = "cuda-pinned"))]
-        {
-            false
-        }
+        // CUDA pinned memory feature has been removed
+        false
     }
 
     /// Get information about available GPU devices.
     pub fn device_info() -> Vec<super::factory::GpuDeviceInfo> {
-        #[cfg(feature = "cuda-pinned")]
-        {
-            let mut devices = Vec::new();
-
-            // Parse nvidia-smi output for GPU names
-            if let Ok(output) = std::process::Command::new("nvidia-smi")
-                .arg("--query-gpu=name,memory.total")
-                .arg("--format=csv,noheader,nounits")
-                .output()
-            {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines() {
-                    let parts: Vec<&str> = line.split(',').collect();
-                    if parts.len() >= 2 {
-                        if let Ok(memory_mb) = parts.get(1).unwrap_or(&"0").parse::<u64>() {
-                            devices.push(super::factory::GpuDeviceInfo {
-                                name: parts.get(0).unwrap_or(&"Unknown").to_string(),
-                                memory_mb,
-                            });
-                        }
-                    }
-                }
-            }
-
-            devices
-        }
-        #[cfg(not(feature = "cuda-pinned"))]
-        {
-            Vec::new()
-        }
+        // CUDA pinned memory feature has been removed
+        Vec::new()
     }
 }
 
@@ -121,12 +68,9 @@ impl ImageDecoderBackend for GpuImageDecoder {
     fn decode(&self, data: &[u8], format: ImageFormat) -> Result<DecodedImage> {
         match format {
             ImageFormat::Jpeg => {
-                if self.cuda_available {
-                    self.decode_jpeg_gpu(data)
-                } else {
-                    tracing::debug!("CUDA not available, using CPU decoder for JPEG");
-                    self.decode_cpu_fallback(data, format)
-                }
+                // CUDA is not available, use CPU decoder
+                tracing::debug!("CUDA not available, using CPU decoder for JPEG");
+                self.decode_cpu_fallback(data, format)
             }
             ImageFormat::Png => {
                 // nvJPEG doesn't support PNG, must use CPU
@@ -146,20 +90,11 @@ impl ImageDecoderBackend for GpuImageDecoder {
     }
 
     fn decode_batch(&self, images: &[(&[u8], ImageFormat)]) -> Result<Vec<DecodedImage>> {
-        // GPU batch decoding using rayon parallel processing
-        if self.cuda_available {
-            use rayon::prelude::*;
-
-            images
-                .par_iter()
-                .map(|(data, format)| self.decode(data, *format))
-                .collect()
-        } else {
-            images
-                .iter()
-                .map(|(data, format)| self.decode(data, *format))
-                .collect()
-        }
+        // Use sequential CPU decoding
+        images
+            .iter()
+            .map(|(data, format)| self.decode(data, *format))
+            .collect()
     }
 
     fn decoder_type(&self) -> DecoderType {
@@ -173,21 +108,6 @@ impl ImageDecoderBackend for GpuImageDecoder {
 
 #[cfg(target_os = "linux")]
 impl GpuImageDecoder {
-    /// Decode JPEG using GPU (nvJPEG).
-    #[cfg(feature = "cuda-pinned")]
-    fn decode_jpeg_gpu(&self, data: &[u8]) -> Result<DecodedImage> {
-        // For now, use CPU decoder as cudarc integration is pending
-        // This is a placeholder for the full nvJPEG implementation
-        tracing::trace!("Using optimized JPEG decode path");
-        self.decode_cpu_fallback(data, ImageFormat::Jpeg)
-    }
-
-    /// Decode JPEG using GPU (placeholder for non-cuda-pinned).
-    #[cfg(not(feature = "cuda-pinned"))]
-    fn decode_jpeg_gpu(&self, data: &[u8]) -> Result<DecodedImage> {
-        self.decode_cpu_fallback(data, ImageFormat::Jpeg)
-    }
-
     /// Fallback to CPU decoding for unsupported formats.
     fn decode_cpu_fallback(&self, data: &[u8], format: ImageFormat) -> Result<DecodedImage> {
         use super::backend::CpuImageDecoder;
@@ -213,7 +133,7 @@ mod tests {
     #[test]
     fn test_gpu_device_info() {
         let devices = GpuImageDecoder::device_info();
-        // May return empty if no GPU or nvidia-smi not available
-        let _ = devices;
+        // Should return empty since CUDA feature was removed
+        assert!(devices.is_empty());
     }
 }

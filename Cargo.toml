@@ -99,13 +99,9 @@ chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Cloud storage support (optional, gated by "cloud-storage" feature)
-object_store = { version = "0.11", optional = true, features = ["aws"] }
 # Async runtime (always enabled for distributed processing)
 tokio = { version = "1.40", features = ["rt-multi-thread", "sync"] }
 tokio-util = "0.7"
-url = { version = "2.5", optional = true }
-bytes = { version = "1.7", optional = true }
 
 # TiKV distributed coordination (always enabled for distributed processing)
 tikv-client = { version = "0.3" }
@@ -134,29 +130,31 @@ io-uring = { version = "0.7", optional = true }
 [features]
 # Include sources + sinks by default so the roboflow binary (submit, run, batch) is built with `cargo build`
 default = ["sources", "sinks"]
+
 # Pipeline API (Source/Sink abstraction)
 sources = ["dep:roboflow-sources"]
 sinks = ["dep:roboflow-sinks"]
-# Cloud storage support for Alibaba OSS and S3-compatible backends
-cloud-storage = ["dep:object_store", "dep:url", "dep:bytes"]
-# GPU compression (experimental)
-# Enables GPU-accelerated compression via nvCOMP
-# Requires: NVIDIA GPU, CUDA toolkit, nvCOMP library (Linux)
-gpu = []
+
+# Note: Cloud storage (S3, OSS) is always available via roboflow-storage
+# The cloud-storage feature is kept for compatibility but does nothing
+cloud-storage = []
+
 # Use jemalloc as global allocator on Linux (better for concurrent workloads)
 # On macOS, the default allocator is already excellent and jemalloc is not used
 jemalloc = ["dep:tikv-jemallocator", "robocodec/jemalloc"]
+
 # CLI support for binaries (profiler, etc.)
 cli = ["dep:clap"]
+
 # Profiling support for profiler binary (flamegraph generation)
 profiling = ["dep:pprof", "cli"]
+
 # CPU-aware WindowLog detection using CPUID (x86_64 only)
 cpuid = ["dep:raw-cpuid"]
+
 # io_uring support for Linux (high-performance async I/O)
 # Requires: Linux 5.6+ kernel
 io-uring-io = ["dep:io-uring"]
-# Distributed tests (distributed is always enabled)
-test-distributed = []
 
 [dev-dependencies]
 pretty_assertions = "1.4"

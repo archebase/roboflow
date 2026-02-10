@@ -53,12 +53,6 @@ default = []
 # Enable video encoding via rsmpeg (requires FFmpeg 6.x or 7.x installed)
 video = ["dep:rsmpeg"]
 
-# CUDA pinned memory for zero-copy GPU transfers (requires cudarc)
-cuda-pinned = []
-
-# GPU acceleration (NVIDIA CUDA, nvJPEG, NVENC)
-gpu = []
-
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3.10"

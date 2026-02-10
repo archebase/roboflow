@@ -4156,7 +4156,6 @@ dependencies = [
  "bumpalo",
  "bytemuck",
  "byteorder",
- "bytes",
  "bzip2",
  "chrono",
  "clap",
@@ -4174,7 +4173,6 @@ dependencies = [
  "mcap",
  "memmap2 0.9.9",
  "num_cpus",
- "object_store",
  "paste",
  "pest",
  "pest_derive",
@@ -4210,7 +4208,6 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
- "url",
  "uuid",
  "zstd",
 ]

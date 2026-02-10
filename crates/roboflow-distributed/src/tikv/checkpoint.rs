@@ -284,7 +284,6 @@ mod tests {
         ((current_frame / config.checkpoint_interval_frames) + 1)
             * config.checkpoint_interval_frames
     }
-    use super::*;
 
     #[test]
     fn test_checkpoint_config_default() {

@@ -31,13 +31,6 @@ pub enum MemoryStrategy {
     /// This provides good performance for GPU transfers without
     /// requiring CUDA runtime integration.
     PageAligned,
-
-    /// CUDA pinned memory (for zero-copy GPU transfers).
-    ///
-    /// Requires CUDA runtime and is only available on Linux with NVIDIA GPUs.
-    /// This enables true zero-copy transfers but has higher allocation overhead.
-    #[cfg(feature = "cuda-pinned")]
-    CudaPinned,
 }
 
 impl MemoryStrategy {
@@ -46,8 +39,6 @@ impl MemoryStrategy {
         match self {
             Self::Heap => 1,
             Self::PageAligned => 4096,
-            #[cfg(feature = "cuda-pinned")]
-            Self::CudaPinned => 4096,
         }
     }
 
@@ -161,28 +152,7 @@ pub fn allocate(size: usize, strategy: MemoryStrategy) -> AlignedImageBuffer {
     match strategy {
         MemoryStrategy::Heap => AlignedImageBuffer::heap(size),
         MemoryStrategy::PageAligned => AlignedImageBuffer::page_aligned(size),
-        #[cfg(feature = "cuda-pinned")]
-        MemoryStrategy::CudaPinned => {
-            // Try CUDA pinned allocation, fall back to page-aligned
-            allocate_cuda_pinned(size).unwrap_or_else(|_| AlignedImageBuffer::page_aligned(size))
-        }
     }
-}
-
-/// Allocate CUDA pinned memory for zero-copy GPU transfers.
-#[cfg(feature = "cuda-pinned")]
-fn allocate_cuda_pinned(size: usize) -> Result<AlignedImageBuffer, std::io::Error> {
-    use std::os::unix::io::AsRawFd;
-
-    // Try to use mmap with MAP_LOCKED for pinned memory
-    // This is Linux-specific and requires root privileges or specific capabilities
-    // For most use cases, page-aligned allocation is sufficient
-
-    // For now, use page-aligned as a practical fallback
-    // True CUDA pinned memory requires cudarc integration
-    // which is deferred to Phase 2 of GPU decoding
-
-    Ok(AlignedImageBuffer::page_aligned(size))
 }
 
 #[cfg(test)]

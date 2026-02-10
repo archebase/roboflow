@@ -15,33 +15,30 @@
 //! - Crash recovery for upload operations
 //! - Atomic updates with version checking
 //! - Integration with the storage layer for S3/MinIO
+//!
+//! ## Note
+//!
+//! This module is always available as part of the distributed processing
+//! functionality. TiKV coordination is a core feature of roboflow.
 
 /// Configuration for TiKV catalog connection.
-#[cfg(feature = "tikv-catalog")]
 pub mod config;
 
 /// TiKV client pool and connection management.
-#[cfg(feature = "tikv-catalog")]
 pub mod pool;
 
 /// Key encoding and decoding for TiKV storage.
-#[cfg(feature = "tikv-catalog")]
 pub mod key;
 
 /// Schema types for catalog metadata.
-#[cfg(feature = "tikv-catalog")]
 pub mod schema;
 
 /// Main catalog implementation.
-#[cfg(feature = "tikv-catalog")]
 pub mod catalog;
 
-// Re-exports when feature is enabled
-#[cfg(feature = "tikv-catalog")]
+// Re-exports
 pub use catalog::TiKVCatalog;
-#[cfg(feature = "tikv-catalog")]
 pub use config::TiKVConfig;
-#[cfg(feature = "tikv-catalog")]
 pub use schema::{EpisodeMetadata, SegmentMetaData, UploadStatus};
 
 /// Default PD endpoints for local development.
