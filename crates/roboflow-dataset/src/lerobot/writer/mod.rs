@@ -22,7 +22,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::common::{AlignedFrame, DatasetWriter, ImageData, WriterStats};
+use crate::common::{
+    AlignedFrame, DatasetWriter, ImageData, WriterStats,
+    streaming_coordinator::{StreamingCoordinator, StreamingCoordinatorConfig},
+    s3_encoder::S3EncoderConfig,
+};
 use crate::lerobot::config::LerobotConfig;
 use crate::lerobot::metadata::MetadataCollector;
 use crate::lerobot::trait_impl::{FromAlignedFrame, LerobotWriterTrait};
@@ -169,6 +173,10 @@ pub struct LerobotWriter {
 
     /// Upload coordinator for cloud uploads (optional).
     upload_coordinator: Option<std::sync::Arc<crate::lerobot::upload::EpisodeUploadCoordinator>>,
+
+    /// Streaming coordinator for multi-camera video encoding (optional).
+    #[allow(dead_code)]
+    streaming_coordinator: Option<StreamingCoordinator>,
 }
 
 impl LerobotWriter {
@@ -232,6 +240,7 @@ impl LerobotWriter {
             failed_encodings: 0,
             use_cloud_storage: false,
             upload_coordinator: None,
+            streaming_coordinator: None,
         })
     }
 
@@ -388,6 +397,7 @@ impl LerobotWriter {
             failed_encodings: 0,
             use_cloud_storage,
             upload_coordinator: upload_coordinator.clone(),
+            streaming_coordinator: None,
         })
     }
 
@@ -732,8 +742,21 @@ impl LerobotWriter {
         // Resolve the video configuration
         let resolved = ResolvedConfig::from_video_config(&self.config.video);
 
-        // Use streaming encoder for cloud storage (OssStorage), batch encoder otherwise
-        let (mut video_files, encode_stats) = if self.use_cloud_storage
+        // Use streaming coordinator for multi-camera parallel encoding when enabled
+        let (mut video_files, encode_stats) = if self.config.streaming.use_coordinator
+            && self.use_cloud_storage
+            && self
+                .storage
+                .as_any()
+                .downcast_ref::<roboflow_storage::OssStorage>()
+                .is_some()
+        {
+            tracing::info!(
+                episode_index = self.episode_index,
+                "Using streaming coordinator for multi-camera parallel encoding"
+            );
+            self.encode_videos_with_coordinator()?
+        } else if self.use_cloud_storage
             && self
                 .storage
                 .as_any()
@@ -796,6 +819,122 @@ impl LerobotWriter {
             // Clear video files after upload to avoid double-upload
             video_files.clear();
         }
+
+        Ok((video_files, encode_stats))
+    }
+
+    /// Encode videos using the streaming coordinator for multi-camera parallel encoding.
+    ///
+    /// This method provides better performance for multi-camera setups by using
+    /// dedicated encoder threads for each camera with concurrent S3/OSS upload.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (video_files, encode_stats) where video_files contains
+    /// (path, camera) tuples and encode_stats contains encoding statistics.
+    fn encode_videos_with_coordinator(&mut self) -> Result<(Vec<(PathBuf, String)>, EncodeStats)> {
+        if self.image_buffers.is_empty() {
+            tracing::debug!(
+                episode_index = self.episode_index,
+                "Video skip: image_buffers empty"
+            );
+            return Ok((Vec::new(), EncodeStats::default()));
+        }
+
+        let total_images: usize = self.image_buffers.values().map(|v| v.len()).sum();
+        tracing::info!(
+            episode_index = self.episode_index,
+            cameras = self.image_buffers.len(),
+            total_frames = total_images,
+            "Encoding videos with streaming coordinator"
+        );
+
+        // Get the object store from storage
+        let object_store = self
+            .storage
+            .as_any()
+            .downcast_ref::<roboflow_storage::OssStorage>()
+            .map(|oss| oss.async_storage().object_store())
+            .ok_or_else(|| {
+                roboflow_core::RoboflowError::encode(
+                    "LerobotWriter",
+                    "Object store not available for streaming coordinator",
+                )
+            })?;
+
+        let runtime = tokio::runtime::Handle::try_current().map_err(|e| {
+            roboflow_core::RoboflowError::other(format!("No tokio runtime: {}", e))
+        })?;
+
+        // Resolve video configuration
+        let resolved = ResolvedConfig::from_video_config(&self.config.video);
+
+        // Build S3/OSS URL prefix
+        let s3_prefix = if self.output_prefix.is_empty() {
+            // Extract bucket from storage (assuming OSS storage format)
+            "oss://roboflow".to_string()
+        } else {
+            format!("oss://{}", self.output_prefix.trim_end_matches('/'))
+        };
+
+        // Create streaming coordinator configuration
+        let encoder_config = S3EncoderConfig {
+            video: resolved.to_encoder_config(self.config.dataset.fps),
+            ring_buffer_size: self.config.streaming.ring_buffer_size,
+            upload_part_size: self.config.streaming.upload_part_size,
+            buffer_timeout: std::time::Duration::from_secs(self.config.streaming.buffer_timeout_secs),
+            fragmented_mp4: true,
+        };
+
+        let coordinator_config = StreamingCoordinatorConfig {
+            frame_channel_capacity: self.config.streaming.ring_buffer_size,
+            encoder_config,
+            shutdown_timeout: std::time::Duration::from_secs(300),
+            fps: self.config.dataset.fps,
+        };
+
+        // Create streaming coordinator
+        let mut coordinator = StreamingCoordinator::new(
+            s3_prefix,
+            object_store.clone(),
+            runtime,
+            coordinator_config,
+        )?;
+
+        // Add all frames from all cameras
+        for (camera, images) in &self.image_buffers {
+            for image in images {
+                let image_data = std::sync::Arc::new(image.clone());
+                coordinator.add_frame(camera, image_data)?;
+            }
+        }
+
+        // Finalize and get results
+        let results = coordinator.finalize()?;
+
+        // Convert results to return format
+        let video_files: Vec<(PathBuf, String)> = results
+            .into_keys()
+            .map(|camera| {
+                // Use camera name as path (for consistency with existing API)
+                (PathBuf::from(&camera), camera.clone())
+            })
+            .collect();
+
+        let encode_stats = EncodeStats {
+            images_encoded: total_images,
+            skipped_frames: 0,
+            failed_encodings: 0,
+            decode_failures: 0,
+            output_bytes: 0, // TODO: Track actual bytes from coordinator
+        };
+
+        tracing::info!(
+            episode_index = self.episode_index,
+            cameras = video_files.len(),
+            images_encoded = encode_stats.images_encoded,
+            "Completed encoding with streaming coordinator"
+        );
 
         Ok((video_files, encode_stats))
     }
@@ -1414,6 +1553,7 @@ impl LerobotWriter {
             failed_encodings: 0,
             use_cloud_storage,
             upload_coordinator,
+            streaming_coordinator: None,
         })
     }
 }

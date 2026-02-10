@@ -20,10 +20,9 @@ png = "0.17"
 # Image decoding (required for LeRobot and streaming conversion)
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
-# Video encoding via rsmpeg (optional, requires FFmpeg 8.x libraries)
-# Note: rsmpeg is currently unused - video encoding uses FFmpeg CLI
-# Kept for potential future native FFmpeg bindings integration
-rsmpeg = { version = "0.18", optional = true, features = ["link_system_ffmpeg"] }
+# Video encoding via rsmpeg (native FFmpeg bindings)
+# rsmpeg provides in-process encoding for max performance (1200 MB/s target)
+rsmpeg = { version = "0.18", features = ["link_system_ffmpeg"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -50,11 +49,6 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 
 [features]
 default = []
-
-# Video encoding uses FFmpeg CLI (always available)
-# The `video` feature is kept for compatibility but does nothing
-# Native rsmpeg integration is planned for future optimization
-video = []
 
 [dev-dependencies]
 pretty_assertions = "1.4"

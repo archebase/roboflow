@@ -146,9 +146,11 @@ mod tests {
 
     #[test]
     fn test_parallel_decode_stats_compression_ratio() {
-        let mut stats = ParallelDecodeStats::default();
-        stats.total_input_bytes = 1000;
-        stats.total_output_bytes = 3000;
+        let stats = ParallelDecodeStats {
+            total_input_bytes: 1000,
+            total_output_bytes: 3000,
+            ..Default::default()
+        };
         assert_eq!(stats.compression_ratio(), 3.0);
     }
 }

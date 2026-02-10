@@ -21,7 +21,10 @@ pub mod image_format;
 pub mod parquet_base;
 pub mod progress;
 pub mod ring_buffer;
+pub mod rsmpeg_encoder;
 pub mod s3_encoder;
+pub mod streaming_coordinator;
+pub mod streaming_uploader;
 pub mod video;
 
 // Re-export core types (shared across all formats)
@@ -53,3 +56,14 @@ pub use video::{
 // Platform-specific re-exports
 #[cfg(target_os = "macos")]
 pub use video::VideoToolboxEncoder as AppleVideoEncoder;
+
+// Re-export streaming uploader
+pub use streaming_uploader::{StreamingUploader, UploadConfig, UploadProgress, UploadStats};
+
+// Re-export rsmpeg encoder
+pub use rsmpeg_encoder::{is_rsmpeg_available, rsmpeg_unavailable_error, RsmpegEncoder, RsmpegEncoderConfig};
+
+// Re-export streaming coordinator
+pub use streaming_coordinator::{
+    EncoderCommand, EncoderResult, StreamingCoordinator, StreamingCoordinatorConfig,
+};

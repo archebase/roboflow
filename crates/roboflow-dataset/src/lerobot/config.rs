@@ -322,6 +322,10 @@ pub struct StreamingConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
 
+    /// Use multi-camera streaming coordinator for better parallelization
+    #[serde(default)]
+    pub use_coordinator: bool,
+
     /// Ring buffer capacity in frames (default: 128)
     #[serde(default = "default_ring_buffer_size")]
     pub ring_buffer_size: usize,
@@ -340,6 +344,7 @@ impl Default for StreamingConfig {
     fn default() -> Self {
         Self {
             enabled: None,
+            use_coordinator: false,
             ring_buffer_size: default_ring_buffer_size(),
             upload_part_size: default_upload_part_size(),
             buffer_timeout_secs: default_buffer_timeout_secs(),
