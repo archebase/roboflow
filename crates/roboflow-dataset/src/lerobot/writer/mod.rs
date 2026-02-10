@@ -399,6 +399,8 @@ impl LerobotWriter {
     }
 
     /// Add a frame to the current episode.
+    /// Note: This does NOT trigger incremental flushing to avoid flushing before images are added.
+    /// The flush check is deferred until after all images for a frame are added (in write_frame).
     pub fn add_frame(&mut self, frame: LerobotFrame) {
         // Update metadata
         if let Some(ref state) = frame.observation_state {
@@ -411,23 +413,11 @@ impl LerobotWriter {
         }
 
         self.frame_data.push(frame);
-
-        // Check if we should flush this chunk (incremental flushing)
-        let memory_bytes = self.estimate_memory_bytes();
-        if self
-            .config
-            .flushing
-            .should_flush(self.frame_data.len(), memory_bytes)
-            && let Err(e) = self.flush_chunk()
-        {
-            tracing::error!(
-                error = %e,
-                "Failed to flush chunk, continuing (memory may increase)"
-            );
-        }
     }
 
     /// Add image data for a camera frame.
+    /// Note: This does NOT trigger incremental flushing to avoid mid-frame flushes.
+    /// The flush check is deferred until after all images for a frame are added.
     pub fn add_image(&mut self, camera: String, data: ImageData) {
         // Update shape metadata
         self.metadata
@@ -435,20 +425,6 @@ impl LerobotWriter {
 
         // Buffer for video encoding
         self.image_buffers.entry(camera).or_default().push(data);
-
-        // Check if we should flush this chunk (incremental flushing)
-        let memory_bytes = self.estimate_memory_bytes();
-        if self
-            .config
-            .flushing
-            .should_flush(self.frame_data.len(), memory_bytes)
-            && let Err(e) = self.flush_chunk()
-        {
-            tracing::error!(
-                error = %e,
-                "Failed to flush chunk, continuing (memory may increase)"
-            );
-        }
     }
 
     /// Start a new episode.
@@ -674,7 +650,14 @@ impl LerobotWriter {
         let _parquet_path = self.write_episode_parquet()?;
 
         // Encode videos for this chunk
-        let (video_files, _encode_stats) = self.encode_videos()?;
+        let (video_files, encode_stats) = self.encode_videos()?;
+
+        // Update statistics (important: track encode stats from incremental flushes)
+        self.images_encoded += encode_stats.images_encoded;
+        self.skipped_frames += encode_stats.skipped_frames;
+        self.failed_encodings += encode_stats.failed_encodings;
+        self.output_bytes += encode_stats.output_bytes;
+        self.total_frames += frame_count;
 
         // Queue uploads if coordinator available
         if self.upload_coordinator.is_some() && !video_files.is_empty() {
@@ -986,9 +969,24 @@ impl DatasetWriter for LerobotWriter {
         // Add the frame
         self.add_frame(lerobot_frame);
 
-        // Add images
+        // Add all images for this frame BEFORE checking flush
+        // This prevents mid-frame flushes that would lose other cameras' data
         for (camera, data) in &frame.images {
             self.add_image(camera.clone(), data.clone());
+        }
+
+        // NOW check if we should flush (after all images for this frame are added)
+        let memory_bytes = self.estimate_memory_bytes();
+        if self
+            .config
+            .flushing
+            .should_flush(self.frame_data.len(), memory_bytes)
+            && let Err(e) = self.flush_chunk()
+        {
+            tracing::error!(
+                error = %e,
+                "Failed to flush chunk, continuing (memory may increase)"
+            );
         }
 
         Ok(())

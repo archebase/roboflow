@@ -19,10 +19,10 @@ use std::sync::Arc;
 
 use roboflow::lerobot::upload::{EpisodeFiles, EpisodeUploadCoordinator, UploadConfig};
 use roboflow::{
-    DatasetBaseConfig, LerobotConfig, LerobotDatasetConfig, LerobotWriter, LerobotWriterTrait,
-    VideoConfig,
+    DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig, LerobotWriter,
+    LerobotWriterTrait, VideoConfig,
 };
-use roboflow_dataset::ImageData;
+use roboflow_dataset::{AlignedFrame, ImageData};
 use roboflow_storage::{LocalStorage, StorageFactory, StorageUrl};
 
 /// Create a test output directory.
@@ -509,4 +509,481 @@ fn test_large_episode_incremental_flush() {
     // Verify completion without OOM
     assert!(stats.duration_sec >= 0.0);
     assert!(output_dir.path().join("data/chunk-000").exists());
+}
+
+// =============================================================================
+// Test: Multi-camera frame with incremental flushing (prevents mid-frame data loss)
+// =============================================================================
+
+#[test]
+fn test_multi_camera_mid_frame_flush_prevention() {
+    let output_dir = test_output_dir("test_multi_camera_flush");
+
+    // Use a small chunk size to trigger flushing during frame addition
+    let config = LerobotConfig {
+        dataset: LerobotDatasetConfig {
+            base: DatasetBaseConfig {
+                name: "multi_camera_test".to_string(),
+                fps: 30,
+                robot_type: Some("test_robot".to_string()),
+            },
+            env_type: None,
+        },
+        mappings: vec![],
+        video: VideoConfig::default(),
+        annotation_file: None,
+        flushing: roboflow::lerobot::FlushingConfig {
+            max_frames_per_chunk: 3, // Very small to trigger flush
+            max_memory_bytes: 0,
+            incremental_video_encoding: true,
+        },
+    };
+
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
+    writer.start_episode(Some(0));
+
+    // Add 10 frames, each with 3 cameras
+    // This will trigger multiple flushes during processing
+    // Use write_frame() to ensure flush happens AFTER all cameras are added
+    for frame_idx in 0..10 {
+        let mut frame =
+            roboflow_dataset::AlignedFrame::new(frame_idx, (frame_idx as u64) * 33_333_333);
+
+        for camera_idx in 0..3 {
+            let camera_name = format!("observation.images.camera_{}", camera_idx);
+            frame.images.insert(
+                camera_name,
+                create_test_image_with_pattern(64, 48, (frame_idx * 3 + camera_idx) as u8),
+            );
+        }
+
+        // Add required state and action
+        frame
+            .states
+            .insert("observation.state".to_string(), vec![0.0_f32; 7]);
+        frame.actions.insert("action".to_string(), vec![0.0_f32; 7]);
+
+        writer.write_frame(&frame).unwrap();
+    }
+
+    writer.finish_episode(Some(0)).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
+
+    // Verify all frames were processed - this is the key test that would fail
+    // if mid-frame flushes were causing data loss
+    assert_eq!(
+        stats.images_encoded, 30,
+        "Should encode all 30 images (10 frames × 3 cameras)"
+    );
+}
+
+// =============================================================================
+// Test: Multi-camera incremental flushing preserves all camera data
+// =============================================================================
+
+#[test]
+fn test_multi_camera_incremental_flush_data_preservation() {
+    let output_dir = test_output_dir("test_multi_camera_data_preservation");
+
+    let config = LerobotConfig {
+        dataset: LerobotDatasetConfig {
+            base: DatasetBaseConfig {
+                name: "data_preservation_test".to_string(),
+                fps: 30,
+                robot_type: Some("test_robot".to_string()),
+            },
+            env_type: None,
+        },
+        mappings: vec![],
+        video: VideoConfig::default(),
+        annotation_file: None,
+        flushing: roboflow::lerobot::FlushingConfig {
+            max_frames_per_chunk: 5, // Flush every 5 frames
+            max_memory_bytes: 0,
+            incremental_video_encoding: true,
+        },
+    };
+
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
+    writer.start_episode(Some(0));
+
+    let num_frames = 15;
+    let num_cameras = 4;
+
+    // Add frames with multiple cameras using write_frame
+    for frame_idx in 0..num_frames {
+        let mut frame = AlignedFrame::new(frame_idx, (frame_idx as u64) * 33_333_333);
+
+        for camera_idx in 0..num_cameras {
+            let camera_name = format!("camera_{}", camera_idx);
+            frame.images.insert(
+                camera_name,
+                create_test_image_with_pattern(
+                    32,
+                    24,
+                    (frame_idx * num_cameras + camera_idx) as u8,
+                ),
+            );
+        }
+
+        frame
+            .states
+            .insert("observation.state".to_string(), vec![0.0_f32; 7]);
+        frame.actions.insert("action".to_string(), vec![0.0_f32; 7]);
+
+        writer.write_frame(&frame).unwrap();
+    }
+
+    writer.finish_episode(Some(0)).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
+
+    // Verify all images were encoded
+    let expected_images = num_frames * num_cameras;
+    assert_eq!(
+        stats.images_encoded, expected_images,
+        "Should encode all {} images ({} frames × {} cameras)",
+        expected_images, num_frames, num_cameras
+    );
+
+    // Verify output structure exists
+    assert!(output_dir.path().join("data/chunk-000").exists());
+    assert!(output_dir.path().join("videos/chunk-000").exists());
+}
+
+// =============================================================================
+// Test: Memory-based flushing with multiple cameras
+// =============================================================================
+
+#[test]
+fn test_multi_camera_memory_based_flushing() {
+    let output_dir = test_output_dir("test_multi_camera_memory_flush");
+
+    // Set a low memory threshold to trigger memory-based flushing
+    let config = LerobotConfig {
+        dataset: LerobotDatasetConfig {
+            base: DatasetBaseConfig {
+                name: "memory_flush_test".to_string(),
+                fps: 30,
+                robot_type: Some("test_robot".to_string()),
+            },
+            env_type: None,
+        },
+        mappings: vec![],
+        video: VideoConfig::default(),
+        annotation_file: None,
+        flushing: roboflow::lerobot::FlushingConfig {
+            max_frames_per_chunk: 0,      // No frame-based flushing
+            max_memory_bytes: 150 * 1024, // 150KB limit
+            incremental_video_encoding: true,
+        },
+    };
+
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
+    writer.start_episode(Some(0));
+
+    // Add large images that will trigger memory-based flushing
+    // Each image: 160x120x3 = 57,600 bytes
+    // With 3 cameras per frame: ~173KB per frame
+    // This should trigger flushing every frame
+    for frame_idx in 0..5 {
+        let mut frame = AlignedFrame::new(frame_idx, (frame_idx as u64) * 33_333_333);
+
+        for camera_idx in 0..3 {
+            let camera_name = format!("camera_{}", camera_idx);
+            frame.images.insert(
+                camera_name,
+                create_test_image_with_pattern(160, 120, (frame_idx * 3 + camera_idx) as u8),
+            );
+        }
+
+        frame
+            .states
+            .insert("observation.state".to_string(), vec![0.0_f32; 7]);
+        frame.actions.insert("action".to_string(), vec![0.0_f32; 7]);
+
+        writer.write_frame(&frame).unwrap();
+    }
+
+    writer.finish_episode(Some(0)).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
+
+    // Verify all images were encoded despite memory-based flushing
+    assert_eq!(
+        stats.images_encoded, 15,
+        "Should encode all 15 images (5 frames × 3 cameras)"
+    );
+}
+
+// =============================================================================
+// Test: Verify exact frame count after incremental flushes
+// =============================================================================
+
+#[test]
+fn test_exact_frame_count_after_incremental_flush() {
+    let output_dir = test_output_dir("test_exact_frame_count");
+
+    let config = LerobotConfig {
+        dataset: LerobotDatasetConfig {
+            base: DatasetBaseConfig {
+                name: "exact_count_test".to_string(),
+                fps: 30,
+                robot_type: Some("test_robot".to_string()),
+            },
+            env_type: None,
+        },
+        mappings: vec![],
+        video: VideoConfig::default(),
+        annotation_file: None,
+        flushing: roboflow::lerobot::FlushingConfig {
+            max_frames_per_chunk: 7, // Prime number to avoid alignment coincidences
+            max_memory_bytes: 0,
+            incremental_video_encoding: true,
+        },
+    };
+
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
+    writer.start_episode(Some(0));
+
+    let expected_frames = 25;
+    let expected_cameras = 2;
+
+    for frame_idx in 0..expected_frames {
+        let mut frame = AlignedFrame::new(frame_idx, (frame_idx as u64) * 33_333_333);
+
+        for camera_idx in 0..expected_cameras {
+            let camera_name = format!("camera_{}", camera_idx);
+            frame.images.insert(
+                camera_name,
+                create_test_image_with_pattern(
+                    64,
+                    48,
+                    (frame_idx * expected_cameras + camera_idx) as u8,
+                ),
+            );
+        }
+
+        frame
+            .states
+            .insert("observation.state".to_string(), vec![0.0_f32; 7]);
+        frame.actions.insert("action".to_string(), vec![0.0_f32; 7]);
+
+        writer.write_frame(&frame).unwrap();
+    }
+
+    writer.finish_episode(Some(0)).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
+
+    assert_eq!(
+        stats.images_encoded,
+        expected_frames * expected_cameras,
+        "Expected {} images ({} frames × {} cameras), got {}",
+        expected_frames * expected_cameras,
+        expected_frames,
+        expected_cameras,
+        stats.images_encoded
+    );
+}
+
+// =============================================================================
+// Test: Flush happens between frames, not mid-frame
+// =============================================================================
+
+#[test]
+fn test_flush_timing_between_frames_not_mid_frame() {
+    let output_dir = test_output_dir("test_flush_timing");
+
+    let config = LerobotConfig {
+        dataset: LerobotDatasetConfig {
+            base: DatasetBaseConfig {
+                name: "flush_timing_test".to_string(),
+                fps: 30,
+                robot_type: Some("test_robot".to_string()),
+            },
+            env_type: None,
+        },
+        mappings: vec![],
+        video: VideoConfig::default(),
+        annotation_file: None,
+        flushing: roboflow::lerobot::FlushingConfig {
+            max_frames_per_chunk: 2, // Flush every 2 frames
+            max_memory_bytes: 0,
+            incremental_video_encoding: true,
+        },
+    };
+
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
+    writer.start_episode(Some(0));
+
+    // Track how many unique patterns we see per camera
+    let mut seen_patterns: std::collections::HashMap<String, std::collections::HashSet<u8>> =
+        std::collections::HashMap::new();
+
+    for frame_idx in 0..10 {
+        let mut frame = AlignedFrame::new(frame_idx, (frame_idx as u64) * 33_333_333);
+
+        for camera_idx in 0..3 {
+            let pattern = (frame_idx * 10 + camera_idx) as u8;
+            let camera_name = format!("camera_{}", camera_idx);
+
+            frame.images.insert(
+                camera_name.clone(),
+                create_test_image_with_pattern(64, 48, pattern),
+            );
+
+            // Track which patterns we've seen for each camera
+            seen_patterns
+                .entry(camera_name)
+                .or_default()
+                .insert(pattern);
+        }
+
+        frame
+            .states
+            .insert("observation.state".to_string(), vec![0.0_f32; 7]);
+        frame.actions.insert("action".to_string(), vec![0.0_f32; 7]);
+
+        writer.write_frame(&frame).unwrap();
+    }
+
+    writer.finish_episode(Some(0)).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
+
+    // Verify all patterns were processed (no lost frames)
+    for (camera, patterns) in &seen_patterns {
+        assert_eq!(
+            patterns.len(),
+            10,
+            "Camera {} should have all 10 frame patterns, got {}",
+            camera,
+            patterns.len()
+        );
+    }
+
+    assert_eq!(stats.images_encoded, 30, "Should encode all 30 images");
+}
+
+// =============================================================================
+// Test: Single camera incremental flushing (baseline)
+// =============================================================================
+
+#[test]
+fn test_single_camera_incremental_flush() {
+    let output_dir = test_output_dir("test_single_camera_flush");
+
+    let config = LerobotConfig {
+        dataset: LerobotDatasetConfig {
+            base: DatasetBaseConfig {
+                name: "single_camera_test".to_string(),
+                fps: 30,
+                robot_type: Some("test_robot".to_string()),
+            },
+            env_type: None,
+        },
+        mappings: vec![],
+        video: VideoConfig::default(),
+        annotation_file: None,
+        flushing: roboflow::lerobot::FlushingConfig {
+            max_frames_per_chunk: 5,
+            max_memory_bytes: 0,
+            incremental_video_encoding: true,
+        },
+    };
+
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
+    writer.start_episode(Some(0));
+
+    // Single camera should work correctly too
+    for frame_idx in 0..20 {
+        let mut frame = AlignedFrame::new(frame_idx, (frame_idx as u64) * 33_333_333);
+
+        frame.images.insert(
+            "camera_0".to_string(),
+            create_test_image_with_pattern(64, 48, frame_idx as u8),
+        );
+
+        frame
+            .states
+            .insert("observation.state".to_string(), vec![0.0_f32; 7]);
+        frame.actions.insert("action".to_string(), vec![0.0_f32; 7]);
+
+        writer.write_frame(&frame).unwrap();
+    }
+
+    writer.finish_episode(Some(0)).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
+
+    assert_eq!(
+        stats.images_encoded, 20,
+        "Should encode all 20 single-camera images"
+    );
+}
+
+// =============================================================================
+// Test: No frames lost with many small flushes
+// =============================================================================
+
+#[test]
+fn test_no_data_loss_with_many_small_flushes() {
+    let output_dir = test_output_dir("test_many_flushes");
+
+    let config = LerobotConfig {
+        dataset: LerobotDatasetConfig {
+            base: DatasetBaseConfig {
+                name: "many_flushes_test".to_string(),
+                fps: 30,
+                robot_type: Some("test_robot".to_string()),
+            },
+            env_type: None,
+        },
+        mappings: vec![],
+        video: VideoConfig::default(),
+        annotation_file: None,
+        flushing: roboflow::lerobot::FlushingConfig {
+            max_frames_per_chunk: 2, // Flush every 2 frames (many flushes)
+            max_memory_bytes: 0,
+            incremental_video_encoding: true,
+        },
+    };
+
+    let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
+    writer.start_episode(Some(0));
+
+    let num_frames = 50;
+    let num_cameras = 5;
+
+    for frame_idx in 0..num_frames {
+        let mut frame = AlignedFrame::new(frame_idx, (frame_idx as u64) * 33_333_333);
+
+        for camera_idx in 0..num_cameras {
+            let camera_name = format!("camera_{}", camera_idx);
+            frame.images.insert(
+                camera_name,
+                create_test_image_with_pattern(
+                    32,
+                    24,
+                    ((frame_idx * num_cameras + camera_idx) % 256) as u8,
+                ),
+            );
+        }
+
+        frame
+            .states
+            .insert("observation.state".to_string(), vec![0.0_f32; 7]);
+        frame.actions.insert("action".to_string(), vec![0.0_f32; 7]);
+
+        writer.write_frame(&frame).unwrap();
+    }
+
+    writer.finish_episode(Some(0)).unwrap();
+    let stats = writer.finalize_with_config().unwrap();
+
+    // With 50 frames and 5 cameras, flushing every 2 frames = 25 flushes
+    // No data should be lost
+    assert_eq!(
+        stats.images_encoded,
+        num_frames * num_cameras,
+        "Should encode all {} images despite {} flushes",
+        num_frames * num_cameras,
+        num_frames / 2
+    );
 }
