@@ -24,8 +24,8 @@ use std::path::{Path, PathBuf};
 
 use crate::common::{
     AlignedFrame, DatasetWriter, ImageData, WriterStats,
-    streaming_coordinator::{StreamingCoordinator, StreamingCoordinatorConfig},
     s3_encoder::S3EncoderConfig,
+    streaming_coordinator::{StreamingCoordinator, StreamingCoordinatorConfig},
 };
 use crate::lerobot::config::LerobotConfig;
 use crate::lerobot::metadata::MetadataCollector;
@@ -862,9 +862,8 @@ impl LerobotWriter {
                 )
             })?;
 
-        let runtime = tokio::runtime::Handle::try_current().map_err(|e| {
-            roboflow_core::RoboflowError::other(format!("No tokio runtime: {}", e))
-        })?;
+        let runtime = tokio::runtime::Handle::try_current()
+            .map_err(|e| roboflow_core::RoboflowError::other(format!("No tokio runtime: {}", e)))?;
 
         // Resolve video configuration
         let resolved = ResolvedConfig::from_video_config(&self.config.video);
@@ -882,7 +881,9 @@ impl LerobotWriter {
             video: resolved.to_encoder_config(self.config.dataset.fps),
             ring_buffer_size: self.config.streaming.ring_buffer_size,
             upload_part_size: self.config.streaming.upload_part_size,
-            buffer_timeout: std::time::Duration::from_secs(self.config.streaming.buffer_timeout_secs),
+            buffer_timeout: std::time::Duration::from_secs(
+                self.config.streaming.buffer_timeout_secs,
+            ),
             fragmented_mp4: true,
         };
 

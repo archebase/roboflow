@@ -61,7 +61,9 @@ pub use video::VideoToolboxEncoder as AppleVideoEncoder;
 pub use streaming_uploader::{StreamingUploader, UploadConfig, UploadProgress, UploadStats};
 
 // Re-export rsmpeg encoder
-pub use rsmpeg_encoder::{is_rsmpeg_available, rsmpeg_unavailable_error, RsmpegEncoder, RsmpegEncoderConfig};
+pub use rsmpeg_encoder::{
+    RsmpegEncoder, RsmpegEncoderConfig, is_rsmpeg_available, rsmpeg_unavailable_error,
+};
 
 // Re-export streaming coordinator
 pub use streaming_coordinator::{

@@ -572,6 +572,10 @@ fn parse_s3_url_to_key(url: &str) -> Result<ObjectPath, RoboflowError> {
 mod tests {
     use super::*;
 
+    // =========================================================================
+    // URL Parsing Tests
+    // =========================================================================
+
     #[test]
     fn test_parse_s3_url() {
         let key = parse_s3_url_to_key("s3://mybucket/videos/episode_000.mp4")
@@ -605,11 +609,162 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_s3_url_nested_path() {
+        let key = parse_s3_url_to_key("s3://mybucket/path/to/nested/videos/episode_000.mp4")
+            .expect("Failed to parse nested S3 URL");
+        assert_eq!(key.as_ref(), "path/to/nested/videos/episode_000.mp4");
+    }
+
+    #[test]
+    fn test_parse_s3_url_with_query_params() {
+        // Query params should be rejected as they're not valid for object keys
+        let result = parse_s3_url_to_key("s3://bucket/video.mp4?versionId=123");
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // Configuration Tests
+    // =========================================================================
+
+    #[test]
     fn test_s3_encoder_config_defaults() {
         let config = S3EncoderConfig::new();
         assert_eq!(config.ring_buffer_size, 128);
         assert_eq!(config.upload_part_size, 16 * 1024 * 1024);
         assert_eq!(config.buffer_timeout, Duration::from_secs(5));
         assert!(config.fragmented_mp4);
+    }
+
+    #[test]
+    fn test_s3_encoder_config_builder() {
+        let config = S3EncoderConfig::new()
+            .with_ring_buffer_size(256)
+            .with_upload_part_size(32 * 1024 * 1024);
+
+        assert_eq!(config.ring_buffer_size, 256);
+        assert_eq!(config.upload_part_size, 32 * 1024 * 1024);
+    }
+
+    // =========================================================================
+    // Encoder Creation Tests (Unit Tests without FFmpeg)
+    // =========================================================================
+
+    #[test]
+    fn test_encoder_creation_valid_params() {
+        let store = Arc::new(object_store::memory::InMemory::new());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let encoder = S3StreamingEncoder::new(
+            "s3://test-bucket/videos/test.mp4",
+            640,
+            480,
+            30,
+            store,
+            runtime.handle().clone(),
+            S3EncoderConfig::new(),
+        );
+
+        assert!(encoder.is_ok());
+        let encoder = encoder.unwrap();
+        assert_eq!(encoder.key().as_ref(), "videos/test.mp4");
+        assert_eq!(encoder.frames_encoded(), 0);
+    }
+
+    #[test]
+    fn test_encoder_creation_zero_width() {
+        let store = Arc::new(object_store::memory::InMemory::new());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let encoder = S3StreamingEncoder::new(
+            "s3://test-bucket/videos/test.mp4",
+            0,
+            480,
+            30,
+            store,
+            runtime.handle().clone(),
+            S3EncoderConfig::new(),
+        );
+
+        assert!(encoder.is_err());
+    }
+
+    #[test]
+    fn test_encoder_creation_zero_height() {
+        let store = Arc::new(object_store::memory::InMemory::new());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let encoder = S3StreamingEncoder::new(
+            "s3://test-bucket/videos/test.mp4",
+            640,
+            0,
+            30,
+            store,
+            runtime.handle().clone(),
+            S3EncoderConfig::new(),
+        );
+
+        assert!(encoder.is_err());
+    }
+
+    #[test]
+    fn test_encoder_creation_zero_fps() {
+        let store = Arc::new(object_store::memory::InMemory::new());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let encoder = S3StreamingEncoder::new(
+            "s3://test-bucket/videos/test.mp4",
+            640,
+            480,
+            0,
+            store,
+            runtime.handle().clone(),
+            S3EncoderConfig::new(),
+        );
+
+        assert!(encoder.is_err());
+    }
+
+    #[test]
+    fn test_encoder_key_extraction() {
+        let store = Arc::new(object_store::memory::InMemory::new());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let encoder = S3StreamingEncoder::new(
+            "s3://mybucket/prefix/videos/episode_123.mp4",
+            1280,
+            720,
+            60,
+            store,
+            runtime.handle().clone(),
+            S3EncoderConfig::new(),
+        )
+        .unwrap();
+
+        assert_eq!(encoder.key().as_ref(), "prefix/videos/episode_123.mp4");
+    }
+
+    // =========================================================================
+    // Abort Tests
+    // =========================================================================
+
+    #[test]
+    fn test_encoder_abort_without_initialization() {
+        let store = Arc::new(object_store::memory::InMemory::new());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let encoder = S3StreamingEncoder::new(
+            "s3://test-bucket/videos/test.mp4",
+            640,
+            480,
+            30,
+            store,
+            runtime.handle().clone(),
+            S3EncoderConfig::new(),
+        )
+        .unwrap();
+
+        // Abort without initializing should succeed
+        let result = encoder.abort();
+        assert!(result.is_ok());
     }
 }

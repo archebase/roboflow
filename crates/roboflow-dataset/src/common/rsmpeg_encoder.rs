@@ -64,13 +64,13 @@ impl Default for RsmpegEncoderConfig {
             width: 640,
             height: 480,
             fps: 30,
-            bitrate: 5_000_000,  // 5 Mbps
+            bitrate: 5_000_000, // 5 Mbps
             codec: "h264_nvenc".to_string(),
             pixel_format: "nv12".to_string(),
             crf: 23,
-            preset: "p4".to_string(),  // NVENC preset p1-p7 (p4 = medium)
+            preset: "p4".to_string(), // NVENC preset p1-p7 (p4 = medium)
             gop_size: 30,
-            fragment_size: 1024 * 1024,  // 1MB fragments
+            fragment_size: 1024 * 1024, // 1MB fragments
             max_b_frames: 1,
         }
     }
@@ -210,7 +210,7 @@ impl RsmpegEncoder {
 
 /// Check if rsmpeg is available.
 pub fn is_rsmpeg_available() -> bool {
-    true  // rsmpeg is now a direct dependency
+    true // rsmpeg is now a direct dependency
 }
 
 /// Get an error indicating rsmpeg is unavailable.
