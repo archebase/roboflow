@@ -17,11 +17,14 @@ pub mod video_profiles;
 pub mod writer;
 
 pub use annotations::{AnnotationData, SkillMark};
-pub use config::{DatasetConfig, LerobotConfig, Mapping, MappingType, VideoConfig};
+pub use config::{DatasetConfig, FlushingConfig, LerobotConfig, Mapping, MappingType, VideoConfig};
 pub use hardware::{HardwareBackend, HardwareConfig};
 pub use trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 
 pub use upload::EpisodeUploadCoordinator;
 pub use upload::{EpisodeFiles, UploadConfig, UploadProgress, UploadStats};
 pub use video_profiles::{Profile, QualityTier, ResolvedConfig, SpeedPreset, VideoEncodingProfile};
-pub use writer::{CameraExtrinsic, CameraIntrinsic, LerobotFrame, LerobotWriter};
+pub use writer::{
+    CameraExtrinsic, CameraIntrinsic, ChunkMetadata, ChunkStats,
+    FlushingConfig as WriterFlushingConfig, IncrementalFlusher, LerobotFrame, LerobotWriter,
+};

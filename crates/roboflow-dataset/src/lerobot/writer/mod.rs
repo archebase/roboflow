@@ -11,6 +11,7 @@
 //! - Complete metadata files
 
 mod encoding;
+mod flushing;
 mod frame;
 mod parquet;
 mod stats;
@@ -31,6 +32,8 @@ use serde::{Deserialize, Serialize};
 pub use frame::LerobotFrame;
 
 use encoding::{EncodeStats, encode_videos};
+
+pub use flushing::{ChunkMetadata, ChunkStats, FlushingConfig, IncrementalFlusher};
 
 /// Camera intrinsic parameters in LeRobot format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -408,6 +411,20 @@ impl LerobotWriter {
         }
 
         self.frame_data.push(frame);
+
+        // Check if we should flush this chunk (incremental flushing)
+        let memory_bytes = self.estimate_memory_bytes();
+        if self
+            .config
+            .flushing
+            .should_flush(self.frame_data.len(), memory_bytes)
+            && let Err(e) = self.flush_chunk()
+        {
+            tracing::error!(
+                error = %e,
+                "Failed to flush chunk, continuing (memory may increase)"
+            );
+        }
     }
 
     /// Add image data for a camera frame.
@@ -418,6 +435,20 @@ impl LerobotWriter {
 
         // Buffer for video encoding
         self.image_buffers.entry(camera).or_default().push(data);
+
+        // Check if we should flush this chunk (incremental flushing)
+        let memory_bytes = self.estimate_memory_bytes();
+        if self
+            .config
+            .flushing
+            .should_flush(self.frame_data.len(), memory_bytes)
+            && let Err(e) = self.flush_chunk()
+        {
+            tracing::error!(
+                error = %e,
+                "Failed to flush chunk, continuing (memory may increase)"
+            );
+        }
     }
 
     /// Start a new episode.
@@ -440,7 +471,7 @@ impl LerobotWriter {
 
         let start = std::time::Instant::now();
         // Encode videos
-        let (_video_files, encode_stats) = self.encode_videos()?;
+        let (video_files, encode_stats) = self.encode_videos()?;
         let video_time = start.elapsed();
 
         // Update statistics
@@ -482,42 +513,45 @@ impl LerobotWriter {
                 "Parquet file existence check"
             );
 
-            // Collect video paths from image_buffers
-            let video_paths: Vec<(String, PathBuf)> = self
-                .image_buffers
-                .keys()
-                .filter(|camera| {
-                    self.image_buffers
-                        .get(&**camera)
-                        .is_some_and(|v| !v.is_empty())
-                })
-                .map(|camera| {
-                    let video_path = self.output_dir.join(format!(
-                        "videos/chunk-000/{}/episode_{:06}.mp4",
-                        camera, self.episode_index
-                    ));
-                    tracing::info!(
-                        episode = self.episode_index,
-                        camera = %camera,
-                        video_path = %video_path.display(),
-                        video_exists = video_path.exists(),
-                        "Video file existence check"
-                    );
-                    (camera.clone(), video_path)
-                })
-                .collect();
+            // Use video_files returned by encode_videos (contains (camera, PathBuf) tuples)
+            // When use_cloud_storage is true, encode_videos returns the video files to upload
+            // The video_files vector is empty when use_cloud_storage is false
+            let video_paths_for_upload: Vec<(String, PathBuf)> = if self.use_cloud_storage {
+                // Use the video_files returned by encode_videos
+                video_files
+                    .into_iter()
+                    .map(|(path, camera)| (camera, path))
+                    .collect()
+            } else {
+                // Fallback: reconstruct from image_buffers (should not happen with coordinator)
+                self.image_buffers
+                    .keys()
+                    .filter(|camera| {
+                        self.image_buffers
+                            .get(&**camera)
+                            .is_some_and(|v| !v.is_empty())
+                    })
+                    .map(|camera| {
+                        let video_path = self.output_dir.join(format!(
+                            "videos/chunk-000/{}/episode_{:06}.mp4",
+                            camera, self.episode_index
+                        ));
+                        (camera.clone(), video_path)
+                    })
+                    .collect()
+            };
 
             tracing::info!(
                 episode = self.episode_index,
-                video_count = video_paths.len(),
+                video_count = video_paths_for_upload.len(),
                 "Calling queue_episode_upload"
             );
 
-            match self.queue_episode_upload(&parquet_path, &video_paths) {
+            match self.queue_episode_upload(&parquet_path, &video_paths_for_upload) {
                 Ok(_) => {
                     tracing::info!(
                         episode = self.episode_index,
-                        video_count = video_paths.len(),
+                        video_count = video_paths_for_upload.len(),
                         output_prefix = %self.output_prefix,
                         "Queued episode for upload via coordinator"
                     );
@@ -554,7 +588,7 @@ impl LerobotWriter {
                                 );
                             }
                         }
-                        for (camera, path) in &video_paths {
+                        for (camera, path) in &video_paths_for_upload {
                             if path.exists() {
                                 if let Err(upload_e) = upload::upload_video_file(
                                     self.storage.as_ref(),
@@ -599,6 +633,69 @@ impl LerobotWriter {
         }
 
         self.episode_index += 1;
+
+        Ok(())
+    }
+
+    /// Estimate current memory usage in bytes.
+    fn estimate_memory_bytes(&self) -> usize {
+        let mut total = 0usize;
+
+        // Frame data overhead
+        total += self.frame_data.len() * 512;
+
+        // Image data
+        for images in self.image_buffers.values() {
+            for img in images {
+                total += img.data.len();
+            }
+        }
+
+        total
+    }
+
+    /// Flush current chunk to disk (incremental flushing).
+    fn flush_chunk(&mut self) -> Result<()> {
+        if self.frame_data.is_empty() && self.image_buffers.is_empty() {
+            return Ok(());
+        }
+
+        let frame_count = self.frame_data.len();
+        let memory_bytes = self.estimate_memory_bytes();
+
+        tracing::info!(
+            frames = frame_count,
+            memory_mb = memory_bytes / (1024 * 1024),
+            cameras = self.image_buffers.len(),
+            "Flushing chunk for memory management"
+        );
+
+        // Write parquet for this chunk
+        let _parquet_path = self.write_episode_parquet()?;
+
+        // Encode videos for this chunk
+        let (video_files, _encode_stats) = self.encode_videos()?;
+
+        // Queue uploads if coordinator available
+        if self.upload_coordinator.is_some() && !video_files.is_empty() {
+            let parquet_path = self.output_dir.join(format!(
+                "data/chunk-000/episode_{:06}.parquet",
+                self.episode_index
+            ));
+            let video_paths: Vec<(String, PathBuf)> = video_files
+                .into_iter()
+                .map(|(path, camera)| (camera, path))
+                .collect();
+            let _ = self.queue_episode_upload(&parquet_path, &video_paths);
+        }
+
+        // Clear buffers
+        self.frame_data.clear();
+        for buffer in self.image_buffers.values_mut() {
+            buffer.clear();
+        }
+
+        tracing::debug!("Chunk flushed, buffers cleared - ready for more frames");
 
         Ok(())
     }

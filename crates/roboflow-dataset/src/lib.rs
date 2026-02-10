@@ -103,6 +103,7 @@ impl DatasetConfig {
                 mappings: Vec::new(),
                 video: Default::default(),
                 annotation_file: None,
+                flushing: Default::default(),
             }),
         }
     }

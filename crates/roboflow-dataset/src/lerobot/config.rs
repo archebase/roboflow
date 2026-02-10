@@ -36,6 +36,10 @@ pub struct LerobotConfig {
     /// Path to JSON annotation file for episode segmentation
     #[serde(default)]
     pub annotation_file: Option<String>,
+
+    /// Incremental flushing options for memory-bounded processing
+    #[serde(default)]
+    pub flushing: FlushingConfig,
 }
 
 impl LerobotConfig {
@@ -208,6 +212,80 @@ fn default_crf() -> u32 {
 
 fn default_preset() -> String {
     "fast".to_string()
+}
+
+/// Incremental flushing configuration for memory-bounded processing.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FlushingConfig {
+    /// Maximum frames per chunk before auto-flush (0 = unlimited).
+    #[serde(default = "default_max_frames")]
+    pub max_frames_per_chunk: usize,
+
+    /// Maximum memory bytes per chunk before auto-flush (0 = unlimited).
+    #[serde(default = "default_max_memory")]
+    pub max_memory_bytes: usize,
+
+    /// Whether to encode videos incrementally (per-chunk).
+    #[serde(default = "default_incremental_encoding")]
+    pub incremental_video_encoding: bool,
+}
+
+impl Default for FlushingConfig {
+    fn default() -> Self {
+        Self {
+            max_frames_per_chunk: default_max_frames(),
+            max_memory_bytes: default_max_memory(),
+            incremental_video_encoding: default_incremental_encoding(),
+        }
+    }
+}
+
+impl FlushingConfig {
+    /// Create unlimited buffering (deprecated: use bounded flushing for production).
+    ///
+    /// # Deprecated
+    ///
+    /// Unlimited buffering can cause OOM on long recordings. Use bounded defaults
+    /// or configure appropriate limits for your hardware.
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use bounded flushing to avoid OOM on long recordings"
+    )]
+    pub fn unlimited() -> Self {
+        Self {
+            max_frames_per_chunk: 0,
+            max_memory_bytes: 0,
+            incremental_video_encoding: false,
+        }
+    }
+
+    /// Check if flushing should occur based on current state.
+    pub fn should_flush(&self, frame_count: usize, memory_bytes: usize) -> bool {
+        if self.max_frames_per_chunk > 0 && frame_count >= self.max_frames_per_chunk {
+            return true;
+        }
+        if self.max_memory_bytes > 0 && memory_bytes >= self.max_memory_bytes {
+            return true;
+        }
+        false
+    }
+
+    /// Is this config actually limiting (vs unlimited)?
+    pub fn is_limited(&self) -> bool {
+        self.max_frames_per_chunk > 0 || self.max_memory_bytes > 0
+    }
+}
+
+fn default_max_frames() -> usize {
+    1000
+}
+
+fn default_max_memory() -> usize {
+    2 * 1024 * 1024 * 1024 // 2GB
+}
+
+fn default_incremental_encoding() -> bool {
+    true
 }
 
 #[cfg(test)]

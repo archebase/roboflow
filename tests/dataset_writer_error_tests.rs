@@ -41,6 +41,7 @@ fn test_config() -> LerobotConfig {
         mappings: vec![],
         video: VideoConfig::default(),
         annotation_file: None,
+        flushing: roboflow::lerobot::FlushingConfig::default(),
     }
 }
 

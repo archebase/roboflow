@@ -540,8 +540,13 @@ impl std::fmt::Debug for AsyncOssStorage {
 pub struct OssStorage {
     /// The async storage implementation
     async_storage: AsyncOssStorage,
-    /// Optional Tokio runtime (only created when not inside a runtime)
+    /// Optional Tokio runtime for blocking operations (owned)
     runtime: Option<tokio::runtime::Runtime>,
+    /// Shared handle to the Tokio runtime for async operations (thread-safe)
+    ///
+    /// This is always set, allowing the storage to work from both Tokio threads
+    /// and native threads (e.g., upload coordinator workers).
+    runtime_handle: tokio::runtime::Handle,
 }
 
 impl OssStorage {
@@ -564,28 +569,39 @@ impl OssStorage {
     }
 
     /// Create a new OSS storage backend with configuration.
+    ///
+    /// This constructor intelligently handles runtime creation:
+    /// - If already inside a Tokio runtime, it uses that runtime's handle
+    /// - If not inside a Tokio runtime, it creates its own current-thread runtime
+    ///
+    /// The resulting storage works correctly from both Tokio threads and native threads
+    /// (e.g., upload coordinator workers).
     pub fn with_config(config: OssConfig) -> Result<Self> {
         let async_storage = AsyncOssStorage::with_config(config)?;
 
-        // Only create a runtime if we're not already inside one
-        let runtime = if tokio::runtime::Handle::try_current().is_ok() {
-            // We're inside a runtime - don't create a new one
-            None
-        } else {
-            // We're in a sync context - create our own runtime
-            Some(
-                tokio::runtime::Builder::new_current_thread()
+        // Try to get current runtime handle, or create our own runtime
+        let (runtime, runtime_handle) = match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                // We're inside a runtime - use it and don't create a new one
+                (None, handle)
+            }
+            Err(_) => {
+                // We're in a sync context - create our own runtime
+                let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .map_err(|e| {
                         StorageError::Other(format!("Failed to create tokio runtime: {}", e))
-                    })?,
-            )
+                    })?;
+                let handle = rt.handle().clone();
+                (Some(rt), handle)
+            }
         };
 
         Ok(Self {
             async_storage,
             runtime,
+            runtime_handle,
         })
     }
 
@@ -603,17 +619,21 @@ impl OssStorage {
             Some(rt) => rt.block_on(f),
             None => {
                 // We're inside a runtime - use block_in_place
-                tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(f))
+                tokio::task::block_in_place(|| self.runtime_handle.block_on(f))
             }
         }
     }
 
-    /// Get a runtime handle for writer operations.
+    /// Get the runtime handle for async operations.
+    ///
+    /// This handle is safe to use from any thread since:
+    /// 1. If we created our own runtime, the handle points to it
+    /// 2. If we're using an existing runtime, the handle is a clone of it
+    ///
+    /// Tokio runtime handles are designed to be cloned and used across threads
+    /// for spawning tasks, even when the current thread is not part of the runtime.
     fn runtime_handle(&self) -> tokio::runtime::Handle {
-        match &self.runtime {
-            Some(rt) => rt.handle().clone(),
-            None => tokio::runtime::Handle::current(),
-        }
+        self.runtime_handle.clone()
     }
 }
 

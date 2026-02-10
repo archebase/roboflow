@@ -45,6 +45,7 @@ fn test_lerobot_writer_basic_flow() {
         mappings: vec![],
         video: VideoConfig::default(),
         annotation_file: None,
+        flushing: roboflow::lerobot::FlushingConfig::default(),
     };
 
     // Create a LeRobot writer directly to verify output

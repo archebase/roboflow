@@ -93,6 +93,7 @@ impl LerobotSink {
             mappings: Vec::new(),
             video: Default::default(),
             annotation_file: None,
+            flushing: roboflow_dataset::lerobot::FlushingConfig::default(),
         }
     }
 }
