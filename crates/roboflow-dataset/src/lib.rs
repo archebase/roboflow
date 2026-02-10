@@ -29,6 +29,9 @@ pub mod lerobot;
 // Image decoding (JPEG/PNG with GPU support)
 pub mod image;
 
+// Streaming frame alignment
+pub mod streaming;
+
 // Re-export common types for convenience
 pub use common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats};
 

@@ -78,12 +78,23 @@ pub struct CompressionConfig {
 /// Default chunk size: 8MB.
 const DEFAULT_CHUNK_SIZE: usize = 8 * 1024 * 1024;
 
+/// Default channel capacity (16 slots).
+pub const DEFAULT_CHANNEL_CAPACITY: usize = 16;
+
+/// Calculate optimal channel capacity based on CPU cores.
+///
+/// Returns `cores * 4` with a minimum of 16. This ensures enough work items
+/// to keep all cores busy without excessive memory usage.
+pub fn channel_capacity(cores: usize) -> usize {
+    cores.saturating_mul(4).max(DEFAULT_CHANNEL_CAPACITY)
+}
+
 impl CompressionConfig {
     /// Auto-detect optimal compression settings based on system capabilities.
     ///
     /// Performance notes:
     /// - Multi-threaded ZSTD provides 2-5x speedup over single-threaded
-    /// - Chunk size should be 8MB per thread for optimal throughput
+    /// - Fixed 1MB chunk size is optimal for ZSTD (sweet spot for compression ratio)
     /// - Compression level 3 provides good balance between speed and ratio
     pub fn auto_detect() -> Self {
         // Detect CPU cores
@@ -92,14 +103,15 @@ impl CompressionConfig {
         // Use all available CPUs for maximum throughput
         let threads = num_cpus;
 
-        // Calculate chunk size: 8MB per thread for optimal multi-threaded compression
-        // This gives ZSTD enough data to distribute work across threads efficiently
-        let chunk_size = DEFAULT_CHUNK_SIZE * threads;
+        // Use fixed 1MB chunk size - ZSTD's sweet spot for compression
+        // Larger chunks don't improve ratio significantly and increase memory usage
+        // Linear scaling (8MB * threads) causes excessive memory allocation
+        const OPTIMAL_CHUNK_SIZE: usize = 1024 * 1024; // 1MB
 
         Self {
             enabled: true,
             threads,
-            chunk_size,
+            chunk_size: OPTIMAL_CHUNK_SIZE,
             compression_level: DEFAULT_COMPRESSION_LEVEL,
             max_memory_bytes: 0,
             window_log: None,

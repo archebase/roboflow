@@ -62,7 +62,8 @@ pub use streaming_uploader::{StreamingUploader, UploadConfig, UploadProgress, Up
 
 // Re-export rsmpeg encoder
 pub use rsmpeg_encoder::{
-    RsmpegEncoder, RsmpegEncoderConfig, is_rsmpeg_available, rsmpeg_unavailable_error,
+    EncodeFrame, RsmpegEncoder, RsmpegEncoderConfig, default_codec_name,
+    is_hardware_encoding_available, is_rsmpeg_available,
 };
 
 // Re-export streaming coordinator

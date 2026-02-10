@@ -419,7 +419,10 @@ fn write_ppm_frame<W: std::io::Write>(writer: &mut W, frame: &VideoFrame) -> std
 /// Read from FFmpeg stdout and upload to S3 via multipart upload.
 ///
 /// This function runs in a separate thread and reads data synchronously
-/// from FFmpeg's stdout, then uploads it to S3 using the async runtime.
+/// from FFmpeg's stdout, then streams it to S3 using the async runtime.
+///
+/// The implementation streams data directly to multipart upload without buffering
+/// the entire video in memory, preventing OOM issues for large videos.
 #[allow(dead_code)] // Used in incremental streaming mode
 fn read_and_upload_stdout(
     mut stdout: std::process::ChildStdout,
@@ -430,9 +433,19 @@ fn read_and_upload_stdout(
 ) -> Result<()> {
     use std::io::Read;
 
-    // Read data synchronously from FFmpeg stdout
+    // Create multipart upload for streaming
+    let multipart_upload = runtime.block_on(async {
+        store
+            .put_multipart(&key)
+            .await
+            .map_err(|e| RoboflowError::encode("CameraStreamingEncoder", e.to_string()))
+    })?;
+
+    let mut multipart =
+        object_store::WriteMultipart::new_with_chunk_size(multipart_upload, part_size);
+
+    // Read data synchronously from FFmpeg stdout and stream directly to S3
     let mut buffer = vec![0u8; part_size];
-    let mut all_data = Vec::new();
 
     loop {
         let n = stdout.read(&mut buffer).map_err(|e| {
@@ -446,14 +459,14 @@ fn read_and_upload_stdout(
             break;
         }
 
-        all_data.extend_from_slice(&buffer[..n]);
+        // Write data directly to the multipart upload (handles buffering internally)
+        multipart.write(&buffer[..n]);
     }
 
-    // Upload all data to S3
+    // Complete the multipart upload
     runtime.block_on(async {
-        let payload = object_store::PutPayload::from_bytes(all_data.into());
-        store
-            .put(&key, payload)
+        multipart
+            .finish()
             .await
             .map_err(|e| RoboflowError::encode("CameraStreamingEncoder", e.to_string()))?;
         Ok::<(), RoboflowError>(())

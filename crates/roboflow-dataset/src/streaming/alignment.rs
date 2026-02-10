@@ -4,7 +4,7 @@
 
 //! Frame alignment with bounded memory footprint.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::common::AlignedFrame;
@@ -75,10 +75,11 @@ impl PartialFrame {
 /// Bounded buffer for aligning messages to frames with fixed memory footprint.
 ///
 /// Maintains active frames being aligned and emits completed frames
-/// for writing. The buffer uses a BTreeMap for automatic timestamp sorting.
+/// for writing. The buffer uses a sorted Vec for better cache locality
+/// (frames typically < 1000, making binary search very efficient).
 pub struct FrameAlignmentBuffer {
-    /// Active frames being aligned, keyed by timestamp
-    active_frames: BTreeMap<u64, PartialFrame>,
+    /// Active frames being aligned, kept sorted by timestamp
+    active_frames: Vec<PartialFrame>,
 
     /// Configuration
     config: StreamingConfig,
@@ -106,7 +107,7 @@ impl FrameAlignmentBuffer {
         let decoder = config.decoder_config.as_ref().map(ImageDecoderFactory::new);
 
         Self {
-            active_frames: BTreeMap::new(),
+            active_frames: Vec::new(),
             config,
             completion_criteria,
             stats: AlignmentStats::new(),
@@ -124,7 +125,7 @@ impl FrameAlignmentBuffer {
         let decoder = config.decoder_config.as_ref().map(ImageDecoderFactory::new);
 
         Self {
-            active_frames: BTreeMap::new(),
+            active_frames: Vec::new(),
             config,
             completion_criteria: criteria,
             stats: AlignmentStats::new(),
@@ -334,17 +335,8 @@ impl FrameAlignmentBuffer {
         // Align timestamp to frame boundary
         let aligned_ts = self.align_to_frame_boundary(timestamped_msg.log_time);
 
-        // Get or create partial frame
-        let entry = self.active_frames.entry(aligned_ts).or_insert_with(|| {
-            let idx = self.next_frame_index;
-            // Use checked arithmetic to detect overflow for very long recordings
-            self.next_frame_index = self.next_frame_index.checked_add(1).unwrap_or_else(|| {
-                tracing::error!("Frame index overflow - recording exceeds usize capacity");
-                usize::MAX // Saturate at maximum value
-            });
-            let eligible = aligned_ts.saturating_add(self.config.completion_window_ns());
-            PartialFrame::new(idx, aligned_ts, eligible)
-        });
+        // Get or create partial frame using binary search
+        let entry = self.find_or_create_frame(aligned_ts);
 
         // Add feature to the partial frame
         entry.add_feature(feature_name);
@@ -359,6 +351,7 @@ impl FrameAlignmentBuffer {
                     data,
                     original_timestamp: timestamped_msg.log_time,
                     is_encoded: final_is_encoded,
+                    is_depth: false,
                 },
             );
         }
@@ -408,11 +401,10 @@ impl FrameAlignmentBuffer {
     pub fn flush(&mut self) -> Vec<AlignedFrame> {
         let mut completed = Vec::new();
 
-        // Drain all frames from the map
-        let frames: std::collections::BTreeMap<u64, PartialFrame> =
-            std::mem::take(&mut self.active_frames);
+        // Drain all frames from the vec
+        let frames: Vec<PartialFrame> = std::mem::take(&mut self.active_frames);
 
-        for (_ts, mut partial) in frames {
+        for mut partial in frames {
             // Update frame index to actual position
             partial.frame.frame_index = completed.len();
 
@@ -459,7 +451,7 @@ impl FrameAlignmentBuffer {
     pub fn estimated_memory_bytes(&self) -> usize {
         let mut total = 0usize;
 
-        for partial in self.active_frames.values() {
+        for partial in &self.active_frames {
             // Estimate image memory usage
             for image in partial.frame.images.values() {
                 if image.is_encoded {
@@ -477,9 +469,37 @@ impl FrameAlignmentBuffer {
         }
 
         // Add overhead for the data structures themselves
-        total += self.active_frames.len() * 512; // BTreeMap overhead
+        total += self.active_frames.len() * 64; // Vec overhead (much lower than BTreeMap)
 
         total
+    }
+
+    /// Find or create a partial frame for the given timestamp.
+    ///
+    /// Uses binary search since frames are kept sorted by timestamp.
+    fn find_or_create_frame(&mut self, timestamp: u64) -> &mut PartialFrame {
+        // Binary search for the frame
+        match self
+            .active_frames
+            .binary_search_by_key(&timestamp, |f| f.timestamp)
+        {
+            Ok(idx) => {
+                // Found existing frame
+                &mut self.active_frames[idx]
+            }
+            Err(idx) => {
+                // Frame not found - create new one and insert at sorted position
+                let frame_idx = self.next_frame_index;
+                self.next_frame_index = self.next_frame_index.checked_add(1).unwrap_or_else(|| {
+                    tracing::error!("Frame index overflow - recording exceeds usize capacity");
+                    usize::MAX
+                });
+                let eligible = timestamp.saturating_add(self.config.completion_window_ns());
+                let frame = PartialFrame::new(frame_idx, timestamp, eligible);
+                self.active_frames.insert(idx, frame);
+                &mut self.active_frames[idx]
+            }
+        }
     }
 
     /// Align a timestamp to the nearest frame boundary.
@@ -504,7 +524,7 @@ impl FrameAlignmentBuffer {
         let mut completed = Vec::new();
         let mut to_remove = Vec::new();
 
-        for (&ts, partial) in &self.active_frames {
+        for (idx, partial) in self.active_frames.iter().enumerate() {
             // Check if frame is complete by criteria
             let is_data_complete = self
                 .completion_criteria
@@ -514,27 +534,27 @@ impl FrameAlignmentBuffer {
             let is_time_complete = self.current_timestamp >= partial.eligible_timestamp;
 
             if is_data_complete || is_time_complete {
-                to_remove.push(ts);
+                to_remove.push(idx);
             }
         }
 
-        // Remove and return completed frames
-        for ts in to_remove {
-            if let Some(mut partial) = self.active_frames.remove(&ts) {
-                // Update frame index
-                partial.frame.frame_index = completed.len();
+        // Remove and return completed frames (in reverse order to preserve indices)
+        for idx in to_remove.into_iter().rev() {
+            let mut partial = self.active_frames.remove(idx);
 
-                if self
-                    .completion_criteria
-                    .is_complete(&partial.received_features)
-                {
-                    self.stats.record_normal_completion();
-                } else {
-                    self.stats.record_force_completion();
-                }
+            // Update frame index
+            partial.frame.frame_index = completed.len();
 
-                completed.push(partial.frame);
+            if self
+                .completion_criteria
+                .is_complete(&partial.received_features)
+            {
+                self.stats.record_normal_completion();
+            } else {
+                self.stats.record_force_completion();
             }
+
+            completed.push(partial.frame);
         }
 
         // Update peak buffer size
