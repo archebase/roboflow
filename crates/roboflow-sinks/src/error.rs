@@ -54,11 +54,6 @@ pub enum SinkError {
     /// Storage error
     #[error("Storage error: {0}")]
     Storage(String),
-
-    /// Parquet-specific error (when feature is enabled)
-    #[cfg(feature = "parquet")]
-    #[error("Parquet error: {0}")]
-    Parquet(String),
 }
 
 #[cfg(test)]

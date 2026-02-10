@@ -24,9 +24,5 @@ thiserror = "1.0"
 # Logging
 tracing = "0.1"
 
-# Parquet (optional)
-polars = { version = "0.41", features = ["parquet"], optional = true }
-
 [features]
 default = []
-parquet = ["dep:polars"]

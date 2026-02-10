@@ -476,6 +476,14 @@ impl EpisodeUploadCoordinator {
                             bytes_uploaded.fetch_add(bytes, Ordering::Relaxed);
                             files_uploaded.fetch_add(1, Ordering::Relaxed);
 
+                            tracing::info!(
+                                worker = worker_id,
+                                file = %task.local_path.display(),
+                                bytes = bytes,
+                                remote = %task.remote_path.display(),
+                                "Upload completed successfully"
+                            );
+
                             // Track completed upload for checkpointing
                             if let Some(episode_idx) = task.episode_index {
                                 let mut completed =
@@ -696,11 +704,18 @@ impl EpisodeUploadCoordinator {
     ///
     /// This queues all files (Parquet + videos) for parallel upload.
     pub fn queue_episode_upload(&self, episode: EpisodeFiles) -> Result<()> {
+        // Build remote path prefix - avoid leading slash when prefix is empty
+        let prefix = if episode.remote_prefix.is_empty() {
+            String::new()
+        } else {
+            format!("{}/", episode.remote_prefix.trim_end_matches('/'))
+        };
+
         let mut files = vec![(
             episode.parquet_path.clone(),
             format!(
-                "{}/data/chunk-000/episode_{:06}.parquet",
-                episode.remote_prefix, episode.episode_index
+                "{}data/chunk-000/episode_{:06}.parquet",
+                prefix, episode.episode_index
             ),
             UploadFileType::Parquet,
         )];
@@ -717,16 +732,25 @@ impl EpisodeUploadCoordinator {
                 .to_string_lossy();
             files.push((
                 path.clone(),
-                format!(
-                    "{}/videos/chunk-000/{}/{}",
-                    episode.remote_prefix, camera, filename
-                ),
+                format!("{}videos/chunk-000/{}/{}", prefix, camera, filename),
                 UploadFileType::Video(camera.clone()),
             ));
         }
 
         // Get file sizes and update stats
         for (local_path, remote_path, file_type) in &files {
+            // Check if local file exists before queuing
+            if !local_path.exists() {
+                tracing::error!(
+                    local = %local_path.display(),
+                    remote = %remote_path,
+                    "Cannot queue upload - local file does not exist"
+                );
+                return Err(roboflow_core::RoboflowError::io(format!(
+                    "Cannot queue upload - local file does not exist: {}",
+                    local_path.display()
+                )));
+            }
             let metadata = std::fs::metadata(local_path).map_err(|e| {
                 roboflow_core::RoboflowError::io(format!("Failed to get file size: {}", e))
             })?;
@@ -802,16 +826,33 @@ impl EpisodeUploadCoordinator {
         let timeout = Duration::from_secs(300); // 5 minute timeout
         let start = Instant::now();
 
+        let initial_pending = self.files_pending.load(Ordering::Relaxed);
+        let initial_in_progress = self.files_in_progress.load(Ordering::Relaxed);
+
+        tracing::debug!(
+            pending = initial_pending,
+            in_progress = initial_in_progress,
+            "Upload flush: starting wait"
+        );
+
         while self.files_pending.load(Ordering::Relaxed) > 0
             || self.files_in_progress.load(Ordering::Relaxed) > 0
         {
             if start.elapsed() > timeout {
-                return Err(roboflow_core::RoboflowError::timeout(
-                    "Flush timed out waiting for uploads to complete".to_string(),
-                ));
+                let pending = self.files_pending.load(Ordering::Relaxed);
+                let in_progress = self.files_in_progress.load(Ordering::Relaxed);
+                return Err(roboflow_core::RoboflowError::timeout(format!(
+                    "Flush timed out waiting for uploads to complete. Pending: {}, In progress: {}",
+                    pending, in_progress
+                )));
             }
             thread::sleep(Duration::from_millis(100));
         }
+
+        tracing::debug!(
+            elapsed_ms = start.elapsed().as_millis(),
+            "Upload flush: all uploads complete"
+        );
 
         Ok(())
     }

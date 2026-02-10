@@ -22,6 +22,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use super::batch::{BatchController, WorkUnit};
+use super::merge::coordinator::MergeCoordinator;
 use super::shutdown::ShutdownHandler;
 use super::tikv::{
     TikvError,
@@ -60,6 +61,7 @@ pub struct Worker {
     job_registry: Arc<RwLock<JobRegistry>>,
     config_cache: Arc<Mutex<LruCache<String, roboflow_dataset::lerobot::LerobotConfig>>>,
     batch_controller: BatchController,
+    merge_coordinator: Arc<MergeCoordinator>,
 }
 
 impl Worker {
@@ -73,6 +75,9 @@ impl Worker {
         // Create batch controller for work unit processing
         let batch_controller = BatchController::with_client(tikv.clone());
 
+        // Create merge coordinator for registering staging completion
+        let merge_coordinator = Arc::new(MergeCoordinator::new(tikv.clone()));
+
         Ok(Self {
             pod_id,
             tikv,
@@ -85,6 +90,7 @@ impl Worker {
                 std::num::NonZeroUsize::new(100).unwrap(), // Cache up to 100 configs
             ))),
             batch_controller,
+            merge_coordinator,
         })
     }
 
@@ -336,6 +342,63 @@ impl Worker {
             fps = report.fps,
             "Work unit complete with Pipeline API"
         );
+
+        // Register staging completion with merge coordinator
+        // The sink may have written to a local buffer (for cloud storage)
+        // or directly to the output path (for local filesystem)
+        let batch_id = &unit.batch_id;
+        let worker_id = &self.pod_id;
+        let frame_count = report.frames_written as u64;
+
+        // Extract staging path from sink stats if available
+        // For cloud storage (S3/OSS), the sink writes to a local temp buffer
+        // For local filesystem, data is written directly to output_path
+        let staging_path = if let Some(serde_json::Value::String(path)) =
+            report.sink_stats.metrics.get("staging_path")
+        {
+            // Cloud storage: use the local buffer path as staging path
+            tracing::debug!(
+                unit_id = %unit.id,
+                staging_path = %path,
+                "Registering cloud storage staging path"
+            );
+            path.clone()
+        } else {
+            // Local filesystem: use the output_path directly
+            // Data was written directly to the output location
+            let output_path_str = output_path.to_string_lossy().to_string();
+            tracing::debug!(
+                unit_id = %unit.id,
+                output_path = %output_path_str,
+                "Using output path as staging path (local filesystem)"
+            );
+            output_path_str
+        };
+
+        // Register with merge coordinator so the merge phase knows where to find data
+        if let Err(e) = self
+            .merge_coordinator
+            .register_staging_complete(batch_id, worker_id, staging_path, frame_count)
+            .await
+        {
+            tracing::warn!(
+                unit_id = %unit.id,
+                batch_id = %batch_id,
+                worker_id = %worker_id,
+                error = %e,
+                "Failed to register staging completion, but continuing. \
+                 Merge may fall back to single-worker mode."
+            );
+            // Don't fail the work unit if registration fails - the merge has fallback logic
+        } else {
+            tracing::info!(
+                unit_id = %unit.id,
+                batch_id = %batch_id,
+                worker_id = %worker_id,
+                frame_count,
+                "Registered staging completion with merge coordinator"
+            );
+        }
 
         ProcessingResult::Success
     }

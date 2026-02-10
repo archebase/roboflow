@@ -40,6 +40,8 @@ pub struct LerobotSink {
     episodes_completed: usize,
     /// Start time for duration calculation
     start_time: Option<std::time::Instant>,
+    /// Local buffer path used for cloud storage staging
+    local_buffer: Option<std::path::PathBuf>,
 }
 
 impl LerobotSink {
@@ -53,6 +55,7 @@ impl LerobotSink {
             frames_written: 0,
             episodes_completed: 0,
             start_time: None,
+            local_buffer: None,
         })
     }
 
@@ -123,8 +126,56 @@ impl Sink for LerobotSink {
 
             let output_prefix = StorageUrl::from_str(&self.output_path)
                 .ok()
-                .map(|u| u.path().trim_end_matches('/').to_string())
-                .unwrap_or_default();
+                .map(|u| {
+                    let path = u.path().trim_end_matches('/');
+                    // For S3/OSS URLs, ensure we get the bucket + key as prefix
+                    if path.is_empty() {
+                        // URL parsing failed to extract the key properly
+                        // Extract bucket/key from the full path
+                        if self.output_path.starts_with("s3://") {
+                            let rest = &self.output_path[5..]; // Skip "s3://"
+                            if let Some(slash) = rest.find('/') {
+                                let bucket = &rest[..slash];
+                                let key = &rest[slash + 1..];
+                                if !key.is_empty() {
+                                    format!("{}/{}", bucket, key.trim_end_matches('/'))
+                                } else {
+                                    bucket.to_string()
+                                }
+                            } else {
+                                rest.to_string()
+                            }
+                        } else if self.output_path.starts_with("oss://") {
+                            let rest = &self.output_path[6..]; // Skip "oss://"
+                            if let Some(slash) = rest.find('/') {
+                                let bucket = &rest[..slash];
+                                let key = &rest[slash + 1..];
+                                if !key.is_empty() {
+                                    format!("{}/{}", bucket, key.trim_end_matches('/'))
+                                } else {
+                                    bucket.to_string()
+                                }
+                            } else {
+                                rest.to_string()
+                            }
+                        } else {
+                            path.to_string()
+                        }
+                    } else {
+                        path.to_string()
+                    }
+                })
+                .unwrap_or_else(|| {
+                    // Fallback: extract from output_path directly
+                    let path = &self.output_path;
+                    if let Some(rest) = path.strip_prefix("s3://") {
+                        rest.to_string()
+                    } else if let Some(rest) = path.strip_prefix("oss://") {
+                        rest.to_string()
+                    } else {
+                        String::new()
+                    }
+                });
 
             let local_buffer = std::env::temp_dir().join("roboflow").join(format!(
                 "{}",
@@ -139,10 +190,14 @@ impl Sink for LerobotSink {
             })?;
 
             tracing::info!(
+                output_path = %self.output_path,
                 output_prefix = %output_prefix,
                 local_buffer = %local_buffer.display(),
                 "Using local buffer for cloud output (videos/parquet written locally then uploaded)"
             );
+
+            // Store local buffer path for merge coordinator registration
+            self.local_buffer = Some(local_buffer.clone());
 
             LerobotWriter::new(storage, output_prefix, &local_buffer, lerobot_config).map_err(
                 |e| SinkError::CreateFailed {
@@ -151,6 +206,7 @@ impl Sink for LerobotSink {
                 },
             )?
         } else {
+            self.local_buffer = None;
             LerobotWriter::new_local(&self.output_path, lerobot_config).map_err(|e| {
                 SinkError::CreateFailed {
                     path: self.output_path.clone().into(),
@@ -312,21 +368,32 @@ impl Sink for LerobotSink {
             "LeRobot sink finalized"
         );
 
+        // Build metrics including staging path for distributed merge
+        let mut metrics = HashMap::from([
+            (
+                "images_encoded".to_string(),
+                serde_json::json!(writer_stats.images_encoded),
+            ),
+            (
+                "state_records".to_string(),
+                serde_json::json!(writer_stats.state_records),
+            ),
+        ]);
+
+        // Add staging path if using cloud storage (local buffer)
+        if let Some(staging_path) = &self.local_buffer {
+            metrics.insert(
+                "staging_path".to_string(),
+                serde_json::json!(staging_path.to_string_lossy().to_string()),
+            );
+        }
+
         Ok(SinkStats {
             frames_written: writer_stats.frames_written,
             episodes_written: self.episodes_completed + 1,
             duration_sec: duration,
             total_bytes: Some(writer_stats.output_bytes),
-            metrics: HashMap::from([
-                (
-                    "images_encoded".to_string(),
-                    serde_json::json!(writer_stats.images_encoded),
-                ),
-                (
-                    "state_records".to_string(),
-                    serde_json::json!(writer_stats.state_records),
-                ),
-            ]),
+            metrics,
         })
     }
 

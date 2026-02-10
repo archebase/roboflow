@@ -462,7 +462,14 @@ impl LerobotWriter {
                 .collect();
 
             match self.queue_episode_upload(&parquet_path, &video_paths) {
-                Ok(_) => {}
+                Ok(_) => {
+                    tracing::info!(
+                        episode = self.episode_index,
+                        video_count = video_paths.len(),
+                        output_prefix = %self.output_prefix,
+                        "Queued episode for upload via coordinator"
+                    );
+                }
                 Err(e) => {
                     let hint = if e.to_string().contains("disconnected") {
                         " (channel disconnected — coordinator may have been shut down, e.g. job cancelled)"
@@ -851,7 +858,12 @@ impl DatasetWriter for LerobotWriter {
 
         // Flush pending uploads to cloud storage; fail finalize if uploads don't complete or any failed
         if let Some(coordinator) = &self.upload_coordinator {
-            tracing::info!("Waiting for pending cloud uploads to complete before finalize...");
+            let stats_before = coordinator.stats();
+            tracing::info!(
+                pending = stats_before.pending_count,
+                in_progress = stats_before.in_progress_count,
+                "Waiting for pending cloud uploads to complete before finalize..."
+            );
             coordinator.flush().map_err(|e| {
                 roboflow_core::RoboflowError::other(format!(
                     "Cloud upload flush failed: {e}. Not all data/video may have been written to sink."
