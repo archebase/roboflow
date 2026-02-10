@@ -13,6 +13,14 @@
 //! - Compression and efficient chunking
 //! - Integration with Python/NumPy ecosystem
 //!
+//! # Implementation Status
+//!
+//! **TODO**: This module is a stub. The actual Zarr implementation is pending:
+//! - Write actual chunk files (.zarr files with binary data)
+//! - Implement proper metadata serialization (.zgroup, .zarray)
+//! - Add support for chunked array writes
+//! - Integrate with the pipeline executor
+//!
 //! # Example
 //!
 //! ```no_run,ignore

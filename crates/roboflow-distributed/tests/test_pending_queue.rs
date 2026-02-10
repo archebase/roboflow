@@ -8,7 +8,6 @@ use roboflow_distributed::batch::{WorkFile, WorkUnit, WorkUnitKeys};
 use roboflow_distributed::tikv::client::TikvClient;
 
 #[tokio::test]
-#[ignore = "requires TiKV"]
 async fn test_pending_queue_workflow() {
     // Create TiKV client
     let tikv = TikvClient::from_env().await.unwrap();

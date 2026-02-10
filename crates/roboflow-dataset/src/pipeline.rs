@@ -467,10 +467,8 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
                     map.get("height").and_then(extract_u32),
                     extract_image_bytes(map),
                 ) {
-                    let image_data =
-                        ImageData::new_rgb(width, height, image_bytes).map_err(|e| {
-                            RoboflowError::other(format!("Invalid image data: {}", e))
-                        })?;
+                    let image_data = ImageData::new_rgb(width, height, image_bytes)
+                        .map_err(|e| RoboflowError::other(format!("Invalid image data: {}", e)))?;
                     frame.add_image(feature_name, image_data);
                     return Ok(());
                 }
@@ -513,9 +511,7 @@ fn extract_u32(value: &robocodec::CodecValue) -> Option<u32> {
         robocodec::CodecValue::UInt32(n) => Some(*n),
         robocodec::CodecValue::UInt64(n) if *n <= u32::MAX as u64 => Some(*n as u32),
         robocodec::CodecValue::Int32(n) if *n >= 0 => Some(*n as u32),
-        robocodec::CodecValue::Int64(n) if *n >= 0 && *n <= u32::MAX as i64 => {
-            Some(*n as u32)
-        }
+        robocodec::CodecValue::Int64(n) if *n >= 0 && *n <= u32::MAX as i64 => Some(*n as u32),
         _ => None,
     }
 }

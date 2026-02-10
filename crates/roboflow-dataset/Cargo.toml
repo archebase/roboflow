@@ -39,6 +39,7 @@ tracing = "0.1"
 
 # Concurrency
 crossbeam-channel = "0.5"
+crossbeam-deque = "0.8"
 num_cpus = "1.16"
 rayon = "1.10"
 

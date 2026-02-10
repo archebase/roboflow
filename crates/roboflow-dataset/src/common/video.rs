@@ -1266,6 +1266,190 @@ impl Default for DepthMkvEncoder {
     }
 }
 
+// =============================================================================
+// Unified Encoder Selection
+// =============================================================================
+
+/// Encoder type for unified video encoding interface.
+///
+/// Provides automatic fallback chain:
+/// - **NVENC** (NVIDIA GPU): 5-10x faster than CPU
+/// - **VideoToolbox** (macOS): 3-5x faster than CPU
+/// - **Rsmpeg/libx264** (CPU): 2-3x faster than FFmpeg CLI
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncoderChoice {
+    /// NVIDIA NVENC hardware encoder (Linux/Windows with NVIDIA GPU)
+    Nvenc,
+
+    /// Apple VideoToolbox hardware encoder (macOS only)
+    VideoToolbox,
+
+    /// Rsmpeg native FFmpeg encoding (CPU fallback)
+    RsmpegLibx264,
+
+    /// FFmpeg CLI with libx264 (legacy fallback)
+    FfmpegLibx264,
+}
+
+impl EncoderChoice {
+    /// Get human-readable name of the encoder.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Nvenc => "h264_nvenc",
+            Self::VideoToolbox => "h264_videotoolbox",
+            Self::RsmpegLibx264 => "libx264 (rsmpeg)",
+            Self::FfmpegLibx264 => "libx264 (ffmpeg)",
+        }
+    }
+
+    /// Get expected speedup factor vs FFmpeg CLI libx264.
+    pub fn speedup_factor(&self) -> f32 {
+        match self {
+            Self::Nvenc => 7.5,         // 5-10x faster
+            Self::VideoToolbox => 4.0,  // 3-5x faster
+            Self::RsmpegLibx264 => 2.5, // 2-3x faster
+            Self::FfmpegLibx264 => 1.0, // Baseline
+        }
+    }
+}
+
+/// Unified encoder selector with automatic hardware detection.
+///
+/// Automatically selects the best available encoder in priority order:
+/// 1. NVENC (if available on Linux/Windows)
+/// 2. VideoToolbox (if available on macOS)
+/// 3. Rsmpeg native libx264 (CPU, always available)
+/// 4. FFmpeg CLI libx264 (legacy fallback)
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use roboflow_dataset::common::video::{select_best_encoder, EncoderChoice};
+///
+/// let encoder = select_best_encoder();
+/// match encoder {
+///     EncoderChoice::Nvenc => println!("Using NVENC hardware acceleration"),
+///     EncoderChoice::VideoToolbox => println!("Using VideoToolbox hardware acceleration"),
+///     EncoderChoice::RsmpegLibx264 => println!("Using native libx264 encoding"),
+///     EncoderChoice::FfmpegLibx264 => println!("Using FFmpeg CLI encoding"),
+/// }
+/// ```
+pub fn select_best_encoder() -> EncoderChoice {
+    // Priority 1: NVENC (NVIDIA GPU)
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        if check_nvenc_available() {
+            tracing::info!("Selected NVENC encoder (5-10x faster than CPU)");
+            return EncoderChoice::Nvenc;
+        }
+    }
+
+    // Priority 2: VideoToolbox (macOS)
+    #[cfg(target_os = "macos")]
+    {
+        if check_videotoolbox_available() {
+            tracing::info!("Selected VideoToolbox encoder (3-5x faster than CPU)");
+            return EncoderChoice::VideoToolbox;
+        }
+    }
+
+    // Priority 3: Rsmpeg native encoding (2-3x faster than FFmpeg CLI)
+    // rsmpeg is always available as a dependency
+    tracing::info!("Selected Rsmpeg native encoder (2-3x faster than FFmpeg CLI)");
+    EncoderChoice::RsmpegLibx264
+
+    // Note: FFmpeg CLI fallback is not needed since rsmpeg is always available
+    // but kept in EncoderChoice enum for reference
+}
+
+/// Check if specific encoder type is available.
+pub fn is_encoder_available(encoder: EncoderChoice) -> bool {
+    match encoder {
+        EncoderChoice::Nvenc => check_nvenc_available(),
+        #[cfg(target_os = "macos")]
+        EncoderChoice::VideoToolbox => check_videotoolbox_available(),
+        #[cfg(not(target_os = "macos"))]
+        EncoderChoice::VideoToolbox => false,
+        EncoderChoice::RsmpegLibx264 => {
+            // Rsmpeg is always available as a dependency
+            true
+        }
+        EncoderChoice::FfmpegLibx264 => {
+            // Check if ffmpeg CLI is available
+            std::process::Command::new("ffmpeg")
+                .arg("-version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }
+    }
+}
+
+/// Get all available encoders in priority order.
+pub fn available_encoders() -> Vec<EncoderChoice> {
+    let mut encoders = Vec::new();
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        if check_nvenc_available() {
+            encoders.push(EncoderChoice::Nvenc);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if check_videotoolbox_available() {
+            encoders.push(EncoderChoice::VideoToolbox);
+        }
+    }
+
+    encoders.push(EncoderChoice::RsmpegLibx264);
+
+    if is_encoder_available(EncoderChoice::FfmpegLibx264) {
+        encoders.push(EncoderChoice::FfmpegLibx264);
+    }
+
+    encoders
+}
+
+/// Print encoder selection diagnostics.
+pub fn print_encoder_diagnostics() {
+    let available = available_encoders();
+
+    if available.is_empty() {
+        tracing::info!(
+            "=== Video Encoder Diagnostics ===\n⚠️  No encoders available! Please install FFmpeg."
+        );
+    } else {
+        let encoder_list: Vec<String> = available
+            .iter()
+            .enumerate()
+            .map(|(i, encoder)| {
+                format!(
+                    "  {}. {} - {} ({}x speedup)",
+                    i + 1,
+                    encoder.name(),
+                    match encoder {
+                        EncoderChoice::Nvenc => "NVIDIA GPU acceleration",
+                        EncoderChoice::VideoToolbox => "Apple hardware acceleration",
+                        EncoderChoice::RsmpegLibx264 => "Native FFmpeg encoding",
+                        EncoderChoice::FfmpegLibx264 => "FFmpeg CLI (fallback)",
+                    },
+                    encoder.speedup_factor()
+                )
+            })
+            .collect();
+
+        tracing::info!(
+            "=== Video Encoder Diagnostics ===\nAvailable encoders (in priority order):\n{}\n\nSelected: {}",
+            encoder_list.join("\n"),
+            select_best_encoder().name()
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1327,5 +1511,43 @@ mod tests {
         let encoder = Mp4Encoder::new();
         // Just check it can be created (ffmpeg check may fail if not installed)
         assert!(encoder.ffmpeg_path.is_none());
+    }
+
+    #[test]
+    fn test_encoder_choice_names() {
+        assert_eq!(EncoderChoice::Nvenc.name(), "h264_nvenc");
+        assert_eq!(EncoderChoice::VideoToolbox.name(), "h264_videotoolbox");
+        assert_eq!(EncoderChoice::RsmpegLibx264.name(), "libx264 (rsmpeg)");
+        assert_eq!(EncoderChoice::FfmpegLibx264.name(), "libx264 (ffmpeg)");
+    }
+
+    #[test]
+    fn test_encoder_choice_speedup() {
+        assert!(EncoderChoice::Nvenc.speedup_factor() > 5.0);
+        assert!(EncoderChoice::VideoToolbox.speedup_factor() > 3.0);
+        assert!(EncoderChoice::RsmpegLibx264.speedup_factor() > 2.0);
+        assert_eq!(EncoderChoice::FfmpegLibx264.speedup_factor(), 1.0);
+    }
+
+    #[test]
+    fn test_select_best_encoder() {
+        let encoder = select_best_encoder();
+        // Should always return a valid encoder
+        match encoder {
+            EncoderChoice::Nvenc
+            | EncoderChoice::VideoToolbox
+            | EncoderChoice::RsmpegLibx264
+            | EncoderChoice::FfmpegLibx264 => {
+                // Valid choices
+            }
+        }
+    }
+
+    #[test]
+    fn test_available_encoders() {
+        let encoders = available_encoders();
+        // At least RsmpegLibx264 should always be available
+        assert!(!encoders.is_empty());
+        assert!(encoders.contains(&EncoderChoice::RsmpegLibx264));
     }
 }

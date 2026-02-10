@@ -17,12 +17,14 @@
 
 pub mod base;
 pub mod config;
+pub mod encoder_pool;
 pub mod image_format;
 pub mod parquet_base;
 pub mod progress;
 pub mod ring_buffer;
 pub mod rsmpeg_encoder;
 pub mod s3_encoder;
+pub mod simd_convert;
 pub mod streaming_coordinator;
 pub mod streaming_uploader;
 pub mod video;
@@ -49,9 +51,13 @@ pub use ring_buffer::{FrameRingBuffer, RingBufferError, RingBufferSnapshot};
 
 // Re-export video utilities including hardware-accelerated encoders
 pub use video::{
-    DepthMkvEncoder, Mp4Encoder, NvencEncoder, VideoFrame, VideoFrameBuffer, VideoToolboxEncoder,
-    check_nvenc_available, check_videotoolbox_available,
+    DepthMkvEncoder, EncoderChoice, Mp4Encoder, NvencEncoder, VideoFrame, VideoFrameBuffer,
+    VideoToolboxEncoder, available_encoders, check_nvenc_available, check_videotoolbox_available,
+    is_encoder_available, print_encoder_diagnostics, select_best_encoder,
 };
+
+// Re-export SIMD RGB to YUV conversion
+pub use simd_convert::{ConversionStrategy, optimal_strategy, rgb_to_nv12, rgb_to_yuv420p};
 
 // Platform-specific re-exports
 #[cfg(target_os = "macos")]

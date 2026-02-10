@@ -22,7 +22,6 @@ use roboflow_distributed::tikv::client::TikvClient;
 use std::sync::Arc;
 
 #[tokio::test]
-#[ignore = "requires TiKV"]
 async fn test_controller_does_not_skip_merge_phase() {
     // When all work units are complete, the controller must leave the batch in
     // Running so the finalizer can trigger the merge. It must NOT transition

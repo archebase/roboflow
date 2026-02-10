@@ -612,7 +612,7 @@ fn test_storage_factory_local() {
     let url_str = format!("file://{}", temp_dir.path().to_str().unwrap());
     let storage = factory.create(&url_str).expect("Failed to create storage");
     // We should get a storage implementation
-    assert!(storage.exists(Path::new(".")) || true);
+    let _ = storage.exists(Path::new("."));
 }
 
 // =============================================================================

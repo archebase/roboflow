@@ -4230,6 +4230,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
+ "crossbeam-deque",
  "image",
  "num_cpus",
  "png 0.17.16",

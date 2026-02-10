@@ -112,10 +112,6 @@ impl CheckpointManager {
     }
 
     /// Helper to block on an async future, handling runtime detection.
-    ///
-    /// This detects whether we're in an async context and uses the appropriate method:
-    /// - If in async context: uses spawn_blocking in a thread with its own runtime
-    /// - If not: creates a temporary runtime
     fn block_on<F, R>(&self, f: F) -> Result<R>
     where
         F: FnOnce(Arc<TikvClient>) -> futures::future::BoxFuture<'static, Result<R>>
@@ -124,25 +120,9 @@ impl CheckpointManager {
         R: Send + 'static,
     {
         let tikv = self.tikv.clone();
-        match tokio::runtime::Handle::try_current() {
-            Ok(_handle) => {
-                // We're inside a runtime - spawn a blocking thread with its own runtime
-                std::thread::spawn(move || {
-                    let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                        TikvError::Other(format!("Failed to create runtime: {}", e))
-                    })?;
-                    rt.block_on(f(tikv))
-                })
-                .join()
-                .map_err(|e| TikvError::Other(format!("Thread join error: {:?}", e)))?
-            }
-            Err(_) => {
-                // No runtime exists - create a temporary one
-                let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| TikvError::Other(format!("Failed to create runtime: {}", e)))?;
-                rt.block_on(f(tikv))
-            }
-        }
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| TikvError::Other(format!("Failed to create runtime: {}", e)))?;
+        rt.block_on(f(tikv))
     }
 
     /// Load a checkpoint by job ID.

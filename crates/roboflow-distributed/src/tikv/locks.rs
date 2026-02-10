@@ -172,7 +172,13 @@ impl LockManager {
     /// * `resource` - The resource key to lock
     /// * `ttl` - Time-to-live for the lock
     pub async fn try_acquire(&self, resource: &str, ttl: Duration) -> Result<Option<LockGuard>> {
-        let ttl_secs = ttl.as_secs().try_into().unwrap_or(i64::MAX);
+        // Convert Duration to seconds, with millisecond precision
+        // For values < 1 second, use at least 1 second to avoid immediate expiration
+        let ttl_secs = ttl
+            .as_secs()
+            .saturating_add(if ttl.subsec_millis() > 0 { 1 } else { 0 })
+            .try_into()
+            .unwrap_or(i64::MAX);
         let acquired = self
             .client
             .acquire_lock(resource, &self.owner, ttl_secs)
@@ -218,7 +224,12 @@ impl LockManager {
         ttl: Duration,
         timeout: Duration,
     ) -> Result<LockGuard> {
-        let ttl_secs = ttl.as_secs().try_into().unwrap_or(i64::MAX);
+        // Convert Duration to seconds, with millisecond precision
+        let ttl_secs = ttl
+            .as_secs()
+            .saturating_add(if ttl.subsec_millis() > 0 { 1 } else { 0 })
+            .try_into()
+            .unwrap_or(i64::MAX);
         let started = tokio::time::Instant::now();
         let mut attempt = 0u32;
 
@@ -298,7 +309,12 @@ impl LockManager {
     /// * `resource` - The resource key to lock
     /// * `ttl` - Time-to-live for the lock (also used for renewal)
     pub async fn acquire_with_renewal(&self, resource: &str, ttl: Duration) -> Result<LockGuard> {
-        let ttl_secs = ttl.as_secs().try_into().unwrap_or(i64::MAX);
+        // Convert Duration to seconds, with millisecond precision
+        let ttl_secs = ttl
+            .as_secs()
+            .saturating_add(if ttl.subsec_millis() > 0 { 1 } else { 0 })
+            .try_into()
+            .unwrap_or(i64::MAX);
         let acquired = self
             .client
             .acquire_lock(resource, &self.owner, ttl_secs)
@@ -387,7 +403,12 @@ impl LockManager {
     ///
     /// Returns `Ok(true)` if extended, `Ok(false)` if we don't own the lock.
     pub async fn renew(&self, resource: &str, ttl: Duration) -> Result<bool> {
-        let ttl_secs = ttl.as_secs().try_into().unwrap_or(i64::MAX);
+        // Convert Duration to seconds, with millisecond precision
+        let ttl_secs = ttl
+            .as_secs()
+            .saturating_add(if ttl.subsec_millis() > 0 { 1 } else { 0 })
+            .try_into()
+            .unwrap_or(i64::MAX);
         let acquired = self
             .client
             .acquire_lock(resource, &self.owner, ttl_secs)
@@ -411,7 +432,12 @@ impl LockManager {
         };
 
         if can_steal {
-            let ttl_secs = ttl.as_secs().try_into().unwrap_or(i64::MAX);
+            // Convert Duration to seconds, with millisecond precision
+            let ttl_secs = ttl
+                .as_secs()
+                .saturating_add(if ttl.subsec_millis() > 0 { 1 } else { 0 })
+                .try_into()
+                .unwrap_or(i64::MAX);
             self.client
                 .acquire_lock(resource, &self.owner, ttl_secs)
                 .await
