@@ -21,8 +21,9 @@
 //!
 //! # Implementation
 //!
-//! - With `video` feature: Uses rsmpeg (native FFmpeg bindings)
-//! - Without `video` feature: Falls back to FFmpeg CLI approach
+//! Currently uses FFmpeg CLI via stdin/stdout pipes for encoding.
+//! Future optimization may use native FFmpeg bindings (rsmpeg) for
+//! zero-copy frame transfers to GPU encoders.
 
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};

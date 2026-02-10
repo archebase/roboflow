@@ -21,7 +21,8 @@ png = "0.17"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 # Video encoding via rsmpeg (optional, requires FFmpeg 8.x libraries)
-# Note: Requires FFMPEG_PKG_CONFIG_PATH or FFMPEG_LIBS_DIR to be set
+# Note: rsmpeg is currently unused - video encoding uses FFmpeg CLI
+# Kept for potential future native FFmpeg bindings integration
 rsmpeg = { version = "0.18", optional = true, features = ["link_system_ffmpeg"] }
 
 # Serialization
@@ -50,8 +51,10 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 [features]
 default = []
 
-# Enable video encoding via rsmpeg (requires FFmpeg 6.x or 7.x installed)
-video = ["dep:rsmpeg"]
+# Video encoding uses FFmpeg CLI (always available)
+# The `video` feature is kept for compatibility but does nothing
+# Native rsmpeg integration is planned for future optimization
+video = []
 
 [dev-dependencies]
 pretty_assertions = "1.4"
