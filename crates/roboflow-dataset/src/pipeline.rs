@@ -559,8 +559,20 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
                     map.get("height").and_then(extract_u32),
                     extract_image_bytes(map),
                 ) {
-                    let image_data = ImageData::new_rgb(width, height, image_bytes)
-                        .map_err(|e| RoboflowError::other(format!("Invalid image data: {}", e)))?;
+                    // Check if this is compressed image data (JPEG/PNG)
+                    // Compressed images have data size much smaller than expected RGB size
+                    let expected_rgb_size = (width as usize) * (height as usize) * 3;
+                    let is_compressed = image_bytes.len() < expected_rgb_size;
+
+                    let image_data = if is_compressed {
+                        // Compressed image (JPEG/PNG) - use encoded() constructor
+                        // The data will be decoded later during MP4 encoding
+                        ImageData::encoded(width, height, image_bytes)
+                    } else {
+                        // Raw RGB data - validate size
+                        ImageData::new_rgb(width, height, image_bytes)
+                            .map_err(|e| RoboflowError::other(format!("Invalid image data: {}", e)))?
+                    };
                     frame.add_image(feature_name, image_data);
                     return Ok(());
                 }
@@ -965,5 +977,68 @@ mod tests {
 
         // But the topic should remain in processed set (no duplicate entry)
         assert_eq!(executor.state.processed_camera_info.len(), 1);
+    }
+
+    #[test]
+    fn test_compressed_image_handling() {
+        use robocodec::CodecValue;
+
+        let writer = MockWriter::new();
+        let streaming = StreamingConfig::with_fps(30);
+        let config = PipelineConfig::new(streaming);
+        let mut executor = PipelineExecutor::new(writer, config);
+
+        // Simulate a compressed JPEG image (much smaller than expected RGB size)
+        // 640x480 RGB would be 921,600 bytes, but JPEG might be 10-50KB
+        let width = 640u32;
+        let height = 480u32;
+        let compressed_jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46]; // JPEG header + some data
+
+        let mut image_msg = HashMap::new();
+        image_msg.insert("width".to_string(), CodecValue::UInt32(width));
+        image_msg.insert("height".to_string(), CodecValue::UInt32(height));
+        image_msg.insert("data".to_string(), CodecValue::Bytes(compressed_jpeg));
+
+        let msg = TimestampedMessage {
+            topic: "/camera/compressed".to_string(),
+            log_time: 0,
+            data: CodecValue::Struct(image_msg),
+        };
+
+        executor.process_message(msg).unwrap();
+
+        // Message was processed without error
+        assert_eq!(executor.stats.messages_processed, 1);
+    }
+
+    #[test]
+    fn test_raw_rgb_image_handling() {
+        use robocodec::CodecValue;
+
+        let writer = MockWriter::new();
+        let streaming = StreamingConfig::with_fps(30);
+        let config = PipelineConfig::new(streaming);
+        let mut executor = PipelineExecutor::new(writer, config);
+
+        // Simulate raw RGB image data (exactly width * height * 3 bytes)
+        let width = 64u32;
+        let height = 48u32;
+        let rgb_data = vec![128u8; (width * height * 3) as usize]; // Exact RGB size
+
+        let mut image_msg = HashMap::new();
+        image_msg.insert("width".to_string(), CodecValue::UInt32(width));
+        image_msg.insert("height".to_string(), CodecValue::UInt32(height));
+        image_msg.insert("data".to_string(), CodecValue::Bytes(rgb_data));
+
+        let msg = TimestampedMessage {
+            topic: "/camera/raw".to_string(),
+            log_time: 0,
+            data: CodecValue::Struct(image_msg),
+        };
+
+        executor.process_message(msg).unwrap();
+
+        // Message was processed without error
+        assert_eq!(executor.stats.messages_processed, 1);
     }
 }
