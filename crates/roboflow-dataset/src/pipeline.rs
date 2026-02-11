@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use roboflow_core::{Result, RoboflowError};
 use roboflow_sources::TimestampedMessage;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, instrument, trace, warn};
 
 use crate::common::base::{AlignedFrame, DatasetWriter, ImageData};
 use crate::streaming::config::StreamingConfig;
@@ -553,7 +553,35 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
                     return Ok(());
                 }
 
-                // Check for image data (has width, height, data fields)
+                // Check for ROS CompressedImage (has format and data, but no width/height)
+                // sensor_msgs/CompressedImage: std_msgs/Header header, string format, uint8[] data
+                if let (Some(format), Some(image_bytes)) = (
+                    map.get("format").and_then(|v| {
+                        if let robocodec::CodecValue::String(s) = v {
+                            Some(s.as_str())
+                        } else {
+                            None
+                        }
+                    }),
+                    extract_image_bytes(map),
+                ) {
+                    // Compressed image (JPEG/PNG) - decode to get dimensions
+                    // Use the encoded() constructor which will decode later during MP4 encoding
+                    // Default to a reasonable resolution if decode fails later
+                    let data_size = image_bytes.len();
+                    let image_data = ImageData::encoded(640, 480, image_bytes);
+                    frame.add_image(feature_name.clone(), image_data);
+                    trace!(
+                        topic = %msg.topic,
+                        feature = %feature_name,
+                        format,
+                        size = data_size,
+                        "Processing CompressedImage (format, size bytes)"
+                    );
+                    return Ok(());
+                }
+
+                // Check for regular image data (has width, height, data fields)
                 if let (Some(width), Some(height), Some(image_bytes)) = (
                     map.get("width").and_then(extract_u32),
                     map.get("height").and_then(extract_u32),
