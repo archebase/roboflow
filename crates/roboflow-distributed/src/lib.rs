@@ -33,10 +33,10 @@ pub use state::{StateLifecycle, StateTransitionError};
 
 // Re-export public types from tikv (distributed coordination)
 pub use tikv::{
-    CheckpointConfig, CheckpointManager, CheckpointState, CircuitBreaker, CircuitConfig,
-    CircuitState, DEFAULT_CHECKPOINT_INTERVAL_FRAMES, DEFAULT_CHECKPOINT_INTERVAL_SECS,
-    HeartbeatRecord, LockGuard, LockManager, LockManagerConfig, LockRecord, ParquetUploadState,
-    TikvClient, TikvConfig, TikvError, UploadedPart, VideoUploadState, WorkerStatus,
+    CheckpointConfig, CheckpointState, CircuitBreaker, CircuitConfig, CircuitState,
+    DEFAULT_CHECKPOINT_INTERVAL_FRAMES, DEFAULT_CHECKPOINT_INTERVAL_SECS, HeartbeatRecord,
+    LockGuard, LockManager, LockManagerConfig, LockRecord, ParquetUploadState, TikvClient,
+    TikvConfig, TikvError, UploadedPart, VideoUploadState, WorkerStatus,
 };
 
 // Re-export public types from batch (declarative batch processing)

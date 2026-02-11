@@ -16,8 +16,7 @@ pub mod locks;
 pub mod schema;
 
 pub use checkpoint::{
-    CheckpointConfig, CheckpointManager, DEFAULT_CHECKPOINT_INTERVAL_FRAMES,
-    DEFAULT_CHECKPOINT_INTERVAL_SECS,
+    CheckpointConfig, DEFAULT_CHECKPOINT_INTERVAL_FRAMES, DEFAULT_CHECKPOINT_INTERVAL_SECS,
 };
 pub use circuit::{CircuitBreaker, CircuitConfig, CircuitState};
 pub use client::TikvClient;

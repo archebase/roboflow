@@ -15,8 +15,8 @@ mod tests {
     use std::time::Duration;
 
     use roboflow_distributed::{
-        CheckpointConfig, CheckpointManager, HeartbeatConfig, HeartbeatManager, HeartbeatRecord,
-        LockManager, WorkerMetrics, WorkerStatus,
+        HeartbeatConfig, HeartbeatManager, HeartbeatRecord, LockManager, WorkerMetrics,
+        WorkerStatus,
     };
     use roboflow_distributed::{TikvClient, Worker, WorkerConfig, tikv::key::HeartbeatKeys};
     use roboflow_storage::LocalStorage;
@@ -487,26 +487,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_checkpoint_should_checkpoint_logic() {
-        let Some(client) = get_tikv_or_skip().await else {
+        let Some(_client) = get_tikv_or_skip().await else {
             return;
         };
 
-        let config = CheckpointConfig::new()
+        let config = roboflow_distributed::tikv::checkpoint::CheckpointConfig::new()
             .with_frame_interval(100)
             .with_time_interval(10);
-        let manager = CheckpointManager::new(client.clone(), config);
 
         // Should checkpoint when frame threshold reached
-        assert!(manager.should_checkpoint(100, Duration::from_secs(5)));
+        assert!(config.should_checkpoint(100, Duration::from_secs(5)));
 
         // Should checkpoint when time threshold reached
-        assert!(manager.should_checkpoint(50, Duration::from_secs(10)));
+        assert!(config.should_checkpoint(50, Duration::from_secs(10)));
 
         // Should not checkpoint when neither threshold reached
-        assert!(!manager.should_checkpoint(50, Duration::from_secs(5)));
+        assert!(!config.should_checkpoint(50, Duration::from_secs(5)));
 
         // Should checkpoint when both thresholds reached
-        assert!(manager.should_checkpoint(100, Duration::from_secs(10)));
+        assert!(config.should_checkpoint(100, Duration::from_secs(10)));
     }
 
     #[tokio::test]
