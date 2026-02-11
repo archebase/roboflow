@@ -171,6 +171,8 @@ struct ExecutorState {
     frame_index: usize,
     /// Start time
     start_time: Instant,
+    /// Camera info topics we've already processed (calibration is constant per bag)
+    processed_camera_info: std::collections::HashSet<String>,
 }
 
 impl<W: DatasetWriter> PipelineExecutor<W> {
@@ -187,6 +189,7 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
                 episode_index: 0,
                 frame_index: 0,
                 start_time: Instant::now(),
+                processed_camera_info: std::collections::HashSet::new(),
             },
         }
     }
@@ -209,6 +212,16 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
         {
             return Ok(());
         }
+
+        // Quick check: skip camera info messages we've already processed
+        // Camera calibration is constant per bag, so we only need to decode it once
+        if is_camera_info_topic(&msg.data)
+            && !self.state.processed_camera_info.insert(msg.topic.clone())
+        {
+            // Already processed this camera info topic before
+            return Ok(());
+        }
+        // First time seeing this camera info topic - will be decoded when buffered
 
         // Calculate frame index for this message
         let frame_interval_ns = self.config.streaming.frame_interval_ns();
@@ -462,7 +475,7 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
     ///
     /// Returns None if the frame has no relevant data (no images or states).
     fn messages_to_frame(
-        &self,
+        &mut self,
         messages: Vec<TimestampedMessage>,
         timestamp_ns: u64,
     ) -> Result<Option<AlignedFrame>> {
@@ -482,7 +495,7 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
 
     /// Process a single message and add its data to the frame.
     fn process_message_for_frame(
-        &self,
+        &mut self,
         frame: &mut AlignedFrame,
         msg: &TimestampedMessage,
     ) -> Result<()> {
@@ -529,12 +542,14 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
                 // Check for CameraInfo (has K and D matrices)
                 if map.contains_key("K") && map.contains_key("D") {
                     // Camera info - this is metadata, not frame data
-                    // It will be handled separately by the writer
-                    debug!(
-                        topic = %msg.topic,
-                        feature = %feature_name,
-                        "Detected camera calibration message"
-                    );
+                    // Skip processing if we've already seen this topic (calibration is constant per bag)
+                    if self.state.processed_camera_info.insert(msg.topic.clone()) {
+                        debug!(
+                            topic = %msg.topic,
+                            feature = %feature_name,
+                            "Cached camera calibration message (first occurrence)"
+                        );
+                    }
                     return Ok(());
                 }
 
@@ -648,9 +663,73 @@ fn extract_image_bytes(map: &HashMap<String, robocodec::CodecValue>) -> Option<V
     }
 }
 
+/// Check if a message contains camera calibration info (K and D matrices).
+///
+/// Camera calibration messages contain intrinsic matrix K and distortion
+/// coefficients D. These are constant for a given camera throughout a bag
+/// recording, so we only need to process each camera's calibration once.
+fn is_camera_info_topic(data: &robocodec::CodecValue) -> bool {
+    match data {
+        robocodec::CodecValue::Struct(map) => map.contains_key("K") && map.contains_key("D"),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::base::{DatasetWriter, UploadState, WriterStats};
+    use std::any::Any;
+
+    /// Mock writer for testing pipeline executor.
+    struct MockWriter {
+        frame_count: usize,
+    }
+
+    impl MockWriter {
+        fn new() -> Self {
+            Self { frame_count: 0 }
+        }
+    }
+
+    impl DatasetWriter for MockWriter {
+        fn write_frame(&mut self, _frame: &AlignedFrame) -> Result<()> {
+            self.frame_count += 1;
+            Ok(())
+        }
+
+        fn write_batch(&mut self, frames: &[AlignedFrame]) -> Result<()> {
+            self.frame_count += frames.len();
+            Ok(())
+        }
+
+        fn finalize(&mut self) -> Result<WriterStats> {
+            Ok(WriterStats {
+                frames_written: self.frame_count,
+                images_encoded: 0,
+                state_records: 0,
+                output_bytes: 0,
+                duration_sec: 0.0,
+                decode_failures: 0,
+            })
+        }
+
+        fn frame_count(&self) -> usize {
+            self.frame_count
+        }
+
+        fn episode_index(&self) -> Option<usize> {
+            Some(0)
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn get_upload_state(&self) -> Option<UploadState> {
+            None
+        }
+    }
 
     #[test]
     fn test_pipeline_config_builder() {
@@ -708,5 +787,183 @@ mod tests {
         map.insert("data".to_string(), CodecValue::Array(data));
 
         assert_eq!(extract_image_bytes(&map), Some(vec![1, 2, 3, 4]));
+    }
+
+    #[test]
+    fn test_is_camera_info_topic() {
+        use robocodec::CodecValue;
+
+        // Camera info has K and D matrices
+        let mut camera_info = HashMap::new();
+        camera_info.insert("K".to_string(), CodecValue::Array(vec![]));
+        camera_info.insert("D".to_string(), CodecValue::Array(vec![]));
+        assert!(is_camera_info_topic(&CodecValue::Struct(camera_info)));
+
+        // Non-camera info struct
+        let mut other_info = HashMap::new();
+        other_info.insert("width".to_string(), CodecValue::UInt32(640));
+        other_info.insert("height".to_string(), CodecValue::UInt32(480));
+        assert!(!is_camera_info_topic(&CodecValue::Struct(other_info)));
+
+        // Only K matrix
+        let mut only_k = HashMap::new();
+        only_k.insert("K".to_string(), CodecValue::Array(vec![]));
+        assert!(!is_camera_info_topic(&CodecValue::Struct(only_k)));
+
+        // Only D matrix
+        let mut only_d = HashMap::new();
+        only_d.insert("D".to_string(), CodecValue::Array(vec![]));
+        assert!(!is_camera_info_topic(&CodecValue::Struct(only_d)));
+
+        // Array value (not a struct)
+        assert!(!is_camera_info_topic(&CodecValue::Array(vec![])));
+
+        // Bytes value
+        assert!(!is_camera_info_topic(&CodecValue::Bytes(vec![])));
+    }
+
+    #[test]
+    fn test_camera_info_caching() {
+        use robocodec::CodecValue;
+
+        // Create a mock writer that tracks what it receives
+        let writer = MockWriter::new();
+
+        let streaming = StreamingConfig::with_fps(30);
+        let config = PipelineConfig::new(streaming);
+
+        let mut executor = PipelineExecutor::new(writer, config);
+
+        // Camera info message with K and D matrices
+        let mut camera_info_map = HashMap::new();
+        camera_info_map.insert(
+            "K".to_string(),
+            CodecValue::Array(vec![
+                CodecValue::Float64(1000.0),
+                CodecValue::Float64(0.0),
+                CodecValue::Float64(320.0),
+                CodecValue::Float64(0.0),
+                CodecValue::Float64(1000.0),
+                CodecValue::Float64(240.0),
+                CodecValue::Float64(0.0),
+                CodecValue::Float64(0.0),
+                CodecValue::Float64(1.0),
+            ]),
+        );
+        camera_info_map.insert(
+            "D".to_string(),
+            CodecValue::Array(vec![
+                CodecValue::Float64(0.1),
+                CodecValue::Float64(0.2),
+                CodecValue::Float64(0.0),
+                CodecValue::Float64(0.0),
+                CodecValue::Float64(0.3),
+            ]),
+        );
+
+        // Send the same camera info message multiple times
+        for i in 0..5 {
+            let msg = TimestampedMessage {
+                topic: "/camera/camera_info".to_string(),
+                log_time: i * 1_000_000, // Different timestamps
+                data: CodecValue::Struct(camera_info_map.clone()),
+            };
+
+            executor.process_message(msg).unwrap();
+        }
+
+        // Verify that the camera info topic is marked as processed
+        assert!(
+            executor
+                .state
+                .processed_camera_info
+                .contains("/camera/camera_info")
+        );
+
+        // The messages_processed stat should count all messages (filtering happens later)
+        assert_eq!(executor.stats.messages_processed, 5);
+    }
+
+    #[test]
+    fn test_multiple_camera_info_topics() {
+        use robocodec::CodecValue;
+
+        let writer = MockWriter::new();
+        let streaming = StreamingConfig::with_fps(30);
+        let config = PipelineConfig::new(streaming);
+        let mut executor = PipelineExecutor::new(writer, config);
+
+        // Create camera info for different cameras
+        let topics = [
+            "/camera/front/camera_info",
+            "/camera/back/camera_info",
+            "/camera/left/camera_info",
+        ];
+
+        for (i, topic) in topics.iter().enumerate() {
+            let mut camera_info = HashMap::new();
+            camera_info.insert("K".to_string(), CodecValue::Array(vec![]));
+            camera_info.insert("D".to_string(), CodecValue::Array(vec![]));
+
+            let msg = TimestampedMessage {
+                topic: topic.to_string(),
+                log_time: (i as u64) * 1_000_000,
+                data: CodecValue::Struct(camera_info),
+            };
+
+            executor.process_message(msg).unwrap();
+        }
+
+        // All three camera topics should be marked as processed
+        for topic in &topics {
+            assert!(executor.state.processed_camera_info.contains(*topic));
+        }
+        assert_eq!(executor.state.processed_camera_info.len(), 3);
+    }
+
+    #[test]
+    fn test_camera_info_cached_during_buffering() {
+        use robocodec::CodecValue;
+
+        let writer = MockWriter::new();
+        let streaming = StreamingConfig::with_fps(30);
+        let config = PipelineConfig::new(streaming);
+        let mut executor = PipelineExecutor::new(writer, config);
+
+        // Create camera info message
+        let mut camera_info = HashMap::new();
+        camera_info.insert("K".to_string(), CodecValue::Array(vec![]));
+        camera_info.insert("D".to_string(), CodecValue::Array(vec![]));
+
+        let topic = "/camera/camera_info";
+
+        // First camera info message - should be processed
+        let msg1 = TimestampedMessage {
+            topic: topic.to_string(),
+            log_time: 0,
+            data: CodecValue::Struct(camera_info.clone()),
+        };
+        executor.process_message(msg1).unwrap();
+
+        // Verify it's in the processed set
+        assert!(executor.state.processed_camera_info.contains(topic));
+
+        // Second camera info message with same topic - should be skipped early
+        // (before buffering, in process_message)
+        let msg2 = TimestampedMessage {
+            topic: topic.to_string(),
+            log_time: 33_333_333,
+            data: CodecValue::Struct(camera_info),
+        };
+
+        let messages_before = executor.stats.messages_processed;
+        executor.process_message(msg2).unwrap();
+        let messages_after = executor.stats.messages_processed;
+
+        // Message count should still increment (we count messages, not just process them)
+        assert_eq!(messages_after, messages_before + 1);
+
+        // But the topic should remain in processed set (no duplicate entry)
+        assert_eq!(executor.state.processed_camera_info.len(), 1);
     }
 }
