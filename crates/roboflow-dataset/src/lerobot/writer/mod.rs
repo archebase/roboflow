@@ -21,6 +21,7 @@ mod upload;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::common::{
     AlignedFrame, DatasetWriter, ImageData, WriterStats,
@@ -437,6 +438,20 @@ impl LerobotWriter {
 
         // Buffer for video encoding
         self.image_buffers.entry(camera).or_default().push(data);
+    }
+
+    /// Add image data from Arc (zero-copy if already Arc-wrapped).
+    pub fn add_image_arc(&mut self, camera: String, data: Arc<ImageData>) {
+        // Update shape metadata
+        let inner = &*data;
+        self.metadata
+            .update_image_shape(camera.clone(), inner.width as usize, inner.height as usize);
+
+        // Buffer for video encoding - try to unwrap if uniquely owned
+        self.image_buffers
+            .entry(camera)
+            .or_default()
+            .push(Arc::try_unwrap(data).unwrap_or_else(|arc| (*arc).clone()));
     }
 
     /// Start a new episode.
@@ -1163,7 +1178,7 @@ impl DatasetWriter for LerobotWriter {
         // Add all images for this frame BEFORE checking flush
         // This prevents mid-frame flushes that would lose other cameras' data
         for (camera, data) in &frame.images {
-            self.add_image(camera.clone(), data.clone());
+            self.add_image_arc(camera.clone(), data.clone());
         }
 
         // NOW check if we should flush (after all images for this frame are added)

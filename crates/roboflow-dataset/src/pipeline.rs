@@ -19,6 +19,7 @@
 //!                     Message aggregation
 //! ```
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -79,6 +80,25 @@ impl PipelineConfig {
     pub fn with_topic_mappings(mut self, mappings: HashMap<String, String>) -> Self {
         self.topic_mappings = mappings;
         self
+    }
+
+    /// Get the feature name for a given topic.
+    ///
+    /// This avoids repeated string allocations by using Cow.
+    /// Uses the topic_mappings if available, otherwise converts
+    /// the topic to a feature name by replacing '/' with '.' and
+    /// trimming leading '.'.
+    pub fn get_feature_name<'a>(&'a self, topic: &'a str) -> Cow<'a, str> {
+        if let Some(mapped) = self.topic_mappings.get(topic) {
+            Cow::Borrowed(mapped)
+        } else {
+            // Convert topic to feature name: '/' -> '.', trim leading '.'
+            let mut s = topic.replace('/', ".");
+            if s.starts_with('.') {
+                s = s.trim_start_matches('.').to_string();
+            }
+            Cow::Owned(s)
+        }
     }
 }
 
@@ -210,6 +230,63 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
             Some(aligned_timestamp.max(self.state.end_timestamp_ns.unwrap_or(0)));
 
         // Process complete frames
+        self.process_complete_frames()?;
+
+        Ok(())
+    }
+
+    /// Process multiple timestamped messages in batch.
+    ///
+    /// This is more efficient than calling `process_message` multiple times
+    /// as it reduces function call overhead and allows better cache utilization.
+    /// Messages are still processed in timestamp order.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Slice of timestamped messages to process
+    #[instrument(skip_all, fields(count = messages.len()))]
+    pub fn process_messages_batch(&mut self, messages: &[TimestampedMessage]) -> Result<()> {
+        // Check max frames limit once for the batch
+        if let Some(max) = self.config.max_frames
+            && self.stats.frames_written >= max
+        {
+            return Ok(());
+        }
+
+        let frame_interval_ns = self.config.streaming.frame_interval_ns();
+
+        // Pre-allocate and buffer all messages at once
+        for msg in messages {
+            // Check max frames limit during iteration
+            if let Some(max) = self.config.max_frames
+                && self.stats.frames_written >= max
+            {
+                break;
+            }
+
+            // Calculate frame index for this message
+            let frame_idx = msg.log_time / frame_interval_ns;
+            let aligned_timestamp = frame_idx * frame_interval_ns;
+
+            // Buffer message by timestamp
+            self.state
+                .message_buffer
+                .entry(aligned_timestamp)
+                .or_default()
+                .push(msg.clone());
+
+            // Track timestamp range
+            if self.state.current_timestamp_ns.is_none() {
+                self.state.current_timestamp_ns = Some(aligned_timestamp);
+            }
+            self.state.end_timestamp_ns =
+                Some(aligned_timestamp.max(self.state.end_timestamp_ns.unwrap_or(0)));
+        }
+
+        // Update stats (more efficient than per-message)
+        self.stats.messages_processed += messages.len();
+
+        // Process complete frames in batch
         self.process_complete_frames()?;
 
         Ok(())

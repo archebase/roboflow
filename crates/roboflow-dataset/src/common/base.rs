@@ -17,6 +17,7 @@
 
 use roboflow_core::Result;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Upload state for checkpointing.
 /// Maps episode_index -> (completed_video_cameras, parquet_completed).
@@ -53,7 +54,8 @@ pub struct AlignedFrame {
     pub timestamp: u64,
 
     /// Image observations by feature name (e.g., "observation.camera_0").
-    pub images: HashMap<String, ImageData>,
+    /// Uses Arc for zero-copy sharing when the same image is referenced multiple times.
+    pub images: HashMap<String, Arc<ImageData>>,
 
     /// State observations by feature name.
     pub states: HashMap<String, Vec<f32>>,
@@ -84,6 +86,11 @@ impl AlignedFrame {
 
     /// Add an image observation.
     pub fn add_image(&mut self, feature: String, data: ImageData) {
+        self.images.insert(feature, Arc::new(data));
+    }
+
+    /// Add an image observation from Arc (zero-copy if already Arc-wrapped).
+    pub fn add_image_arc(&mut self, feature: String, data: Arc<ImageData>) {
         self.images.insert(feature, data);
     }
 

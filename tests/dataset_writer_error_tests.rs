@@ -55,7 +55,7 @@ fn create_test_image(width: u32, height: u32) -> ImageData {
 /// Create a test frame with state and action data.
 fn create_test_frame(frame_index: usize, image: ImageData) -> AlignedFrame {
     let mut images = std::collections::HashMap::new();
-    images.insert("observation.images.camera_0".to_string(), image);
+    images.insert("observation.images.camera_0".to_string(), std::sync::Arc::new(image));
 
     // Add state observation (joint positions)
     let mut states = std::collections::HashMap::new();

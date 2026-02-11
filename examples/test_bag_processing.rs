@@ -107,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pattern = ((frame_idx * num_cameras + cam_idx) % 256) as u8;
             let image = create_test_image(320, 240, pattern);
 
-            frame.images.insert(camera_name, image);
+            frame.images.insert(camera_name, std::sync::Arc::new(image));
             total_images += 1;
         }
 

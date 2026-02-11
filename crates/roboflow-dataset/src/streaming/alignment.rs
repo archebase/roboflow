@@ -5,6 +5,7 @@
 //! Frame alignment with bounded memory footprint.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::common::AlignedFrame;
@@ -345,14 +346,14 @@ impl FrameAlignmentBuffer {
         if let Some(data) = decoded_image {
             entry.frame.images.insert(
                 feature_name.to_string(),
-                ImageData {
+                Arc::new(ImageData {
                     width,
                     height,
                     data,
                     original_timestamp: timestamped_msg.log_time,
                     is_encoded: final_is_encoded,
                     is_depth: false,
-                },
+                }),
             );
         }
 

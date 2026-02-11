@@ -559,7 +559,7 @@ fn test_multi_camera_mid_frame_flush_prevention() {
             let camera_name = format!("observation.images.camera_{}", camera_idx);
             frame.images.insert(
                 camera_name,
-                create_test_image_with_pattern(64, 48, (frame_idx * 3 + camera_idx) as u8),
+                std::sync::Arc::new(create_test_image_with_pattern(64, 48, (frame_idx * 3 + camera_idx) as u8)),
             );
         }
 
@@ -625,11 +625,11 @@ fn test_multi_camera_incremental_flush_data_preservation() {
             let camera_name = format!("camera_{}", camera_idx);
             frame.images.insert(
                 camera_name,
-                create_test_image_with_pattern(
+                std::sync::Arc::new(create_test_image_with_pattern(
                     32,
                     24,
                     (frame_idx * num_cameras + camera_idx) as u8,
-                ),
+                )),
             );
         }
 
@@ -700,7 +700,7 @@ fn test_multi_camera_memory_based_flushing() {
             let camera_name = format!("camera_{}", camera_idx);
             frame.images.insert(
                 camera_name,
-                create_test_image_with_pattern(160, 120, (frame_idx * 3 + camera_idx) as u8),
+                std::sync::Arc::new(create_test_image_with_pattern(160, 120, (frame_idx * 3 + camera_idx) as u8)),
             );
         }
 
@@ -763,11 +763,11 @@ fn test_exact_frame_count_after_incremental_flush() {
             let camera_name = format!("camera_{}", camera_idx);
             frame.images.insert(
                 camera_name,
-                create_test_image_with_pattern(
+                std::sync::Arc::new(create_test_image_with_pattern(
                     64,
                     48,
                     (frame_idx * expected_cameras + camera_idx) as u8,
-                ),
+                )),
             );
         }
 
@@ -837,7 +837,7 @@ fn test_flush_timing_between_frames_not_mid_frame() {
 
             frame.images.insert(
                 camera_name.clone(),
-                create_test_image_with_pattern(64, 48, pattern),
+                std::sync::Arc::new(create_test_image_with_pattern(64, 48, pattern)),
             );
 
             // Track which patterns we've seen for each camera
@@ -909,7 +909,7 @@ fn test_single_camera_incremental_flush() {
 
         frame.images.insert(
             "camera_0".to_string(),
-            create_test_image_with_pattern(64, 48, frame_idx as u8),
+            std::sync::Arc::new(create_test_image_with_pattern(64, 48, frame_idx as u8)),
         );
 
         frame
@@ -970,11 +970,11 @@ fn test_no_data_loss_with_many_small_flushes() {
             let camera_name = format!("camera_{}", camera_idx);
             frame.images.insert(
                 camera_name,
-                create_test_image_with_pattern(
+                std::sync::Arc::new(create_test_image_with_pattern(
                     32,
                     24,
                     ((frame_idx * num_cameras + camera_idx) % 256) as u8,
-                ),
+                )),
             );
         }
 
