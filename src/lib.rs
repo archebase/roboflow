@@ -17,7 +17,9 @@
 //!
 //! ## Example
 //!
-//! See the `roboflow-dataset` and `roboflow-sources` crates for detailed examples.
+//! ```rust
+//! // See examples/ directory for complete usage examples
+//! ```
 
 // =============================================================================
 // Global Allocator
