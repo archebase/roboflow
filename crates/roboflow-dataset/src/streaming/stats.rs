@@ -151,7 +151,11 @@ mod tests {
 
         // FPS should be very low but non-zero after recording frames
         let fps = stats.fps();
-        assert!(fps > 0.0, "FPS should be positive after recording frames, got {}", fps);
+        assert!(
+            fps > 0.0,
+            "FPS should be positive after recording frames, got {}",
+            fps
+        );
 
         // With 2 frames in at least 10ms, FPS should be <= 200
         assert!(fps <= 200.0, "FPS should be reasonable, got {}", fps);

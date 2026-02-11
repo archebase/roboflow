@@ -159,6 +159,7 @@ paste = "1.0"
 criterion = "0.5"
 tempfile = "3.10"
 roboflow-distributed = { workspace = true }
+bytes = "1.7"
 
 # Binaries
 [[bin]]

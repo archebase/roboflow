@@ -71,8 +71,8 @@ pub use streaming_uploader::{StreamingUploader, UploadConfig, UploadProgress, Up
 
 // Re-export rsmpeg encoder
 pub use rsmpeg_encoder::{
-    default_codec_name, is_hardware_encoding_available, is_rsmpeg_available,
-    EncodeFrame, RsmpegEncoder, RsmpegEncoderConfig, RsmpegMp4Encoder,
+    EncodeFrame, RsmpegEncoder, RsmpegEncoderConfig, RsmpegMp4Encoder, default_codec_name,
+    is_hardware_encoding_available, is_rsmpeg_available,
 };
 
 // Re-export rsmpeg S3 encoder

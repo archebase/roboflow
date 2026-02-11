@@ -23,8 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::common::{
-    AlignedFrame, DatasetWriter, ImageData, WriterStats,
-    RsmpegS3EncoderConfig,
+    AlignedFrame, DatasetWriter, ImageData, RsmpegS3EncoderConfig, WriterStats,
     streaming_coordinator::{StreamingCoordinator, StreamingCoordinatorConfig},
 };
 use crate::lerobot::config::LerobotConfig;

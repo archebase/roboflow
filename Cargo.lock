@@ -4156,6 +4156,7 @@ dependencies = [
  "bumpalo",
  "bytemuck",
  "byteorder",
+ "bytes",
  "bzip2",
  "chrono",
  "clap",

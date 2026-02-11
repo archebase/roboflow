@@ -10,9 +10,9 @@
 //! - Video dimensions match input
 //! - Output videos are valid and playable
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
-use std::collections::HashMap;
 
 use roboflow::{
     DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig as DatasetConfig,
@@ -140,7 +140,9 @@ fn verify_mp4_properties(
     }
 
     // Verify frame count (allow some tolerance for different encoding methods)
-    if props.nb_frames > 0 && (props.nb_frames < expected_frames / 2 || props.nb_frames > expected_frames * 2) {
+    if props.nb_frames > 0
+        && (props.nb_frames < expected_frames / 2 || props.nb_frames > expected_frames * 2)
+    {
         return Err(format!(
             "Frame count mismatch: got {}, expected {}",
             props.nb_frames, expected_frames
@@ -229,13 +231,14 @@ fn test_video_encoding_with_ffprobe_validation() {
         writer.write_frame(&frame).expect("Failed to write frame");
     }
 
-    writer.finish_episode(Some(0)).expect("Failed to finish episode");
+    writer
+        .finish_episode(Some(0))
+        .expect("Failed to finish episode");
     let stats = writer.finalize_with_config().expect("Failed to finalize");
 
     // Verify encoding happened
     assert_eq!(
-        stats.images_encoded,
-        num_frames,
+        stats.images_encoded, num_frames,
         "Expected {} images to be encoded, got {}",
         num_frames, stats.images_encoded
     );
@@ -254,13 +257,8 @@ fn test_video_encoding_with_ffprobe_validation() {
 
     // Verify MP4 properties with ffprobe if available
     if ffprobe_path().is_some() {
-        let result = verify_mp4_properties(
-            &video_path,
-            width,
-            height,
-            num_frames as u64,
-            expected_fps,
-        );
+        let result =
+            verify_mp4_properties(&video_path, width, height, num_frames as u64, expected_fps);
 
         match result {
             Ok(msg) => {
@@ -315,13 +313,21 @@ fn test_multi_camera_video_encoding() {
         // Camera 0
         images.insert(
             "observation.images.camera_0".to_string(),
-            std::sync::Arc::new(create_test_image_with_pattern(width, height, (i % 256) as u8)),
+            std::sync::Arc::new(create_test_image_with_pattern(
+                width,
+                height,
+                (i % 256) as u8,
+            )),
         );
 
         // Camera 1
         images.insert(
             "observation.images.camera_1".to_string(),
-            std::sync::Arc::new(create_test_image_with_pattern(width, height, ((i + 128) % 256) as u8)),
+            std::sync::Arc::new(create_test_image_with_pattern(
+                width,
+                height,
+                ((i + 128) % 256) as u8,
+            )),
         );
 
         let mut states = HashMap::new();
@@ -349,7 +355,9 @@ fn test_multi_camera_video_encoding() {
         writer.write_frame(&frame).expect("Failed to write frame");
     }
 
-    writer.finish_episode(Some(0)).expect("Failed to finish episode");
+    writer
+        .finish_episode(Some(0))
+        .expect("Failed to finish episode");
     let stats = writer.finalize_with_config().expect("Failed to finalize");
 
     // Verify both cameras were encoded
@@ -357,7 +365,9 @@ fn test_multi_camera_video_encoding() {
         stats.images_encoded,
         num_frames * 2, // 2 cameras
         "Expected {} images ({} frames × 2 cameras), got {}",
-        num_frames * 2, num_frames, stats.images_encoded
+        num_frames * 2,
+        num_frames,
+        stats.images_encoded
     );
 
     // Check both video files exist
@@ -385,17 +395,10 @@ fn test_multi_camera_video_encoding() {
 
     // Verify with ffprobe if available
     if ffprobe_path().is_some() {
-        for (camera_name, video_path) in [
-            ("camera_0", &camera_0_video),
-            ("camera_1", &camera_1_video),
-        ] {
-            let result = verify_mp4_properties(
-                video_path,
-                width,
-                height,
-                num_frames as u64,
-                30.0,
-            );
+        for (camera_name, video_path) in
+            [("camera_0", &camera_0_video), ("camera_1", &camera_1_video)]
+        {
+            let result = verify_mp4_properties(video_path, width, height, num_frames as u64, 30.0);
 
             match result {
                 Ok(msg) => {
@@ -415,7 +418,12 @@ fn test_multi_camera_video_encoding() {
 
 #[test]
 fn test_various_video_resolutions() {
-    let resolutions = vec![(64u32, 48u32), (320u32, 240u32), (640u32, 480u32), (1280u32, 720u32)];
+    let resolutions = vec![
+        (64u32, 48u32),
+        (320u32, 240u32),
+        (640u32, 480u32),
+        (1280u32, 720u32),
+    ];
 
     for (width, height) in resolutions {
         let output_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
@@ -475,7 +483,9 @@ fn test_various_video_resolutions() {
             writer.write_frame(&frame).expect("Failed to write frame");
         }
 
-        writer.finish_episode(Some(0)).expect("Failed to finish episode");
+        writer
+            .finish_episode(Some(0))
+            .expect("Failed to finish episode");
         let stats = writer.finalize_with_config().expect("Failed to finalize");
 
         assert_eq!(stats.images_encoded, 5, "All 5 frames should be encoded");
@@ -489,7 +499,8 @@ fn test_various_video_resolutions() {
         assert!(
             video_path.exists(),
             "Video should exist for {}x{}",
-            width, height
+            width,
+            height
         );
 
         // Basic check: file should be reasonably sized (> 1KB for 5 frames)
@@ -497,10 +508,17 @@ fn test_various_video_resolutions() {
         assert!(
             metadata.len() > 1024,
             "Video file should be at least 1KB, got {} bytes for {}x{}",
-            metadata.len(), width, height
+            metadata.len(),
+            width,
+            height
         );
 
-        println!("✓ Resolution {}x{}: {} bytes", width, height, metadata.len());
+        println!(
+            "✓ Resolution {}x{}: {} bytes",
+            width,
+            height,
+            metadata.len()
+        );
     }
 }
 
@@ -603,7 +621,9 @@ fn test_dimension_mismatch_handled_gracefully() {
         let _ = writer.write_frame(&frame);
     }
 
-    writer.finish_episode(Some(0)).expect("Failed to finish episode");
+    writer
+        .finish_episode(Some(0))
+        .expect("Failed to finish episode");
     let stats = writer.finalize_with_config().expect("Failed to finalize");
 
     // Should have encoded the 3 consistent frames
@@ -679,12 +699,13 @@ fn test_high_frame_count_encoding() {
         writer.write_frame(&frame).expect("Failed to write frame");
     }
 
-    writer.finish_episode(Some(0)).expect("Failed to finish episode");
+    writer
+        .finish_episode(Some(0))
+        .expect("Failed to finish episode");
     let stats = writer.finalize_with_config().expect("Failed to finalize");
 
     assert_eq!(
-        stats.images_encoded,
-        num_frames,
+        stats.images_encoded, num_frames,
         "All {} frames should be encoded",
         num_frames
     );
@@ -701,7 +722,8 @@ fn test_high_frame_count_encoding() {
     assert!(
         metadata.len() > 100_000,
         "Video file too small: {} bytes for {} frames",
-        metadata.len(), num_frames
+        metadata.len(),
+        num_frames
     );
 
     // But not excessively large (< 50MB for this content)

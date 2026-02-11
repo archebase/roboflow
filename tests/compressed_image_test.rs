@@ -13,8 +13,8 @@ use roboflow::{
     DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig as DatasetConfig,
     LerobotWriter, LerobotWriterTrait, VideoConfig,
 };
-use roboflow_dataset::{ImageData, AlignedFrame, PipelineConfig, PipelineExecutor};
 use roboflow_dataset::streaming::StreamingConfig;
+use roboflow_dataset::{AlignedFrame, ImageData, PipelineConfig, PipelineExecutor};
 
 /// Test that ImageData correctly handles compressed vs raw images.
 #[test]
@@ -160,10 +160,16 @@ fn test_video_encoding_raw_images() {
         );
 
         let mut states = std::collections::HashMap::new();
-        states.insert("observation.state".to_string(), vec![0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6]);
+        states.insert(
+            "observation.state".to_string(),
+            vec![0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6],
+        );
 
         let mut actions = std::collections::HashMap::new();
-        actions.insert("action".to_string(), vec![0.15f32, 0.25, 0.35, 0.45, 0.55, 0.65]);
+        actions.insert(
+            "action".to_string(),
+            vec![0.15f32, 0.25, 0.35, 0.45, 0.55, 0.65],
+        );
 
         let frame = AlignedFrame {
             frame_index: i,
@@ -236,10 +242,16 @@ fn test_video_encoding_mixed_images() {
         );
 
         let mut states = std::collections::HashMap::new();
-        states.insert("observation.state".to_string(), vec![0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6]);
+        states.insert(
+            "observation.state".to_string(),
+            vec![0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6],
+        );
 
         let mut actions = std::collections::HashMap::new();
-        actions.insert("action".to_string(), vec![0.15f32, 0.25, 0.35, 0.45, 0.55, 0.65]);
+        actions.insert(
+            "action".to_string(),
+            vec![0.15f32, 0.25, 0.35, 0.45, 0.55, 0.65],
+        );
 
         let frame = AlignedFrame {
             frame_index: i,
@@ -267,10 +279,16 @@ fn test_video_encoding_mixed_images() {
         );
 
         let mut states = std::collections::HashMap::new();
-        states.insert("observation.state".to_string(), vec![0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6]);
+        states.insert(
+            "observation.state".to_string(),
+            vec![0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6],
+        );
 
         let mut actions = std::collections::HashMap::new();
-        actions.insert("action".to_string(), vec![0.15f32, 0.25, 0.35, 0.45, 0.55, 0.65]);
+        actions.insert(
+            "action".to_string(),
+            vec![0.15f32, 0.25, 0.35, 0.45, 0.55, 0.65],
+        );
 
         let frame = AlignedFrame {
             frame_index: i + 5,
@@ -337,8 +355,8 @@ async fn test_process_bag_with_compressed_images() {
         streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
-    let writer =
-        LerobotWriter::new_local(output_dir.path(), config.clone()).expect("Failed to create writer");
+    let writer = LerobotWriter::new_local(output_dir.path(), config.clone())
+        .expect("Failed to create writer");
 
     let streaming_config = StreamingConfig::with_fps(30);
     let pipeline_config = PipelineConfig::new(streaming_config);
@@ -346,11 +364,12 @@ async fn test_process_bag_with_compressed_images() {
 
     // Process first 500 messages from the bag
     let source_config = SourceConfig::bag(bag_path);
-    let mut source = create_source(&source_config)
-        .expect("Failed to create bag source");
+    let mut source = create_source(&source_config).expect("Failed to create bag source");
 
     // Initialize the source
-    let _metadata = source.initialize(&source_config).await
+    let _metadata = source
+        .initialize(&source_config)
+        .await
         .expect("Failed to initialize source");
 
     let mut messages_processed = 0;
@@ -388,7 +407,10 @@ async fn test_process_bag_with_compressed_images() {
         }
     }
 
-    println!("Processed {} messages from {}", messages_processed, bag_path);
+    println!(
+        "Processed {} messages from {}",
+        messages_processed, bag_path
+    );
 
     // Finalize and check stats
     // Note: The bag file may not have all required LeRobot fields (observation_state, action, etc.)
@@ -411,5 +433,8 @@ async fn test_process_bag_with_compressed_images() {
 
     // The test passes if we processed messages without crashing on compressed images
     // images_encoded may be 0 if no valid images were in first 500 messages
-    assert!(messages_processed > 0, "Should have processed some messages");
+    assert!(
+        messages_processed > 0,
+        "Should have processed some messages"
+    );
 }

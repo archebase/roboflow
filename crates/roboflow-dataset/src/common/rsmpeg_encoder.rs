@@ -639,7 +639,7 @@ impl StorageRsmpegEncoder {
         dest_path: &str,
         storage: Arc<dyn Storage>,
         config: RsmpegEncoderConfig,
-) -> Result<Self> {
+    ) -> Result<Self> {
         // Create channel for encoded fragments and stop signal
         let (encoded_tx, encoded_rx) = std::sync::mpsc::channel();
         let (stop_tx, stop_rx) = std::sync::mpsc::channel();
@@ -963,10 +963,7 @@ impl RsmpegMp4Encoder {
                 AVCodec::find_encoder(ffi::AV_CODEC_ID_H264)
             })
             .ok_or_else(|| {
-                VideoEncoderError::FfmpegFailed(
-                    -1,
-                    "No H.264 encoder available".to_string(),
-                )
+                VideoEncoderError::FfmpegFailed(-1, "No H.264 encoder available".to_string())
             })?;
 
         // =============================================================
@@ -992,10 +989,7 @@ impl RsmpegMp4Encoder {
 
         // Open codec
         codec_context.open(None).map_err(|e| {
-            VideoEncoderError::FfmpegFailed(
-                -1,
-                format!("Failed to open codec: {}", e),
-            )
+            VideoEncoderError::FfmpegFailed(-1, format!("Failed to open codec: {}", e))
         })?;
 
         // =============================================================
@@ -1014,11 +1008,9 @@ impl RsmpegMp4Encoder {
             None,
             None,
             None,
-        ).ok_or_else(|| {
-            VideoEncoderError::FfmpegFailed(
-                -1,
-                "Failed to create SWScale context".to_string(),
-            )
+        )
+        .ok_or_else(|| {
+            VideoEncoderError::FfmpegFailed(-1, "Failed to create SWScale context".to_string())
         })?;
 
         // =============================================================
@@ -1054,9 +1046,9 @@ impl RsmpegMp4Encoder {
         }
 
         // Write header
-        format_context
-            .write_header(&mut None)
-            .map_err(|e| VideoEncoderError::FfmpegFailed(-1, format!("Failed to write header: {}", e)))?;
+        format_context.write_header(&mut None).map_err(|e| {
+            VideoEncoderError::FfmpegFailed(-1, format!("Failed to write header: {}", e))
+        })?;
 
         // =============================================================
         // STEP 6: Encode all frames
@@ -1092,10 +1084,7 @@ impl RsmpegMp4Encoder {
             yuv_frame.set_format(pixel_format_enum);
 
             yuv_frame.get_buffer(0).map_err(|e| {
-                VideoEncoderError::FfmpegFailed(
-                    -1,
-                    format!("Failed to allocate YUV frame: {}", e),
-                )
+                VideoEncoderError::FfmpegFailed(-1, format!("Failed to allocate YUV frame: {}", e))
             })?;
 
             unsafe {
@@ -1114,26 +1103,19 @@ impl RsmpegMp4Encoder {
             yuv_frame.set_pts(frame_count as i64);
 
             // Send frame to encoder
-            codec_context
-                .send_frame(Some(&yuv_frame))
-                .map_err(|e| {
-                    VideoEncoderError::FfmpegFailed(
-                        -1,
-                        format!("Failed to send frame {}: {}", frame_count, e),
-                    )
-                })?;
+            codec_context.send_frame(Some(&yuv_frame)).map_err(|e| {
+                VideoEncoderError::FfmpegFailed(
+                    -1,
+                    format!("Failed to send frame {}: {}", frame_count, e),
+                )
+            })?;
 
             // Receive and write packets
             while let Ok(mut pkt) = codec_context.receive_packet() {
                 // Write packet to output using write_frame
-                format_context
-                    .write_frame(&mut pkt)
-                    .map_err(|e| {
-                        VideoEncoderError::FfmpegFailed(
-                            -1,
-                            format!("Failed to write packet: {}", e),
-                        )
-                    })?;
+                format_context.write_frame(&mut pkt).map_err(|e| {
+                    VideoEncoderError::FfmpegFailed(-1, format!("Failed to write packet: {}", e))
+                })?;
             }
 
             frame_count += 1;
@@ -1145,28 +1127,18 @@ impl RsmpegMp4Encoder {
 
         codec_context.send_frame(None).ok();
         while let Ok(mut pkt) = codec_context.receive_packet() {
-            format_context
-                .write_frame(&mut pkt)
-                .map_err(|e| {
-                    VideoEncoderError::FfmpegFailed(
-                        -1,
-                        format!("Failed to write flush packet: {}", e),
-                    )
-                })?;
+            format_context.write_frame(&mut pkt).map_err(|e| {
+                VideoEncoderError::FfmpegFailed(-1, format!("Failed to write flush packet: {}", e))
+            })?;
         }
 
         // =============================================================
         // STEP 8: Write trailer
         // =============================================================
 
-        format_context
-            .write_trailer()
-            .map_err(|e| {
-                VideoEncoderError::FfmpegFailed(
-                    -1,
-                    format!("Failed to write trailer: {}", e),
-                )
-            })?;
+        format_context.write_trailer().map_err(|e| {
+            VideoEncoderError::FfmpegFailed(-1, format!("Failed to write trailer: {}", e))
+        })?;
 
         tracing::debug!(
             frames = frame_count,

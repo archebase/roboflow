@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use crate::common::{ImageData, decode_image_to_rgb};
+use crate::common::rsmpeg_encoder::RsmpegMp4Encoder;
 use crate::common::video::VideoEncoderError;
 use crate::common::video::{VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
-use crate::common::rsmpeg_encoder::RsmpegMp4Encoder;
+use crate::common::{ImageData, decode_image_to_rgb};
 use crate::lerobot::video_profiles::ResolvedConfig;
 use roboflow_core::Result;
 

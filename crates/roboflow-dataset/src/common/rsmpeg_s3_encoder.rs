@@ -17,9 +17,9 @@ use roboflow_core::{Result, RoboflowError};
 use roboflow_storage::object_store;
 use tokio::runtime::Handle;
 
-use crate::common::{ImageData, decode_to_rgb};
-use crate::common::video::{VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
 use crate::common::rsmpeg_encoder::RsmpegMp4Encoder;
+use crate::common::video::{VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
+use crate::common::{ImageData, decode_to_rgb};
 
 /// Configuration for rsmpeg S3 encoder.
 #[derive(Debug, Clone, Default)]
@@ -248,8 +248,11 @@ impl RsmpegS3Encoder {
             tracing::warn!(
                 frames_encoded = self.frames_encoded,
                 frames_skipped = self.frames_skipped,
-                skip_rate = format!("{:.1}%",
-                    (self.frames_skipped as f64 / (self.frames_encoded + self.frames_skipped) as f64) * 100.0
+                skip_rate = format!(
+                    "{:.1}%",
+                    (self.frames_skipped as f64
+                        / (self.frames_encoded + self.frames_skipped) as f64)
+                        * 100.0
                 ),
                 "Video encoding completed with skipped frames - some frames are MISSING from output"
             );
@@ -279,12 +282,11 @@ impl RsmpegS3Encoder {
         // Encode using RsmpegMp4Encoder
         let encoder = RsmpegMp4Encoder::with_config(self.config.video.clone());
 
-        encoder.encode_buffer(&self.buffer, &temp_file).map_err(|e| {
-            RoboflowError::encode(
-                "RsmpegS3Encoder",
-                format!("Failed to encode video: {}", e),
-            )
-        })?;
+        encoder
+            .encode_buffer(&self.buffer, &temp_file)
+            .map_err(|e| {
+                RoboflowError::encode("RsmpegS3Encoder", format!("Failed to encode video: {}", e))
+            })?;
 
         // Read the encoded file
         let encoded_data = std::fs::read(&temp_file).map_err(|e| {
@@ -342,17 +344,11 @@ fn parse_s3_url_to_key(url: &str) -> std::result::Result<object_store::path::Pat
         .strip_prefix("s3://")
         .or_else(|| url.strip_prefix("oss://"))
         .ok_or_else(|| {
-            RoboflowError::parse(
-                "RsmpegS3Encoder",
-                "URL must start with s3:// or oss://",
-            )
+            RoboflowError::parse("RsmpegS3Encoder", "URL must start with s3:// or oss://")
         })?;
 
     let slash_idx = url_without_scheme.find('/').ok_or_else(|| {
-        RoboflowError::parse(
-            "RsmpegS3Encoder",
-            "URL must contain a path after bucket",
-        )
+        RoboflowError::parse("RsmpegS3Encoder", "URL must contain a path after bucket")
     })?;
 
     let key = &url_without_scheme[slash_idx + 1..];
@@ -400,7 +396,8 @@ mod tests {
             store,
             runtime.handle().clone(),
             config,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Add first frame to set dimensions
         let rgb_data = vec![128u8; 640 * 480 * 3];
@@ -424,8 +421,15 @@ mod tests {
             is_depth: false,
         };
         let result = encoder.add_frame(&img2);
-        assert!(result.is_ok(), "Dimension mismatch returns Ok but skips frame");
-        assert_eq!(encoder.frames_skipped(), 1, "Frame should be tracked as skipped");
+        assert!(
+            result.is_ok(),
+            "Dimension mismatch returns Ok but skips frame"
+        );
+        assert_eq!(
+            encoder.frames_skipped(),
+            1,
+            "Frame should be tracked as skipped"
+        );
     }
 
     #[test]
@@ -439,7 +443,8 @@ mod tests {
             store,
             runtime.handle().clone(),
             config,
-        ).unwrap();
+        )
+        .unwrap();
 
         let (url, frames) = encoder.finalize().unwrap();
         assert_eq!(url, "s3://test-bucket/videos/test.mp4");
@@ -457,7 +462,8 @@ mod tests {
             store,
             runtime.handle().clone(),
             config,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Add invalid encoded image that will fail to decode
         let invalid_jpeg = vec![0xFF, 0xD8, 0xFF]; // Too short
@@ -473,7 +479,10 @@ mod tests {
 
         // All frames failed, should return error
         let result = encoder.finalize();
-        assert!(result.is_err(), "Should return error when all frames fail to decode");
+        assert!(
+            result.is_err(),
+            "Should return error when all frames fail to decode"
+        );
     }
 
     #[test]
@@ -487,7 +496,8 @@ mod tests {
             store,
             runtime.handle().clone(),
             config,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Add frame with zero dimensions
         let img = ImageData {

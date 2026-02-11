@@ -80,7 +80,9 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
     let data = &img.data;
     if data.len() > 4 {
         // Find JPEG magic (FF D8 FF)
-        if let Some(pos) = data.windows(3).position(|w| w[0] == 0xFF && w[1] == 0xD8 && w[2] == 0xFF)
+        if let Some(pos) = data
+            .windows(3)
+            .position(|w| w[0] == 0xFF && w[1] == 0xD8 && w[2] == 0xFF)
             && let Some(decoded) = try_decode_payload(&data[pos..])
         {
             tracing::debug!(
@@ -90,7 +92,9 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
             return Some(decoded);
         }
         // Find PNG magic (89 50 4E 47)
-        if let Some(pos) = data.windows(4).position(|w| w[0] == 0x89 && &w[1..4] == b"PNG")
+        if let Some(pos) = data
+            .windows(4)
+            .position(|w| w[0] == 0x89 && &w[1..4] == b"PNG")
             && let Some(decoded) = try_decode_payload(&data[pos..])
         {
             tracing::debug!(

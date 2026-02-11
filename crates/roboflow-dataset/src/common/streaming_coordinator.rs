@@ -211,21 +211,19 @@ impl EncoderWorker {
 
         for cmd in self.cmd_rx {
             match cmd {
-                EncoderCommand::AddFrame { image } => {
-                    match encoder.add_frame(&image) {
-                        Ok(()) => {
-                            frames_encoded += 1;
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                camera = %self.camera,
-                                error = %e,
-                                frame = frames_encoded,
-                                "Failed to encode frame"
-                            );
-                        }
+                EncoderCommand::AddFrame { image } => match encoder.add_frame(&image) {
+                    Ok(()) => {
+                        frames_encoded += 1;
                     }
-                }
+                    Err(e) => {
+                        tracing::error!(
+                            camera = %self.camera,
+                            error = %e,
+                            frame = frames_encoded,
+                            "Failed to encode frame"
+                        );
+                    }
+                },
 
                 EncoderCommand::Flush | EncoderCommand::Shutdown => {
                     break;
