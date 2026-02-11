@@ -49,7 +49,7 @@ use roboflow_core::{Result, RoboflowError};
 use roboflow_storage::object_store;
 
 use super::ImageData;
-use super::s3_encoder::{S3EncoderConfig, S3StreamingEncoder};
+use super::rsmpeg_s3_encoder::{RsmpegS3Encoder, RsmpegS3EncoderConfig};
 
 // =============================================================================
 // Commands
@@ -92,7 +92,7 @@ pub struct StreamingCoordinatorConfig {
     pub frame_channel_capacity: usize,
 
     /// Video encoder configuration
-    pub encoder_config: S3EncoderConfig,
+    pub encoder_config: RsmpegS3EncoderConfig,
 
     /// Timeout for graceful shutdown
     pub shutdown_timeout: Duration,
@@ -105,7 +105,7 @@ impl Default for StreamingCoordinatorConfig {
     fn default() -> Self {
         Self {
             frame_channel_capacity: 64, // 64 frames backpressure
-            encoder_config: S3EncoderConfig::default(),
+            encoder_config: RsmpegS3EncoderConfig::default(),
             shutdown_timeout: Duration::from_secs(300), // 5 minutes
             fps: 30,                                    // Default 30 fps
         }
@@ -125,7 +125,7 @@ impl StreamingCoordinatorConfig {
     }
 
     /// Set the encoder configuration.
-    pub fn with_encoder_config(mut self, config: S3EncoderConfig) -> Self {
+    pub fn with_encoder_config(mut self, config: RsmpegS3EncoderConfig) -> Self {
         self.encoder_config = config;
         self
     }
@@ -167,10 +167,7 @@ struct EncoderWorker {
     runtime: tokio::runtime::Handle,
 
     /// Encoder configuration
-    encoder_config: S3EncoderConfig,
-
-    /// Frame rate (fps)
-    fps: u32,
+    encoder_config: RsmpegS3EncoderConfig,
 
     /// Command receiver
     cmd_rx: Receiver<EncoderCommand>,
@@ -183,12 +180,9 @@ impl EncoderWorker {
         // SETUP: Create encoder
         // =============================================================
 
-        // Create S3StreamingEncoder for this camera
-        let mut encoder = match S3StreamingEncoder::new(
+        // Create RsmpegS3Encoder for this camera
+        let mut encoder = match RsmpegS3Encoder::new(
             &self.s3_url,
-            640, // Default width - will be updated on first frame
-            480, // Default height - will be updated on first frame
-            self.fps,
             self.store.clone(),
             self.runtime.clone(),
             self.encoder_config.clone(),
@@ -206,7 +200,7 @@ impl EncoderWorker {
 
         tracing::info!(
             camera = %self.camera,
-            "EncoderWorker started"
+            "EncoderWorker started with rsmpeg encoder"
         );
 
         // =============================================================
@@ -214,36 +208,10 @@ impl EncoderWorker {
         // =============================================================
 
         let mut frames_encoded = 0u64;
-        let mut first_frame = true;
 
         for cmd in self.cmd_rx {
             match cmd {
                 EncoderCommand::AddFrame { image } => {
-                    // Reconfigure on first frame to get correct dimensions
-                    if first_frame {
-                        drop(encoder);
-                        match S3StreamingEncoder::new(
-                            &self.s3_url,
-                            image.width,
-                            image.height,
-                            self.fps,
-                            self.store.clone(),
-                            self.runtime.clone(),
-                            self.encoder_config.clone(),
-                        ) {
-                            Ok(enc) => encoder = enc,
-                            Err(e) => {
-                                tracing::error!(
-                                    camera = %self.camera,
-                                    error = %e,
-                                    "Failed to reconfigure encoder"
-                                );
-                                return Err(e);
-                            }
-                        }
-                        first_frame = false;
-                    }
-
                     match encoder.add_frame(&image) {
                         Ok(()) => {
                             frames_encoded += 1;
@@ -390,7 +358,6 @@ impl StreamingCoordinator {
             store: Arc::clone(&self.store),
             runtime: self.runtime.clone(),
             encoder_config: self.config.encoder_config.clone(),
-            fps: self.config.fps,
             cmd_rx,
         };
 

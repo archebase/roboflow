@@ -664,6 +664,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
+    // Register all built-in source types (bag, mcap, rrd)
+    roboflow_sources::register_builtin_sources();
+
     match command {
         Command::Submit { args } => {
             if let Err(e) = commands::run_submit_command(&args).await {

@@ -23,6 +23,32 @@ pub use rrd::RrdSource;
 use async_trait::async_trait;
 use robocodec::CodecValue;
 
+/// Register all built-in source types with the global registry.
+///
+/// This function should be called once at program startup to ensure
+/// all source types are available for dynamic creation.
+pub fn register_builtin_sources() {
+    use crate::{BagSource, McapSource, RrdSource, Source};
+
+    // Register Bag source
+    register_source(
+        "bag",
+        Box::new(|| Box::new(BagSource::new("").unwrap()) as Box<dyn Source>),
+    );
+
+    // Register MCAP source
+    register_source(
+        "mcap",
+        Box::new(|| Box::new(McapSource::new("").unwrap()) as Box<dyn Source>),
+    );
+
+    // Register RRD source
+    register_source(
+        "rrd",
+        Box::new(|| Box::new(RrdSource::new("").unwrap()) as Box<dyn Source>),
+    );
+}
+
 /// A decoded message from a source.
 ///
 /// This is the primary output type for all sources, providing a unified

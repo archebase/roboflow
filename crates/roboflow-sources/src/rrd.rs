@@ -45,7 +45,12 @@ impl RrdSource {
 
 #[async_trait::async_trait]
 impl Source for RrdSource {
-    async fn initialize(&mut self, _config: &SourceConfig) -> SourceResult<SourceMetadata> {
+    async fn initialize(&mut self, config: &SourceConfig) -> SourceResult<SourceMetadata> {
+        // Update path from config if provided
+        if let crate::SourceType::Rrd { path } = &config.source_type {
+            self.path = path.clone();
+        }
+
         Err(SourceError::UnsupportedFormat(format!(
             "RRD format is not yet supported (file: {}). \
              RRD decoding requires the re_sdk crate. \

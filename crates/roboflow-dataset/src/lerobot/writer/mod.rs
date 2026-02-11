@@ -15,7 +15,6 @@ mod flushing;
 mod frame;
 mod parquet;
 mod stats;
-mod streaming;
 mod upload;
 
 use std::collections::HashMap;
@@ -25,7 +24,7 @@ use std::sync::Arc;
 
 use crate::common::{
     AlignedFrame, DatasetWriter, ImageData, WriterStats,
-    s3_encoder::S3EncoderConfig,
+    RsmpegS3EncoderConfig,
     streaming_coordinator::{StreamingCoordinator, StreamingCoordinatorConfig},
 };
 use crate::lerobot::config::LerobotConfig;
@@ -40,7 +39,6 @@ pub use frame::LerobotFrame;
 use encoding::{EncodeStats, encode_videos};
 
 pub use flushing::{ChunkMetadata, ChunkStats, FlushingConfig, IncrementalFlusher};
-pub use streaming::{StreamingEncodeStats, encode_videos_streaming};
 
 /// Camera intrinsic parameters in LeRobot format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -444,8 +442,11 @@ impl LerobotWriter {
     pub fn add_image_arc(&mut self, camera: String, data: Arc<ImageData>) {
         // Update shape metadata
         let inner = &*data;
-        self.metadata
-            .update_image_shape(camera.clone(), inner.width as usize, inner.height as usize);
+        self.metadata.update_image_shape(
+            camera.clone(),
+            inner.width as usize,
+            inner.height as usize,
+        );
 
         // Buffer for video encoding - try to unwrap if uniquely owned
         self.image_buffers
@@ -757,9 +758,9 @@ impl LerobotWriter {
         // Resolve the video configuration
         let resolved = ResolvedConfig::from_video_config(&self.config.video);
 
-        // Use streaming coordinator for multi-camera parallel encoding when enabled
-        let (mut video_files, encode_stats) = if self.config.streaming.use_coordinator
-            && self.use_cloud_storage
+        // Use streaming coordinator for cloud storage (OSS/S3)
+        // For local storage, use batch encoding
+        let (mut video_files, encode_stats) = if self.use_cloud_storage
             && self
                 .storage
                 .as_any()
@@ -768,54 +769,9 @@ impl LerobotWriter {
         {
             tracing::info!(
                 episode_index = self.episode_index,
-                "Using streaming coordinator for multi-camera parallel encoding"
+                "Using streaming coordinator for direct S3/OSS upload"
             );
             self.encode_videos_with_coordinator()?
-        } else if self.use_cloud_storage
-            && self
-                .storage
-                .as_any()
-                .downcast_ref::<roboflow_storage::OssStorage>()
-                .is_some()
-        {
-            // Streaming upload directly to S3/OSS
-            tracing::info!(
-                episode_index = self.episode_index,
-                "Using streaming encoder for direct S3/OSS upload"
-            );
-            let runtime = tokio::runtime::Handle::try_current().map_err(|e| {
-                roboflow_core::RoboflowError::other(format!("No tokio runtime: {}", e))
-            })?;
-
-            let streaming_stats = encode_videos_streaming(
-                &camera_data,
-                self.episode_index,
-                &self.output_prefix,
-                &resolved,
-                self.config.dataset.fps,
-                self.storage.clone(),
-                runtime,
-            )?;
-
-            // Convert streaming stats to return format
-            let video_files: Vec<(PathBuf, String)> = streaming_stats
-                .video_urls
-                .into_iter()
-                .map(|(camera, url)| {
-                    // Use camera name as path for consistency (won't be used for local files)
-                    (PathBuf::from(&camera), url)
-                })
-                .collect();
-
-            let encode_stats = EncodeStats {
-                images_encoded: streaming_stats.images_encoded,
-                skipped_frames: streaming_stats.skipped_frames,
-                failed_encodings: streaming_stats.failed_encodings,
-                decode_failures: 0,
-                output_bytes: streaming_stats.output_bytes,
-            };
-
-            (video_files, encode_stats)
         } else {
             // Batch encoding with intermediate files
             encode_videos(
@@ -892,14 +848,8 @@ impl LerobotWriter {
         };
 
         // Create streaming coordinator configuration
-        let encoder_config = S3EncoderConfig {
+        let encoder_config = RsmpegS3EncoderConfig {
             video: resolved.to_encoder_config(self.config.dataset.fps),
-            ring_buffer_size: self.config.streaming.ring_buffer_size,
-            upload_part_size: self.config.streaming.upload_part_size,
-            buffer_timeout: std::time::Duration::from_secs(
-                self.config.streaming.buffer_timeout_secs,
-            ),
-            fragmented_mp4: true,
         };
 
         let coordinator_config = StreamingCoordinatorConfig {

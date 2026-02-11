@@ -559,7 +559,11 @@ fn test_multi_camera_mid_frame_flush_prevention() {
             let camera_name = format!("observation.images.camera_{}", camera_idx);
             frame.images.insert(
                 camera_name,
-                std::sync::Arc::new(create_test_image_with_pattern(64, 48, (frame_idx * 3 + camera_idx) as u8)),
+                std::sync::Arc::new(create_test_image_with_pattern(
+                    64,
+                    48,
+                    (frame_idx * 3 + camera_idx) as u8,
+                )),
             );
         }
 
@@ -700,7 +704,11 @@ fn test_multi_camera_memory_based_flushing() {
             let camera_name = format!("camera_{}", camera_idx);
             frame.images.insert(
                 camera_name,
-                std::sync::Arc::new(create_test_image_with_pattern(160, 120, (frame_idx * 3 + camera_idx) as u8)),
+                std::sync::Arc::new(create_test_image_with_pattern(
+                    160,
+                    120,
+                    (frame_idx * 3 + camera_idx) as u8,
+                )),
             );
         }
 

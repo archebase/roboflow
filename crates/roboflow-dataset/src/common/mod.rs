@@ -17,13 +17,13 @@
 
 pub mod base;
 pub mod config;
-pub mod encoder_pool;
+pub mod image_decode;
 pub mod image_format;
 pub mod parquet_base;
 pub mod progress;
 pub mod ring_buffer;
 pub mod rsmpeg_encoder;
-pub mod s3_encoder;
+pub mod rsmpeg_s3_encoder;
 pub mod simd_convert;
 pub mod streaming_coordinator;
 pub mod streaming_uploader;
@@ -45,6 +45,9 @@ pub use progress::{ProgressReceiver, ProgressSender, ProgressUpdate};
 
 // Re-export image format detection
 pub use image_format::{ImageFormat, can_passthrough, detect_image_format};
+
+// Re-export image decode utilities
+pub use image_decode::{decode_image_to_rgb, decode_to_rgb};
 
 // Re-export ring buffer for streaming frame processing
 pub use ring_buffer::{FrameRingBuffer, RingBufferError, RingBufferSnapshot};
@@ -68,9 +71,12 @@ pub use streaming_uploader::{StreamingUploader, UploadConfig, UploadProgress, Up
 
 // Re-export rsmpeg encoder
 pub use rsmpeg_encoder::{
-    EncodeFrame, RsmpegEncoder, RsmpegEncoderConfig, default_codec_name,
-    is_hardware_encoding_available, is_rsmpeg_available,
+    default_codec_name, is_hardware_encoding_available, is_rsmpeg_available,
+    EncodeFrame, RsmpegEncoder, RsmpegEncoderConfig, RsmpegMp4Encoder,
 };
+
+// Re-export rsmpeg S3 encoder
+pub use rsmpeg_s3_encoder::{RsmpegS3Encoder, RsmpegS3EncoderConfig};
 
 // Re-export streaming coordinator
 pub use streaming_coordinator::{

@@ -157,4 +157,41 @@ mod tests {
         // Try to create a non-registered source
         assert!(registry.create(&config).is_err());
     }
+
+    #[test]
+    fn test_builtin_source_registration() {
+        // After calling register_builtin_sources, all builtin types should be registered
+        crate::register_builtin_sources();
+
+        let registry = global_registry();
+
+        // Verify all builtin sources are registered
+        assert!(
+            registry.has_source("bag"),
+            "bag source should be registered"
+        );
+        assert!(
+            registry.has_source("mcap"),
+            "mcap source should be registered"
+        );
+        assert!(
+            registry.has_source("rrd"),
+            "rrd source should be registered"
+        );
+
+        // Verify we can create configs for each type
+        let bag_config = SourceConfig::bag("test.bag");
+        let mcap_config = SourceConfig::mcap("test.mcap");
+        let rrd_config = SourceConfig::rrd("test.rrd");
+
+        // Creating sources should work (they will fail during initialize since paths are fake)
+        let bag_source = registry.create(&bag_config);
+        assert!(bag_source.is_ok(), "bag source creation should succeed");
+
+        let mcap_source = registry.create(&mcap_config);
+        assert!(mcap_source.is_ok(), "mcap source creation should succeed");
+
+        let rrd_source = registry.create(&rrd_config);
+        assert!(rrd_source.is_ok(), "rrd source creation should succeed");
+    }
 }

@@ -570,8 +570,9 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
                         ImageData::encoded(width, height, image_bytes)
                     } else {
                         // Raw RGB data - validate size
-                        ImageData::new_rgb(width, height, image_bytes)
-                            .map_err(|e| RoboflowError::other(format!("Invalid image data: {}", e)))?
+                        ImageData::new_rgb(width, height, image_bytes).map_err(|e| {
+                            RoboflowError::other(format!("Invalid image data: {}", e))
+                        })?
                     };
                     frame.add_image(feature_name, image_data);
                     return Ok(());

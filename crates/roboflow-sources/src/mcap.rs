@@ -69,7 +69,12 @@ impl McapSource {
 
 #[async_trait::async_trait]
 impl Source for McapSource {
-    async fn initialize(&mut self, _config: &SourceConfig) -> SourceResult<SourceMetadata> {
+    async fn initialize(&mut self, config: &SourceConfig) -> SourceResult<SourceMetadata> {
+        // Update path from config if provided
+        if let crate::SourceType::Mcap { path } = &config.source_type {
+            self.path = path.clone();
+        }
+
         let is_cloud = self.is_cloud_url();
         let (metadata, rx, handle) = decode::initialize_threaded_source(
             &self.path,

@@ -146,7 +146,14 @@ mod tests {
         stats.record_normal_completion();
         stats.record_normal_completion();
 
-        // FPS should be very low since we just started
-        assert!(stats.fps() > 0.0);
+        // Ensure some time has passed for FPS calculation
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // FPS should be very low but non-zero after recording frames
+        let fps = stats.fps();
+        assert!(fps > 0.0, "FPS should be positive after recording frames, got {}", fps);
+
+        // With 2 frames in at least 10ms, FPS should be <= 200
+        assert!(fps <= 200.0, "FPS should be reasonable, got {}", fps);
     }
 }
