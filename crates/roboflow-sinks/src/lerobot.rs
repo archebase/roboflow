@@ -111,6 +111,22 @@ impl Sink for LerobotSink {
             "Initializing LeRobot sink"
         );
 
+        // Reject malformed cloud URLs (e.g. "s3:" or "s3:/bucket" missing "//")
+        if (self.output_path.starts_with("s3:") && !self.output_path.starts_with("s3://"))
+            || (self.output_path.starts_with("oss:") && !self.output_path.starts_with("oss://"))
+        {
+            return Err(SinkError::CreateFailed {
+                path: self.output_path.clone().into(),
+                error: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "Malformed cloud URL '{}': use s3://bucket/path or oss://bucket/path (double slash required)",
+                        self.output_path
+                    ),
+                )),
+            });
+        }
+
         let writer = if self.output_path.starts_with("s3://")
             || self.output_path.starts_with("oss://")
         {

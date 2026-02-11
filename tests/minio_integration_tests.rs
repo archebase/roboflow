@@ -102,6 +102,61 @@ impl MinioConfig {
     pub fn s3_url_prefix(&self, path: &str) -> String {
         format!("s3://{}/{}", self.bucket, path)
     }
+
+    /// Cleanup a test directory recursively.
+    pub fn cleanup_dir(&self, runtime: &tokio::runtime::Runtime, path: &str) {
+        let storage = match self.create_storage() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to create storage for cleanup: {}", e);
+                return;
+            }
+        };
+
+        let test_path = Path::new(path);
+        if let Err(e) = Self::cleanup_recursive(&storage, runtime, test_path) {
+            eprintln!("Failed to cleanup {}: {}", path, e);
+        }
+    }
+
+    /// Recursively delete a directory and all its contents.
+    fn cleanup_recursive(
+        storage: &AsyncOssStorage,
+        runtime: &tokio::runtime::Runtime,
+        path: &Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if !runtime.block_on(async { storage.exists(path).await }) {
+            return Ok(());
+        }
+
+        // Try to list and delete contents first (for directories)
+        let object_store = storage.object_store();
+        let path_str = path.to_str().unwrap_or_default();
+
+        // Use object_store to list all objects with this prefix
+        let list_result = runtime.block_on(async {
+            object_store
+                .list_with_delimiter(Some(&object_store::path::Path::from(path_str)))
+                .await
+        })?;
+
+        // Delete all objects in the directory
+        for object in list_result.objects {
+            let object_path = object.location.as_ref();
+            runtime.block_on(async { storage.delete(Path::new(object_path)).await })?;
+        }
+
+        // Recursively delete subdirectories
+        for prefix in list_result.common_prefixes {
+            let sub_path = Path::new(prefix.as_ref());
+            Self::cleanup_recursive(storage, runtime, sub_path)?;
+        }
+
+        // Try to delete the directory itself (may fail if not empty, that's ok)
+        let _ = runtime.block_on(async { storage.delete(path).await });
+
+        Ok(())
+    }
 }
 
 /// Helper to create test image data.
@@ -252,6 +307,9 @@ fn test_rsmpeg_s3_encoder_with_minio() {
     });
     assert!(exists, "Video should exist in MinIO");
 
+    // Cleanup test files
+    config.cleanup_dir(&runtime, "test_videos");
+
     println!("✓ RsmpegS3Encoder with MinIO test passed");
 }
 
@@ -342,6 +400,9 @@ fn test_streaming_coordinator_with_minio() {
         })
         .unwrap();
 
+    // Cleanup test files
+    config.cleanup_dir(&runtime, "test_coordinator");
+
     println!("✓ StreamingCoordinator with MinIO test passed");
 }
 
@@ -419,6 +480,9 @@ fn test_compressed_images_with_minio_upload() {
     // The important thing is that the coordinator doesn't crash
     println!("✓ Compressed images with MinIO upload test passed");
     println!("  - Cameras processed: {}", results.len());
+
+    // Cleanup test files
+    config.cleanup_dir(&runtime, "test_compressed");
 }
 
 // =============================================================================
@@ -529,6 +593,9 @@ fn test_concurrent_minio_uploads() {
             result.err()
         );
     }
+
+    // Cleanup test files
+    config.cleanup_dir(&runtime, "test_concurrent");
 
     println!("✓ Concurrent MinIO uploads test passed (3 workers)");
 }

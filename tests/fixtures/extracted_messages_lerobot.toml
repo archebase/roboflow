@@ -1,0 +1,62 @@
+# LeRobot config for tests/fixtures/extracted_messages.bag
+#
+# Message types in the bag (from robocodec schema list):
+# - sensor_msgs/CompressedImage: color (JPEG) + depth (compressedDepth/PNG)
+# - sensor_msgs/CameraInfo: calibration
+# - kuavo_msgs/jointCmd, lejuClawCommand, etc.: arm/claw control
+# - sensor_msgs/JointState @ /kuavo_arm_traj: joint state
+#
+# Run: cargo test --test bag_lerobot_integration_tests
+
+[dataset]
+name = "extracted_messages_test"
+fps = 30
+robot_type = "kuavo"
+
+# Color images (CompressedImage, JPEG)
+[[mappings]]
+topic = "/cam_h/color/image_raw/compressed"
+feature = "observation.images.cam_high"
+mapping_type = "image"
+
+[[mappings]]
+topic = "/cam_l/color/image_raw/compressed"
+feature = "observation.images.cam_left"
+mapping_type = "image"
+
+[[mappings]]
+topic = "/cam_r/color/image_raw/compressed"
+feature = "observation.images.cam_right"
+mapping_type = "image"
+
+# Depth images (CompressedImage, compressedDepth = 16-bit PNG)
+[[mappings]]
+topic = "/cam_h/depth/image_raw/compressedDepth"
+feature = "observation.images.cam_high.depth"
+mapping_type = "image"
+
+[[mappings]]
+topic = "/cam_l/depth/image_rect_raw/compressedDepth"
+feature = "observation.images.cam_left.depth"
+mapping_type = "image"
+
+[[mappings]]
+topic = "/cam_r/depth/image_rect_raw/compressedDepth"
+feature = "observation.images.cam_right.depth"
+mapping_type = "image"
+
+# State (JointState)
+[[mappings]]
+topic = "/kuavo_arm_traj"
+feature = "observation.state"
+mapping_type = "state"
+
+# Action (joint command)
+[[mappings]]
+topic = "/joint_cmd"
+feature = "action"
+mapping_type = "action"
+
+[video]
+codec = "libx264"
+crf = 23

@@ -13,13 +13,17 @@ use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 
 use polars::prelude::*;
+use tokio::runtime::Handle;
 
 use roboflow_core::{Result, RoboflowError};
+use roboflow_storage::object_store;
 
 use super::frame::LerobotFrame;
 use crate::common::ImageData;
+use crate::common::rsmpeg_s3_encoder::RsmpegS3Encoder;
 use crate::common::video::{VideoEncoderConfig, VideoFrame};
 use crate::lerobot::video_profiles::ResolvedConfig;
 
@@ -141,6 +145,15 @@ pub struct IncrementalFlusher {
     /// Whether using cloud storage (affects upload queuing)
     use_cloud_storage: bool,
 
+    /// Object store for S3/OSS upload (when use_cloud_storage=true)
+    object_store: Option<Arc<dyn object_store::ObjectStore>>,
+
+    /// Tokio runtime handle for async S3 operations
+    runtime: Option<Handle>,
+
+    /// S3/OSS URL prefix for direct uploads
+    s3_prefix: Option<String>,
+
     /// Current chunk index
     current_chunk: usize,
 
@@ -174,12 +187,31 @@ impl IncrementalFlusher {
             video_config,
             fps,
             use_cloud_storage,
+            object_store: None,
+            runtime: None,
+            s3_prefix: None,
             current_chunk: 0,
             frame_buffer: Vec::new(),
             image_buffers: HashMap::new(),
             stats: ChunkStats::default(),
             chunk_metadata: Vec::new(),
         }
+    }
+
+    /// Set S3 upload parameters for direct cloud storage encoding.
+    ///
+    /// When object_store is provided, videos are encoded and uploaded directly
+    /// to S3/OSS without intermediate local files.
+    pub fn with_s3_upload(
+        mut self,
+        object_store: Arc<dyn object_store::ObjectStore>,
+        runtime: Handle,
+        s3_prefix: String,
+    ) -> Self {
+        self.object_store = Some(object_store);
+        self.runtime = Some(runtime);
+        self.s3_prefix = Some(s3_prefix);
+        self
     }
 
     /// Add a frame to the buffer. Returns Some(chunk_metadata) if a flush occurred.
@@ -470,41 +502,112 @@ impl IncrementalFlusher {
 
     /// Encode videos for current chunk.
     fn encode_chunk_videos(&self, chunk_dir: &Path) -> Result<Vec<(PathBuf, String)>> {
-        use crate::common::video::Mp4Encoder;
+        use crate::common::rsmpeg_encoder::RsmpegMp4Encoder;
         use crate::lerobot::writer::encoding::build_frame_buffer_static;
 
         let encoder_config = self.video_config.to_encoder_config(self.fps);
         let mut video_files = Vec::new();
+
+        // Check if we should use S3 encoder (direct upload)
+        let use_s3_encoder =
+            self.object_store.is_some() && self.runtime.is_some() && self.s3_prefix.is_some();
 
         for (camera, images) in &self.image_buffers {
             if images.is_empty() {
                 continue;
             }
 
-            let camera_dir = chunk_dir.join(camera);
-            fs::create_dir_all(&camera_dir)?;
-
             let (buffer, _skipped) = build_frame_buffer_static(images)?;
             if buffer.is_empty() {
                 continue;
             }
 
-            let video_path = camera_dir.join(format!("episode_{:06}.mp4", self.episode_index));
+            if use_s3_encoder {
+                // Use S3 encoder for direct upload (no local files)
+                let object_store = self.object_store.as_ref().unwrap().clone();
+                let runtime = self.runtime.as_ref().unwrap().clone();
+                let s3_prefix = self.s3_prefix.as_ref().unwrap();
+                let s3_encoder_config = crate::common::rsmpeg_s3_encoder::RsmpegS3EncoderConfig {
+                    video: encoder_config.clone(),
+                };
 
-            let encoder = Mp4Encoder::with_config(encoder_config.clone());
-            encoder.encode_buffer(&buffer, &video_path).map_err(|e| {
-                RoboflowError::encode("VideoEncoder", format!("Failed to encode video: {}", e))
-            })?;
+                // Build S3 path per LeRobot v2.1 spec: s3_prefix/videos/chunk-XXX/camera/episode_X.mp4
+                let s3_path = format!(
+                    "{}/videos/chunk-{:03}/{}/episode_{:06}.mp4",
+                    s3_prefix.trim_end_matches('/'),
+                    self.current_chunk,
+                    camera,
+                    self.episode_index
+                );
 
-            tracing::debug!(
-                camera = %camera,
-                frames = buffer.len(),
-                path = %video_path.display(),
-                "Encoded chunk video"
-            );
+                let mut encoder =
+                    RsmpegS3Encoder::new(&s3_path, object_store, runtime, s3_encoder_config)
+                        .map_err(|e| {
+                            RoboflowError::encode(
+                                "VideoEncoder",
+                                format!("Failed to create S3 encoder: {}", e),
+                            )
+                        })?;
 
-            if self.use_cloud_storage {
-                video_files.push((video_path.clone(), camera.clone()));
+                // Add all images as ImageData (convert from VideoFrame)
+                for frame in &buffer.frames {
+                    let image_data = crate::common::ImageData::new(
+                        frame.width,
+                        frame.height,
+                        frame.data.clone(),
+                    );
+                    encoder.add_frame(&image_data).map_err(|e| {
+                        RoboflowError::encode("VideoEncoder", format!("Failed to add frame: {}", e))
+                    })?;
+                }
+
+                // Finalize and upload directly to S3
+                let (_url, frames_encoded) = encoder.finalize().map_err(|e| {
+                    RoboflowError::encode(
+                        "VideoEncoder",
+                        format!("Failed to finalize S3 encoder: {}", e),
+                    )
+                })?;
+
+                tracing::debug!(
+                    camera = %camera,
+                    frames = frames_encoded,
+                    s3_path = %s3_path,
+                    "Encoded and uploaded chunk video to S3"
+                );
+
+                // Track as local path for consistency (won't be used for upload since already uploaded)
+                let video_path = PathBuf::from(&s3_path);
+                if self.use_cloud_storage {
+                    video_files.push((video_path, camera.clone()));
+                }
+            } else {
+                // Local encoding
+                let camera_dir = chunk_dir.join(camera);
+                fs::create_dir_all(&camera_dir)?;
+
+                let video_path = camera_dir.join(format!("episode_{:06}.mp4", self.episode_index));
+
+                // Use native rsmpeg encoder
+                RsmpegMp4Encoder::with_config(encoder_config.clone())
+                    .encode_buffer(&buffer, &video_path)
+                    .map_err(|e| {
+                        RoboflowError::encode(
+                            "VideoEncoder",
+                            format!("Failed to encode video: {}", e),
+                        )
+                    })?;
+
+                tracing::debug!(
+                    camera = %camera,
+                    frames = buffer.len(),
+                    path = %video_path.display(),
+                    "Encoded chunk video"
+                );
+
+                if self.use_cloud_storage {
+                    video_files.push((video_path.clone(), camera.clone()));
+                }
             }
         }
 

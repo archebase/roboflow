@@ -168,7 +168,15 @@ impl FromStr for StorageUrl {
                 ))),
             }
         } else {
-            // No scheme - treat as local path
+            // No scheme - treat as local path, but reject malformed S3/OSS URLs
+            // (e.g. "s3:" or "s3:/bucket" missing "//") to avoid silently writing
+            // to a local directory named "s3:" instead of S3
+            if s.starts_with("s3:") || s.starts_with("oss:") {
+                return Err(StorageError::invalid_path(format!(
+                    "malformed cloud URL '{}': use s3://bucket/path or oss://bucket/path (double slash required)",
+                    s
+                )));
+            }
             Ok(Self::Local {
                 path: PathBuf::from(s),
             })
@@ -422,6 +430,28 @@ mod tests {
     #[test]
     fn test_parse_empty_bucket() {
         let result = StorageUrl::from_str("s3:///file.txt");
+        assert!(matches!(result, Err(StorageError::InvalidPath(_))));
+    }
+
+    #[test]
+    fn test_parse_malformed_s3_url_single_slash() {
+        // s3:/bucket (missing one /) was incorrectly treated as local path, creating dir "s3:"
+        let result = StorageUrl::from_str("s3:/roboflow-datasets");
+        assert!(matches!(result, Err(StorageError::InvalidPath(_))));
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("malformed"));
+        assert!(err_msg.contains("s3://"));
+    }
+
+    #[test]
+    fn test_parse_malformed_s3_url_scheme_only() {
+        let result = StorageUrl::from_str("s3:");
+        assert!(matches!(result, Err(StorageError::InvalidPath(_))));
+    }
+
+    #[test]
+    fn test_parse_malformed_oss_url() {
+        let result = StorageUrl::from_str("oss:/bucket/path");
         assert!(matches!(result, Err(StorageError::InvalidPath(_))));
     }
 

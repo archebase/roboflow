@@ -34,6 +34,9 @@
 //! `KeyBuilder` or `*Keys` types to construct proper prefix-based keys.
 
 use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::time::sleep;
 
 use super::config::TikvConfig;
 use super::error::{Result, TikvError};
@@ -480,7 +483,47 @@ impl TikvClient {
     ///
     /// Uses a **pessimistic transaction** so the read acquires a row lock,
     /// preventing race conditions between concurrent lock acquisition attempts.
+    ///
+    /// Retries on transient errors (WriteConflict, PessimisticLock, etc.) with
+    /// exponential backoff using `max_retries` and `retry_base_delay_ms`.
     pub async fn acquire_lock(
+        &self,
+        resource: &str,
+        owner: &str,
+        ttl_seconds: i64,
+    ) -> Result<bool> {
+        let max_retries = self.config.max_retries;
+        let base_delay_ms = self.config.retry_base_delay_ms;
+
+        for attempt in 0..=max_retries {
+            match self.acquire_lock_once(resource, owner, ttl_seconds).await {
+                Ok(acquired) => return Ok(acquired),
+                Err(e) => {
+                    if !e.is_retryable() {
+                        return Err(e);
+                    }
+                    if attempt < max_retries {
+                        let delay_ms = base_delay_ms.saturating_mul(2_u64.pow(attempt));
+                        let delay = Duration::from_millis(delay_ms);
+                        tracing::warn!(
+                            resource = %resource,
+                            attempt = attempt + 1,
+                            max = max_retries + 1,
+                            error = %e,
+                            "Lock acquisition failed with retryable error, retrying"
+                        );
+                        sleep(delay).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        unreachable!("retry loop always returns via Ok or Err")
+    }
+
+    /// Single attempt to acquire a lock (no retry). Used internally by `acquire_lock`.
+    async fn acquire_lock_once(
         &self,
         resource: &str,
         owner: &str,
@@ -493,71 +536,51 @@ impl TikvClient {
             "Attempting to acquire lock"
         );
 
-        {
-            let inner = self.inner.as_ref().ok_or_else(|| {
-                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
-            })?;
+        let inner = self.inner.as_ref().ok_or_else(|| {
+            TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+        })?;
 
-            let key = LockKeys::lock(resource);
-            let mut txn = inner
-                .begin_pessimistic()
+        let key = LockKeys::lock(resource);
+        let mut txn = inner
+            .begin_pessimistic()
+            .await
+            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+        // Run transactional logic; on any error we must rollback before returning
+        let body_result: Result<bool> = async {
+            let current = txn
+                .get(key.clone())
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
+            let acquired = match current {
+                Some(data) => {
+                    let existing: LockRecord = bincode::deserialize(&data)
+                        .map_err(|e| TikvError::Deserialization(e.to_string()))?;
 
-            // Run transactional logic; on any error we must rollback before returning
-            let body_result: Result<bool> = async {
-                let current = txn
-                    .get(key.clone())
-                    .await
-                    .map_err(|e| TikvError::ClientError(e.to_string()))?;
-                let acquired = match current {
-                    Some(data) => {
-                        let existing: LockRecord = bincode::deserialize(&data)
-                            .map_err(|e| TikvError::Deserialization(e.to_string()))?;
-
-                        if existing.is_owned_by(owner) {
-                            let mut lock = existing;
-                            lock.extend(ttl_seconds);
-                            let new_data = bincode::serialize(&lock)
-                                .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                            txn.put(key, new_data)
-                                .await
-                                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-                            tracing::debug!(
-                                resource = %resource,
-                                owner = %owner,
-                                new_version = lock.version,
-                                "Lock extended"
-                            );
-                            true
-                        } else if !existing.is_expired() {
-                            tracing::debug!(
-                                resource = %resource,
-                                owner = %owner,
-                                current_owner = %existing.owner,
-                                "Lock held by another owner"
-                            );
-                            false
-                        } else {
-                            let lock = LockRecord::new(
-                                resource.to_string(),
-                                owner.to_string(),
-                                ttl_seconds,
-                            );
-                            let data = bincode::serialize(&lock)
-                                .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                            txn.put(key, data)
-                                .await
-                                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-                            tracing::info!(
-                                resource = %resource,
-                                owner = %owner,
-                                "Lock acquired (was expired)"
-                            );
-                            true
-                        }
-                    }
-                    None => {
+                    if existing.is_owned_by(owner) {
+                        let mut lock = existing;
+                        lock.extend(ttl_seconds);
+                        let new_data = bincode::serialize(&lock)
+                            .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                        txn.put(key, new_data)
+                            .await
+                            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                        tracing::debug!(
+                            resource = %resource,
+                            owner = %owner,
+                            new_version = lock.version,
+                            "Lock extended"
+                        );
+                        true
+                    } else if !existing.is_expired() {
+                        tracing::debug!(
+                            resource = %resource,
+                            owner = %owner,
+                            current_owner = %existing.owner,
+                            "Lock held by another owner"
+                        );
+                        false
+                    } else {
                         let lock =
                             LockRecord::new(resource.to_string(), owner.to_string(), ttl_seconds);
                         let data = bincode::serialize(&lock)
@@ -568,26 +591,41 @@ impl TikvClient {
                         tracing::info!(
                             resource = %resource,
                             owner = %owner,
-                            "Lock acquired (new lock)"
+                            "Lock acquired (was expired)"
                         );
                         true
                     }
-                };
-                Ok(acquired)
-            }
-            .await;
-
-            match body_result {
-                Ok(acquired) => {
-                    txn.commit()
+                }
+                None => {
+                    let lock =
+                        LockRecord::new(resource.to_string(), owner.to_string(), ttl_seconds);
+                    let data = bincode::serialize(&lock)
+                        .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                    txn.put(key, data)
                         .await
                         .map_err(|e| TikvError::ClientError(e.to_string()))?;
-                    Ok(acquired)
+                    tracing::info!(
+                        resource = %resource,
+                        owner = %owner,
+                        "Lock acquired (new lock)"
+                    );
+                    true
                 }
-                Err(e) => {
-                    let _ = txn.rollback().await;
-                    Err(e)
-                }
+            };
+            Ok(acquired)
+        }
+        .await;
+
+        match body_result {
+            Ok(acquired) => {
+                txn.commit()
+                    .await
+                    .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                Ok(acquired)
+            }
+            Err(e) => {
+                let _ = txn.rollback().await;
+                Err(e)
             }
         }
     }

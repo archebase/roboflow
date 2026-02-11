@@ -517,8 +517,11 @@ impl LerobotWriter {
             );
 
             // Use video_files returned by encode_videos (contains (camera, PathBuf) tuples)
-            // When use_cloud_storage is true, encode_videos returns the video files to upload
-            // The video_files vector is empty when use_cloud_storage is false
+            // When use_cloud_storage is true with OssStorage:
+            //   - encode_videos_with_coordinator uploads videos directly to S3 and returns empty video_files
+            //   - Only the parquet file needs to be uploaded
+            // When use_cloud_storage is false:
+            //   - video_files is empty (no upload needed)
             let video_paths_for_upload: Vec<(String, PathBuf)> = if self.use_cloud_storage {
                 // Use the video_files returned by encode_videos
                 video_files
@@ -526,22 +529,10 @@ impl LerobotWriter {
                     .map(|(path, camera)| (camera, path))
                     .collect()
             } else {
-                // Fallback: reconstruct from image_buffers (should not happen with coordinator)
-                self.image_buffers
-                    .keys()
-                    .filter(|camera| {
-                        self.image_buffers
-                            .get(&**camera)
-                            .is_some_and(|v| !v.is_empty())
-                    })
-                    .map(|camera| {
-                        let video_path = self.output_dir.join(format!(
-                            "videos/chunk-000/{}/episode_{:06}.mp4",
-                            camera, self.episode_index
-                        ));
-                        (camera.clone(), video_path)
-                    })
-                    .collect()
+                // Local storage: no upload coordinator should be used
+                return Err(roboflow_core::RoboflowError::other(
+                    "Upload coordinator should not be used with local storage (use_cloud_storage=false)",
+                ));
             };
 
             tracing::info!(
@@ -877,14 +868,12 @@ impl LerobotWriter {
         // Finalize and get results
         let results = coordinator.finalize()?;
 
-        // Convert results to return format
-        let video_files: Vec<(PathBuf, String)> = results
-            .into_keys()
-            .map(|camera| {
-                // Use camera name as path (for consistency with existing API)
-                (PathBuf::from(&camera), camera.clone())
-            })
-            .collect();
+        let camera_count = results.len();
+
+        // When using StreamingCoordinator, videos are already uploaded to S3 directly.
+        // Return empty video_files so the upload coordinator won't try to upload non-existent local files.
+        // Only the parquet file needs to be uploaded.
+        let video_files: Vec<(PathBuf, String)> = Vec::new();
 
         let encode_stats = EncodeStats {
             images_encoded: total_images,
@@ -896,9 +885,9 @@ impl LerobotWriter {
 
         tracing::info!(
             episode_index = self.episode_index,
-            cameras = video_files.len(),
+            cameras = camera_count,
             images_encoded = encode_stats.images_encoded,
-            "Completed encoding with streaming coordinator"
+            "Completed encoding with streaming coordinator (videos already uploaded to S3)"
         );
 
         Ok((video_files, encode_stats))

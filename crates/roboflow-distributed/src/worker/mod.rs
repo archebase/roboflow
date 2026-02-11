@@ -226,6 +226,20 @@ impl Worker {
         };
 
         // Determine if we need cloud storage
+        // Reject malformed cloud URLs (e.g. "s3:" or "s3:/bucket" missing "//") to avoid
+        // silently writing to a local directory named "s3:" instead of S3
+        let output_path_str = output_path.to_string_lossy();
+        if (output_path_str.starts_with("s3:") && !output_path_str.starts_with("s3://"))
+            || (output_path_str.starts_with("oss:") && !output_path_str.starts_with("oss://"))
+        {
+            return ProcessingResult::Failed {
+                error: format!(
+                    "Malformed cloud URL '{}': use s3://bucket/path or oss://bucket/path (double slash required)",
+                    output_path_str
+                ),
+            };
+        }
+
         let (has_cloud_storage, storage, output_prefix) =
             if output_path.starts_with("s3://") || output_path.starts_with("oss://") {
                 use std::str::FromStr;

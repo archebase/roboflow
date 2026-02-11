@@ -261,48 +261,174 @@ impl ImageDecoderBackend for CpuImageDecoder {
 
 impl CpuImageDecoder {
     fn decode_jpeg(&self, data: &[u8]) -> Result<DecodedImage> {
-        use image::ImageDecoder;
-
         let cursor = Cursor::new(data);
         let decoder = image::codecs::jpeg::JpegDecoder::new(cursor)
             .map_err(|e| ImageError::DecodeFailed(format!("JPEG decoder init: {}", e)))?;
 
-        let dimensions = decoder.dimensions();
-        let width = dimensions.0;
-        let height = dimensions.1;
-        let total_bytes = decoder.total_bytes() as usize;
-
-        // Allocate using the configured memory strategy
-        let mut rgb_data = allocate(total_bytes, self.memory_strategy).data;
-
-        decoder
-            .read_image(&mut rgb_data)
-            .map_err(|e| ImageError::DecodeFailed(format!("JPEG decode: {}", e)))?;
-
-        Ok(DecodedImage::new(width, height, rgb_data))
+        self.decode_with_image_decoder(decoder, "JPEG")
     }
 
     fn decode_png(&self, data: &[u8]) -> Result<DecodedImage> {
-        use image::ImageDecoder;
-
         let cursor = Cursor::new(data);
         let decoder = image::codecs::png::PngDecoder::new(cursor)
             .map_err(|e| ImageError::DecodeFailed(format!("PNG decoder init: {}", e)))?;
 
+        self.decode_with_image_decoder(decoder, "PNG")
+    }
+
+    /// Decode using any ImageDecoder and convert output to RGB8.
+    ///
+    /// Handles non-RGB formats (e.g. L8, L16, La8, Rgba8) by converting to RGB.
+    /// This fixes panics when decoding compressedDepth (16-bit PNG) or grayscale images.
+    fn decode_with_image_decoder<D>(&self, decoder: D, format_name: &str) -> Result<DecodedImage>
+    where
+        D: image::ImageDecoder,
+    {
         let dimensions = decoder.dimensions();
         let width = dimensions.0;
         let height = dimensions.1;
+        let color_type = decoder.color_type();
         let total_bytes = decoder.total_bytes() as usize;
 
-        // Allocate using the configured memory strategy
-        let mut rgb_data = allocate(total_bytes, self.memory_strategy).data;
+        // Allocate for raw decode output
+        let mut raw_data = allocate(total_bytes, self.memory_strategy).data;
 
         decoder
-            .read_image(&mut rgb_data)
-            .map_err(|e| ImageError::DecodeFailed(format!("PNG decode: {}", e)))?;
+            .read_image(&mut raw_data)
+            .map_err(|e| ImageError::DecodeFailed(format!("{} decode: {}", format_name, e)))?;
+
+        // Convert to RGB8 if needed (handles L16, L8, La8, Rgba8, etc.)
+        let rgb_data = raw_to_rgb8(width, height, &raw_data, color_type)?;
 
         Ok(DecodedImage::new(width, height, rgb_data))
     }
+}
+
+/// Convert raw decoded image buffer to RGB8 based on color type.
+///
+/// Handles formats that produce different byte layouts (e.g. 16-bit depth PNG)
+/// so the pipeline can assume RGB for video encoding.
+fn raw_to_rgb8(
+    width: u32,
+    height: u32,
+    raw: &[u8],
+    color_type: image::ColorType,
+) -> Result<Vec<u8>> {
+    use image::ColorType;
+
+    let pixel_count = (width as usize) * (height as usize);
+    let expected_rgb_size = pixel_count * 3;
+
+    let rgb_data = match color_type {
+        ColorType::Rgb8 => {
+            if raw.len() != expected_rgb_size {
+                return Err(ImageError::InvalidData(format!(
+                    "Rgb8 data size {} doesn't match expected {} for {}x{} image",
+                    raw.len(),
+                    expected_rgb_size,
+                    width,
+                    height
+                )));
+            }
+            raw.to_vec()
+        }
+        ColorType::L8 => {
+            // 1 byte per pixel grayscale -> replicate to RGB
+            let mut rgb = Vec::with_capacity(expected_rgb_size);
+            for &g in raw {
+                rgb.push(g);
+                rgb.push(g);
+                rgb.push(g);
+            }
+            rgb
+        }
+        ColorType::La8 => {
+            // 2 bytes per pixel (L, A) -> use L for RGB
+            let mut rgb = Vec::with_capacity(expected_rgb_size);
+            for chunk in raw.chunks_exact(2) {
+                let g = chunk[0];
+                rgb.push(g);
+                rgb.push(g);
+                rgb.push(g);
+            }
+            rgb
+        }
+        ColorType::L16 => {
+            // 2 bytes per pixel 16-bit grayscale (native endian) -> scale to 8-bit, replicate to RGB
+            let mut rgb = Vec::with_capacity(expected_rgb_size);
+            for chunk in raw.chunks_exact(2) {
+                let v = u16::from_ne_bytes([chunk[0], chunk[1]]);
+                let g = (v >> 8) as u8; // use high byte for 8-bit
+                rgb.push(g);
+                rgb.push(g);
+                rgb.push(g);
+            }
+            rgb
+        }
+        ColorType::La16 => {
+            // 4 bytes per pixel (L16, A16) -> use L high byte for RGB
+            let mut rgb = Vec::with_capacity(expected_rgb_size);
+            for chunk in raw.chunks_exact(4) {
+                let v = u16::from_ne_bytes([chunk[0], chunk[1]]);
+                let g = (v >> 8) as u8;
+                rgb.push(g);
+                rgb.push(g);
+                rgb.push(g);
+            }
+            rgb
+        }
+        ColorType::Rgba8 => {
+            // 4 bytes per pixel -> drop alpha
+            let mut rgb = Vec::with_capacity(expected_rgb_size);
+            for chunk in raw.chunks_exact(4) {
+                rgb.push(chunk[0]);
+                rgb.push(chunk[1]);
+                rgb.push(chunk[2]);
+            }
+            rgb
+        }
+        ColorType::Rgb16 => {
+            // 6 bytes per pixel -> scale to 8-bit
+            let mut rgb = Vec::with_capacity(expected_rgb_size);
+            for chunk in raw.chunks_exact(6) {
+                let r = u16::from_ne_bytes([chunk[0], chunk[1]]);
+                let g = u16::from_ne_bytes([chunk[2], chunk[3]]);
+                let b = u16::from_ne_bytes([chunk[4], chunk[5]]);
+                rgb.push((r >> 8) as u8);
+                rgb.push((g >> 8) as u8);
+                rgb.push((b >> 8) as u8);
+            }
+            rgb
+        }
+        ColorType::Rgba16 => {
+            // 8 bytes per pixel -> scale to 8-bit, drop alpha
+            let mut rgb = Vec::with_capacity(expected_rgb_size);
+            for chunk in raw.chunks_exact(8) {
+                let r = u16::from_ne_bytes([chunk[0], chunk[1]]);
+                let g = u16::from_ne_bytes([chunk[2], chunk[3]]);
+                let b = u16::from_ne_bytes([chunk[4], chunk[5]]);
+                rgb.push((r >> 8) as u8);
+                rgb.push((g >> 8) as u8);
+                rgb.push((b >> 8) as u8);
+            }
+            rgb
+        }
+        ColorType::Rgb32F | ColorType::Rgba32F => {
+            return Err(ImageError::UnsupportedFormat(format!(
+                "32-bit float color type {:?} not supported for RGB conversion",
+                color_type
+            )));
+        }
+        _ => {
+            return Err(ImageError::UnsupportedFormat(format!(
+                "Color type {:?} not supported for RGB conversion",
+                color_type
+            )));
+        }
+    };
+
+    debug_assert_eq!(rgb_data.len(), expected_rgb_size);
+    Ok(rgb_data)
 }
 
 #[cfg(test)]
@@ -431,5 +557,31 @@ mod tests {
 
         let result = decoder.decode(&rgb_data, ImageFormat::Rgb8);
         assert!(matches!(result, Err(ImageError::InvalidData(_))));
+    }
+
+    #[test]
+    fn test_decode_l16_png_converts_to_rgb() {
+        // 16-bit grayscale PNG (2 bytes per pixel) - simulates compressedDepth output.
+        // 2x2 L16: 4 pixels * 2 bytes = 8 bytes raw.
+        // Native-endian: pixel 0 = 0x0100 (256), pixel 1 = 0x0200 (512), etc.
+        let mut png_data = Vec::new();
+        use image::ImageEncoder;
+        let raw_l16: Vec<u8> = [0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04]
+            .iter()
+            .copied()
+            .collect(); // 2x2 L16 image
+        image::codecs::png::PngEncoder::new(&mut png_data)
+            .write_image(&raw_l16, 2, 2, image::ExtendedColorType::L16)
+            .expect("write test PNG");
+
+        let decoder = CpuImageDecoder::default_config();
+        let result = decoder.decode(&png_data, ImageFormat::Png);
+        assert!(result.is_ok(), "L16 PNG should decode: {:?}", result);
+        let decoded = result.unwrap();
+        assert_eq!(decoded.width, 2);
+        assert_eq!(decoded.height, 2);
+        assert_eq!(decoded.data.len(), 12); // 2*2*3 RGB
+        // L16 values 256,512,768,1024 (native endian) -> high byte 1,2,3,4 -> RGB replicated
+        assert_eq!(decoded.data, vec![1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]);
     }
 }

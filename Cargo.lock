@@ -4174,6 +4174,7 @@ dependencies = [
  "mcap",
  "memmap2 0.9.9",
  "num_cpus",
+ "object_store",
  "paste",
  "pest",
  "pest_derive",

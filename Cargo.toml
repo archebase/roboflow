@@ -160,6 +160,8 @@ criterion = "0.5"
 tempfile = "3.10"
 roboflow-distributed = { workspace = true }
 bytes = "1.7"
+futures = "0.3"
+object_store = "0.11"
 
 # Binaries
 [[bin]]

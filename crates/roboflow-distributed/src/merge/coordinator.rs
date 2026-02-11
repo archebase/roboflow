@@ -271,7 +271,7 @@ impl MergeCoordinator {
         Self {
             tikv,
             _config: MergeConfig::default(),
-            storage_factory: StorageFactory::default(),
+            storage_factory: StorageFactory::from_env(),
             temp_dir: std::env::temp_dir(),
             semaphore: MergeSemaphore::with_defaults(),
         }
@@ -282,7 +282,7 @@ impl MergeCoordinator {
         Self {
             tikv,
             _config,
-            storage_factory: StorageFactory::default(),
+            storage_factory: StorageFactory::from_env(),
             temp_dir: std::env::temp_dir(),
             semaphore: MergeSemaphore::with_defaults(),
         }

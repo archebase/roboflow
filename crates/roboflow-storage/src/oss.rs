@@ -712,6 +712,10 @@ impl Storage for OssStorage {
         Ok(Box::new(reader))
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn download_file(&self, remote_path: &Path, local_path: &Path) -> Result<u64> {
         let object_size = self.size(remote_path)?;
         let config = crate::StreamingConfig::default();

@@ -87,10 +87,12 @@ impl TikvError {
                     || msg.contains("key_version")
             }
             Self::ClientError(msg) => {
-                // Check if it's a write conflict (retryable)
+                // Check if it's a write conflict or pessimistic lock conflict (retryable)
                 msg.contains("WriteConflict")
                     || msg.contains("Write Conflict")
                     || msg.contains("key_version")
+                    || msg.contains("PessimisticLock")
+                    || msg.contains("PessimisticRetry")
             }
             Self::LockAcquisitionFailed(_) => true,
             _ => false,

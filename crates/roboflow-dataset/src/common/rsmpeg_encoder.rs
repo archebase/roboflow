@@ -307,6 +307,10 @@ impl RsmpegEncoder {
         };
 
         codec_context.set_pix_fmt(pix_fmt);
+        // Set color range to full (JPEG) - RGB from decoded images uses full range
+        unsafe {
+            (*codec_context.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
+        }
 
         // Set CRF and preset via options for libx264
         if config.codec.contains("x264") {
@@ -481,14 +485,23 @@ impl RsmpegEncoder {
         }
 
         // =============================================================
-        // STEP 3: Set timestamp
+        // STEP 3: Set color range (full/JPEG) to avoid VideoToolbox warning
+        // =============================================================
+        // RGB from decoded images uses full range (0-255). Explicitly set
+        // color_range so VideoToolbox/NVENC don't assume MPEG range.
+        unsafe {
+            (*yuv_frame.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
+        }
+
+        // =============================================================
+        // STEP 4: Set timestamp
         // =============================================================
 
         yuv_frame.set_pts(self.frame_count as i64);
         self.frame_count += 1;
 
         // =============================================================
-        // STEP 4: Encode frame
+        // STEP 5: Encode frame
         // =============================================================
 
         let codec_context = self.codec_context.as_mut().unwrap();
@@ -499,7 +512,7 @@ impl RsmpegEncoder {
         })?;
 
         // =============================================================
-        // STEP 5: Receive and send encoded packets
+        // STEP 6: Receive and send encoded packets
         // =============================================================
 
         self.receive_and_send_packets()?;
@@ -986,6 +999,10 @@ impl RsmpegMp4Encoder {
         codec_context.set_gop_size(self.config.fps as i32); // 1 second keyframe interval
         codec_context.set_max_b_frames(0); // Disable B-frames for simplicity
         codec_context.set_pix_fmt(pixel_format_enum);
+        // Set color range to full (JPEG) - RGB from decoded images uses full range
+        unsafe {
+            (*codec_context.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
+        }
 
         // Open codec
         codec_context.open(None).map_err(|e| {
@@ -1098,6 +1115,8 @@ impl RsmpegMp4Encoder {
                     yuv_frame.data_mut().as_mut_ptr(),
                     yuv_frame.linesize_mut().as_mut_ptr(),
                 );
+                // Set color range to full (JPEG) to avoid VideoToolbox warning
+                (*yuv_frame.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
             }
 
             yuv_frame.set_pts(frame_count as i64);

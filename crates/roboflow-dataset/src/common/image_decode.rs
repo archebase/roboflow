@@ -58,10 +58,6 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
     if img.data.len() > 8
         && let Some(decoded) = try_decode_payload(&img.data[8..])
     {
-        tracing::debug!(
-            original_len = img.data.len(),
-            "Decoded image after skipping 8-byte header"
-        );
         return Some(decoded);
     }
 
@@ -69,10 +65,6 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
     if img.data.len() > 4
         && let Some(decoded) = try_decode_payload(&img.data[4..])
     {
-        tracing::debug!(
-            original_len = img.data.len(),
-            "Decoded image after skipping 4-byte header"
-        );
         return Some(decoded);
     }
 
@@ -85,10 +77,6 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
             .position(|w| w[0] == 0xFF && w[1] == 0xD8 && w[2] == 0xFF)
             && let Some(decoded) = try_decode_payload(&data[pos..])
         {
-            tracing::debug!(
-                skipped_bytes = pos,
-                "Decoded image after finding JPEG magic bytes"
-            );
             return Some(decoded);
         }
         // Find PNG magic (89 50 4E 47)
@@ -97,10 +85,6 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
             .position(|w| w[0] == 0x89 && &w[1..4] == b"PNG")
             && let Some(decoded) = try_decode_payload(&data[pos..])
         {
-            tracing::debug!(
-                skipped_bytes = pos,
-                "Decoded image after finding PNG magic bytes"
-            );
             return Some(decoded);
         }
     }
