@@ -17,19 +17,7 @@
 //!
 //! ## Example
 //!
-//! ```no_run
-//! use roboflow_dataset::{PipelineExecutor, PipelineConfig};
-//! use roboflow_dataset::streaming::config::StreamingConfig;
-//! use roboflow_sources::SourceConfig;
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Process MCAP to LeRobot dataset
-//! let streaming_config = StreamingConfig::with_fps(30);
-//! let pipeline_config = PipelineConfig::new(streaming_config);
-//! let executor = PipelineExecutor::new(writer, pipeline_config);
-//! # Ok(())
-//! # }
-//! ```
+//! See the `roboflow-dataset` and `roboflow-sources` crates for detailed examples.
 
 // =============================================================================
 // Global Allocator
