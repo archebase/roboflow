@@ -1410,6 +1410,30 @@ impl LerobotWriterBuilder {
                         "output_dir is required (or use storage() for cloud storage)",
                     )
                 })?;
+
+                // Validate that output_dir is not a cloud storage URL
+                let output_dir_str = output_dir.as_os_str().to_string_lossy();
+                if output_dir_str.starts_with("s3://")
+                    || output_dir_str.starts_with("oss://")
+                    || output_dir_str.starts_with("S3://")
+                    || output_dir_str.starts_with("OSS://")
+                {
+                    return Err(roboflow_core::RoboflowError::parse(
+                        "LerobotWriterBuilder",
+                        format!(
+                            "output_dir appears to be a cloud storage URL ('{}'). For cloud storage, use storage() method with StorageFactory instead.\n\n\
+                             Example:\n\n\
+                               let storage = StorageFactory::new().create(\"{}\")?;\n\n\
+                               LerobotWriter::builder()\n\n\
+                                   .storage(storage)\n\n\
+                                   .output_prefix(\"datasets\")\n\n\
+                                   .local_buffer(\"/tmp/roboflow_buffer\")\n\n\
+                                   .config(config)",
+                            output_dir_str, output_dir_str
+                        ),
+                    ));
+                }
+
                 let storage =
                     std::sync::Arc::new(roboflow_storage::LocalStorage::new(&output_dir)) as _;
                 let local_buffer = output_dir.clone();
