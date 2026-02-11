@@ -264,8 +264,10 @@ impl Worker {
                 let prefix = storage_url.path().trim_end_matches('/').to_string();
                 (true, storage, Some(prefix))
             } else {
+                // Use local temp directory as buffer instead of treating cloud URL as local path
+                let temp_dir = std::env::temp_dir();
                 let local_storage: Arc<dyn roboflow_storage::Storage> =
-                    Arc::new(roboflow_storage::LocalStorage::new(&output_path));
+                    Arc::new(roboflow_storage::LocalStorage::new(&temp_dir));
                 (false, local_storage, None)
             };
 
