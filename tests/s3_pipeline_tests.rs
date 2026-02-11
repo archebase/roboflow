@@ -14,7 +14,6 @@
 //! - Incremental flushing behavior
 
 use std::fs;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use roboflow::lerobot::upload::{EpisodeFiles, EpisodeUploadCoordinator, UploadConfig};
@@ -418,53 +417,6 @@ fn test_flushing_config_validation() {
         config.should_flush(1500, 1024),
         "Should flush when frames exceeded"
     );
-}
-
-// =============================================================================
-// Test: Chunk metadata tracking
-// =============================================================================
-
-#[test]
-fn test_chunk_metadata() {
-    let metadata = roboflow::lerobot::ChunkMetadata {
-        index: 0,
-        start_frame: 0,
-        end_frame: 1000,
-        frame_count: 1000,
-        parquet_path: PathBuf::from("/test/episode_000000.parquet"),
-        video_files: vec![
-            (PathBuf::from("/test/camera_0.mp4"), "camera_0".to_string()),
-            (PathBuf::from("/test/camera_1.mp4"), "camera_1".to_string()),
-        ],
-        memory_bytes: 512 * 1024 * 1024,
-    };
-
-    assert_eq!(metadata.index, 0);
-    assert_eq!(metadata.frame_count, 1000);
-    assert_eq!(metadata.video_files.len(), 2);
-    assert_eq!(metadata.memory_bytes, 512 * 1024 * 1024);
-}
-
-// =============================================================================
-// Test: Chunk statistics
-// =============================================================================
-
-#[test]
-fn test_chunk_stats() {
-    let mut stats = roboflow::lerobot::ChunkStats::default();
-
-    assert_eq!(stats.chunks_written, 0);
-    assert_eq!(stats.total_frames, 0);
-    assert_eq!(stats.total_video_bytes, 0);
-    assert_eq!(stats.total_parquet_bytes, 0);
-
-    stats.chunks_written = 3;
-    stats.total_frames = 3000;
-    stats.total_video_bytes = 150 * 1024 * 1024;
-    stats.total_parquet_bytes = 10 * 1024 * 1024;
-
-    assert_eq!(stats.chunks_written, 3);
-    assert_eq!(stats.total_frames, 3000);
 }
 
 // =============================================================================

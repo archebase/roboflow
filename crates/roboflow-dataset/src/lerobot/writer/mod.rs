@@ -11,7 +11,6 @@
 //! - Complete metadata files
 
 mod encoding;
-mod flushing;
 mod frame;
 mod parquet;
 mod stats;
@@ -36,8 +35,6 @@ use serde::{Deserialize, Serialize};
 pub use frame::LerobotFrame;
 
 use encoding::{EncodeStats, encode_videos};
-
-pub use flushing::{ChunkMetadata, ChunkStats, FlushingConfig, IncrementalFlusher};
 
 /// Camera intrinsic parameters in LeRobot format.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -626,3 +626,67 @@ fn test_lerobot_frame_count_increment() {
         }
     }
 }
+
+// =============================================================================
+// Cloud Storage URL Validation Tests
+// =============================================================================
+
+#[test]
+fn test_lerobot_builder_rejects_s3_url_in_output_dir() {
+    let _output_dir = test_output_dir("test_s3_url_rejection");
+    let config = test_config();
+
+    // Try to build with s3:// URL in output_dir (without storage() method)
+    let result = LerobotWriter::builder()
+        .output_dir("s3://bucket-name/datasets")
+        .config(config)
+        .build();
+
+    // Should fail with helpful error message
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_lerobot_builder_rejects_oss_url_in_output_dir() {
+    let _output_dir = test_output_dir("test_oss_url_rejection");
+    let config = test_config();
+
+    // Try to build with oss:// URL in output_dir
+    let result = LerobotWriter::builder()
+        .output_dir("oss://bucket-name/datasets")
+        .config(config)
+        .build();
+
+    // Should fail
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_lerobot_builder_rejects_uppercase_s3_url() {
+    let _output_dir = test_output_dir("test_uppercase_s3_rejection");
+    let config = test_config();
+
+    // Try to build with S3:// (uppercase) URL
+    let result = LerobotWriter::builder()
+        .output_dir("S3://bucket-name/datasets")
+        .config(config)
+        .build();
+
+    // Should fail with helpful error message
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_lerobot_builder_rejects_uppercase_oss_url() {
+    let _output_dir = test_output_dir("test_uppercase_oss_rejection");
+    let config = test_config();
+
+    // Try to build with OSS:// (uppercase) URL
+    let result = LerobotWriter::builder()
+        .output_dir("OSS://bucket-name/datasets")
+        .config(config)
+        .build();
+
+    // Should fail with helpful error message
+    assert!(result.is_err());
+}
