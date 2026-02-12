@@ -102,7 +102,10 @@ mod tests {
     fn test_has_sink() {
         // Create a new registry scope for testing
         let registry = roboflow_core::FactoryRegistry::new();
-        registry.register("mock", Box::new(|| Box::new(MockSink) as Box<dyn Sink>) as SinkFactory);
+        registry.register(
+            "mock",
+            Box::new(|| Box::new(MockSink) as Box<dyn Sink>) as SinkFactory,
+        );
 
         assert!(registry.contains("mock"));
         assert!(!registry.contains("other"));
@@ -111,7 +114,10 @@ mod tests {
     #[test]
     fn test_registered_sinks() {
         let registry = roboflow_core::FactoryRegistry::new();
-        registry.register("mock", Box::new(|| Box::new(MockSink) as Box<dyn Sink>) as SinkFactory);
+        registry.register(
+            "mock",
+            Box::new(|| Box::new(MockSink) as Box<dyn Sink>) as SinkFactory,
+        );
 
         let sinks = registry.names();
         assert_eq!(sinks, vec!["mock".to_string()]);
@@ -120,7 +126,10 @@ mod tests {
     #[test]
     fn test_create_sink_error() {
         let registry = roboflow_core::FactoryRegistry::new();
-        registry.register("mock", Box::new(|| Box::new(MockSink) as Box<dyn Sink>) as SinkFactory);
+        registry.register(
+            "mock",
+            Box::new(|| Box::new(MockSink) as Box<dyn Sink>) as SinkFactory,
+        );
 
         let config = SinkConfig::lerobot("/output");
         // Try to get a non-registered sink

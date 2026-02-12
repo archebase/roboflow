@@ -6,13 +6,13 @@
 //!
 //! Configuration for converting ROS bag data to LeRobot v2.1 format.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use roboflow_core::Result;
+use roboflow_core::{Result, Validate, validators};
 
 // Re-export shared config types so existing imports continue to work.
 pub use crate::common::config::DatasetBaseConfig;
@@ -63,53 +63,32 @@ impl LerobotConfig {
     }
 
     /// Validate the configuration for semantic correctness.
-    fn validate(&self) -> Result<()> {
+    fn validate_config(&self) -> Result<()> {
         // Validate FPS > 0
-        if self.dataset.fps == 0 {
-            return Err(roboflow_core::RoboflowError::parse(
-                "LerobotConfig",
-                "dataset.fps must be greater than 0",
-            ));
-        }
+        validators::positive(self.dataset.fps, "dataset.fps")?;
 
         // Validate CRF range (0-51 for H.264)
-        if self.video.crf > 51 {
-            return Err(roboflow_core::RoboflowError::parse(
-                "LerobotConfig",
-                format!("video.crf ({}) must be in range [0-51]", self.video.crf),
-            ));
-        }
+        validators::range(self.video.crf, 0, 51, "video.crf")?;
 
         // Validate streaming config
-        if self.streaming.ring_buffer_size == 0 {
-            return Err(roboflow_core::RoboflowError::parse(
-                "LerobotConfig",
-                "streaming.ring_buffer_size must be greater than 0",
-            ));
-        }
+        validators::positive(self.streaming.ring_buffer_size, "streaming.ring_buffer_size")?;
 
         // Validate upload part size (5MB to 5GB)
         const MIN_PART_SIZE: usize = 5 * 1024 * 1024;
         const MAX_PART_SIZE: usize = 5 * 1024 * 1024 * 1024;
-        if self.streaming.upload_part_size < MIN_PART_SIZE
-            || self.streaming.upload_part_size > MAX_PART_SIZE
-        {
-            return Err(roboflow_core::RoboflowError::parse(
-                "LerobotConfig",
-                format!(
-                    "streaming.upload_part_size must be between {} and {} bytes",
-                    MIN_PART_SIZE, MAX_PART_SIZE
-                ),
-            ));
-        }
+        validators::range(
+            self.streaming.upload_part_size,
+            MIN_PART_SIZE,
+            MAX_PART_SIZE,
+            "streaming.upload_part_size",
+        )?;
 
         // Check for duplicate topics
-        use std::collections::HashSet;
         let mut topics = HashSet::new();
         for mapping in &self.mappings {
             if !topics.insert(&mapping.topic) {
                 return Err(roboflow_core::RoboflowError::parse(
-                    "LerobotConfig",
+                    "mappings",
                     format!("Duplicate topic found: {}", mapping.topic),
                 ));
             }
@@ -117,7 +96,15 @@ impl LerobotConfig {
 
         Ok(())
     }
+}
 
+impl Validate for LerobotConfig {
+    fn validate(&self) -> Result<()> {
+        self.validate_config()
+    }
+}
+
+impl LerobotConfig {
     /// Get mappings by topic.
     pub fn mappings_by_topic(&self) -> HashMap<String, Mapping> {
         let mut map = HashMap::new();

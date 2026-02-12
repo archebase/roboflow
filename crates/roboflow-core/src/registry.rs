@@ -186,11 +186,11 @@ impl std::fmt::Display for Encoding {
 /// ```
 /// use roboflow_core::FactoryRegistry;
 ///
-/// let registry = FactoryRegistry::<Box<dyn Fn() -> String>>::new();
-/// registry.register("greet", Box::new(|| "Hello".to_string()));
+/// let registry = FactoryRegistry::<String>::new();
+/// registry.register("greeting", "Hello".to_string());
 ///
-/// if let Some(factory) = registry.get("greet") {
-///     assert_eq!(factory(), "Hello");
+/// if let Some(value) = registry.get("greeting") {
+///     assert_eq!(value, "Hello");
 /// }
 /// ```
 pub struct FactoryRegistry<V> {
@@ -307,14 +307,13 @@ impl<V> std::ops::Deref for FactoryGuard<'_, V> {
 /// ```
 /// use roboflow_core::GlobalFactoryRegistry;
 ///
-/// static REGISTRY: GlobalFactoryRegistry<Box<dyn Fn() -> i32>> =
-///     GlobalFactoryRegistry::new();
+/// static REGISTRY: GlobalFactoryRegistry<i32> = GlobalFactoryRegistry::new();
 ///
 /// // Lazily initializes on first access
-/// REGISTRY.get_or_init().register("answer", Box::new(|| 42));
+/// REGISTRY.get_or_init().register("answer", 42);
 ///
-/// let factory = REGISTRY.get_or_init().get("answer");
-/// assert_eq!(factory.map(|f| f()), Some(42));
+/// let value = REGISTRY.get_or_init().get("answer");
+/// assert_eq!(value, Some(42));
 /// ```
 pub struct GlobalFactoryRegistry<V> {
     inner: std::sync::OnceLock<FactoryRegistry<V>>,

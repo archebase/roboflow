@@ -97,7 +97,10 @@ mod tests {
     fn test_has_source() {
         // Create a new registry scope for testing
         let registry = roboflow_core::FactoryRegistry::new();
-        registry.register("mock", Box::new(|| Box::new(MockSource) as Box<dyn Source>) as SourceFactory);
+        registry.register(
+            "mock",
+            Box::new(|| Box::new(MockSource) as Box<dyn Source>) as SourceFactory,
+        );
 
         assert!(registry.contains("mock"));
         assert!(!registry.contains("other"));
@@ -106,7 +109,10 @@ mod tests {
     #[test]
     fn test_registered_sources() {
         let registry = roboflow_core::FactoryRegistry::new();
-        registry.register("mock", Box::new(|| Box::new(MockSource) as Box<dyn Source>) as SourceFactory);
+        registry.register(
+            "mock",
+            Box::new(|| Box::new(MockSource) as Box<dyn Source>) as SourceFactory,
+        );
 
         let sources = registry.names();
         assert_eq!(sources, vec!["mock".to_string()]);
@@ -115,7 +121,10 @@ mod tests {
     #[test]
     fn test_create_source_error() {
         let registry = roboflow_core::FactoryRegistry::new();
-        registry.register("mock", Box::new(|| Box::new(MockSource) as Box<dyn Source>) as SourceFactory);
+        registry.register(
+            "mock",
+            Box::new(|| Box::new(MockSource) as Box<dyn Source>) as SourceFactory,
+        );
 
         let config = SourceConfig::mcap("test.mcap");
         // Try to get a non-registered source
@@ -128,18 +137,9 @@ mod tests {
         crate::register_builtin_sources();
 
         // Verify all builtin sources are registered
-        assert!(
-            has_source("bag"),
-            "bag source should be registered"
-        );
-        assert!(
-            has_source("mcap"),
-            "mcap source should be registered"
-        );
-        assert!(
-            has_source("rrd"),
-            "rrd source should be registered"
-        );
+        assert!(has_source("bag"), "bag source should be registered");
+        assert!(has_source("mcap"), "mcap source should be registered");
+        assert!(has_source("rrd"), "rrd source should be registered");
 
         // Verify we can create configs for each type
         let bag_config = SourceConfig::bag("test.bag");

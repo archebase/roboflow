@@ -18,7 +18,9 @@ pub use config::{SourceConfig, SourceType};
 pub use error::{SourceError, SourceResult};
 pub use mcap::McapSource;
 pub use metadata::{SourceMetadata, TopicMetadata};
-pub use registry::{create_source, global_registry, has_source, register_source, registered_sources};
+pub use registry::{
+    create_source, global_registry, has_source, register_source, registered_sources,
+};
 pub use rrd::RrdSource;
 pub use s3_prefix::S3PrefixSource;
 

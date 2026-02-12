@@ -6,6 +6,8 @@
 
 use std::time::Duration;
 
+use roboflow_core::{Result, Validate, validators};
+
 /// Default job poll interval in seconds.
 pub const DEFAULT_POLL_INTERVAL_SECS: u64 = 5;
 
@@ -165,5 +167,41 @@ impl WorkerConfig {
     pub fn with_checkpoint_async(mut self, async_mode: bool) -> Self {
         self.checkpoint_async = async_mode;
         self
+    }
+}
+
+impl Validate for WorkerConfig {
+    fn validate(&self) -> Result<()> {
+        // Validate concurrency settings
+        validators::positive(self.max_concurrent_jobs, "max_concurrent_jobs")?;
+        validators::positive(self.max_attempts, "max_attempts")?;
+        validators::positive(self.expected_workers, "expected_workers")?;
+
+        // Validate intervals
+        validators::positive(
+            self.poll_interval.as_secs(),
+            "poll_interval_secs",
+        )?;
+        validators::positive(
+            self.job_timeout.as_secs(),
+            "job_timeout_secs",
+        )?;
+        validators::positive(
+            self.heartbeat_interval.as_secs(),
+            "heartbeat_interval_secs",
+        )?;
+
+        // Validate checkpoint intervals (can be 0 to disable)
+        validators::non_negative(self.checkpoint_interval_frames, "checkpoint_interval_frames")?;
+        validators::non_negative(
+            self.checkpoint_interval_seconds,
+            "checkpoint_interval_seconds",
+        )?;
+
+        // Validate output paths
+        validators::not_empty_str(&self.output_prefix, "output_prefix")?;
+        validators::not_empty_str(&self.merge_output_path, "merge_output_path")?;
+
+        Ok(())
     }
 }

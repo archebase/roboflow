@@ -17,6 +17,7 @@
 //! This crate has NO feature flags and NO conditional compilation.
 //! All types are always available for use by other roboflow crates.
 
+pub mod config;
 pub mod error;
 pub mod logging;
 pub mod registry;
@@ -25,6 +26,7 @@ pub mod trace;
 pub mod value;
 
 // Re-export core types for convenience
+pub use config::{Validate, validators};
 pub use error::{ErrorCategory, Result, RoboflowError};
 pub use logging::{LogFormat, LoggingConfig, init_logging, init_logging_with};
 pub use registry::{

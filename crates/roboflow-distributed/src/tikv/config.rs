@@ -7,6 +7,8 @@
 use std::env;
 use std::time::Duration;
 
+use roboflow_core::validators;
+
 use super::error::TikvError;
 
 // Constants from parent module
@@ -178,47 +180,35 @@ impl TikvConfig {
 
     /// Validate the configuration.
     pub fn validate(&self) -> Result<(), TikvError> {
-        if self.pd_endpoints.is_empty() {
-            return Err(TikvError::InvalidConfig(
-                "No PD endpoints specified".to_string(),
-            ));
-        }
-        if !self.key_prefix.starts_with('/') {
-            return Err(TikvError::InvalidConfig(
-                "Key prefix must start with /".to_string(),
-            ));
-        }
+        // Validate PD endpoints
+        validators::not_empty(&self.pd_endpoints, "pd_endpoints")
+            .map_err(|e| TikvError::InvalidConfig(e.to_string()))?;
+
+        // Validate key prefix format
+        validators::starts_with(&self.key_prefix, "/", "key_prefix")
+            .map_err(|e| TikvError::InvalidConfig(e.to_string()))?;
 
         // Validate TLS configuration consistency
-        let has_cert = self.cert_path.is_some();
-        let has_key = self.key_path.is_some();
-        if has_cert != has_key {
-            return Err(TikvError::InvalidConfig(
-                "Both cert_path and key_path must be provided together for TLS".to_string(),
-            ));
-        }
+        validators::paired(
+            self.cert_path.as_ref(),
+            self.key_path.as_ref(),
+            "cert_path",
+            "key_path",
+        )
+        .map_err(|e| TikvError::InvalidConfig(e.to_string()))?;
 
-        // Validate timeout values are reasonable
-        if self.operation_timeout.as_secs() == 0 {
-            return Err(TikvError::InvalidConfig(
-                "Operation timeout must be greater than 0".to_string(),
-            ));
-        }
-        if self.transaction_timeout.as_secs() == 0 {
-            return Err(TikvError::InvalidConfig(
-                "Transaction timeout must be greater than 0".to_string(),
-            ));
-        }
-        if self.default_lock_ttl_secs <= 0 {
-            return Err(TikvError::InvalidConfig(
-                "Lock TTL must be greater than 0".to_string(),
-            ));
-        }
-        if self.max_retries == 0 {
-            return Err(TikvError::InvalidConfig(
-                "Max retries must be greater than 0".to_string(),
-            ));
-        }
+        // Validate timeout values
+        validators::positive(self.operation_timeout.as_secs(), "operation_timeout")
+            .map_err(|e| TikvError::InvalidConfig(e.to_string()))?;
+
+        validators::positive(self.transaction_timeout.as_secs(), "transaction_timeout")
+            .map_err(|e| TikvError::InvalidConfig(e.to_string()))?;
+
+        validators::positive(self.default_lock_ttl_secs, "default_lock_ttl_secs")
+            .map_err(|e| TikvError::InvalidConfig(e.to_string()))?;
+
+        validators::positive(self.max_retries, "max_retries")
+            .map_err(|e| TikvError::InvalidConfig(e.to_string()))?;
 
         Ok(())
     }
