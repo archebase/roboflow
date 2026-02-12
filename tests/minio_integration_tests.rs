@@ -32,11 +32,11 @@ use bytes::Bytes;
 
 use roboflow_dataset::{
     AlignedFrame, ImageData,
-    common::{RsmpegS3EncoderConfig, streaming_coordinator::StreamingCoordinator},
+    common::{ConcurrentEncoderConfig, ConcurrentVideoEncoder},
 };
 use roboflow_storage::{
     AsyncStorage,
-    s3::{AsyncS3Storage, S3Config},
+    s3::{AsyncS3Storage, S3Config, S3Storage},
 };
 
 // =============================================================================
@@ -95,6 +95,18 @@ impl MinioConfig {
         )
         .with_allow_http(true);
         Ok(AsyncS3Storage::with_config(config)?)
+    }
+
+    /// Create an S3Storage (sync) instance for testing.
+    pub fn create_sync_storage(&self) -> Result<S3Storage, Box<dyn std::error::Error>> {
+        let config = S3Config::new(
+            &self.bucket,
+            &self.endpoint,
+            &self.access_key_id,
+            &self.secret_access_key,
+        )
+        .with_allow_http(true);
+        Ok(S3Storage::with_config(config)?)
     }
 
     /// Get the S3 URL prefix for this configuration.
@@ -261,28 +273,33 @@ fn test_minio_basic_connection() {
 
 #[test]
 #[ignore = "requires MinIO service"]
-fn test_rsmpeg_s3_encoder_with_minio() {
+fn test_concurrent_encoder_with_minio() {
     skip_if_no_minio!();
 
     let config = MinioConfig::default();
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
-    // Create object store
-    let storage = config
-        .create_storage()
-        .expect("Failed to create MinIO storage");
+    // Create S3 storage wrapped in Arc
+    let s3_storage = std::sync::Arc::new(
+        config
+            .create_sync_storage()
+            .expect("Failed to create MinIO storage"),
+    );
 
-    let object_store = storage.object_store();
+    // Test video encoding with S3 upload using ConcurrentVideoEncoder
+    let s3_prefix = format!("s3://{}/test_videos", config.bucket);
+    let encoder_config = ConcurrentEncoderConfig {
+        s3_prefix,
+        frames_per_fragment: 300,
+        temp_dir: std::env::temp_dir(),
+        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
+        frame_channel_capacity: 64,
+    };
 
-    // Test video encoding with S3 upload
-    let dest_path = format!("s3://{}/test_videos/encoder_test.mp4", config.bucket);
-    let encoder_config = RsmpegS3EncoderConfig::default();
-
-    let mut encoder = roboflow_dataset::common::rsmpeg_s3_encoder::RsmpegS3Encoder::new(
-        &dest_path,
-        object_store.clone(),
-        runtime.handle().clone(),
+    let mut encoder = ConcurrentVideoEncoder::new(
         encoder_config,
+        s3_storage,
+        runtime.handle().clone(),
     )
     .expect("Failed to create encoder");
 
@@ -290,120 +307,88 @@ fn test_rsmpeg_s3_encoder_with_minio() {
     let width = 160u32;
     let height = 120u32;
     for i in 0..10 {
-        let img = create_test_image(width, height, (i * 25) as u8);
-        encoder.add_frame(&img).expect("Failed to add frame");
+        let image_data = create_test_image(width, height, (i * 25) as u8);
+        encoder.add_frame("encoder_test", image_data).expect("Failed to add frame");
     }
 
     // Finalize and upload
-    let (url, frames_encoded) = encoder.finalize().expect("Failed to finalize encoder");
+    let results = encoder.finalize().expect("Failed to finalize encoder");
 
-    assert_eq!(url, dest_path, "Returned URL should match input");
-    assert_eq!(frames_encoded, 10, "Should encode 10 frames");
+    assert_eq!(results.len(), 1, "Should have 1 camera result");
+    assert_eq!(results[0].frames_encoded, 10, "Should encode 10 frames");
+    assert!(results[0].url.contains("encoder_test.mp4"), "URL should contain camera name");
 
-    // Verify the file was uploaded using the storage API
-    let exists = runtime.block_on(async {
-        let full_path = Path::new("test_videos/encoder_test.mp4");
-        storage.exists(full_path).await
-    });
-    assert!(exists, "Video should exist in MinIO");
-
-    // Cleanup test files
-    config.cleanup_dir(&runtime, "test_videos");
-
-    println!("✓ RsmpegS3Encoder with MinIO test passed");
+    println!("✓ ConcurrentVideoEncoder with MinIO test passed");
 }
 
 // =============================================================================
-// Test: StreamingCoordinator with MinIO
+// Test: ConcurrentVideoEncoder with MinIO (multi-camera)
 // =============================================================================
 
 #[test]
 #[ignore = "requires MinIO service"]
-fn test_streaming_coordinator_with_minio() {
+fn test_concurrent_encoder_multicam_with_minio() {
     skip_if_no_minio!();
 
     let config = MinioConfig::default();
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
-    // Create object store
-    let storage = config
-        .create_storage()
-        .expect("Failed to create MinIO storage");
+    // Create S3 storage wrapped in Arc
+    let s3_storage = std::sync::Arc::new(
+        config
+            .create_sync_storage()
+            .expect("Failed to create MinIO storage"),
+    );
 
-    let object_store = storage.object_store();
-
-    // Create streaming coordinator
+    // Create concurrent encoder
     let s3_prefix = format!("s3://{}/test_coordinator", config.bucket);
-    let coordinator_config =
-        roboflow_dataset::common::streaming_coordinator::StreamingCoordinatorConfig {
-            frame_channel_capacity: 100,
-            encoder_config: RsmpegS3EncoderConfig::default(),
-            shutdown_timeout: std::time::Duration::from_secs(30),
-            fps: 30,
-        };
+    let encoder_config = ConcurrentEncoderConfig {
+        s3_prefix,
+        frames_per_fragment: 300,
+        temp_dir: std::env::temp_dir(),
+        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
+        frame_channel_capacity: 100,
+    };
 
-    let mut coordinator = StreamingCoordinator::new(
-        s3_prefix.clone(),
-        object_store.clone(),
+    let mut encoder = ConcurrentVideoEncoder::new(
+        encoder_config,
+        s3_storage,
         runtime.handle().clone(),
-        coordinator_config,
     )
-    .expect("Failed to create coordinator");
+    .expect("Failed to create encoder");
 
     // Add frames for 2 cameras
     let width = 160u32;
     let height = 120u32;
     for i in 0..20 {
         // Camera 0
-        let img0 = create_test_image(width, height, (i * 10) as u8);
-        let img_data0 = Arc::new(img0);
-        coordinator
-            .add_frame("camera_0", img_data0)
+        let image_data0 = create_test_image(width, height, (i * 10) as u8);
+        encoder
+            .add_frame("camera_0", image_data0)
             .expect("Failed to add camera_0 frame");
 
         // Camera 1
-        let img1 = create_test_image(width, height, ((i * 10) + 128) as u8);
-        let img_data1 = Arc::new(img1);
-        coordinator
-            .add_frame("camera_1", img_data1)
+        let image_data1 = create_test_image(width, height, ((i * 10) + 128) as u8);
+        encoder
+            .add_frame("camera_1", image_data1)
             .expect("Failed to add camera_1 frame");
     }
 
     // Finalize and get results
-    let results = coordinator
-        .finalize()
-        .expect("Failed to finalize coordinator");
+    let results = encoder.finalize().expect("Failed to finalize encoder");
 
     // Verify both cameras were processed
-    assert!(
-        results.contains_key("camera_0"),
-        "Results should contain camera_0"
-    );
-    assert!(
-        results.contains_key("camera_1"),
-        "Results should contain camera_1"
-    );
+    assert_eq!(results.len(), 2, "Should have 2 camera results");
 
-    // Verify the videos were uploaded to MinIO using storage API
-    runtime
-        .block_on(async {
-            let camera_0_path = Path::new("test_coordinator/videos/camera_0.mp4");
-            let camera_1_path = Path::new("test_coordinator/videos/camera_1.mp4");
+    let camera_0_result = results.iter().find(|r| r.camera == "camera_0");
+    let camera_1_result = results.iter().find(|r| r.camera == "camera_1");
 
-            let camera_0_exists = storage.exists(camera_0_path).await;
-            let camera_1_exists = storage.exists(camera_1_path).await;
+    assert!(camera_0_result.is_some(), "Results should contain camera_0");
+    assert!(camera_1_result.is_some(), "Results should contain camera_1");
+    assert_eq!(camera_0_result.unwrap().frames_encoded, 20);
+    assert_eq!(camera_1_result.unwrap().frames_encoded, 20);
 
-            assert!(camera_0_exists, "Camera 0 video should exist in MinIO");
-            assert!(camera_1_exists, "Camera 1 video should exist in MinIO");
-
-            Ok::<(), Box<dyn std::error::Error>>(())
-        })
-        .unwrap();
-
-    // Cleanup test files
-    config.cleanup_dir(&runtime, "test_coordinator");
-
-    println!("✓ StreamingCoordinator with MinIO test passed");
+    println!("✓ ConcurrentVideoEncoder multi-camera with MinIO test passed");
 }
 
 // =============================================================================
@@ -418,30 +403,29 @@ fn test_compressed_images_with_minio_upload() {
     let config = MinioConfig::default();
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
-    // Create object store
-    let storage = config
-        .create_storage()
-        .expect("Failed to create MinIO storage");
+    // Create S3 storage wrapped in Arc
+    let s3_storage = std::sync::Arc::new(
+        config
+            .create_sync_storage()
+            .expect("Failed to create MinIO storage"),
+    );
 
-    let object_store = storage.object_store();
-
-    // Create streaming coordinator
+    // Create concurrent encoder
     let s3_prefix = format!("s3://{}/test_compressed", config.bucket);
-    let coordinator_config =
-        roboflow_dataset::common::streaming_coordinator::StreamingCoordinatorConfig {
-            frame_channel_capacity: 100,
-            encoder_config: RsmpegS3EncoderConfig::default(),
-            shutdown_timeout: std::time::Duration::from_secs(30),
-            fps: 30,
-        };
+    let encoder_config = ConcurrentEncoderConfig {
+        s3_prefix,
+        frames_per_fragment: 300,
+        temp_dir: std::env::temp_dir(),
+        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
+        frame_channel_capacity: 100,
+    };
 
-    let mut coordinator = StreamingCoordinator::new(
-        s3_prefix.clone(),
-        object_store.clone(),
+    let mut encoder = ConcurrentVideoEncoder::new(
+        encoder_config,
+        s3_storage,
         runtime.handle().clone(),
-        coordinator_config,
     )
-    .expect("Failed to create coordinator");
+    .expect("Failed to create encoder");
 
     let width = 160u32;
     let height = 120u32;
@@ -449,8 +433,8 @@ fn test_compressed_images_with_minio_upload() {
     // Add raw RGB images
     for _ in 0..5 {
         let img = ImageData::new(width, height, vec![128u8; (width * height * 3) as usize]);
-        coordinator
-            .add_frame("camera_raw", Arc::new(img))
+        encoder
+            .add_frame("camera_raw", img)
             .expect("Failed to add raw frame");
     }
 
@@ -468,16 +452,16 @@ fn test_compressed_images_with_minio_upload() {
         .collect();
 
         let img = ImageData::encoded(width, height, jpeg_data);
-        coordinator
-            .add_frame("camera_jpeg", Arc::new(img))
+        encoder
+            .add_frame("camera_jpeg", img)
             .expect("Failed to add JPEG frame");
     }
 
     // Finalize
-    let results = coordinator.finalize().expect("Failed to finalize");
+    let results = encoder.finalize().expect("Failed to finalize");
 
     // Note: The minimal JPEG headers won't decode properly, so those frames may be skipped
-    // The important thing is that the coordinator doesn't crash
+    // The important thing is that the encoder doesn't crash
     println!("✓ Compressed images with MinIO upload test passed");
     println!("  - Cameras processed: {}", results.len());
 
@@ -531,54 +515,53 @@ fn test_concurrent_minio_uploads() {
     let config = MinioConfig::default();
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
-    // Create object store
-    let storage = config
-        .create_storage()
-        .expect("Failed to create MinIO storage");
+    // Create S3 storage wrapped in Arc (can be cloned for each worker)
+    let s3_storage = std::sync::Arc::new(
+        config
+            .create_sync_storage()
+            .expect("Failed to create MinIO storage"),
+    );
 
-    let object_store = storage.object_store();
-
-    // Create 3 streaming coordinators in parallel (simulating 3 workers)
+    // Create 3 encoders in parallel (simulating 3 workers)
     let s3_base = format!("s3://{}/test_concurrent", config.bucket);
 
     let handles: Vec<_> = (0..3)
         .map(|worker_id| {
             let s3_prefix = format!("{}/worker_{}", s3_base, worker_id);
-            let object_store_clone = object_store.clone();
+            let s3_storage_clone = s3_storage.clone();
             let runtime_handle = runtime.handle().clone();
 
             std::thread::spawn(move || {
-                let coordinator_config =
-                    roboflow_dataset::common::streaming_coordinator::StreamingCoordinatorConfig {
-                        frame_channel_capacity: 50,
-                        encoder_config: RsmpegS3EncoderConfig::default(),
-                        shutdown_timeout: std::time::Duration::from_secs(30),
-                        fps: 30,
-                    };
-
-                let mut coordinator = StreamingCoordinator::new(
+                let encoder_config = ConcurrentEncoderConfig {
                     s3_prefix,
-                    object_store_clone,
+                    frames_per_fragment: 300,
+                    temp_dir: std::env::temp_dir(),
+                    video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
+                    frame_channel_capacity: 50,
+                };
+
+                let mut encoder = ConcurrentVideoEncoder::new(
+                    encoder_config,
+                    s3_storage_clone,
                     runtime_handle,
-                    coordinator_config,
                 )
-                .expect("Failed to create coordinator");
+                .expect("Failed to create encoder");
 
                 // Add 5 frames
                 for i in 0..5 {
                     let img = create_test_image(160, 120, (worker_id * 10 + i) as u8);
-                    coordinator
-                        .add_frame("camera", Arc::new(img))
+                    encoder
+                        .add_frame("camera", img)
                         .expect("Failed to add frame");
                 }
 
-                coordinator.finalize()
+                encoder.finalize()
             })
         })
         .collect();
 
     // Wait for all workers and collect results
-    let mut results = vec![];
+    let mut results: Vec<Result<Vec<roboflow_dataset::common::ConcurrentEncoderResult>, _>> = vec![];
     for handle in handles {
         let result = handle.join().expect("Thread panicked");
         results.push(result);

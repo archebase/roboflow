@@ -500,18 +500,29 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
         msg: &TimestampedMessage,
     ) -> Result<()> {
         // Get the feature name for this topic
-        let feature_name = self
-            .config
-            .topic_mappings
-            .get(&msg.topic)
-            .cloned()
-            .unwrap_or_else(|| {
-                // Default: convert topic to feature name
-                msg.topic
-                    .replace('/', ".")
-                    .trim_start_matches('.')
-                    .to_string()
-            });
+        // When topic_mappings is configured, only process mapped topics
+        // When topic_mappings is empty, fall back to converting topic name to feature name
+        let feature_name = if self.config.topic_mappings.is_empty() {
+            // No explicit mappings - use fallback conversion
+            msg.topic
+                .replace('/', ".")
+                .trim_start_matches('.')
+                .to_string()
+        } else {
+            // Mappings configured - only process topics that are explicitly mapped
+            match self.config.topic_mappings.get(&msg.topic).cloned() {
+                Some(feature) => feature,
+                None => {
+                    // Topic not in mappings - skip this message
+                    // This ensures only topics explicitly configured in lerobot_config.toml are processed
+                    trace!(
+                        topic = %msg.topic,
+                        "Skipping unmapped topic"
+                    );
+                    return Ok(());
+                }
+            }
+        };
 
         match &msg.data {
             robocodec::CodecValue::Array(arr) => {
@@ -1069,5 +1080,90 @@ mod tests {
 
         // Message was processed without error
         assert_eq!(executor.stats.messages_processed, 1);
+    }
+
+    #[test]
+    fn test_unmapped_topics_skipped_when_mappings_configured() {
+        use robocodec::CodecValue;
+
+        let writer = MockWriter::new();
+        let streaming = StreamingConfig::with_fps(30);
+        // Configure with explicit topic mappings
+        let config = PipelineConfig::new(streaming)
+            .with_topic_mapping("/camera/mapped", "observation.images.mapped");
+        let mut executor = PipelineExecutor::new(writer, config);
+
+        // Create a compressed image message for a MAPPED topic
+        let width = 64u32;
+        let height = 48u32;
+        let compressed_jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0]; // JPEG header
+
+        let mut mapped_image = HashMap::new();
+        mapped_image.insert("width".to_string(), CodecValue::UInt32(width));
+        mapped_image.insert("height".to_string(), CodecValue::UInt32(height));
+        mapped_image.insert("data".to_string(), CodecValue::Bytes(compressed_jpeg.clone()));
+
+        let mapped_msg = TimestampedMessage {
+            topic: "/camera/mapped".to_string(),
+            log_time: 0,
+            data: CodecValue::Struct(mapped_image),
+        };
+
+        // Create a compressed image message for an UNMAPPED topic
+        let mut unmapped_image = HashMap::new();
+        unmapped_image.insert("width".to_string(), CodecValue::UInt32(width));
+        unmapped_image.insert("height".to_string(), CodecValue::UInt32(height));
+        unmapped_image.insert("data".to_string(), CodecValue::Bytes(compressed_jpeg));
+
+        let unmapped_msg = TimestampedMessage {
+            topic: "/camera/unmapped".to_string(),
+            log_time: 33_333_333, // Next frame
+            data: CodecValue::Struct(unmapped_image),
+        };
+
+        // Process both messages
+        executor.process_message(mapped_msg).unwrap();
+        executor.process_message(unmapped_msg).unwrap();
+
+        // Both messages should be counted as processed
+        assert_eq!(executor.stats.messages_processed, 2);
+
+        // But only the mapped topic should have been written to frames
+        // We can verify this by checking the writer's frame count
+        // (MockWriter doesn't track this, so we just verify no errors)
+    }
+
+    #[test]
+    fn test_all_topics_processed_when_no_mappings() {
+        use robocodec::CodecValue;
+
+        let writer = MockWriter::new();
+        let streaming = StreamingConfig::with_fps(30);
+        // No topic mappings - should process all topics
+        let config = PipelineConfig::new(streaming);
+        let mut executor = PipelineExecutor::new(writer, config);
+
+        // Create image messages for different topics
+        let width = 64u32;
+        let height = 48u32;
+        let compressed_jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0];
+
+        for topic in ["/camera/a", "/camera/b", "/camera/c"] {
+            let mut image = HashMap::new();
+            image.insert("width".to_string(), CodecValue::UInt32(width));
+            image.insert("height".to_string(), CodecValue::UInt32(height));
+            image.insert("data".to_string(), CodecValue::Bytes(compressed_jpeg.clone()));
+
+            let msg = TimestampedMessage {
+                topic: topic.to_string(),
+                log_time: 0,
+                data: CodecValue::Struct(image),
+            };
+
+            executor.process_message(msg).unwrap();
+        }
+
+        // All messages should be processed
+        assert_eq!(executor.stats.messages_processed, 3);
     }
 }

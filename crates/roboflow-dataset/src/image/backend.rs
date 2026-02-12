@@ -566,10 +566,7 @@ mod tests {
         // Native-endian: pixel 0 = 0x0100 (256), pixel 1 = 0x0200 (512), etc.
         let mut png_data = Vec::new();
         use image::ImageEncoder;
-        let raw_l16: Vec<u8> = [0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04]
-            .iter()
-            .copied()
-            .collect(); // 2x2 L16 image
+        let raw_l16: Vec<u8> = [0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04].to_vec(); // 2x2 L16 image
         image::codecs::png::PngEncoder::new(&mut png_data)
             .write_image(&raw_l16, 2, 2, image::ExtendedColorType::L16)
             .expect("write test PNG");

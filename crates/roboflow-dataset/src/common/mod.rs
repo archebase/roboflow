@@ -16,16 +16,18 @@
 //! - [`ProgressSender`] - Channel-based progress reporting
 
 pub mod base;
+pub mod camera_pipeline;
+pub mod concurrent_video_encoder;
 pub mod config;
+pub mod fragment_encoder;
+pub mod fragment_uploader;
 pub mod image_decode;
 pub mod image_format;
 pub mod parquet_base;
 pub mod progress;
 pub mod ring_buffer;
 pub mod rsmpeg_encoder;
-pub mod rsmpeg_s3_encoder;
 pub mod simd_convert;
-pub mod streaming_coordinator;
 pub mod streaming_uploader;
 pub mod video;
 
@@ -75,10 +77,19 @@ pub use rsmpeg_encoder::{
     is_hardware_encoding_available, is_rsmpeg_available,
 };
 
-// Re-export rsmpeg S3 encoder
-pub use rsmpeg_s3_encoder::{RsmpegS3Encoder, RsmpegS3EncoderConfig};
+// Re-export fragment encoder
+pub use fragment_encoder::{FragmentEncoder, FragmentEncoderConfig, FragmentInfo};
 
-// Re-export streaming coordinator
-pub use streaming_coordinator::{
-    EncoderCommand, EncoderResult, StreamingCoordinator, StreamingCoordinatorConfig,
+// Re-export fragment uploader
+pub use fragment_uploader::UploadCommand;
+
+// Re-export camera pipeline
+pub use camera_pipeline::{
+    CameraPipeline, CameraPipelineConfig, CameraPipelineHandle, CameraPipelineResult,
+    PipelineCommand, spawn_camera_pipeline,
+};
+
+// Re-export concurrent video encoder
+pub use concurrent_video_encoder::{
+    ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder,
 };

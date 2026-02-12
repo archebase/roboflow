@@ -14,7 +14,6 @@ mod encoding;
 mod frame;
 mod parquet;
 mod stats;
-mod upload;
 
 use std::collections::HashMap;
 use std::fs;
@@ -22,8 +21,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::common::{
-    AlignedFrame, DatasetWriter, ImageData, RsmpegS3EncoderConfig, WriterStats,
-    streaming_coordinator::{StreamingCoordinator, StreamingCoordinatorConfig},
+    AlignedFrame, ConcurrentEncoderConfig, ConcurrentVideoEncoder, DatasetWriter, ImageData,
+    WriterStats,
 };
 use crate::lerobot::config::LerobotConfig;
 use crate::lerobot::metadata::MetadataCollector;
@@ -168,10 +167,6 @@ pub struct LerobotWriter {
 
     /// Upload coordinator for cloud uploads (optional).
     upload_coordinator: Option<std::sync::Arc<crate::lerobot::upload::EpisodeUploadCoordinator>>,
-
-    /// Streaming coordinator for multi-camera video encoding (optional).
-    #[allow(dead_code)]
-    streaming_coordinator: Option<StreamingCoordinator>,
 }
 
 impl LerobotWriter {
@@ -263,7 +258,6 @@ impl LerobotWriter {
             failed_encodings: 0,
             use_cloud_storage: false,
             upload_coordinator: None,
-            streaming_coordinator: None,
         })
     }
 
@@ -420,7 +414,6 @@ impl LerobotWriter {
             failed_encodings: 0,
             use_cloud_storage,
             upload_coordinator: upload_coordinator.clone(),
-            streaming_coordinator: None,
         })
     }
 
@@ -590,11 +583,7 @@ impl LerobotWriter {
                     // Fallback: upload this episode synchronously so data still reaches cloud
                     if self.use_cloud_storage {
                         if parquet_path.exists() {
-                            if let Err(upload_e) = upload::upload_parquet_file(
-                                self.storage.as_ref(),
-                                &parquet_path,
-                                &self.output_prefix,
-                            ) {
+                            if let Err(upload_e) = self.upload_parquet_file(&parquet_path) {
                                 tracing::error!(
                                     episode = self.episode_index,
                                     error = %upload_e,
@@ -609,12 +598,7 @@ impl LerobotWriter {
                         }
                         for (camera, path) in &video_paths_for_upload {
                             if path.exists() {
-                                if let Err(upload_e) = upload::upload_video_file(
-                                    self.storage.as_ref(),
-                                    path,
-                                    camera,
-                                    &self.output_prefix,
-                                ) {
+                                if let Err(upload_e) = self.upload_video_file(path, camera) {
                                     tracing::error!(
                                         episode = self.episode_index,
                                         camera = %camera,
@@ -738,7 +722,7 @@ impl LerobotWriter {
             && self.upload_coordinator.is_none()
             && !parquet_path.as_os_str().is_empty()
         {
-            upload::upload_parquet_file(self.storage.as_ref(), &parquet_path, &self.output_prefix)?;
+            self.upload_parquet_file(&parquet_path)?;
         }
 
         Ok((parquet_path, size))
@@ -801,7 +785,7 @@ impl LerobotWriter {
 
         // Upload videos to cloud storage (without upload coordinator)
         if self.use_cloud_storage && self.upload_coordinator.is_none() && !video_files.is_empty() {
-            upload::upload_videos_parallel(self.storage.as_ref(), video_files.clone())?;
+            self.upload_videos_parallel(&video_files)?;
             // Clear video files after upload to avoid double-upload
             video_files.clear();
         }
@@ -809,7 +793,7 @@ impl LerobotWriter {
         Ok((video_files, encode_stats))
     }
 
-    /// Encode videos using the streaming coordinator for multi-camera parallel encoding.
+    /// Encode videos using the concurrent video encoder for multi-camera parallel encoding.
     ///
     /// This method provides better performance for multi-camera setups by using
     /// dedicated encoder threads for each camera with concurrent S3/OSS upload.
@@ -832,10 +816,10 @@ impl LerobotWriter {
             episode_index = self.episode_index,
             cameras = self.image_buffers.len(),
             total_frames = total_images,
-            "Encoding videos with streaming coordinator"
+            "Encoding videos with concurrent encoder"
         );
 
-        // Get the object store from storage
+        // Get the S3 storage backend
         let s3_storage = self
             .storage
             .as_any()
@@ -843,11 +827,9 @@ impl LerobotWriter {
             .ok_or_else(|| {
                 roboflow_core::RoboflowError::encode(
                     "LerobotWriter",
-                    "Object store not available for streaming coordinator",
+                    "S3 storage not available for concurrent encoder",
                 )
             })?;
-        let object_store = s3_storage.async_storage().object_store();
-        let bucket = s3_storage.bucket();
 
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|e| roboflow_core::RoboflowError::other(format!("No tokio runtime: {}", e)))?;
@@ -855,8 +837,8 @@ impl LerobotWriter {
         // Resolve video configuration
         let resolved = ResolvedConfig::from_video_config(&self.config.video);
 
-        // Build S3 URL prefix using bucket from storage and output_prefix as path
-        // output_prefix is just a path (e.g., "datasets" or empty), not a full URL
+        // Build S3 URL prefix
+        let bucket = s3_storage.bucket();
         let s3_prefix = if self.output_prefix.is_empty() {
             format!("s3://{}", bucket)
         } else {
@@ -867,57 +849,60 @@ impl LerobotWriter {
             )
         };
 
-        // Create streaming coordinator configuration
-        let encoder_config = RsmpegS3EncoderConfig {
-            video: resolved.to_encoder_config(self.config.dataset.fps),
-        };
-
-        let coordinator_config = StreamingCoordinatorConfig {
-            frame_channel_capacity: self.config.streaming.ring_buffer_size,
-            encoder_config,
-            shutdown_timeout: std::time::Duration::from_secs(300),
-            fps: self.config.dataset.fps,
-        };
-
-        // Create streaming coordinator
-        let mut coordinator = StreamingCoordinator::new(
+        // Create concurrent encoder configuration
+        let encoder_config = ConcurrentEncoderConfig {
             s3_prefix,
-            object_store.clone(),
+            frames_per_fragment: 300, // 10 seconds @ 30fps
+            temp_dir: self._local_buffer.clone(),
+            video_config: resolved.to_encoder_config(self.config.dataset.fps),
+            frame_channel_capacity: self.config.streaming.ring_buffer_size,
+        };
+
+        // Create concurrent encoder - pass the storage Arc directly
+        let mut encoder = ConcurrentVideoEncoder::new(
+            encoder_config,
+            self.storage.clone(),
             runtime,
-            coordinator_config,
         )?;
 
         // Add all frames from all cameras
+        let mut skipped_frames = 0;
         for (camera, images) in &self.image_buffers {
             for image in images {
-                let image_data = std::sync::Arc::new(image.clone());
-                coordinator.add_frame(camera, image_data)?;
+                if let Err(e) = encoder.add_frame(camera, image.clone()) {
+                    tracing::debug!(
+                        camera = %camera,
+                        error = %e,
+                        "Failed to add frame to encoder"
+                    );
+                    skipped_frames += 1;
+                }
             }
         }
 
         // Finalize and get results
-        let results = coordinator.finalize()?;
+        let results = encoder.finalize()?;
 
         let camera_count = results.len();
+        let images_encoded: usize = results.iter().map(|r| r.frames_encoded).sum();
 
-        // When using StreamingCoordinator, videos are already uploaded to S3 directly.
+        // When using ConcurrentVideoEncoder, videos are already uploaded to S3 directly.
         // Return empty video_files so the upload coordinator won't try to upload non-existent local files.
-        // Only the parquet file needs to be uploaded.
         let video_files: Vec<(PathBuf, String)> = Vec::new();
 
         let encode_stats = EncodeStats {
-            images_encoded: total_images,
-            skipped_frames: 0,
+            images_encoded,
+            skipped_frames,
             failed_encodings: 0,
             decode_failures: 0,
-            output_bytes: 0, // TODO: Track actual bytes from coordinator
+            output_bytes: 0,
         };
 
         tracing::info!(
             episode_index = self.episode_index,
             cameras = camera_count,
             images_encoded = encode_stats.images_encoded,
-            "Completed encoding with streaming coordinator (videos already uploaded to S3)"
+            "Completed encoding with concurrent encoder (videos already uploaded to S3)"
         );
 
         Ok((video_files, encode_stats))
@@ -1571,7 +1556,97 @@ impl LerobotWriter {
             failed_encodings: 0,
             use_cloud_storage,
             upload_coordinator,
-            streaming_coordinator: None,
         })
+    }
+
+    /// Upload a Parquet file to cloud storage.
+    fn upload_parquet_file(&self, local_path: &Path) -> Result<()> {
+        let filename = local_path
+            .file_name()
+            .ok_or_else(|| roboflow_core::RoboflowError::parse("Path", "Invalid file name"))?;
+
+        let remote_path = if self.output_prefix.is_empty() {
+            Path::new("data/chunk-000").join(filename)
+        } else {
+            Path::new(&self.output_prefix)
+                .join("data/chunk-000")
+                .join(filename)
+        };
+
+        self.storage
+            .upload_file(local_path, &remote_path)
+            .map_err(|e| roboflow_core::RoboflowError::encode("Storage", format!("Upload failed: {}", e)))?;
+
+        tracing::info!(
+            local = %local_path.display(),
+            remote = %remote_path.display(),
+            "Uploaded Parquet file to cloud storage"
+        );
+
+        // Clean up local file after successful upload
+        if let Err(e) = fs::remove_file(local_path) {
+            tracing::error!(
+                path = %local_path.display(),
+                error = %e,
+                "Failed to delete local file after upload - disk space may leak"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Upload a video file to cloud storage.
+    fn upload_video_file(&self, local_path: &Path, camera: &str) -> Result<()> {
+        let filename = local_path
+            .file_name()
+            .ok_or_else(|| roboflow_core::RoboflowError::parse("Path", "Invalid file name"))?;
+
+        let remote_path = if self.output_prefix.is_empty() {
+            Path::new("videos/chunk-000").join(camera).join(filename)
+        } else {
+            Path::new(&self.output_prefix)
+                .join("videos/chunk-000")
+                .join(camera)
+                .join(filename)
+        };
+
+        self.storage
+            .upload_file(local_path, &remote_path)
+            .map_err(|e| roboflow_core::RoboflowError::encode("Storage", format!("Upload failed: {}", e)))?;
+
+        tracing::info!(
+            local = %local_path.display(),
+            remote = %remote_path.display(),
+            camera = %camera,
+            "Uploaded video file to cloud storage"
+        );
+
+        // Clean up local file after successful upload
+        if let Err(e) = fs::remove_file(local_path) {
+            tracing::error!(
+                path = %local_path.display(),
+                error = %e,
+                "Failed to delete local file after upload - disk space may leak"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Upload multiple video files to cloud storage in parallel.
+    fn upload_videos_parallel(&self, video_files: &[(PathBuf, String)]) -> Result<()> {
+        use rayon::prelude::*;
+
+        let results: Vec<Result<()>> = video_files
+            .par_iter()
+            .map(|(path, camera)| self.upload_video_file(path, camera))
+            .collect();
+
+        // Check for any errors
+        for result in results {
+            result?;
+        }
+
+        Ok(())
     }
 }
