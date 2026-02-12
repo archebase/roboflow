@@ -150,8 +150,8 @@ pub fn rgb_to_yuv420p(
     let mut u_plane = vec![0u8; (width / 2) * (height / 2)];
     let mut v_plane = vec![0u8; (width / 2) * (height / 2)];
 
-    // For now, use the scalar implementation
-    // TODO: Add SSE2/AVX2/NEON implementations
+    // Use scalar implementation; SIMD optimizations tracked in TECH_DEBT_PLAN.md Phase 2
+    // TODO(TD-2.6): Consolidate with roboflow-video/src/simd.rs
     rgb_to_yuv420p_scalar(
         rgb_data,
         width,

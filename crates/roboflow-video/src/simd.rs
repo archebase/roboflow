@@ -149,8 +149,7 @@ pub fn rgb_to_yuv420p(rgb_data: &[u8], width: usize, height: usize) -> Yuv420pRe
     let mut u_plane = vec![0u8; (width / 2) * (height / 2)];
     let mut v_plane = vec![0u8; (width / 2) * (height / 2)];
 
-    // For now, use the scalar implementation
-    // TODO: Add SSE2/AVX2/NEON implementations
+    // Use scalar implementation; SIMD optimizations tracked in TECH_DEBT_PLAN.md Phase 2
     rgb_to_yuv420p_scalar(
         rgb_data,
         width,
