@@ -53,9 +53,7 @@ pub fn register_builtin_sources() {
     // Register S3 prefix source
     register_source(
         "s3-prefix",
-        Box::new(|| {
-            Box::new(S3PrefixSource::new("s3://placeholder/").unwrap()) as Box<dyn Source>
-        }),
+        Box::new(|| Box::new(S3PrefixSource::new("s3://placeholder/").unwrap()) as Box<dyn Source>),
     );
 }
 

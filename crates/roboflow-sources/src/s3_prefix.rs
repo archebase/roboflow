@@ -68,7 +68,10 @@ impl S3PrefixSource {
         let storage = StorageFactory::from_env()
             .create(&prefix_url)
             .map_err(|e| {
-                SourceError::Storage(format!("Failed to create storage for {}: {}", prefix_url, e))
+                SourceError::Storage(format!(
+                    "Failed to create storage for {}: {}",
+                    prefix_url, e
+                ))
             })?;
 
         Ok(Self {
@@ -85,7 +88,9 @@ impl S3PrefixSource {
     /// Check if a file has a supported extension.
     fn is_supported_file(path: &str) -> bool {
         let path_lower = path.to_lowercase();
-        SUPPORTED_EXTENSIONS.iter().any(|ext| path_lower.ends_with(ext))
+        SUPPORTED_EXTENSIONS
+            .iter()
+            .any(|ext| path_lower.ends_with(ext))
     }
 
     /// Determine the source type from a file path.
@@ -129,7 +134,11 @@ impl S3PrefixSource {
             .filter(|obj| !obj.is_dir && Self::is_supported_file(&obj.path))
             .map(|obj| {
                 // Reconstruct full URL
-                format!("{}/{}", self.prefix_url.trim_end_matches('/'), obj.path.trim_start_matches('/'))
+                format!(
+                    "{}/{}",
+                    self.prefix_url.trim_end_matches('/'),
+                    obj.path.trim_start_matches('/')
+                )
             })
             .collect();
 
@@ -147,14 +156,12 @@ impl S3PrefixSource {
         let without_scheme = url
             .strip_prefix("s3://")
             .or_else(|| url.strip_prefix("oss://"))
-            .ok_or_else(|| {
-                SourceError::InvalidConfig(format!("Invalid URL scheme: {}", url))
-            })?;
+            .ok_or_else(|| SourceError::InvalidConfig(format!("Invalid URL scheme: {}", url)))?;
 
         // Find the first slash to separate bucket from path
-        let slash_pos = without_scheme.find('/').ok_or_else(|| {
-            SourceError::InvalidConfig(format!("No path in URL: {}", url))
-        })?;
+        let slash_pos = without_scheme
+            .find('/')
+            .ok_or_else(|| SourceError::InvalidConfig(format!("No path in URL: {}", url)))?;
 
         // Return everything after the bucket
         Ok(without_scheme[slash_pos + 1..].to_string())
@@ -225,7 +232,10 @@ impl Source for S3PrefixSource {
         self.storage = StorageFactory::from_env()
             .create(&prefix_url)
             .map_err(|e| {
-                SourceError::Storage(format!("Failed to create storage for {}: {}", prefix_url, e))
+                SourceError::Storage(format!(
+                    "Failed to create storage for {}: {}",
+                    prefix_url, e
+                ))
             })?;
 
         // List files in the prefix
@@ -257,10 +267,7 @@ impl Source for S3PrefixSource {
         // Build combined metadata
         // For now, use a simple metadata structure
         // In a full implementation, we'd aggregate metadata from all files
-        let mut metadata = SourceMetadata::new(
-            "s3-prefix".to_string(),
-            self.prefix_url.clone(),
-        );
+        let mut metadata = SourceMetadata::new("s3-prefix".to_string(), self.prefix_url.clone());
         metadata.metadata.insert(
             "file_count".to_string(),
             serde_json::json!(self.files.len()),
@@ -332,9 +339,9 @@ impl Source for S3PrefixSource {
     }
 
     async fn metadata(&self) -> SourceResult<SourceMetadata> {
-        self.metadata.clone().ok_or_else(|| {
-            SourceError::InvalidConfig("S3PrefixSource not initialized".to_string())
-        })
+        self.metadata
+            .clone()
+            .ok_or_else(|| SourceError::InvalidConfig("S3PrefixSource not initialized".to_string()))
     }
 
     fn supports_seeking(&self) -> bool {
@@ -390,14 +397,16 @@ mod tests {
 
     #[test]
     fn test_extract_prefix_path() {
-        let path = S3PrefixSource::extract_prefix_path_from_url("s3://bucket/path/to/prefix/").unwrap();
+        let path =
+            S3PrefixSource::extract_prefix_path_from_url("s3://bucket/path/to/prefix/").unwrap();
         assert_eq!(path, "path/to/prefix/");
 
         let path = S3PrefixSource::extract_prefix_path_from_url("oss://bucket/data/").unwrap();
         assert_eq!(path, "data/");
 
         // Test with no trailing slash
-        let path = S3PrefixSource::extract_prefix_path_from_url("s3://bucket/path/to/data").unwrap();
+        let path =
+            S3PrefixSource::extract_prefix_path_from_url("s3://bucket/path/to/data").unwrap();
         assert_eq!(path, "path/to/data");
 
         // Test error cases
