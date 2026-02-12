@@ -36,7 +36,7 @@ use roboflow_dataset::{
 };
 use roboflow_storage::{
     AsyncStorage,
-    s3::{AsyncS3Storage, S3Config, S3Storage},
+    s3::{AsyncS3Storage, S3Config},
 };
 
 // =============================================================================
@@ -97,16 +97,15 @@ impl MinioConfig {
         Ok(AsyncS3Storage::with_config(config)?)
     }
 
-    /// Create an S3Storage (sync) instance for testing.
-    pub fn create_sync_storage(&self) -> Result<S3Storage, Box<dyn std::error::Error>> {
-        let config = S3Config::new(
+    /// Get the S3Config for use with ConcurrentVideoEncoder.
+    pub fn s3_config(&self) -> S3Config {
+        S3Config::new(
             &self.bucket,
             &self.endpoint,
             &self.access_key_id,
             &self.secret_access_key,
         )
-        .with_allow_http(true);
-        Ok(S3Storage::with_config(config)?)
+        .with_allow_http(true)
     }
 
     /// Get the S3 URL prefix for this configuration.
@@ -277,14 +276,6 @@ fn test_concurrent_encoder_with_minio() {
     skip_if_no_minio!();
 
     let config = MinioConfig::default();
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-
-    // Create S3 storage wrapped in Arc
-    let s3_storage = std::sync::Arc::new(
-        config
-            .create_sync_storage()
-            .expect("Failed to create MinIO storage"),
-    );
 
     // Test video encoding with S3 upload using ConcurrentVideoEncoder
     let key_prefix = "test_videos".to_string();
@@ -292,14 +283,14 @@ fn test_concurrent_encoder_with_minio() {
         key_prefix,
         chunk_index: 0,
         episode_index: 0,
-        frames_per_fragment: 300,
-        temp_dir: std::env::temp_dir(),
+        chunk_size: 256 * 1024,
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 64,
+        s3_config: config.s3_config(),
     };
 
     let mut encoder =
-        ConcurrentVideoEncoder::new(encoder_config, s3_storage, runtime.handle().clone())
+        ConcurrentVideoEncoder::new(encoder_config)
             .expect("Failed to create encoder");
 
     // Add test frames
@@ -335,14 +326,6 @@ fn test_concurrent_encoder_multicam_with_minio() {
     skip_if_no_minio!();
 
     let config = MinioConfig::default();
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-
-    // Create S3 storage wrapped in Arc
-    let s3_storage = std::sync::Arc::new(
-        config
-            .create_sync_storage()
-            .expect("Failed to create MinIO storage"),
-    );
 
     // Create concurrent encoder
     let key_prefix = "test_coordinator".to_string();
@@ -350,14 +333,14 @@ fn test_concurrent_encoder_multicam_with_minio() {
         key_prefix,
         chunk_index: 0,
         episode_index: 0,
-        frames_per_fragment: 300,
-        temp_dir: std::env::temp_dir(),
+        chunk_size: 256 * 1024,
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 100,
+        s3_config: config.s3_config(),
     };
 
     let mut encoder =
-        ConcurrentVideoEncoder::new(encoder_config, s3_storage, runtime.handle().clone())
+        ConcurrentVideoEncoder::new(encoder_config)
             .expect("Failed to create encoder");
 
     // Add frames for 2 cameras
@@ -404,14 +387,6 @@ fn test_compressed_images_with_minio_upload() {
     skip_if_no_minio!();
 
     let config = MinioConfig::default();
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-
-    // Create S3 storage wrapped in Arc
-    let s3_storage = std::sync::Arc::new(
-        config
-            .create_sync_storage()
-            .expect("Failed to create MinIO storage"),
-    );
 
     // Create concurrent encoder
     let key_prefix = "test_compressed".to_string();
@@ -419,14 +394,14 @@ fn test_compressed_images_with_minio_upload() {
         key_prefix,
         chunk_index: 0,
         episode_index: 0,
-        frames_per_fragment: 300,
-        temp_dir: std::env::temp_dir(),
+        chunk_size: 256 * 1024,
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 100,
+        s3_config: config.s3_config(),
     };
 
     let mut encoder =
-        ConcurrentVideoEncoder::new(encoder_config, s3_storage, runtime.handle().clone())
+        ConcurrentVideoEncoder::new(encoder_config)
             .expect("Failed to create encoder");
 
     let width = 160u32;
@@ -468,6 +443,7 @@ fn test_compressed_images_with_minio_upload() {
     println!("  - Cameras processed: {}", results.len());
 
     // Cleanup test files
+    let runtime = tokio::runtime::Runtime::new().unwrap();
     config.cleanup_dir(&runtime, "test_compressed");
 }
 
@@ -515,35 +491,27 @@ fn test_concurrent_minio_uploads() {
     skip_if_no_minio!();
 
     let config = MinioConfig::default();
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-
-    // Create S3 storage wrapped in Arc (can be cloned for each worker)
-    let s3_storage = std::sync::Arc::new(
-        config
-            .create_sync_storage()
-            .expect("Failed to create MinIO storage"),
-    );
+    let s3_config = config.s3_config();
 
     // Create 3 encoders in parallel (simulating 3 workers)
     let handles: Vec<_> = (0..3)
         .map(|worker_id| {
             let key_prefix = format!("test_concurrent/worker_{}", worker_id);
-            let s3_storage_clone = s3_storage.clone();
-            let runtime_handle = runtime.handle().clone();
+            let s3_config_clone = s3_config.clone();
 
             std::thread::spawn(move || {
                 let encoder_config = ConcurrentEncoderConfig {
                     key_prefix,
                     chunk_index: 0,
                     episode_index: worker_id as u32,
-                    frames_per_fragment: 300,
-                    temp_dir: std::env::temp_dir(),
+                    chunk_size: 256 * 1024,
                     video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
                     frame_channel_capacity: 50,
+                    s3_config: s3_config_clone,
                 };
 
                 let mut encoder =
-                    ConcurrentVideoEncoder::new(encoder_config, s3_storage_clone, runtime_handle)
+                    ConcurrentVideoEncoder::new(encoder_config)
                         .expect("Failed to create encoder");
 
                 // Add 5 frames
@@ -578,6 +546,7 @@ fn test_concurrent_minio_uploads() {
     }
 
     // Cleanup test files
+    let runtime = tokio::runtime::Runtime::new().unwrap();
     config.cleanup_dir(&runtime, "test_concurrent");
 
     println!("✓ Concurrent MinIO uploads test passed (3 workers)");
@@ -639,14 +608,6 @@ fn test_large_file_upload_to_minio() {
 #[test]
 fn test_lerobot_v21_video_path_structure() {
     let config = MinioConfig::default();
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-
-    // Create S3 storage wrapped in Arc
-    let s3_storage = Arc::new(
-        config
-            .create_sync_storage()
-            .expect("Failed to create MinIO storage"),
-    );
 
     // Test configuration
     let key_prefix = "test_lerobot_v21".to_string();
@@ -657,14 +618,14 @@ fn test_lerobot_v21_video_path_structure() {
         key_prefix: key_prefix.clone(),
         chunk_index,
         episode_index,
-        frames_per_fragment: 300,
-        temp_dir: std::env::temp_dir(),
+        chunk_size: 256 * 1024,
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 64,
+        s3_config: config.s3_config(),
     };
 
     let mut encoder =
-        ConcurrentVideoEncoder::new(encoder_config, s3_storage.clone(), runtime.handle().clone())
+        ConcurrentVideoEncoder::new(encoder_config)
             .expect("Failed to create encoder");
 
     // Add frames for multiple cameras (simulating multi-camera setup)
@@ -724,6 +685,7 @@ fn test_lerobot_v21_video_path_structure() {
         .create_storage()
         .expect("Failed to create async storage");
 
+    let runtime = tokio::runtime::Runtime::new().expect("Failed to create runtime for verification");
     runtime
         .block_on(async {
             for result in &results {
@@ -749,6 +711,7 @@ fn test_lerobot_v21_video_path_structure() {
         .unwrap();
 
     // Cleanup test files
+    let runtime = tokio::runtime::Runtime::new().unwrap();
     config.cleanup_dir(&runtime, "test_lerobot_v21");
 
     println!("✓ LeRobot v2.1 video path structure test passed");
@@ -761,27 +724,19 @@ fn test_lerobot_v21_video_path_structure() {
 #[test]
 fn test_multi_camera_unique_temp_files() {
     let config = MinioConfig::default();
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-
-    // Create S3 storage wrapped in Arc
-    let s3_storage = Arc::new(
-        config
-            .create_sync_storage()
-            .expect("Failed to create MinIO storage"),
-    );
 
     let encoder_config = ConcurrentEncoderConfig {
         key_prefix: "test_unique_temp".to_string(),
         chunk_index: 0,
         episode_index: 0,
-        frames_per_fragment: 10, // Small fragment size to trigger multiple fragments
-        temp_dir: std::env::temp_dir(),
+        chunk_size: 256 * 1024,
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 64,
+        s3_config: config.s3_config(),
     };
 
     let mut encoder =
-        ConcurrentVideoEncoder::new(encoder_config, s3_storage, runtime.handle().clone())
+        ConcurrentVideoEncoder::new(encoder_config)
             .expect("Failed to create encoder");
 
     // Add frames for cameras with similar names (simultaneously)
@@ -818,6 +773,7 @@ fn test_multi_camera_unique_temp_files() {
     }
 
     // Cleanup test files
+    let runtime = tokio::runtime::Runtime::new().unwrap();
     config.cleanup_dir(&runtime, "test_unique_temp");
 
     println!("✓ Multi-camera unique temp files test passed (regression test)");

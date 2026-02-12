@@ -292,6 +292,11 @@ impl AsyncS3Storage {
         &self.config.bucket
     }
 
+    /// Get the S3 configuration.
+    pub fn config(&self) -> &S3Config {
+        &self.config
+    }
+
     /// Get the full key for a path, including prefix if set.
     fn full_key(&self, path: &Path) -> String {
         self.config.full_key(path)
@@ -620,6 +625,11 @@ impl S3Storage {
         self.async_storage.bucket()
     }
 
+    /// Get the S3 configuration.
+    pub fn config(&self) -> &S3Config {
+        self.async_storage.config()
+    }
+
     /// Block on a future, handling both sync and async contexts.
     fn block_on<F, R>(&self, f: F) -> R
     where
@@ -807,10 +817,10 @@ impl crate::streaming_upload::StorageStreamingExt for S3Storage {
         use object_store::WriteMultipart;
 
         let key = self.async_storage.path_to_key(path);
-        let runtime = self.runtime_handle();
 
-        // Create multipart upload via object_store
-        let multipart_upload = runtime.block_on(async {
+        // Create multipart upload via object_store using self.block_on()
+        // which properly handles both owned and borrowed runtime contexts
+        let multipart_upload = self.block_on(async {
             self.async_storage
                 .object_store()
                 .put_multipart(&key)
@@ -828,7 +838,7 @@ impl crate::streaming_upload::StorageStreamingExt for S3Storage {
             "Created streaming multipart upload"
         );
 
-        Ok(Box::new(CloudMultipartUpload::new(upload, runtime)))
+        Ok(Box::new(CloudMultipartUpload::new(upload, self.runtime_handle())))
     }
 }
 

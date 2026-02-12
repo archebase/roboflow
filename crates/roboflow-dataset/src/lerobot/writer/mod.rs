@@ -820,7 +820,7 @@ impl LerobotWriter {
         );
 
         // Get the S3 storage backend
-        let _s3_storage = self
+        let s3_storage = self
             .storage
             .as_any()
             .downcast_ref::<roboflow_storage::S3Storage>()
@@ -831,8 +831,8 @@ impl LerobotWriter {
                 )
             })?;
 
-        let runtime = tokio::runtime::Handle::try_current()
-            .map_err(|e| roboflow_core::RoboflowError::other(format!("No tokio runtime: {}", e)))?;
+        // Get S3 config for the encoder
+        let s3_config = s3_storage.config().clone();
 
         // Resolve video configuration
         let resolved = ResolvedConfig::from_video_config(&self.config.video);
@@ -846,15 +846,14 @@ impl LerobotWriter {
             key_prefix,
             chunk_index: 0,
             episode_index: self.episode_index as u32,
-            frames_per_fragment: 300, // 10 seconds @ 30fps
-            temp_dir: self._local_buffer.clone(),
+            chunk_size: 256 * 1024, // 256KB chunks for streaming
             video_config: resolved.to_encoder_config(self.config.dataset.fps),
             frame_channel_capacity: self.config.streaming.ring_buffer_size,
+            s3_config,
         };
 
-        // Create concurrent encoder - pass the storage Arc directly
-        let mut encoder =
-            ConcurrentVideoEncoder::new(encoder_config, self.storage.clone(), runtime)?;
+        // Create concurrent encoder
+        let mut encoder = ConcurrentVideoEncoder::new(encoder_config)?;
 
         // Add all frames from all cameras
         let mut skipped_frames = 0;

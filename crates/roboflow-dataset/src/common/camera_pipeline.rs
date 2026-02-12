@@ -11,7 +11,7 @@
 //!
 //! - Frame accumulator with backpressure (bounded buffer)
 //! - Fragment encoding when buffer is full
-//! - Send fragments to uploader thread
+//! - Send fragments to upload thread via crossbeam channel
 //! - Handle errors with abort
 
 use std::path::PathBuf;
@@ -75,13 +75,13 @@ pub struct CameraPipelineResult {
 /// Per-camera encoding pipeline.
 ///
 /// Runs in its own thread, receiving frames, buffering, encoding fragments,
-/// and sending them to the uploader.
+/// and sending them to the upload thread.
 pub struct CameraPipeline {
     /// Camera name.
     camera: String,
     /// Command receiver.
     cmd_rx: Receiver<PipelineCommand>,
-    /// Upload command sender.
+    /// Upload command sender (crossbeam channel for upload thread).
     upload_tx: Sender<UploadCommand>,
     /// Fragment encoder.
     encoder: FragmentEncoder,
@@ -348,7 +348,7 @@ impl CameraPipelineHandle {
 /// # Arguments
 ///
 /// * `config` - Pipeline configuration including camera name and encoding settings
-/// * `upload_tx` - Sender for upload commands to the uploader thread
+/// * `upload_tx` - Sender for upload commands to the upload thread
 ///
 /// # Returns
 ///
@@ -359,7 +359,6 @@ pub fn spawn_camera_pipeline(
 ) -> Result<CameraPipelineHandle> {
     let camera = config.camera.clone();
     let (cmd_tx, cmd_rx) = crossbeam_channel::bounded(64);
-
     let pipeline = CameraPipeline::new(config, cmd_rx, upload_tx)?;
 
     let thread_name = format!("camera-pipeline-{}", camera);
