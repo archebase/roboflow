@@ -71,7 +71,10 @@ impl LerobotConfig {
         validators::range(self.video.crf, 0, 51, "video.crf")?;
 
         // Validate streaming config
-        validators::positive(self.streaming.ring_buffer_size, "streaming.ring_buffer_size")?;
+        validators::positive(
+            self.streaming.ring_buffer_size,
+            "streaming.ring_buffer_size",
+        )?;
 
         // Validate upload part size (5MB to 5GB)
         const MIN_PART_SIZE: usize = 5 * 1024 * 1024;

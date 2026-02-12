@@ -178,21 +178,15 @@ impl Validate for WorkerConfig {
         validators::positive(self.expected_workers, "expected_workers")?;
 
         // Validate intervals
-        validators::positive(
-            self.poll_interval.as_secs(),
-            "poll_interval_secs",
-        )?;
-        validators::positive(
-            self.job_timeout.as_secs(),
-            "job_timeout_secs",
-        )?;
-        validators::positive(
-            self.heartbeat_interval.as_secs(),
-            "heartbeat_interval_secs",
-        )?;
+        validators::positive(self.poll_interval.as_secs(), "poll_interval_secs")?;
+        validators::positive(self.job_timeout.as_secs(), "job_timeout_secs")?;
+        validators::positive(self.heartbeat_interval.as_secs(), "heartbeat_interval_secs")?;
 
         // Validate checkpoint intervals (can be 0 to disable)
-        validators::non_negative(self.checkpoint_interval_frames, "checkpoint_interval_frames")?;
+        validators::non_negative(
+            self.checkpoint_interval_frames,
+            "checkpoint_interval_frames",
+        )?;
         validators::non_negative(
             self.checkpoint_interval_seconds,
             "checkpoint_interval_seconds",

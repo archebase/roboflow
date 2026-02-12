@@ -1391,9 +1391,9 @@ impl LerobotWriterBuilder {
     ///
     /// Returns an error if required fields are not set.
     pub fn build(self) -> Result<LerobotWriter> {
-        let config = self.config.ok_or_else(|| {
-            roboflow_core::RoboflowError::parse("LerobotWriterBuilder", "config is required")
-        })?;
+        let config = self
+            .config
+            .ok_or_else(|| roboflow_core::RoboflowError::required("LerobotWriterBuilder", "config"))?;
 
         // Determine if we're using cloud storage
         let use_cloud_storage = self.storage.is_some();
@@ -1402,10 +1402,7 @@ impl LerobotWriterBuilder {
             self.storage
         {
             let local_buffer = self.local_buffer.ok_or_else(|| {
-                roboflow_core::RoboflowError::parse(
-                    "LerobotWriterBuilder",
-                    "local_buffer is required when using cloud storage",
-                )
+                roboflow_core::RoboflowError::required("LerobotWriterBuilder", "local_buffer")
             })?;
             let output_dir = local_buffer.clone();
             let output_prefix = self.output_prefix.unwrap_or_default();
@@ -1413,17 +1410,14 @@ impl LerobotWriterBuilder {
         } else {
             // Local storage mode
             let output_dir = self.output_dir.ok_or_else(|| {
-                roboflow_core::RoboflowError::parse(
-                    "LerobotWriterBuilder",
-                    "output_dir is required (or use storage() for cloud storage)",
-                )
+                roboflow_core::RoboflowError::required("LerobotWriterBuilder", "output_dir")
             })?;
 
             // Validate output_dir is not a cloud storage URL
             let output_dir_str = output_dir.to_string_lossy();
             let lower = output_dir_str.to_lowercase();
             if lower.starts_with("s3://") || lower.starts_with("oss://") {
-                return Err(roboflow_core::RoboflowError::parse(
+                return Err(roboflow_core::RoboflowError::config(
                     "LerobotWriterBuilder",
                     "output_dir cannot be a cloud storage URL (s3:// or oss://). Use storage() method with local_buffer() instead.",
                 ));
@@ -1436,7 +1430,7 @@ impl LerobotWriterBuilder {
                 || output_dir_str.starts_with("S3://")
                 || output_dir_str.starts_with("OSS://")
             {
-                return Err(roboflow_core::RoboflowError::parse(
+                return Err(roboflow_core::RoboflowError::config(
                     "LerobotWriterBuilder",
                     format!(
                         "output_dir appears to be a cloud storage URL ('{}'). For cloud storage, use the storage() method with StorageFactory instead.\n\n\

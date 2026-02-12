@@ -268,6 +268,46 @@ impl RoboflowError {
         RoboflowError::Other(message.into())
     }
 
+    /// Create a configuration error.
+    ///
+    /// Use this for errors related to configuration validation or
+    /// missing/invalid configuration values.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use roboflow_core::RoboflowError;
+    ///
+    /// let err = RoboflowError::config("ServerConfig", "port must be between 1 and 65535");
+    /// assert!(format!("{}", err).contains("Parse error in 'ServerConfig'"));
+    /// ```
+    pub fn config(context: impl Into<String>, message: impl Into<String>) -> Self {
+        RoboflowError::ParseError {
+            context: context.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Create a missing required field error.
+    ///
+    /// Convenience constructor for the common pattern of reporting
+    /// a missing required field in a builder or configuration struct.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use roboflow_core::RoboflowError;
+    ///
+    /// let err = RoboflowError::required("MyBuilder", "output_path");
+    /// assert!(format!("{}", err).contains("output_path is required"));
+    /// ```
+    pub fn required(struct_name: impl Into<String>, field_name: impl Into<String>) -> Self {
+        RoboflowError::ParseError {
+            context: struct_name.into(),
+            message: format!("{} is required", field_name.into()),
+        }
+    }
+
     /// Check if this error is retryable.
     ///
     /// Retryable errors include timeouts, network errors, and transient cloud storage errors.
@@ -844,5 +884,23 @@ mod tests {
         let fields = err.log_fields();
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].0, "timeout");
+    }
+
+    #[test]
+    fn test_config_error() {
+        let err = RoboflowError::config("ServerConfig", "port must be valid");
+        assert_eq!(err.category(), ErrorCategory::Parse);
+        let display = format!("{}", err);
+        assert!(display.contains("Parse error in 'ServerConfig'"));
+        assert!(display.contains("port must be valid"));
+    }
+
+    #[test]
+    fn test_required_error() {
+        let err = RoboflowError::required("MyBuilder", "output_path");
+        assert_eq!(err.category(), ErrorCategory::Parse);
+        let display = format!("{}", err);
+        assert!(display.contains("Parse error in 'MyBuilder'"));
+        assert!(display.contains("output_path is required"));
     }
 }

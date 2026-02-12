@@ -271,12 +271,7 @@ pub mod validators {
     /// // Only one set - Err
     /// validators::paired(Some("cert"), None, "cert", "key").unwrap_err();
     /// ```
-    pub fn paired<T>(
-        a: Option<T>,
-        b: Option<T>,
-        field_a: &str,
-        field_b: &str,
-    ) -> Result<()> {
+    pub fn paired<T>(a: Option<T>, b: Option<T>, field_a: &str, field_b: &str) -> Result<()> {
         let a_set = a.is_some();
         let b_set = b.is_some();
         if a_set == b_set {
@@ -284,7 +279,10 @@ pub mod validators {
         } else {
             Err(RoboflowError::parse(
                 field_a,
-                format!("must be set together with '{}' (one is set, other is not)", field_b),
+                format!(
+                    "must be set together with '{}' (one is set, other is not)",
+                    field_b
+                ),
             ))
         }
     }
