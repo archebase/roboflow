@@ -18,9 +18,7 @@
 use crossbeam_channel::{Receiver, Sender};
 use roboflow_core::{Result, RoboflowError};
 
-use crate::common::streaming_encoder::{
-    EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder,
-};
+use crate::common::streaming_encoder::{EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder};
 use crate::common::video::VideoEncoderConfig;
 use crate::common::{ImageData, decode_to_rgb};
 
@@ -271,7 +269,12 @@ impl CameraStreamingPipeline {
             .with_dimensions(self.width, self.height)
             .with_codec(StreamingEncoderConfig::detect_best_codec());
 
-        let encoder = StreamingMp4Encoder::with_dimensions(encoder_config, chunk_tx, self.width, self.height)?;
+        let encoder = StreamingMp4Encoder::with_dimensions(
+            encoder_config,
+            chunk_tx,
+            self.width,
+            self.height,
+        )?;
 
         tracing::info!(
             camera = %self.camera,
@@ -570,9 +573,7 @@ mod tests {
 
         // Send a frame first
         let image = ImageData::new(64, 64, vec![128u8; 64 * 64 * 3]);
-        cmd_tx
-            .send(StreamingCommand::AddFrame { image })
-            .unwrap();
+        cmd_tx.send(StreamingCommand::AddFrame { image }).unwrap();
 
         // Then send shutdown
         cmd_tx.send(StreamingCommand::Shutdown).unwrap();
@@ -583,10 +584,7 @@ mod tests {
 
         // Check that abort was sent to upload channel
         let received = upload_rx.try_recv();
-        assert!(matches!(
-            received,
-            Ok(StreamingUploadCommand::AbortAll)
-        ));
+        assert!(matches!(received, Ok(StreamingUploadCommand::AbortAll)));
     }
 
     #[test]
@@ -611,9 +609,7 @@ mod tests {
         // Add 5 frames with non-square dimensions
         for _ in 0..5 {
             let image = ImageData::new(width, height, rgb_data.clone());
-            cmd_tx
-                .send(StreamingCommand::AddFrame { image })
-                .unwrap();
+            cmd_tx.send(StreamingCommand::AddFrame { image }).unwrap();
         }
 
         cmd_tx.send(StreamingCommand::Flush).unwrap();
@@ -674,9 +670,7 @@ mod tests {
         // Add some frames
         for _ in 0..3 {
             let image = ImageData::new(64, 64, vec![128u8; 64 * 64 * 3]);
-            cmd_tx
-                .send(StreamingCommand::AddFrame { image })
-                .unwrap();
+            cmd_tx.send(StreamingCommand::AddFrame { image }).unwrap();
         }
 
         // Close the upload channel

@@ -77,15 +77,12 @@ pub use rsmpeg_encoder::{
 };
 
 // Re-export streaming encoder
-pub use streaming_encoder::{
-    EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder,
-};
+pub use streaming_encoder::{EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder};
 
 // Re-export camera streaming pipeline
 pub use camera_streaming_pipeline::{
-    CameraStreamingPipeline, StreamingCommand, StreamingPipelineConfig,
-    StreamingPipelineHandle, StreamingPipelineResult, StreamingUploadCommand,
-    spawn_streaming_pipeline,
+    CameraStreamingPipeline, StreamingCommand, StreamingPipelineConfig, StreamingPipelineHandle,
+    StreamingPipelineResult, StreamingUploadCommand, spawn_streaming_pipeline,
 };
 
 // Re-export concurrent video encoder

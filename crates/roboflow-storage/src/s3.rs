@@ -838,7 +838,10 @@ impl crate::streaming_upload::StorageStreamingExt for S3Storage {
             "Created streaming multipart upload"
         );
 
-        Ok(Box::new(CloudMultipartUpload::new(upload, self.runtime_handle())))
+        Ok(Box::new(CloudMultipartUpload::new(
+            upload,
+            self.runtime_handle(),
+        )))
     }
 }
 

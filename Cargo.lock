@@ -4334,6 +4334,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "roboflow-video"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "image",
+ "png 0.17.16",
+ "roboflow-core",
+ "roboflow-storage",
+ "rsmpeg",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "rosbag"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

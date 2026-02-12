@@ -360,13 +360,12 @@ impl StreamingMp4Encoder {
         );
 
         // Determine pixel format based on codec
-        self.pix_fmt = if self.config.codec.contains("nvenc")
-            || self.config.codec.contains("videotoolbox")
-        {
-            ffi::AV_PIX_FMT_NV12
-        } else {
-            ffi::AV_PIX_FMT_YUV420P
-        };
+        self.pix_fmt =
+            if self.config.codec.contains("nvenc") || self.config.codec.contains("videotoolbox") {
+                ffi::AV_PIX_FMT_NV12
+            } else {
+                ffi::AV_PIX_FMT_YUV420P
+            };
 
         // =============================================================
         // STEP 2: Allocate and configure codec context
@@ -876,13 +875,15 @@ mod tests {
         let rgb_data = vec![128u8; (width * height * 3) as usize];
 
         // Use with_dimensions to properly initialize non-square encoder
-        let mut encoder =
-            StreamingMp4Encoder::with_dimensions(config, tx, width, height).unwrap();
+        let mut encoder = StreamingMp4Encoder::with_dimensions(config, tx, width, height).unwrap();
         assert_eq!(encoder.dimensions(), (width, height));
 
         // Add frame with correct non-square dimensions
         let result = encoder.add_frame(&rgb_data);
-        assert!(result.is_ok(), "Should accept non-square frame with correct dimensions");
+        assert!(
+            result.is_ok(),
+            "Should accept non-square frame with correct dimensions"
+        );
 
         assert_eq!(encoder.frame_count(), 1);
 

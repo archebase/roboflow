@@ -290,8 +290,7 @@ fn test_concurrent_encoder_with_minio() {
     };
 
     let mut encoder =
-        ConcurrentVideoEncoder::new(encoder_config)
-            .expect("Failed to create encoder");
+        ConcurrentVideoEncoder::new(encoder_config).expect("Failed to create encoder");
 
     // Add test frames
     let width = 160u32;
@@ -340,8 +339,7 @@ fn test_concurrent_encoder_multicam_with_minio() {
     };
 
     let mut encoder =
-        ConcurrentVideoEncoder::new(encoder_config)
-            .expect("Failed to create encoder");
+        ConcurrentVideoEncoder::new(encoder_config).expect("Failed to create encoder");
 
     // Add frames for 2 cameras
     let width = 160u32;
@@ -401,8 +399,7 @@ fn test_compressed_images_with_minio_upload() {
     };
 
     let mut encoder =
-        ConcurrentVideoEncoder::new(encoder_config)
-            .expect("Failed to create encoder");
+        ConcurrentVideoEncoder::new(encoder_config).expect("Failed to create encoder");
 
     let width = 160u32;
     let height = 120u32;
@@ -511,8 +508,7 @@ fn test_concurrent_minio_uploads() {
                 };
 
                 let mut encoder =
-                    ConcurrentVideoEncoder::new(encoder_config)
-                        .expect("Failed to create encoder");
+                    ConcurrentVideoEncoder::new(encoder_config).expect("Failed to create encoder");
 
                 // Add 5 frames
                 for i in 0..5 {
@@ -625,8 +621,7 @@ fn test_lerobot_v21_video_path_structure() {
     };
 
     let mut encoder =
-        ConcurrentVideoEncoder::new(encoder_config)
-            .expect("Failed to create encoder");
+        ConcurrentVideoEncoder::new(encoder_config).expect("Failed to create encoder");
 
     // Add frames for multiple cameras (simulating multi-camera setup)
     let cameras = vec![
@@ -685,7 +680,8 @@ fn test_lerobot_v21_video_path_structure() {
         .create_storage()
         .expect("Failed to create async storage");
 
-    let runtime = tokio::runtime::Runtime::new().expect("Failed to create runtime for verification");
+    let runtime =
+        tokio::runtime::Runtime::new().expect("Failed to create runtime for verification");
     runtime
         .block_on(async {
             for result in &results {
@@ -736,8 +732,7 @@ fn test_multi_camera_unique_temp_files() {
     };
 
     let mut encoder =
-        ConcurrentVideoEncoder::new(encoder_config)
-            .expect("Failed to create encoder");
+        ConcurrentVideoEncoder::new(encoder_config).expect("Failed to create encoder");
 
     // Add frames for cameras with similar names (simultaneously)
     // This would previously cause temp file collisions

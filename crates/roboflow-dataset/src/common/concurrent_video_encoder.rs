@@ -215,9 +215,7 @@ impl ConcurrentVideoEncoder {
             .spawn(move || {
                 Self::upload_thread(camera_clone, dest_url_clone, s3_config, upload_rx);
             })
-            .map_err(|e| {
-                RoboflowError::other(format!("Failed to spawn upload thread: {}", e))
-            })?;
+            .map_err(|e| RoboflowError::other(format!("Failed to spawn upload thread: {}", e)))?;
 
         // Spawn streaming encoding pipeline
         let handle = spawn_streaming_pipeline(pipeline_config, upload_tx)?;
