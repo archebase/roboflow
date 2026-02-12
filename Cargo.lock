@@ -4243,6 +4243,7 @@ dependencies = [
  "roboflow-core",
  "roboflow-sources",
  "roboflow-storage",
+ "roboflow-video",
  "rsmpeg",
  "serde",
  "serde_json",

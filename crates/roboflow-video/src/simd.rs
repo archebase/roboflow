@@ -26,6 +26,9 @@
 
 use roboflow_core::RoboflowError;
 
+/// Result type for YUV420p conversion (Y, U, V planes).
+type Yuv420pResult = Result<(Vec<u8>, Vec<u8>, Vec<u8>), RoboflowError>;
+
 // =============================================================================
 // Configuration
 // =============================================================================
@@ -129,7 +132,7 @@ pub fn rgb_to_yuv420p(
     rgb_data: &[u8],
     width: usize,
     height: usize,
-) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), RoboflowError> {
+) -> Yuv420pResult {
     let expected_size = width * height * 3;
     if rgb_data.len() != expected_size {
         return Err(RoboflowError::other(format!(

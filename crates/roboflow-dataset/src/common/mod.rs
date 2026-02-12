@@ -52,11 +52,12 @@ pub use image_decode::{decode_image_to_rgb, decode_to_rgb};
 // Re-export ring buffer for streaming frame processing
 pub use ring_buffer::{FrameRingBuffer, RingBufferError, RingBufferSnapshot};
 
-// Re-export video utilities including hardware-accelerated encoders
+// Re-export video utilities from the video module (which re-exports from roboflow-video)
 pub use video::{
-    DepthMkvEncoder, EncoderChoice, Mp4Encoder, NvencEncoder, VideoFrame, VideoFrameBuffer,
-    VideoToolboxEncoder, available_encoders, check_nvenc_available, check_videotoolbox_available,
-    is_encoder_available, print_encoder_diagnostics, select_best_encoder,
+    DepthEncoderConfig, DepthMkvEncoder, EncoderChoice, Mp4Encoder, NvencEncoder,
+    VideoEncoderConfig, VideoEncoderError, VideoFrame, VideoFrameBuffer, VideoToolboxEncoder,
+    available_encoders, check_nvenc_available, check_videotoolbox_available, is_encoder_available,
+    print_encoder_diagnostics, select_best_encoder,
 };
 
 // Re-export SIMD RGB to YUV conversion

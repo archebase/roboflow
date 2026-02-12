@@ -12,6 +12,7 @@ description = "Dataset writers for roboflow - LeRobot v2.1, Parquet (always avai
 roboflow-core = { workspace = true }
 roboflow-storage = { workspace = true }
 roboflow-sources = { path = "../roboflow-sources" }
+roboflow-video = { path = "../roboflow-video" }
 robocodec = { workspace = true }
 
 # Parquet (always available)

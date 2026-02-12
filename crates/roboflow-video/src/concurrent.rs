@@ -113,6 +113,7 @@ pub struct ConcurrentEncoderResult {
 }
 
 /// Result from camera pipeline finalization.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct CameraPipelineResult {
     /// Camera name.
@@ -130,6 +131,7 @@ struct CameraPipelineResult {
 // =============================================================================
 
 /// Command for upload threads.
+#[allow(dead_code)]
 #[derive(Debug)]
 enum UploadCommand {
     /// Upload a fragment.
@@ -196,6 +198,8 @@ impl CameraPipeline {
         let upload_tx = self.upload_tx.clone();
 
         // Use recv() in a loop to avoid borrow conflicts with &mut self
+        // Note: Cannot use while let because Shutdown case needs to return Err
+        #[allow(clippy::while_let_loop)]
         loop {
             match self.cmd_rx.recv() {
                 Ok(cmd) => match cmd {
@@ -406,10 +410,10 @@ impl CameraPipelineHandle {
         }?;
 
         // Then wait for the upload thread to complete
-        if let Some(upload_handle) = self.upload_thread_handle.take() {
-            if let Err(e) = upload_handle.join() {
-                tracing::warn!("Upload thread panicked: {:?}", e);
-            }
+        if let Some(upload_handle) = self.upload_thread_handle.take()
+            && let Err(e) = upload_handle.join()
+        {
+            tracing::warn!("Upload thread panicked: {:?}", e);
         }
 
         Ok(result)
@@ -443,6 +447,7 @@ fn decode_to_rgb(image: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
 ///
 /// This orchestrates per-camera encoding pipelines. Each pipeline
 /// manages its own upload using the `MultipartUpload` trait.
+#[allow(dead_code)]
 pub struct ConcurrentVideoEncoder {
     /// Per-camera pipeline handles.
     pipelines: HashMap<String, CameraPipelineHandle>,
