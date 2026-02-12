@@ -23,9 +23,5 @@ thiserror = "1.0"
 # Logging
 tracing = "0.1"
 
-# HDF5 (optional)
-hdf5 = { git = "https://github.com/archebase/hdf5-rs", optional = true }
-
 [features]
 default = []
-hdf5 = ["dep:hdf5"]

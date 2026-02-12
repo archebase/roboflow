@@ -58,11 +58,6 @@ pub enum SourceError {
     /// Storage error
     #[error("Storage error: {0}")]
     Storage(String),
-
-    /// HDF5-specific error (when feature is enabled)
-    #[cfg(feature = "hdf5")]
-    #[error("HDF5 error: {0}")]
-    HDF5(String),
 }
 
 #[cfg(test)]

@@ -47,15 +47,6 @@ impl SourceConfig {
         }
     }
 
-    /// Create an HDF5 source configuration.
-    #[cfg(feature = "hdf5")]
-    pub fn hdf5(path: impl Into<String>) -> Self {
-        Self {
-            source_type: SourceType::Hdf5 { path: path.into() },
-            options: HashMap::new(),
-        }
-    }
-
     /// Get the path for this source.
     ///
     /// For S3Prefix sources, returns the URL.
@@ -65,8 +56,6 @@ impl SourceConfig {
             SourceType::Bag { path } => path,
             SourceType::Rrd { path } => path,
             SourceType::S3Prefix { url } => url,
-            #[cfg(feature = "hdf5")]
-            SourceType::Hdf5 { path } => path,
         }
     }
 
@@ -157,12 +146,6 @@ pub enum SourceType {
         /// S3/OSS URL prefix (e.g., "s3://bucket/path/to/data/")
         url: String,
     },
-    /// HDF5 file format (when feature is enabled)
-    #[cfg(feature = "hdf5")]
-    Hdf5 {
-        /// Path to the HDF5 file
-        path: String,
-    },
 }
 
 impl SourceType {
@@ -173,8 +156,6 @@ impl SourceType {
             Self::Bag { .. } => "bag",
             Self::Rrd { .. } => "rrd",
             Self::S3Prefix { .. } => "s3-prefix",
-            #[cfg(feature = "hdf5")]
-            Self::Hdf5 { .. } => "hdf5",
         }
     }
 
@@ -187,8 +168,6 @@ impl SourceType {
             Self::Bag { path } => path,
             Self::Rrd { path } => path,
             Self::S3Prefix { url } => url,
-            #[cfg(feature = "hdf5")]
-            Self::Hdf5 { path } => path,
         }
     }
 }
