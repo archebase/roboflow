@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use crate::{
-    AsyncS3Storage, AsyncStorage, LocalStorage, S3Config, S3Storage, RoboflowConfig,
+    AsyncS3Storage, AsyncStorage, LocalStorage, RoboflowConfig, S3Config, S3Storage,
     SeekableStorage, Storage, StorageError, StorageResult as Result, url::StorageUrl,
 };
 

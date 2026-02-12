@@ -242,7 +242,7 @@ pub struct VideoUploadState {
     /// Camera/topic identifier.
     pub camera_id: String,
 
-    /// Multipart upload ID from S3/OSS.
+    /// Multipart upload ID from S3.
     pub upload_id: String,
 
     /// Parts uploaded so far.
@@ -258,7 +258,7 @@ pub struct UploadedPart {
     /// Part number (1-indexed).
     pub part_num: u32,
 
-    /// ETag returned by S3/OSS after upload.
+    /// ETag returned by S3 after upload.
     pub etag: String,
 
     /// Size of the part in bytes.
@@ -268,7 +268,7 @@ pub struct UploadedPart {
 /// State for parquet dataset multipart upload.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ParquetUploadState {
-    /// Multipart upload ID from S3/OSS.
+    /// Multipart upload ID from S3.
     pub upload_id: String,
 
     /// Parts uploaded so far.

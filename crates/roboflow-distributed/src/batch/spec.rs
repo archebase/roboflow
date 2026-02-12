@@ -300,20 +300,20 @@ impl BatchSpec {
     }
 
     fn validate_source_url(&self, url: &str) -> Result<(), BatchSpecError> {
-        if !url.starts_with("s3://") && !url.starts_with("oss://") && !url.starts_with("file://") {
+        if !url.starts_with("s3://") && !url.starts_with("file://") {
             return Err(BatchSpecError::InvalidUrl {
                 url: url.to_string(),
-                reason: "invalid scheme (must be s3://, oss://, or file://)".to_string(),
+                reason: "invalid scheme (must be s3:// or file://)".to_string(),
             });
         }
         Ok(())
     }
 
     fn validate_output_url(&self, url: &str) -> Result<(), BatchSpecError> {
-        if !url.starts_with("s3://") && !url.starts_with("oss://") && !url.starts_with("file://") {
+        if !url.starts_with("s3://") && !url.starts_with("file://") {
             return Err(BatchSpecError::InvalidUrl {
                 url: url.to_string(),
-                reason: "invalid scheme (must be s3://, oss://, or file://)".to_string(),
+                reason: "invalid scheme (must be s3:// or file://)".to_string(),
             });
         }
         Ok(())
@@ -513,8 +513,8 @@ mod tests {
     fn test_batch_spec_json_roundtrip() {
         let spec = BatchSpec::new(
             "test-batch",
-            vec!["oss://bucket/*.bag".to_string()],
-            "oss://output/".to_string(),
+            vec!["s3://bucket/*.bag".to_string()],
+            "s3://output/".to_string(),
         );
 
         let json = spec.to_json().unwrap();

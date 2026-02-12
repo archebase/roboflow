@@ -37,8 +37,8 @@ pub mod factory;
 pub mod local;
 pub mod multipart;
 pub mod multipart_parallel;
-pub mod s3;
 pub mod retry;
+pub mod s3;
 pub mod streaming;
 pub mod streaming_upload;
 pub mod url;
@@ -61,8 +61,8 @@ pub use multipart_parallel::{
 pub use object_store;
 pub use object_store::path::Path as ObjectPath;
 // S3-compatible storage (Amazon S3, Alibaba OSS, MinIO, etc.)
-pub use s3::{AsyncS3Storage, S3Config, S3Storage};
 pub use retry::{RetryConfig, RetryingStorage, retry_with_backoff};
+pub use s3::{AsyncS3Storage, S3Config, S3Storage};
 pub use streaming_upload::{
     CloudMultipartUpload, LocalMultipartUpload, MultipartUpload, StorageStreamingExt, UploadStats,
 };

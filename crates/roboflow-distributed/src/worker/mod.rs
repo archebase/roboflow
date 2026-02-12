@@ -176,8 +176,29 @@ impl Worker {
             return ProcessingResult::Failed { error: error_msg };
         };
 
-        let output_path = self.build_output_path(unit);
+        // Build output path - use the output_path from WorkUnit (specified during submit)
+        // If empty, fall back to legacy pattern
+        let output_path = if !unit.output_path.is_empty() {
+            PathBuf::from(&unit.output_path)
+        } else {
+            // Fallback: {output_prefix}/{unit_id}/
+            PathBuf::from(format!(
+                "{}/{}",
+                self.config.output_prefix.trim_end_matches('/'),
+                unit.id
+            ))
+        };
         let unit_id = unit.id.clone();
+
+        // Detect if output_path looks like a cloud URL and determine local path for encoding
+        let output_path_str = output_path.to_string_lossy();
+        let is_cloud_url =
+            output_path_str.starts_with("s3://") || output_path_str.starts_with("S3://");
+        let local_output_path = if is_cloud_url {
+            std::env::temp_dir()
+        } else {
+            output_path.clone()
+        };
 
         // Check for existing checkpoint
         // NOTE: Checkpoint resumption is not yet fully implemented.
@@ -229,47 +250,44 @@ impl Worker {
         // Reject malformed cloud URLs (e.g. "s3:" or "s3:/bucket" missing "//") to avoid
         // silently writing to a local directory named "s3:" instead of S3
         let output_path_str = output_path.to_string_lossy();
-        if (output_path_str.starts_with("s3:") && !output_path_str.starts_with("s3://"))
-            || (output_path_str.starts_with("oss:") && !output_path_str.starts_with("oss://"))
-        {
+        if output_path_str.starts_with("s3:") && !output_path_str.starts_with("s3://") {
             return ProcessingResult::Failed {
                 error: format!(
-                    "Malformed cloud URL '{}': use s3://bucket/path or oss://bucket/path (double slash required)",
+                    "Malformed cloud URL '{}': use s3://bucket/path (double slash required)",
                     output_path_str
                 ),
             };
         }
 
-        let (has_cloud_storage, storage, output_prefix) =
-            if output_path.starts_with("s3://") || output_path.starts_with("oss://") {
-                use std::str::FromStr;
-                let output_path_str = output_path.to_string_lossy().to_string();
-                let storage: Arc<dyn roboflow_storage::Storage> =
-                    match roboflow_storage::StorageFactory::from_env().create(&output_path_str) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            return ProcessingResult::Failed {
-                                error: format!("Failed to create storage: {}", e),
-                            };
-                        }
-                    };
-                let storage_url = match roboflow_storage::StorageUrl::from_str(&output_path_str) {
-                    Ok(url) => url,
-                    Err(_) => {
+        let (has_cloud_storage, storage, output_prefix) = if output_path_str.starts_with("s3://") {
+            use std::str::FromStr;
+            let output_path_str = output_path.to_string_lossy();
+            let storage: Arc<dyn roboflow_storage::Storage> =
+                match roboflow_storage::StorageFactory::from_env().create(&output_path_str) {
+                    Ok(s) => s,
+                    Err(e) => {
                         return ProcessingResult::Failed {
-                            error: format!("Failed to parse storage URL: {}", output_path_str),
+                            error: format!("Failed to create storage: {}", e),
                         };
                     }
                 };
-                let prefix = storage_url.path().trim_end_matches('/').to_string();
-                (true, storage, Some(prefix))
-            } else {
-                // Use local temp directory as buffer instead of treating cloud URL as local path
-                let temp_dir = std::env::temp_dir();
-                let local_storage: Arc<dyn roboflow_storage::Storage> =
-                    Arc::new(roboflow_storage::LocalStorage::new(&temp_dir));
-                (false, local_storage, None)
+            let storage_url = match roboflow_storage::StorageUrl::from_str(&output_path_str) {
+                Ok(url) => url,
+                Err(_) => {
+                    return ProcessingResult::Failed {
+                        error: format!("Failed to parse storage URL: {}", output_path_str),
+                    };
+                }
             };
+            let prefix = storage_url.path().trim_end_matches('/').to_string();
+            (true, storage, Some(prefix))
+        } else {
+            // Use local temp directory as buffer instead of treating cloud URL as local path
+            let temp_dir = std::env::temp_dir();
+            let local_storage: Arc<dyn roboflow_storage::Storage> =
+                Arc::new(roboflow_storage::LocalStorage::new(&temp_dir));
+            (false, local_storage, None)
+        };
 
         // Create the source
         let source = match create_source(&source_config) {
@@ -287,7 +305,7 @@ impl Worker {
             match roboflow_dataset::lerobot::LerobotWriter::new(
                 storage.clone(),
                 prefix.to_string(),
-                &output_path,
+                std::env::temp_dir(), // Use temp dir as local buffer (PathBuf -> impl AsRef<Path>)
                 lerobot_config.clone(),
             ) {
                 Ok(w) => w,
@@ -299,7 +317,7 @@ impl Worker {
             }
         } else {
             match roboflow_dataset::lerobot::LerobotWriter::new_local(
-                &output_path,
+                &local_output_path,
                 lerobot_config.clone(),
             ) {
                 Ok(w) => w,
@@ -532,25 +550,6 @@ impl Worker {
 }
 
 impl Worker {
-    /// Build the output path for a work unit.
-    ///
-    /// Uses the output_path specified in the Batch/WorkUnit from submit.
-    /// Falls back to a default pattern if not set.
-    fn build_output_path(&self, unit: &WorkUnit) -> PathBuf {
-        // Use the output_path from the WorkUnit (specified during submit)
-        // If empty, fall back to legacy pattern
-        if !unit.output_path.is_empty() {
-            PathBuf::from(&unit.output_path)
-        } else {
-            // Fallback: {output_prefix}/{unit_id}/
-            PathBuf::from(format!(
-                "{}/{}",
-                self.config.output_prefix.trim_end_matches('/'),
-                unit.id
-            ))
-        }
-    }
-
     /// Create a LeRobot configuration for processing a work unit.
     ///
     /// Loads the configuration from TiKV using the config_hash stored in the work unit.
@@ -792,7 +791,7 @@ impl Worker {
                     }
 
                     // Process the work unit using the pipeline-v2 API.
-                    // For cloud URLs, the source streams data directly from S3/OSS
+                    // For cloud URLs, the source streams data directly from S3
                     // via robocodec's S3Reader -- no prefetch or temp files needed.
                     let result = self.process_work_unit_with_pipeline(&unit).await;
 

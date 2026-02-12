@@ -264,7 +264,7 @@ impl ParquetMergeExecutor {
         }
 
         // Upload to storage if using cloud storage
-        if self.output_path.starts_with("s3://") || self.output_path.starts_with("oss://") {
+        if self.output_path.starts_with("s3://") {
             let mut reader = std::fs::File::open(&local_path).map_err(|e| {
                 TikvError::Serialization(format!("Failed to open temp file: {}", e))
             })?;

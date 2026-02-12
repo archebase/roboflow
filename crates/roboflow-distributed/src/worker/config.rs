@@ -57,7 +57,7 @@ pub struct WorkerConfig {
     /// Local output prefix for writing files (used when output_storage_url is not set).
     pub output_prefix: String,
 
-    /// Cloud storage URL for output files (e.g., "s3://bucket/datasets" or "oss://bucket/datasets").
+    /// Cloud storage URL for output files (e.g., "s3://bucket/datasets").
     ///
     /// When set, workers write to staging paths in cloud storage using a Staging + Merge pattern:
     /// - Staging: `{output_storage_url}/staging/{job_id}/worker_{pod_id}/`
@@ -143,7 +143,7 @@ impl WorkerConfig {
     /// Set the cloud storage URL for output files.
     ///
     /// When set, workers write to staging paths in cloud storage using a Staging + Merge pattern.
-    /// Example: "s3://my-bucket/datasets" or "oss://my-bucket/datasets"
+    /// Example: "s3://my-bucket/datasets"
     pub fn with_output_storage_url(mut self, url: impl Into<String>) -> Self {
         self.output_storage_url = Some(url.into());
         self

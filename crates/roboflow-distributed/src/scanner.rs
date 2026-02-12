@@ -12,7 +12,7 @@
 //!
 //! - **Leader Election**: Only the leader performs scans
 //! - **Batch Processing**: Queries Pending batches from TiKV
-//! - **File Discovery**: For each batch, scans the source URLs in S3/OSS
+//! - **File Discovery**: For each batch, scans the source URLs in S3
 //! - **Work Unit Creation**: Creates work units for discovered files, updates batch status
 //!
 //! # Example
@@ -520,7 +520,7 @@ impl Scanner {
         let storage = self.storage_factory.create(source_url)?;
 
         // Extract the path after the bucket name.
-        // URLs are like: s3://bucket/path/to/file or oss://bucket/file.mcap
+        // URLs are like: s3://bucket/path/to/file
         // The format is: scheme://bucket/path
         // We need to skip past :// to find the slash after the bucket name.
         let path_for_list = if let Some(protocol_end) = source_url.find("://") {
@@ -1195,12 +1195,12 @@ mod tests {
 
         // Single file in root
         assert_eq!(extract_path("s3://bucket/file.mcap"), "file.mcap");
-        assert_eq!(extract_path("oss://bucket/file.bag"), "file.bag");
+        assert_eq!(extract_path("s3://bucket/file.bag"), "file.bag");
 
         // File with nested path
         assert_eq!(extract_path("s3://bucket/data/file.mcap"), "data/file.mcap");
         assert_eq!(
-            extract_path("oss://bucket/data/subdir/file.bag"),
+            extract_path("s3://bucket/data/subdir/file.bag"),
             "data/subdir/file.bag"
         );
 
@@ -1221,7 +1221,7 @@ mod tests {
 
         // Root (no path after bucket)
         assert_eq!(extract_path("s3://bucket/"), "");
-        assert_eq!(extract_path("oss://bucket/"), "");
+        assert_eq!(extract_path("s3://bucket/"), "");
 
         // Complex filename with underscores, dates, etc.
         assert_eq!(

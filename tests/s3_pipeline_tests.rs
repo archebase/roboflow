@@ -294,9 +294,9 @@ fn test_storage_url_parsing() {
     let s3_url: StorageUrl = "s3://my-bucket/path/to/file.parquet".parse().unwrap();
     assert!(matches!(s3_url, StorageUrl::S3 { .. }));
 
-    // Test OSS URL parsing
-    let oss_url: StorageUrl = "oss://my-bucket/path/to/file.parquet".parse().unwrap();
-    assert!(matches!(oss_url, StorageUrl::Oss { .. }));
+    // Test that OSS URLs are rejected (only S3 is supported)
+    let oss_url_result: Result<StorageUrl, _> = "oss://my-bucket/path/to/file.parquet".parse();
+    assert!(oss_url_result.is_err(), "OSS URLs should be rejected");
 
     // Test local file URL parsing
     let local_url: StorageUrl = "file:///local/path/to/file.parquet".parse().unwrap();

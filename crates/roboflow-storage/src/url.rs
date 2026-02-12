@@ -358,5 +358,4 @@ mod tests {
         let url = StorageUrl::s3("bucket", "file.txt");
         assert_eq!(url.to_string(), "s3://bucket/file.txt");
     }
-
 }
