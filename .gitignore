@@ -31,3 +31,4 @@ profiles/
 # robot data
 *.bag
 *.mcap
+output.mp4

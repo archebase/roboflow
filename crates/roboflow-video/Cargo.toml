@@ -1,0 +1,40 @@
+[package]
+name = "roboflow-video"
+version = "0.1.0"
+edition = "2024"
+authors = ["ArcheBase Contributors"]
+license = "MulanPSL-2.0"
+repository = "https://github.com/archebase/roboflow"
+description = "Video encoding for roboflow - MP4, hardware acceleration, multi-camera"
+
+[dependencies]
+# Internal crates
+roboflow-core = { workspace = true }
+roboflow-storage = { workspace = true }
+
+# Video encoding via rsmpeg (native FFmpeg bindings)
+rsmpeg = { version = "0.18", features = ["link_system_ffmpeg"] }
+
+# Image decoding (for converting encoded images to RGB)
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+
+# PNG for depth image fallback
+png = "0.17"
+
+# Error handling
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+
+# Concurrency
+crossbeam-channel = "0.5"
+
+# Async runtime
+tokio = { workspace = true }
+
+[features]
+default = []
+
+[dev-dependencies]
+tempfile = "3.10"
