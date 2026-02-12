@@ -128,11 +128,7 @@ impl ConversionStrategy {
 /// assert_eq!(u.len(), 320 * 240);
 /// assert_eq!(v.len(), 320 * 240);
 /// ```
-pub fn rgb_to_yuv420p(
-    rgb_data: &[u8],
-    width: usize,
-    height: usize,
-) -> Yuv420pResult {
+pub fn rgb_to_yuv420p(rgb_data: &[u8], width: usize, height: usize) -> Yuv420pResult {
     let expected_size = width * height * 3;
     if rgb_data.len() != expected_size {
         return Err(RoboflowError::other(format!(
