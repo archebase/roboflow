@@ -595,42 +595,7 @@ impl BatchController {
 
         tracing::debug!(results = pending.len(), "claim_work_unit: scan completed");
 
-        // DEBUG: Also try a direct get for the known key pattern
         if pending.is_empty() {
-            // List all batches in Running phase from phase index
-            let running_prefix = super::BatchIndexKeys::phase_prefix(super::BatchPhase::Running);
-            let running = self.client.scan(running_prefix, 10).await?;
-            for (k, _) in &running {
-                let key_str = String::from_utf8_lossy(k);
-                if let Some(batch_id) = key_str.split('/').next_back() {
-                    // Try to scan pending keys for this batch
-                    let batch_pending = self
-                        .client
-                        .scan(WorkUnitKeys::pending_batch_prefix(batch_id), 10)
-                        .await?;
-                    tracing::info!(
-                        batch_id = %batch_id,
-                        pending_count = batch_pending.len(),
-                        "claim_work_unit: checked pending for running batch"
-                    );
-                    // If found via batch prefix, also try the global prefix
-                    if !batch_pending.is_empty() {
-                        for (pk, _) in &batch_pending {
-                            tracing::info!(
-                                key = %String::from_utf8_lossy(pk),
-                                "claim_work_unit: found pending via batch prefix!"
-                            );
-                            // Also try a direct get
-                            let direct = self.client.get(pk.clone()).await?;
-                            tracing::info!(
-                                exists = direct.is_some(),
-                                "claim_work_unit: direct get result"
-                            );
-                        }
-                    }
-                }
-            }
-
             return Ok(None);
         }
 
