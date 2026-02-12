@@ -664,4 +664,185 @@ mod tests {
         assert!(err.is_retryable());
         assert!(format!("{err}").contains("Storage error (s3)"));
     }
+
+    #[test]
+    fn test_alignment_error() {
+        let err = RoboflowError::AlignmentError {
+            expected: 8,
+            actual: 5,
+        };
+        assert_eq!(err.category(), ErrorCategory::Runtime);
+        assert_eq!(err.code(), 3002);
+        let display = format!("{err}");
+        assert!(display.contains("Alignment error"));
+        assert!(display.contains("expected alignment of 8"));
+        assert!(display.contains("position is 5"));
+    }
+
+    #[test]
+    fn test_length_exceeded_error() {
+        let err = RoboflowError::LengthExceeded {
+            length: 100,
+            position: 50,
+            buffer_len: 80,
+        };
+        assert_eq!(err.category(), ErrorCategory::Runtime);
+        assert_eq!(err.code(), 3003);
+        let display = format!("{err}");
+        assert!(display.contains("Length 100 exceeds buffer"));
+        assert!(display.contains("position 50"));
+        assert!(display.contains("buffer length: 80"));
+    }
+
+    #[test]
+    fn test_field_decode_error() {
+        let err = RoboflowError::FieldDecodeError {
+            field_name: "velocity".to_string(),
+            field_type: "Vector3".to_string(),
+            cursor_pos: 42,
+            cause: "invalid float".to_string(),
+        };
+        assert_eq!(err.category(), ErrorCategory::Runtime);
+        assert_eq!(err.code(), 3004);
+        let display = format!("{err}");
+        assert!(display.contains("Failed to decode field 'velocity'"));
+        assert!(display.contains("type: 'Vector3'"));
+        assert!(display.contains("cursor_pos: 42"));
+        assert!(display.contains("invalid float"));
+    }
+
+    #[test]
+    fn test_unsupported_error() {
+        let err = RoboflowError::unsupported("nested arrays");
+        assert_eq!(err.category(), ErrorCategory::Codec);
+        assert_eq!(err.code(), 4001);
+        let display = format!("{err}");
+        assert!(display.contains("Unsupported feature"));
+        assert!(display.contains("nested arrays"));
+    }
+
+    #[test]
+    fn test_encode_error() {
+        let err = RoboflowError::encode("CDR", "invalid type code");
+        assert_eq!(err.category(), ErrorCategory::Codec);
+        assert_eq!(err.code(), 4002);
+        let display = format!("{err}");
+        assert!(display.contains("CDR encode error"));
+        assert!(display.contains("invalid type code"));
+    }
+
+    #[test]
+    fn test_timeout_error() {
+        let err = RoboflowError::timeout("operation timed out after 30s");
+        assert_eq!(err.category(), ErrorCategory::Runtime);
+        assert_eq!(err.code(), 3098);
+        assert!(err.is_retryable());
+        let display = format!("{err}");
+        assert!(display.contains("Timeout"));
+        assert!(display.contains("operation timed out"));
+    }
+
+    #[test]
+    fn test_other_error() {
+        let err = RoboflowError::other("something went wrong");
+        assert_eq!(err.category(), ErrorCategory::Runtime);
+        assert_eq!(err.code(), 3099);
+        assert!(!err.is_retryable());
+        let display = format!("{err}");
+        assert!(display.contains("something went wrong"));
+    }
+
+    #[test]
+    fn test_codec_error() {
+        let err = RoboflowError::CodecError {
+            message: "decode failed".to_string(),
+        };
+        assert_eq!(err.category(), ErrorCategory::Runtime);
+        assert_eq!(err.code(), 3006);
+        let display = format!("{err}");
+        assert!(display.contains("Format I/O error"));
+        assert!(display.contains("decode failed"));
+    }
+
+    #[test]
+    fn test_error_clone() {
+        let err = RoboflowError::parse("test", "message");
+        let cloned = err.clone();
+        assert_eq!(format!("{err}"), format!("{cloned}"));
+
+        let err = RoboflowError::storage("s3", "error", false);
+        let cloned = err.clone();
+        assert_eq!(format!("{err}"), format!("{cloned}"));
+    }
+
+    #[test]
+    fn test_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err: RoboflowError = io_err.into();
+        assert_eq!(err.category(), ErrorCategory::Codec);
+        assert!(format!("{err}").contains("IO encode error"));
+        assert!(format!("{err}").contains("file not found"));
+    }
+
+    #[test]
+    fn test_storage_non_retryable() {
+        let err = RoboflowError::storage("local", "permission denied", false);
+        assert_eq!(err.category(), ErrorCategory::Storage);
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn test_error_category_strings() {
+        assert_eq!(ErrorCategory::Parse.as_str(), "PARSE");
+        assert_eq!(ErrorCategory::Schema.as_str(), "SCHEMA");
+        assert_eq!(ErrorCategory::Runtime.as_str(), "RUNTIME");
+        assert_eq!(ErrorCategory::Codec.as_str(), "CODEC");
+        assert_eq!(ErrorCategory::Transform.as_str(), "TRANSFORM");
+        assert_eq!(ErrorCategory::Storage.as_str(), "STORAGE");
+    }
+
+    #[test]
+    fn test_error_category_code_prefixes() {
+        assert_eq!(ErrorCategory::Parse.code_prefix(), 1000);
+        assert_eq!(ErrorCategory::Schema.code_prefix(), 2000);
+        assert_eq!(ErrorCategory::Runtime.code_prefix(), 3000);
+        assert_eq!(ErrorCategory::Codec.code_prefix(), 4000);
+        assert_eq!(ErrorCategory::Transform.code_prefix(), 5000);
+        assert_eq!(ErrorCategory::Storage.code_prefix(), 6000);
+    }
+
+    #[test]
+    fn test_log_fields_comprehensive() {
+        // Test all error variants have proper log fields
+        let err = RoboflowError::AlignmentError {
+            expected: 4,
+            actual: 3,
+        };
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].0, "expected");
+        assert_eq!(fields[1].0, "actual");
+
+        let err = RoboflowError::LengthExceeded {
+            length: 10,
+            position: 5,
+            buffer_len: 8,
+        };
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 3);
+
+        let err = RoboflowError::FieldDecodeError {
+            field_name: "f".to_string(),
+            field_type: "t".to_string(),
+            cursor_pos: 0,
+            cause: "c".to_string(),
+        };
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 4);
+
+        let err = RoboflowError::Timeout("timeout".to_string());
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "timeout");
+    }
 }
