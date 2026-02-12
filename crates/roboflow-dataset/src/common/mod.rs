@@ -20,7 +20,6 @@ pub mod camera_streaming_pipeline;
 pub mod concurrent_video_encoder;
 pub mod config;
 pub mod image_decode;
-pub mod image_format;
 pub mod parquet_base;
 pub mod progress;
 pub mod ring_buffer;
@@ -44,8 +43,8 @@ pub use parquet_base::{FeatureStats, ParquetWriterBase, calculate_stats};
 // Re-export progress utilities
 pub use progress::{ProgressReceiver, ProgressSender, ProgressUpdate};
 
-// Re-export image format detection
-pub use image_format::{ImageFormat, can_passthrough, detect_image_format};
+// Re-export image format detection from the image module (canonical location)
+pub use crate::image::{ImageFormat, can_passthrough, detect_image_format};
 
 // Re-export image decode utilities
 pub use image_decode::{decode_image_to_rgb, decode_to_rgb};

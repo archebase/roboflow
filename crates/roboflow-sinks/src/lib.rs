@@ -19,6 +19,9 @@ pub use config::{SinkConfig, SinkType};
 pub use error::{SinkError, SinkResult};
 pub use registry::{SinkRegistry, create_sink, global_registry, register_sink};
 
+// Re-export ImageFormat from roboflow_dataset (canonical location)
+pub use roboflow_dataset::image::ImageFormat;
+
 use async_trait::async_trait;
 use std::collections::HashMap;
 
@@ -82,21 +85,6 @@ pub struct ImageData {
     pub data: Vec<u8>,
     /// Image format (e.g., "rgb8", "jpeg")
     pub format: ImageFormat,
-}
-
-/// Image format enumeration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImageFormat {
-    /// RGB8 format (3 bytes per pixel)
-    Rgb8,
-    /// BGR8 format (3 bytes per pixel)
-    Bgr8,
-    /// Grayscale (1 byte per pixel)
-    Gray8,
-    /// JPEG compressed
-    Jpeg,
-    /// PNG compressed
-    Png,
 }
 
 impl DatasetFrame {

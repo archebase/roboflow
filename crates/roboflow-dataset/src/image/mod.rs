@@ -60,7 +60,7 @@ pub mod parallel;
 pub use backend::{DecodedImage, DecoderType, ImageDecoderBackend};
 pub use config::{DecoderBackendType as ImageDecoderBackendType, ImageDecoderConfig};
 pub use factory::{DecodeStats, GpuDeviceInfo, ImageDecoderFactory};
-pub use format::ImageFormat;
+pub use format::{ImageFormat, can_passthrough, detect_image_format, detect_jpeg, detect_png};
 pub use memory::{AlignedImageBuffer, MemoryStrategy};
 pub use parallel::{ParallelDecodeStats, decode_images_parallel, decode_images_parallel_with_dims};
 

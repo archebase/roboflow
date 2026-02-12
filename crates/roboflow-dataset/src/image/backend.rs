@@ -235,12 +235,18 @@ impl ImageDecoderBackend for CpuImageDecoder {
         match format {
             ImageFormat::Jpeg => self.decode_jpeg(data),
             ImageFormat::Png => self.decode_png(data),
-            ImageFormat::Rgb8 => {
-                // Already RGB, but we need explicit dimensions from metadata.
+            ImageFormat::Rgb8 | ImageFormat::Bgr8 => {
+                // Already RGB/BGR, but we need explicit dimensions from metadata.
                 // The previous sqrt() approach was incorrect for non-square images.
                 // Return an error directing the caller to provide dimensions explicitly.
                 Err(ImageError::InvalidData(
-                    "RGB8 format requires explicit width/height from message metadata. \
+                    "RGB8/BGR8 format requires explicit width/height from message metadata. \
+                     Use DecodedImage::new_with_dimensions() or extract dimensions from the ROS message.".to_string()
+                ))
+            }
+            ImageFormat::Gray8 => {
+                Err(ImageError::InvalidData(
+                    "Gray8 format requires explicit width/height from message metadata. \
                      Use DecodedImage::new_with_dimensions() or extract dimensions from the ROS message.".to_string()
                 ))
             }

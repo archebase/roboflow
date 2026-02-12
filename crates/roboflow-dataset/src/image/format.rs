@@ -12,8 +12,12 @@
 /// Image format identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ImageFormat {
-    /// Uncompressed RGB8 data
+    /// Uncompressed RGB8 data (3 bytes per pixel)
     Rgb8,
+    /// Uncompressed BGR8 data (3 bytes per pixel)
+    Bgr8,
+    /// Uncompressed grayscale data (1 byte per pixel)
+    Gray8,
     /// JPEG compressed image
     Jpeg,
     /// PNG compressed image
@@ -29,7 +33,9 @@ impl ImageFormat {
     /// ROS CompressedImage uses format strings like "jpeg", "png", "rgb8", "avi".
     pub fn from_ros_format(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "rgb8" | "bgr8" | "rgba8" | "bgra8" => Self::Rgb8,
+            "rgb8" | "rgba8" => Self::Rgb8,
+            "bgr8" | "bgra8" => Self::Bgr8,
+            "mono8" | "gray8" => Self::Gray8,
             "jpeg" | "jpg" | "jpe" | "jfif" => Self::Jpeg,
             "png" => Self::Png,
             // Some cameras use "avi" or "h264" but actually send JPEG
@@ -74,6 +80,16 @@ impl ImageFormat {
     /// Check if this format is compressed (requires decoding).
     pub fn is_compressed(&self) -> bool {
         matches!(self, Self::Jpeg | Self::Png)
+    }
+
+    /// Check if this format is already encoded (JPEG/PNG).
+    pub fn is_encoded(&self) -> bool {
+        matches!(self, Self::Jpeg | Self::Png)
+    }
+
+    /// Check if this format can use passthrough encoding (JPEG only).
+    pub fn supports_passthrough(&self) -> bool {
+        matches!(self, Self::Jpeg)
     }
 
     /// Extract dimensions from JPEG header without full decode.
@@ -174,6 +190,48 @@ impl ImageFormat {
     }
 }
 
+// =============================================================================
+// Standalone detection functions for convenience
+// =============================================================================
+
+/// Detect if image data is JPEG-encoded.
+///
+/// JPEG files start with the magic bytes: FF D8 FF
+pub fn detect_jpeg(data: &[u8]) -> bool {
+    data.len() >= 4 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF
+}
+
+/// Detect if image data is PNG-encoded.
+///
+/// PNG files start with the magic bytes: 89 50 4E 47 (the PNG signature)
+pub fn detect_png(data: &[u8]) -> bool {
+    data.len() >= 8
+        && data[0] == 0x89
+        && data[1] == 0x50
+        && data[2] == 0x4E
+        && data[3] == 0x47
+        && data[4] == 0x0D
+        && data[5] == 0x0A
+        && data[6] == 0x1A
+        && data[7] == 0x0A
+}
+
+/// Detect the image format from raw bytes.
+pub fn detect_image_format(data: &[u8]) -> ImageFormat {
+    if detect_jpeg(data) {
+        return ImageFormat::Jpeg;
+    }
+    if detect_png(data) {
+        return ImageFormat::Png;
+    }
+    ImageFormat::Unknown
+}
+
+/// Check if the image data is likely JPEG-encoded for passthrough.
+pub fn can_passthrough(data: &[u8]) -> bool {
+    detect_jpeg(data)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,7 +243,8 @@ mod tests {
         assert_eq!(ImageFormat::from_ros_format("jpg"), ImageFormat::Jpeg);
         assert_eq!(ImageFormat::from_ros_format("png"), ImageFormat::Png);
         assert_eq!(ImageFormat::from_ros_format("rgb8"), ImageFormat::Rgb8);
-        assert_eq!(ImageFormat::from_ros_format("bgr8"), ImageFormat::Rgb8);
+        assert_eq!(ImageFormat::from_ros_format("bgr8"), ImageFormat::Bgr8);
+        assert_eq!(ImageFormat::from_ros_format("mono8"), ImageFormat::Gray8);
         assert_eq!(
             ImageFormat::from_ros_format("unknown"),
             ImageFormat::Unknown

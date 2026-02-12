@@ -144,7 +144,7 @@ mod tests {
         let strategy = PipelineStrategy::select_optimal(ImageFormat::Jpeg);
         assert!(!matches!(strategy, PipelineStrategy::Passthrough));
 
-        let strategy = PipelineStrategy::select_optimal(ImageFormat::RawRgb8);
+        let strategy = PipelineStrategy::select_optimal(ImageFormat::Rgb8);
         // Raw RGB will be handled by some strategy
         let _ = strategy;
     }
