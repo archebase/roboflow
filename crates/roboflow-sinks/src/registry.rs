@@ -1,80 +1,26 @@
-// Sink registry for creating sinks from configuration
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
+//! Sink registry for creating sinks from configuration.
 
 use crate::{Sink, SinkConfig, SinkError, SinkFactory, error::SinkResult};
-use std::sync::RwLock;
+use roboflow_core::GlobalFactoryRegistry;
 
 /// Global registry of sink factories.
 ///
 /// Sinks register themselves at startup, and the registry creates
 /// instances on demand from configuration.
-pub struct SinkRegistry {
-    factories: RwLock<std::collections::HashMap<String, SinkFactory>>,
-}
+static GLOBAL_SINK_REGISTRY: GlobalFactoryRegistry<SinkFactory> = GlobalFactoryRegistry::new();
 
-impl SinkRegistry {
-    /// Create a new empty registry.
-    pub fn new() -> Self {
-        Self {
-            factories: RwLock::new(std::collections::HashMap::new()),
-        }
-    }
-
-    /// Register a sink factory.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Name of the sink type (e.g., "lerobot", "kps")
-    /// * `factory` - Function that creates new sink instances
-    pub fn register(&self, name: impl Into<String>, factory: SinkFactory) {
-        let mut factories = self.factories.write().unwrap();
-        factories.insert(name.into(), factory);
-    }
-
-    /// Create a sink from configuration.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Sink configuration
-    ///
-    /// # Returns
-    ///
-    /// A boxed sink instance
-    pub fn create(&self, config: &SinkConfig) -> SinkResult<Box<dyn Sink>> {
-        let factories = self.factories.read().unwrap();
-        let sink_type = config.sink_type.name();
-
-        let factory = factories
-            .get(sink_type)
-            .ok_or_else(|| SinkError::UnsupportedFormat(sink_type.to_string()))?;
-
-        Ok(factory())
-    }
-
-    /// Check if a sink type is registered.
-    pub fn has_sink(&self, name: &str) -> bool {
-        let factories = self.factories.read().unwrap();
-        factories.contains_key(name)
-    }
-
-    /// Get all registered sink names.
-    pub fn registered_sinks(&self) -> Vec<String> {
-        let factories = self.factories.read().unwrap();
-        factories.keys().cloned().collect()
-    }
-}
-
-impl Default for SinkRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Global sink registry instance.
-static GLOBAL_REGISTRY: std::sync::OnceLock<SinkRegistry> = std::sync::OnceLock::new();
-
-/// Get the global sink registry.
-pub fn global_registry() -> &'static SinkRegistry {
-    GLOBAL_REGISTRY.get_or_init(SinkRegistry::new)
+/// Register a sink type with the global registry.
+///
+/// # Arguments
+///
+/// * `name` - Name of the sink type (e.g., "lerobot", "kps")
+/// * `factory` - Function that creates new sink instances
+pub fn register_sink(name: impl Into<String>, factory: SinkFactory) {
+    GLOBAL_SINK_REGISTRY.get_or_init().register(name, factory);
 }
 
 /// Create a sink from configuration using the global registry.
@@ -89,17 +35,31 @@ pub fn global_registry() -> &'static SinkRegistry {
 ///
 /// A boxed sink instance
 pub fn create_sink(config: &SinkConfig) -> SinkResult<Box<dyn Sink>> {
-    global_registry().create(config)
+    let sink_type = config.sink_type.name();
+
+    let registry = GLOBAL_SINK_REGISTRY.get_or_init();
+    let factory = registry
+        .get_ref(sink_type)
+        .ok_or_else(|| SinkError::UnsupportedFormat(sink_type.to_string()))?;
+
+    Ok(factory())
 }
 
-/// Register a sink type with the global registry.
+/// Check if a sink type is registered.
+pub fn has_sink(name: &str) -> bool {
+    GLOBAL_SINK_REGISTRY.get_or_init().contains(name)
+}
+
+/// Get all registered sink names.
+pub fn registered_sinks() -> Vec<String> {
+    GLOBAL_SINK_REGISTRY.get_or_init().names()
+}
+
+/// Get a reference to the global sink registry.
 ///
-/// # Arguments
-///
-/// * `name` - Name of the sink type
-/// * `factory` - Function that creates new sink instances
-pub fn register_sink(name: impl Into<String>, factory: SinkFactory) {
-    global_registry().register(name, factory);
+/// This is provided for advanced use cases where direct registry access is needed.
+pub fn global_registry() -> &'static roboflow_core::FactoryRegistry<SinkFactory> {
+    GLOBAL_SINK_REGISTRY.get_or_init()
 }
 
 #[cfg(test)]
@@ -139,27 +99,31 @@ mod tests {
     }
 
     #[test]
-    fn test_registry() {
-        let registry = SinkRegistry::new();
+    fn test_has_sink() {
+        // Create a new registry scope for testing
+        let registry = roboflow_core::FactoryRegistry::new();
+        registry.register("mock", Box::new(|| Box::new(MockSink) as Box<dyn Sink>) as SinkFactory);
 
-        // Register a mock sink
-        registry.register("mock", Box::new(|| Box::new(MockSink) as Box<dyn Sink>));
+        assert!(registry.contains("mock"));
+        assert!(!registry.contains("other"));
+    }
 
-        assert!(registry.has_sink("mock"));
-        assert!(!registry.has_sink("other"));
+    #[test]
+    fn test_registered_sinks() {
+        let registry = roboflow_core::FactoryRegistry::new();
+        registry.register("mock", Box::new(|| Box::new(MockSink) as Box<dyn Sink>) as SinkFactory);
 
-        let sinks = registry.registered_sinks();
+        let sinks = registry.names();
         assert_eq!(sinks, vec!["mock".to_string()]);
     }
 
     #[test]
-    fn test_create_sink() {
-        let registry = SinkRegistry::new();
-
-        registry.register("mock", Box::new(|| Box::new(MockSink) as Box<dyn Sink>));
+    fn test_create_sink_error() {
+        let registry = roboflow_core::FactoryRegistry::new();
+        registry.register("mock", Box::new(|| Box::new(MockSink) as Box<dyn Sink>) as SinkFactory);
 
         let config = SinkConfig::lerobot("/output");
-        // Try to create a non-registered sink
-        assert!(registry.create(&config).is_err());
+        // Try to get a non-registered sink
+        assert!(registry.get_ref(config.sink_type.name()).is_none());
     }
 }

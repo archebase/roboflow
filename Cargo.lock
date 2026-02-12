@@ -4155,6 +4155,7 @@ version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "roboflow-core",
  "roboflow-dataset",
  "roboflow-storage",
  "serde",
@@ -4169,6 +4170,7 @@ version = "0.2.0"
 dependencies = [
  "async-trait",
  "robocodec",
+ "roboflow-core",
  "roboflow-storage",
  "serde",
  "serde_json",

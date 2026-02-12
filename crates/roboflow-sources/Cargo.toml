@@ -9,6 +9,7 @@ description = "Source plugins for roboflow data pipeline"
 
 [dependencies]
 robocodec = { workspace = true }
+roboflow-core = { path = "../roboflow-core" }
 roboflow-storage = { path = "../roboflow-storage" }
 async-trait = { workspace = true }
 tokio = { workspace = true }

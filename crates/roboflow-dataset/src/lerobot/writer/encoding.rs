@@ -481,15 +481,8 @@ mod tests {
         let video_config = create_test_video_config();
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let (videos, stats) = encode_videos(
-            &image_buffers,
-            0,
-            temp_dir.path(),
-            &video_config,
-            30,
-            false,
-        )
-        .unwrap();
+        let (videos, stats) =
+            encode_videos(&image_buffers, 0, temp_dir.path(), &video_config, 30, false).unwrap();
 
         assert!(videos.is_empty());
         assert_eq!(stats.images_encoded, 0);
@@ -502,15 +495,8 @@ mod tests {
         let video_config = create_test_video_config();
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let (videos, stats) = encode_videos(
-            &image_buffers,
-            0,
-            temp_dir.path(),
-            &video_config,
-            30,
-            false,
-        )
-        .unwrap();
+        let (videos, stats) =
+            encode_videos(&image_buffers, 0, temp_dir.path(), &video_config, 30, false).unwrap();
 
         assert!(videos.is_empty());
         assert_eq!(stats.images_encoded, 0);

@@ -18,7 +18,7 @@ pub use config::{SourceConfig, SourceType};
 pub use error::{SourceError, SourceResult};
 pub use mcap::McapSource;
 pub use metadata::{SourceMetadata, TopicMetadata};
-pub use registry::{SourceRegistry, create_source, global_registry, register_source};
+pub use registry::{create_source, global_registry, has_source, register_source, registered_sources};
 pub use rrd::RrdSource;
 pub use s3_prefix::S3PrefixSource;
 
@@ -80,12 +80,11 @@ pub struct TimestampedMessage {
 /// # Example
 ///
 /// ```rust,no_run
-/// use roboflow_sources::{Source, SourceConfig, SourceRegistry};
+/// use roboflow_sources::{Source, SourceConfig, create_source};
 ///
 /// async fn read_from_mcap() -> roboflow_sources::SourceResult<()> {
 ///     let config = SourceConfig::mcap("path/to/data.mcap");
-///     let registry = SourceRegistry::new();
-///     let mut source = registry.create(&config)?;
+///     let mut source = create_source(&config)?;
 ///
 ///     let metadata = source.initialize(&config).await?;
 ///     println!("Source has {} topics", metadata.topics.len());

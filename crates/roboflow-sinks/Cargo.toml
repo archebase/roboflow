@@ -8,6 +8,7 @@ repository = "https://github.com/archebase/roboflow"
 description = "Sink plugins for roboflow data pipeline"
 
 [dependencies]
+roboflow-core = { path = "../roboflow-core" }
 roboflow-dataset = { workspace = true }
 roboflow-storage = { workspace = true }
 

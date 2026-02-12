@@ -17,7 +17,7 @@ pub use lerobot_factory::{LerobotWriterConfig, LerobotWriterResult, create_lerob
 
 pub use config::{SinkConfig, SinkType};
 pub use error::{SinkError, SinkResult};
-pub use registry::{SinkRegistry, create_sink, global_registry, register_sink};
+pub use registry::{create_sink, global_registry, has_sink, register_sink, registered_sinks};
 
 // Re-export ImageFormat from roboflow_dataset (canonical location)
 pub use roboflow_dataset::image::ImageFormat;
@@ -202,12 +202,11 @@ impl SinkCheckpoint {
 /// # Example
 ///
 /// ```rust,no_run
-/// use roboflow_sinks::{Sink, SinkConfig, SinkRegistry, DatasetFrame};
+/// use roboflow_sinks::{Sink, SinkConfig, create_sink, DatasetFrame};
 ///
 /// async fn write_to_lerobot() -> roboflow_sinks::SinkResult<()> {
 ///     let config = SinkConfig::lerobot("/path/to/output");
-///     let registry = SinkRegistry::new();
-///     let mut sink = registry.create(&config)?;
+///     let mut sink = create_sink(&config)?;
 ///
 ///     sink.initialize(&config).await?;
 ///

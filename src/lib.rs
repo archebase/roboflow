@@ -65,14 +65,16 @@ pub mod core {
 // =============================================================================
 #[cfg(feature = "sources")]
 pub use roboflow_sources::{
-    Source, SourceConfig, SourceError, SourceMetadata, SourceRegistry, SourceResult,
-    TimestampedMessage,
+    Source, SourceConfig, SourceError, SourceFactory, SourceMetadata, SourceResult,
+    TimestampedMessage, create_source, global_registry as source_registry, has_source,
+    register_source, registered_sources,
 };
 
 #[cfg(feature = "sinks")]
 pub use roboflow_sinks::{
-    DatasetFrame, ImageData, ImageFormat, Sink, SinkCheckpoint, SinkConfig, SinkError,
-    SinkRegistry, SinkResult, SinkStats,
+    DatasetFrame, ImageData, ImageFormat, Sink, SinkCheckpoint, SinkConfig, SinkError, SinkFactory,
+    SinkResult, SinkStats, create_sink, global_registry as sink_registry, has_sink, register_sink,
+    registered_sinks,
 };
 
 // =============================================================================
