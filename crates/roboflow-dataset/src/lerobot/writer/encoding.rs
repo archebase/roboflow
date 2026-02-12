@@ -376,3 +376,155 @@ pub fn build_frame_buffer_static(images: &[ImageData]) -> Result<(VideoFrameBuff
 
     Ok((buffer, skipped))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::ImageData;
+
+    /// Create a test ImageData with raw RGB pixels
+    fn create_test_image(width: u32, height: u32, is_encoded: bool) -> ImageData {
+        let data = if is_encoded {
+            // Minimal valid JPEG header (not actually valid, just for testing)
+            vec![0xFF, 0xD8, 0xFF, 0xE0]
+        } else {
+            // Raw RGB data
+            vec![0u8; (width as usize) * (height as usize) * 3]
+        };
+        ImageData {
+            width,
+            height,
+            data,
+            original_timestamp: 0,
+            is_encoded,
+            is_depth: false,
+        }
+    }
+
+    #[test]
+    fn test_build_frame_buffer_empty_images() {
+        let images: Vec<ImageData> = vec![];
+        let (buffer, skipped) = build_frame_buffer_static(&images).unwrap();
+        assert!(buffer.is_empty());
+        assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn test_build_frame_buffer_zero_dimensions() {
+        let images = vec![
+            create_test_image(0, 100, false),
+            create_test_image(100, 0, false),
+            create_test_image(0, 0, false),
+        ];
+        let (buffer, skipped) = build_frame_buffer_static(&images).unwrap();
+        assert!(buffer.is_empty());
+        assert_eq!(skipped, 3);
+    }
+
+    #[test]
+    fn test_build_frame_buffer_single_frame() {
+        let images = vec![create_test_image(64, 48, false)];
+        let (buffer, skipped) = build_frame_buffer_static(&images).unwrap();
+        assert!(!buffer.is_empty());
+        assert_eq!(buffer.len(), 1);
+        assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn test_build_frame_buffer_multiple_frames() {
+        let images = vec![
+            create_test_image(64, 48, false),
+            create_test_image(64, 48, false),
+            create_test_image(64, 48, false),
+        ];
+        let (buffer, skipped) = build_frame_buffer_static(&images).unwrap();
+        assert!(!buffer.is_empty());
+        assert_eq!(buffer.len(), 3);
+        assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn test_build_frame_buffer_dimension_mismatch() {
+        // First frame sets the expected dimensions
+        // Second frame has different dimensions, should be skipped
+        let images = vec![
+            create_test_image(64, 48, false),
+            create_test_image(32, 24, false), // Different size
+        ];
+        let (buffer, skipped) = build_frame_buffer_static(&images).unwrap();
+        assert_eq!(buffer.len(), 1); // Only first frame
+        assert_eq!(skipped, 1); // Second frame skipped
+    }
+
+    #[test]
+    fn test_build_frame_buffer_encoded_image_decode_failure() {
+        // Encoded image with invalid JPEG data will fail to decode
+        let images = vec![create_test_image(64, 48, true)];
+        let (buffer, skipped) = build_frame_buffer_static(&images).unwrap();
+        assert!(buffer.is_empty());
+        assert_eq!(skipped, 1);
+    }
+
+    #[test]
+    fn test_encode_stats_default() {
+        let stats = EncodeStats::default();
+        assert_eq!(stats.images_encoded, 0);
+        assert_eq!(stats.skipped_frames, 0);
+        assert_eq!(stats.failed_encodings, 0);
+        assert_eq!(stats.decode_failures, 0);
+        assert_eq!(stats.output_bytes, 0);
+    }
+
+    #[test]
+    fn test_encode_videos_empty_input() {
+        let image_buffers: Vec<(String, Vec<ImageData>)> = vec![];
+        let video_config = create_test_video_config();
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let (videos, stats) = encode_videos(
+            &image_buffers,
+            0,
+            temp_dir.path(),
+            &video_config,
+            30,
+            false,
+        )
+        .unwrap();
+
+        assert!(videos.is_empty());
+        assert_eq!(stats.images_encoded, 0);
+    }
+
+    #[test]
+    fn test_encode_videos_empty_camera() {
+        // Camera with no images should be filtered out
+        let image_buffers = vec![("camera_0".to_string(), vec![])];
+        let video_config = create_test_video_config();
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let (videos, stats) = encode_videos(
+            &image_buffers,
+            0,
+            temp_dir.path(),
+            &video_config,
+            30,
+            false,
+        )
+        .unwrap();
+
+        assert!(videos.is_empty());
+        assert_eq!(stats.images_encoded, 0);
+    }
+
+    /// Create a minimal ResolvedConfig for testing
+    fn create_test_video_config() -> ResolvedConfig {
+        ResolvedConfig {
+            codec: "libx264".to_string(),
+            crf: 23,
+            preset: "medium".to_string(),
+            pixel_format: "yuv420p".to_string(),
+            hardware_accelerated: false,
+            parallel_jobs: 1,
+        }
+    }
+}
