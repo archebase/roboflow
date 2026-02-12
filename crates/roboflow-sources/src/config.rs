@@ -85,6 +85,52 @@ impl SourceConfig {
             .get(key)
             .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
+
+    /// Create a source configuration from a URL/path.
+    ///
+    /// Auto-detects the source type based on:
+    /// - URL scheme (s3://, oss://)
+    /// - File extension (.mcap, .bag, .rrd)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use roboflow_sources::SourceConfig;
+    ///
+    /// // Local files
+    /// let config = SourceConfig::from_url("/path/to/data.mcap");
+    /// assert_eq!(config.source_type.name(), "mcap");
+    ///
+    /// // S3 files
+    /// let config = SourceConfig::from_url("s3://bucket/data/file.bag");
+    /// assert_eq!(config.source_type.name(), "bag");
+    ///
+    /// // S3 prefix (no extension)
+    /// let config = SourceConfig::from_url("s3://bucket/data/prefix/");
+    /// assert_eq!(config.source_type.name(), "s3-prefix");
+    /// ```
+    pub fn from_url(url: impl AsRef<str>) -> Self {
+        let url = url.as_ref();
+
+        // Check for cloud URLs
+        let is_cloud = url.starts_with("s3://") || url.starts_with("oss://");
+        let url_lower = url.to_lowercase();
+
+        // Check for specific file extensions
+        if url_lower.ends_with(".mcap") {
+            Self::mcap(url)
+        } else if url_lower.ends_with(".bag") {
+            Self::bag(url)
+        } else if url_lower.ends_with(".rrd") {
+            Self::rrd(url)
+        } else if is_cloud {
+            // Cloud URL without specific extension - treat as prefix
+            Self::s3_prefix(url)
+        } else {
+            // Default to MCAP for local files
+            Self::mcap(url)
+        }
+    }
 }
 
 /// The type of source.
@@ -199,5 +245,43 @@ mod tests {
 
         assert_eq!(config.path(), "s3://bucket/data/episode_001/");
         assert_eq!(config.source_type.name(), "s3-prefix");
+    }
+
+    #[test]
+    fn test_from_url_local_files() {
+        let config = SourceConfig::from_url("/path/to/file.mcap");
+        assert_eq!(config.source_type.name(), "mcap");
+
+        let config = SourceConfig::from_url("/path/to/file.bag");
+        assert_eq!(config.source_type.name(), "bag");
+
+        let config = SourceConfig::from_url("/path/to/file.rrd");
+        assert_eq!(config.source_type.name(), "rrd");
+
+        // Case insensitive
+        let config = SourceConfig::from_url("/path/to/file.MCAP");
+        assert_eq!(config.source_type.name(), "mcap");
+    }
+
+    #[test]
+    fn test_from_url_cloud_files() {
+        let config = SourceConfig::from_url("s3://bucket/path/file.mcap");
+        assert_eq!(config.source_type.name(), "mcap");
+
+        let config = SourceConfig::from_url("s3://bucket/path/prefix/");
+        assert_eq!(config.source_type.name(), "s3-prefix");
+
+        let config = SourceConfig::from_url("oss://bucket/path/file.bag");
+        assert_eq!(config.source_type.name(), "bag");
+
+        let config = SourceConfig::from_url("oss://bucket/path/prefix/");
+        assert_eq!(config.source_type.name(), "s3-prefix");
+    }
+
+    #[test]
+    fn test_from_url_default() {
+        // Unknown extension defaults to MCAP
+        let config = SourceConfig::from_url("/path/to/unknown");
+        assert_eq!(config.source_type.name(), "mcap");
     }
 }

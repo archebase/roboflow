@@ -156,4 +156,4 @@ pub trait Decoder: Send + Sync {
 // High-level Conversion API
 // =============================================================================
 #[cfg(all(feature = "sources", feature = "sinks"))]
-pub use convert::{convert, convert_with_defaults, ConvertBuilder, ConversionReport};
+pub use convert::{ConversionReport, ConvertBuilder, convert, convert_with_defaults};

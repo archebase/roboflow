@@ -42,8 +42,8 @@ use roboflow_sinks::{LerobotWriterConfig, create_lerobot_writer};
 
 use roboflow_dataset::{
     PipelineConfig, PipelineStats,
-    common::config::{Mapping, MappingType, DatasetBaseConfig},
-    lerobot::{LerobotConfig, DatasetConfig, VideoConfig, FlushingConfig, StreamingConfig},
+    common::config::{DatasetBaseConfig, Mapping, MappingType},
+    lerobot::{DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig},
 };
 
 /// Report from a conversion operation.
@@ -266,7 +266,7 @@ impl ConvertBuilder {
             LerobotConfig::from_file(path).map_err(|e| {
                 RoboflowError::parse(
                     "LerobotConfig",
-                    format!("Failed to load config from {}: {}", path.display(), e)
+                    format!("Failed to load config from {}: {}", path.display(), e),
                 )
             })?
         } else {
@@ -291,13 +291,14 @@ impl ConvertBuilder {
         config.mappings = merged_mappings;
 
         // Create source
-        let source_config = create_source_config(&input);
+        let source_config = SourceConfig::from_url(&input);
         let mut source = create_source(&source_config).map_err(|e| {
             RoboflowError::other(format!("Failed to create source for {}: {}", input, e))
         })?;
-        source.initialize(&source_config).await.map_err(|e| {
-            RoboflowError::other(format!("Failed to initialize source: {}", e))
-        })?;
+        source
+            .initialize(&source_config)
+            .await
+            .map_err(|e| RoboflowError::other(format!("Failed to initialize source: {}", e)))?;
 
         // Create writer using the consolidated factory
         let factory_config = LerobotWriterConfig::new(&output, config.clone());
@@ -312,12 +313,13 @@ impl ConvertBuilder {
             .map(|m| (m.topic.clone(), m.feature.clone()))
             .collect();
 
-        let mut streaming_config = roboflow_dataset::streaming::config::StreamingConfig::with_fps(config.dataset.fps);
+        let mut streaming_config =
+            roboflow_dataset::streaming::config::StreamingConfig::with_fps(config.dataset.fps);
         let frame_interval_ns = 1_000_000_000u64 / config.dataset.fps as u64;
         streaming_config.completion_window_ns = frame_interval_ns * 3;
 
-        let mut pipeline_config = PipelineConfig::new(streaming_config)
-            .with_topic_mappings(topic_mappings);
+        let mut pipeline_config =
+            PipelineConfig::new(streaming_config).with_topic_mappings(topic_mappings);
 
         if let Some(max) = self.max_frames {
             pipeline_config = pipeline_config.with_max_frames(max);
@@ -348,11 +350,7 @@ impl ConvertBuilder {
         // Finalize
         let stats = executor.finalize()?;
 
-        Ok(ConversionReport::from_pipeline_stats(
-            stats,
-            input,
-            output,
-        ))
+        Ok(ConversionReport::from_pipeline_stats(stats, input, output))
     }
 
     /// Run the conversion with a timeout.
@@ -362,7 +360,9 @@ impl ConvertBuilder {
     pub async fn run_with_timeout(self, timeout: Duration) -> Result<ConversionReport> {
         tokio::time::timeout(timeout, self.run())
             .await
-            .map_err(|_| RoboflowError::timeout(format!("Conversion timed out after {:?}", timeout)))?
+            .map_err(|_| {
+                RoboflowError::timeout(format!("Conversion timed out after {:?}", timeout))
+            })?
     }
 }
 
@@ -428,31 +428,6 @@ pub async fn convert_with_defaults(
         .output(output.as_ref())
         .run()
         .await
-}
-
-/// Create a source configuration from an input path.
-///
-/// Handles local files, S3 files, and S3 prefixes.
-#[cfg(feature = "sources")]
-fn create_source_config(input: &str) -> SourceConfig {
-    // Check for cloud URLs
-    let is_cloud = input.starts_with("s3://") || input.starts_with("oss://");
-    let url_lower = input.to_lowercase();
-
-    // Check for specific file extensions
-    if url_lower.ends_with(".mcap") {
-        SourceConfig::mcap(input)
-    } else if url_lower.ends_with(".bag") {
-        SourceConfig::bag(input)
-    } else if url_lower.ends_with(".rrd") {
-        SourceConfig::rrd(input)
-    } else if is_cloud {
-        // Cloud URL without specific extension - treat as prefix
-        SourceConfig::s3_prefix(input)
-    } else {
-        // Default to MCAP for local files
-        SourceConfig::mcap(input)
-    }
 }
 
 /// Create a default LeRobot configuration.
@@ -527,27 +502,27 @@ mod tests {
 
     #[cfg(feature = "sources")]
     #[test]
-    fn test_create_source_config_local() {
-        let config = create_source_config("/path/to/file.mcap");
+    fn test_source_config_from_url_local() {
+        let config = SourceConfig::from_url("/path/to/file.mcap");
         assert_eq!(config.source_type.name(), "mcap");
 
-        let config = create_source_config("/path/to/file.bag");
+        let config = SourceConfig::from_url("/path/to/file.bag");
         assert_eq!(config.source_type.name(), "bag");
 
-        let config = create_source_config("/path/to/file.rrd");
+        let config = SourceConfig::from_url("/path/to/file.rrd");
         assert_eq!(config.source_type.name(), "rrd");
     }
 
     #[cfg(feature = "sources")]
     #[test]
-    fn test_create_source_config_cloud() {
-        let config = create_source_config("s3://bucket/path/file.mcap");
+    fn test_source_config_from_url_cloud() {
+        let config = SourceConfig::from_url("s3://bucket/path/file.mcap");
         assert_eq!(config.source_type.name(), "mcap");
 
-        let config = create_source_config("s3://bucket/path/prefix/");
+        let config = SourceConfig::from_url("s3://bucket/path/prefix/");
         assert_eq!(config.source_type.name(), "s3-prefix");
 
-        let config = create_source_config("oss://bucket/path/file.bag");
+        let config = SourceConfig::from_url("oss://bucket/path/file.bag");
         assert_eq!(config.source_type.name(), "bag");
     }
 }

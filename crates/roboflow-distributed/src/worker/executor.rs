@@ -132,7 +132,7 @@ impl TaskExecutor {
         };
 
         // Step 4: Create source
-        let source_config = Self::create_source_config(source_url);
+        let source_config = SourceConfig::from_url(source_url);
         let source = match create_source(&source_config) {
             Ok(s) => s,
             Err(e) => {
@@ -232,35 +232,6 @@ impl TaskExecutor {
         );
 
         Ok(config)
-    }
-
-    /// Create source config from URL.
-    ///
-    /// Handles:
-    /// - Local files with extensions (.mcap, .bag, .rrd)
-    /// - S3/OSS file URLs (s3://bucket/path/file.mcap)
-    /// - S3/OSS prefix URLs (s3://bucket/path/to/prefix/)
-    fn create_source_config(source_url: &str) -> SourceConfig {
-        // Check for cloud URLs
-        let is_cloud = source_url.starts_with("s3://") || source_url.starts_with("oss://");
-
-        // Get the lowercase version for extension checking
-        let url_lower = source_url.to_lowercase();
-
-        // Check for specific file extensions
-        if url_lower.ends_with(".mcap") {
-            SourceConfig::mcap(source_url)
-        } else if url_lower.ends_with(".bag") {
-            SourceConfig::bag(source_url)
-        } else if url_lower.ends_with(".rrd") {
-            SourceConfig::rrd(source_url)
-        } else if is_cloud {
-            // Cloud URL without a specific extension - treat as prefix
-            SourceConfig::s3_prefix(source_url)
-        } else {
-            // Default to MCAP for local files
-            SourceConfig::mcap(source_url)
-        }
     }
 
     /// Build topic mappings from config.
