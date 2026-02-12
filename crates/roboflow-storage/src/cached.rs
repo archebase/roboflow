@@ -16,7 +16,7 @@
 //! use roboflow::storage::{Storage, LocalStorage, cached::{CachedStorage, CacheConfig}};
 //! use std::sync::Arc;
 //!
-//! let remote = Arc::new(OssStorage::new(...)?);
+//! let remote = Arc::new(S3Storage::new(...)?);
 //! let cache_dir = "/tmp/cache";
 //! let config = CacheConfig::new(cache_dir);
 //! let storage = CachedStorage::new(remote, config)?;

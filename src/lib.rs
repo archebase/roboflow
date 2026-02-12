@@ -100,7 +100,7 @@ pub use roboflow_dataset::lerobot;
 // =============================================================================
 pub use roboflow_storage::{
     CacheConfig, CacheStats, CachedStorage, EvictionPolicy, LocalStorage, MultipartConfig,
-    MultipartStats, ObjectMetadata, OssConfig, OssStorage, RetryConfig, RetryingStorage, SeekRead,
+    MultipartStats, ObjectMetadata, S3Config, S3Storage, RetryConfig, RetryingStorage, SeekRead,
     SeekableStorage, Storage, StorageConfig, StorageError, StorageFactory, StorageResult,
     StorageUrl,
 };

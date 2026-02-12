@@ -11,7 +11,7 @@
 //!
 //! - [`MultipartUpload`] trait for streaming upload operations
 //! - [`Storage::put_multipart_stream`] method to create uploads
-//! - [`OssStorage`] uses `object_store::WriteMultipart` for cloud
+//! - [`S3Storage`] uses `object_store::WriteMultipart` for cloud
 //! - [`LocalStorage`] buffers to a temporary file for local filesystem
 //!
 //! # Example
@@ -132,7 +132,7 @@ use object_store::WriteMultipart;
 
 /// Cloud multipart upload using `object_store::WriteMultipart`.
 ///
-/// This is used by `OssStorage` for S3 and OSS backends.
+/// This is used by `S3Storage` for S3 and OSS backends.
 pub struct CloudMultipartUpload {
     /// The underlying WriteMultipart from object_store
     upload: WriteMultipart,

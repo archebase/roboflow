@@ -36,7 +36,7 @@ use roboflow_dataset::{
 };
 use roboflow_storage::{
     AsyncStorage,
-    oss::{AsyncOssStorage, OssConfig},
+    s3::{AsyncS3Storage, S3Config},
 };
 
 // =============================================================================
@@ -74,27 +74,27 @@ impl Default for MinioConfig {
 impl MinioConfig {
     /// Check if MinIO is available by attempting to connect.
     pub fn is_available(&self) -> bool {
-        // Try to create an AsyncOssStorage instance with HTTP enabled for local testing
-        let oss_config = OssConfig::new(
+        // Try to create an AsyncS3Storage instance with HTTP enabled for local testing
+        let s3_config = S3Config::new(
             &self.bucket,
             &self.endpoint,
             &self.access_key_id,
             &self.secret_access_key,
         )
         .with_allow_http(true);
-        AsyncOssStorage::with_config(oss_config).is_ok()
+        AsyncS3Storage::with_config(s3_config).is_ok()
     }
 
-    /// Create an AsyncOssStorage instance for testing.
-    pub fn create_storage(&self) -> Result<AsyncOssStorage, Box<dyn std::error::Error>> {
-        let config = OssConfig::new(
+    /// Create an AsyncS3Storage instance for testing.
+    pub fn create_storage(&self) -> Result<AsyncS3Storage, Box<dyn std::error::Error>> {
+        let config = S3Config::new(
             &self.bucket,
             &self.endpoint,
             &self.access_key_id,
             &self.secret_access_key,
         )
         .with_allow_http(true);
-        Ok(AsyncOssStorage::with_config(config)?)
+        Ok(AsyncS3Storage::with_config(config)?)
     }
 
     /// Get the S3 URL prefix for this configuration.
@@ -121,7 +121,7 @@ impl MinioConfig {
 
     /// Recursively delete a directory and all its contents.
     fn cleanup_recursive(
-        storage: &AsyncOssStorage,
+        storage: &AsyncS3Storage,
         runtime: &tokio::runtime::Runtime,
         path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -498,14 +498,14 @@ fn test_minio_bucket_management() {
     let test_bucket = format!("test-bucket-{}", std::process::id());
 
     // Create storage with test bucket (using HTTP for local testing)
-    let oss_config = OssConfig::new(
+    let s3_config = S3Config::new(
         &test_bucket,
         &config.endpoint,
         &config.access_key_id,
         &config.secret_access_key,
     )
     .with_allow_http(true);
-    let result = AsyncOssStorage::with_config(oss_config);
+    let result = AsyncS3Storage::with_config(s3_config);
 
     // Test bucket might not exist - that's ok for this test
     match result {

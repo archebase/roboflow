@@ -8,25 +8,24 @@
 //!
 //! This crate provides a unified storage abstraction that supports multiple backends:
 //! - **Local filesystem** - Always available for development/testing
-//! - **Alibaba OSS** - S3-compatible cloud storage (always available)
-//! - **Amazon S3** - Via the same OSS backend (always available)
+//! - **S3-compatible storage** - Amazon S3, Alibaba OSS, MinIO, etc. (always available)
 //!
 //! ## Design Philosophy
 //!
-//! **S3/OSS is the production storage layer** for distributed systems.
+//! **S3 is the production storage layer** for distributed systems.
 //! Local filesystem is for development/testing only.
 //! **No feature flags** - all storage backends are always available.
 //!
 //! ## Example
 //!
 //! ```ignore
-//! use roboflow_storage::{Storage, LocalStorage, OssStorage};
+//! use roboflow_storage::{Storage, LocalStorage, S3Storage};
 //!
 //! // Local storage (for development)
 //! let local = LocalStorage::new("/tmp")?;
 //!
-//! // Cloud storage (for production)
-//! let oss = OssStorage::new("bucket", "endpoint", "key", "secret")?;
+//! // Cloud storage (for production - S3-compatible: Amazon S3, Alibaba OSS, MinIO, etc.)
+//! let s3 = S3Storage::new("bucket", "endpoint", "key", "secret")?;
 //!
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -38,7 +37,7 @@ pub mod factory;
 pub mod local;
 pub mod multipart;
 pub mod multipart_parallel;
-pub mod oss;
+pub mod s3;
 pub mod retry;
 pub mod streaming;
 pub mod streaming_upload;
@@ -61,7 +60,8 @@ pub use multipart_parallel::{
 };
 pub use object_store;
 pub use object_store::path::Path as ObjectPath;
-pub use oss::{AsyncOssStorage, OssConfig, OssStorage};
+// S3-compatible storage (Amazon S3, Alibaba OSS, MinIO, etc.)
+pub use s3::{AsyncS3Storage, S3Config, S3Storage};
 pub use retry::{RetryConfig, RetryingStorage, retry_with_backoff};
 pub use streaming_upload::{
     CloudMultipartUpload, LocalMultipartUpload, MultipartUpload, StorageStreamingExt, UploadStats,

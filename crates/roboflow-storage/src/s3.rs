@@ -2,15 +2,15 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Alibaba OSS and S3-compatible storage backend.
+//! S3-compatible cloud storage backend.
 //!
 //! This module provides cloud storage support using the `object_store` crate.
-//! It supports Alibaba OSS (S3-compatible) and Amazon S3.
+//! It supports Amazon S3 and S3-compatible services (MinIO, Alibaba OSS, etc.).
 //!
 //! ## Architecture
 //!
-//! - **AsyncOssStorage**: Pure async implementation of `AsyncStorage`
-//! - **OssStorage**: Sync wrapper around AsyncOssStorage for backward compatibility
+//! - **AsyncS3Storage**: Pure async implementation of `AsyncStorage`
+//! - **S3Storage**: Sync wrapper around AsyncS3Storage for backward compatibility
 
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
@@ -25,9 +25,9 @@ use crate::{
 // Configuration
 // =============================================================================
 
-/// Configuration for Alibaba OSS / S3-compatible storage.
+/// Configuration for S3-compatible storage (Amazon S3, MinIO, Alibaba OSS, etc.).
 #[derive(Clone)]
-pub struct OssConfig {
+pub struct S3Config {
     /// Bucket name
     pub bucket: String,
     /// OSS endpoint (e.g., oss-cn-hangzhou.aliyuncs.com)
@@ -48,9 +48,9 @@ pub struct OssConfig {
 }
 
 // Manual Debug implementation to redact sensitive credentials
-impl std::fmt::Debug for OssConfig {
+impl std::fmt::Debug for S3Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OssConfig")
+        f.debug_struct("S3Config")
             .field("bucket", &self.bucket)
             .field("endpoint", &self.endpoint)
             .field("access_key_id", &"<REDACTED>")
@@ -63,7 +63,7 @@ impl std::fmt::Debug for OssConfig {
     }
 }
 
-impl OssConfig {
+impl S3Config {
     /// Create a new OSS configuration.
     ///
     /// By default, HTTP is **disabled** for security. Use `with_allow_http(true)` only
@@ -199,7 +199,7 @@ impl OssConfig {
 }
 
 // =============================================================================
-// AsyncOssStorage - Pure Async Implementation
+// AsyncS3Storage - Pure Async Implementation
 // =============================================================================
 
 /// Async OSS/S3 storage backend.
@@ -210,9 +210,9 @@ impl OssConfig {
 /// # Example
 ///
 /// ```ignore
-/// use roboflow_storage::{AsyncStorage, oss::AsyncOssStorage};
+/// use roboflow_storage::{AsyncStorage, oss::AsyncS3Storage};
 ///
-/// let storage = AsyncOssStorage::new(
+/// let storage = AsyncS3Storage::new(
 ///     "my-bucket",
 ///     "oss-cn-hangzhou.aliyuncs.com",
 ///     "access-key-id",
@@ -223,14 +223,14 @@ impl OssConfig {
 /// let data = storage.read(Path::new("file.txt")).await?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub struct AsyncOssStorage {
+pub struct AsyncS3Storage {
     /// The underlying object_store client
     store: Arc<dyn object_store::ObjectStore>,
     /// Configuration
-    config: OssConfig,
+    config: S3Config,
 }
 
-impl AsyncOssStorage {
+impl AsyncS3Storage {
     /// Create a new async OSS storage backend.
     ///
     /// # Arguments
@@ -245,12 +245,12 @@ impl AsyncOssStorage {
         access_key_id: impl Into<String>,
         access_key_secret: impl Into<String>,
     ) -> Result<Self> {
-        let config = OssConfig::new(bucket, endpoint, access_key_id, access_key_secret);
+        let config = S3Config::new(bucket, endpoint, access_key_id, access_key_secret);
         Self::with_config(config)
     }
 
     /// Create a new async OSS storage backend with configuration.
-    pub fn with_config(config: OssConfig) -> Result<Self> {
+    pub fn with_config(config: S3Config) -> Result<Self> {
         // Validate bucket name before proceeding
         config.validate_bucket_name()?;
 
@@ -266,7 +266,7 @@ impl AsyncOssStorage {
         if config.allow_http {
             tracing::warn!(
                 bucket = %config.bucket,
-                "HTTP connections enabled for OSS/S3 - credentials will be transmitted unencrypted. \
+                "HTTP connections enabled for S3 - credentials will be transmitted unencrypted. \
                  This should ONLY be used for local testing/development."
             );
             builder = builder.with_allow_http(true);
@@ -276,7 +276,7 @@ impl AsyncOssStorage {
         let store: Arc<dyn object_store::ObjectStore> = Arc::new(
             builder
                 .build()
-                .map_err(|e| StorageError::Cloud(format!("Failed to create OSS client: {}", e)))?,
+                .map_err(|e| StorageError::Cloud(format!("Failed to create S3 client: {}", e)))?,
         );
 
         Ok(Self { store, config })
@@ -285,6 +285,11 @@ impl AsyncOssStorage {
     /// Get the underlying object_store client.
     pub fn object_store(&self) -> Arc<dyn object_store::ObjectStore> {
         Arc::clone(&self.store)
+    }
+
+    /// Get the bucket name.
+    pub fn bucket(&self) -> &str {
+        &self.config.bucket
     }
 
     /// Get the full key for a path, including prefix if set.
@@ -319,7 +324,7 @@ impl AsyncOssStorage {
 }
 
 #[async_trait::async_trait]
-impl AsyncStorage for AsyncOssStorage {
+impl AsyncStorage for AsyncS3Storage {
     async fn read(&self, path: &Path) -> Result<bytes::Bytes> {
         let key = self.path_to_key(path);
         self.store
@@ -442,12 +447,12 @@ impl AsyncStorage for AsyncOssStorage {
     }
 
     async fn create_dir(&self, _path: &Path) -> Result<()> {
-        // OSS doesn't have directories - this is a no-op
+        // S3 doesn't have directories - this is a no-op
         Ok(())
     }
 
     async fn create_dir_all(&self, _path: &Path) -> Result<()> {
-        // OSS doesn't have directories - this is a no-op
+        // S3 doesn't have directories - this is a no-op
         Ok(())
     }
 
@@ -499,9 +504,9 @@ impl AsyncStorage for AsyncOssStorage {
     }
 }
 
-impl std::fmt::Debug for AsyncOssStorage {
+impl std::fmt::Debug for AsyncS3Storage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AsyncOssStorage")
+        f.debug_struct("AsyncS3Storage")
             .field("bucket", &self.config.bucket)
             .field("endpoint", &self.config.endpoint)
             .field("prefix", &self.config.prefix)
@@ -510,26 +515,26 @@ impl std::fmt::Debug for AsyncOssStorage {
 }
 
 // =============================================================================
-// OssStorage - Sync Wrapper for Backward Compatibility
+// S3Storage - Sync Wrapper for Backward Compatibility
 // =============================================================================
 
 /// Sync OSS/S3 storage backend.
 ///
-/// This is a wrapper around `AsyncOssStorage` that implements the synchronous
+/// This is a wrapper around `AsyncS3Storage` that implements the synchronous
 /// `Storage` trait. It intelligently handles both async and sync contexts:
 /// - When called from within a Tokio runtime, uses `block_in_place`
 /// - When called from a sync context, uses its own runtime
 ///
-/// **Note**: In async contexts (workers, scanners), prefer using `AsyncOssStorage`
+/// **Note**: In async contexts (workers, scanners), prefer using `AsyncS3Storage`
 /// directly to avoid any blocking overhead.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use roboflow_storage::{Storage, OssStorage};
+/// use roboflow_storage::{Storage, S3Storage};
 ///
 /// // For sync contexts (CLI tools, tests)
-/// let storage = OssStorage::new(
+/// let storage = S3Storage::new(
 ///     "my-bucket",
 ///     "oss-cn-hangzhou.aliyuncs.com",
 ///     "access-key-id",
@@ -537,9 +542,9 @@ impl std::fmt::Debug for AsyncOssStorage {
 /// )?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub struct OssStorage {
+pub struct S3Storage {
     /// The async storage implementation
-    async_storage: AsyncOssStorage,
+    async_storage: AsyncS3Storage,
     /// Optional Tokio runtime for blocking operations (owned)
     runtime: Option<tokio::runtime::Runtime>,
     /// Shared handle to the Tokio runtime for async operations (thread-safe)
@@ -549,7 +554,7 @@ pub struct OssStorage {
     runtime_handle: tokio::runtime::Handle,
 }
 
-impl OssStorage {
+impl S3Storage {
     /// Create a new OSS storage backend.
     ///
     /// # Arguments
@@ -564,7 +569,7 @@ impl OssStorage {
         access_key_id: impl Into<String>,
         access_key_secret: impl Into<String>,
     ) -> Result<Self> {
-        let config = OssConfig::new(bucket, endpoint, access_key_id, access_key_secret);
+        let config = S3Config::new(bucket, endpoint, access_key_id, access_key_secret);
         Self::with_config(config)
     }
 
@@ -576,8 +581,8 @@ impl OssStorage {
     ///
     /// The resulting storage works correctly from both Tokio threads and native threads
     /// (e.g., upload coordinator workers).
-    pub fn with_config(config: OssConfig) -> Result<Self> {
-        let async_storage = AsyncOssStorage::with_config(config)?;
+    pub fn with_config(config: S3Config) -> Result<Self> {
+        let async_storage = AsyncS3Storage::with_config(config)?;
 
         // Try to get current runtime handle, or create our own runtime
         let (runtime, runtime_handle) = match tokio::runtime::Handle::try_current() {
@@ -606,8 +611,13 @@ impl OssStorage {
     }
 
     /// Get a reference to the underlying async storage.
-    pub fn async_storage(&self) -> &AsyncOssStorage {
+    pub fn async_storage(&self) -> &AsyncS3Storage {
         &self.async_storage
+    }
+
+    /// Get the bucket name.
+    pub fn bucket(&self) -> &str {
+        self.async_storage.bucket()
     }
 
     /// Block on a future, handling both sync and async contexts.
@@ -637,14 +647,14 @@ impl OssStorage {
     }
 }
 
-impl Storage for OssStorage {
+impl Storage for S3Storage {
     fn reader(&self, path: &Path) -> Result<Box<dyn Read + Send + 'static>> {
         let bytes = self.block_on(self.async_storage.read(path))?.to_vec();
         Ok(Box::new(Cursor::new(bytes)))
     }
 
     fn writer(&self, path: &Path) -> Result<Box<dyn Write + Send + 'static>> {
-        Ok(Box::new(SyncOssWriter::new(
+        Ok(Box::new(SyncS3Writer::new(
             self.async_storage.object_store(),
             self.runtime_handle(),
             self.async_storage.path_to_key(path),
@@ -788,7 +798,7 @@ impl Storage for OssStorage {
 // Streaming Upload Support
 // =============================================================================
 
-impl crate::streaming_upload::StorageStreamingExt for OssStorage {
+impl crate::streaming_upload::StorageStreamingExt for S3Storage {
     fn put_multipart_stream(
         &self,
         path: &Path,
@@ -822,9 +832,9 @@ impl crate::streaming_upload::StorageStreamingExt for OssStorage {
     }
 }
 
-impl std::fmt::Debug for OssStorage {
+impl std::fmt::Debug for S3Storage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OssStorage")
+        f.debug_struct("S3Storage")
             .field("bucket", &self.async_storage.config.bucket)
             .field("endpoint", &self.async_storage.config.endpoint)
             .field("prefix", &self.async_storage.config.prefix)
@@ -833,11 +843,11 @@ impl std::fmt::Debug for OssStorage {
 }
 
 // =============================================================================
-// SyncOssWriter
+// SyncS3Writer
 // =============================================================================
 
 /// A writer that buffers data and uploads to OSS on flush/drop.
-struct SyncOssWriter {
+struct SyncS3Writer {
     /// Buffer for data to be uploaded
     buffer: Vec<u8>,
     /// The object_store client
@@ -852,7 +862,7 @@ struct SyncOssWriter {
     max_buffer_size: usize,
 }
 
-impl SyncOssWriter {
+impl SyncS3Writer {
     /// Create a new OSS writer.
     fn new(
         store: Arc<dyn object_store::ObjectStore>,
@@ -890,7 +900,7 @@ impl SyncOssWriter {
                 store
                     .put(&key, payload)
                     .await
-                    .map_err(|e| StorageError::Cloud(format!("Failed to upload to OSS: {}", e)))
+                    .map_err(|e| StorageError::Cloud(format!("Failed to upload to S3: {}", e)))
             })
         })
         .join();
@@ -900,7 +910,7 @@ impl SyncOssWriter {
             Ok(Err(e)) => return Err(e),
             Err(e) => {
                 return Err(StorageError::Other(format!(
-                    "OSS upload thread panicked: {:?}",
+                    "S3 upload thread panicked: {:?}",
                     e
                 )));
             }
@@ -911,7 +921,7 @@ impl SyncOssWriter {
     }
 }
 
-impl Write for SyncOssWriter {
+impl Write for SyncS3Writer {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let written = buf.len();
         self.buffer.extend_from_slice(buf);
@@ -931,14 +941,14 @@ impl Write for SyncOssWriter {
     }
 }
 
-impl Drop for SyncOssWriter {
+impl Drop for SyncS3Writer {
     fn drop(&mut self) {
         // Try to upload on drop if not already uploaded
         if !self.uploaded
             && !self.buffer.is_empty()
             && let Err(e) = self.upload()
         {
-            tracing::error!("Failed to upload OSS data on drop: {}", e);
+            tracing::error!("Failed to upload S3 data on drop: {}", e);
         }
     }
 }
@@ -953,7 +963,7 @@ mod tests {
 
     #[test]
     fn test_oss_config_new() {
-        let config = OssConfig::new("my-bucket", "oss-cn-hangzhou.aliyuncs.com", "key", "secret");
+        let config = S3Config::new("my-bucket", "oss-cn-hangzhou.aliyuncs.com", "key", "secret");
         assert_eq!(config.bucket, "my-bucket");
         assert_eq!(config.endpoint, "oss-cn-hangzhou.aliyuncs.com");
         assert_eq!(config.access_key_id, "key");
@@ -964,7 +974,7 @@ mod tests {
 
     #[test]
     fn test_oss_config_with_prefix() {
-        let config = OssConfig::new("bucket", "endpoint", "key", "secret")
+        let config = S3Config::new("bucket", "endpoint", "key", "secret")
             .with_prefix("data/test")
             .with_region("cn-hangzhou");
 
@@ -974,14 +984,14 @@ mod tests {
 
     #[test]
     fn test_oss_config_full_key_without_prefix() {
-        let config = OssConfig::new("bucket", "endpoint", "key", "secret");
+        let config = S3Config::new("bucket", "endpoint", "key", "secret");
         assert_eq!(config.full_key(Path::new("test.txt")), "test.txt");
         assert_eq!(config.full_key(Path::new("data/test.txt")), "data/test.txt");
     }
 
     #[test]
     fn test_oss_config_full_key_with_prefix() {
-        let config = OssConfig::new("bucket", "endpoint", "key", "secret").with_prefix("datasets");
+        let config = S3Config::new("bucket", "endpoint", "key", "secret").with_prefix("datasets");
         assert_eq!(config.full_key(Path::new("test.txt")), "datasets/test.txt");
         assert_eq!(
             config.full_key(Path::new("data/test.txt")),
@@ -991,13 +1001,13 @@ mod tests {
 
     #[test]
     fn test_oss_config_full_key_with_trailing_slash_prefix() {
-        let config = OssConfig::new("bucket", "endpoint", "key", "secret").with_prefix("datasets/");
+        let config = S3Config::new("bucket", "endpoint", "key", "secret").with_prefix("datasets/");
         assert_eq!(config.full_key(Path::new("test.txt")), "datasets/test.txt");
     }
 
     #[test]
     fn test_oss_config_endpoint_url() {
-        let config = OssConfig::new("bucket", "oss-cn-hangzhou.aliyuncs.com", "key", "secret");
+        let config = S3Config::new("bucket", "oss-cn-hangzhou.aliyuncs.com", "key", "secret");
         assert_eq!(
             config.endpoint_url(),
             "https://oss-cn-hangzhou.aliyuncs.com"
@@ -1006,20 +1016,20 @@ mod tests {
 
     #[test]
     fn test_oss_config_endpoint_url_already_https() {
-        let config = OssConfig::new("bucket", "https://custom.endpoint.com", "key", "secret");
+        let config = S3Config::new("bucket", "https://custom.endpoint.com", "key", "secret");
         assert_eq!(config.endpoint_url(), "https://custom.endpoint.com");
     }
 
     // Security tests for bucket name validation
     #[test]
     fn test_oss_config_bucket_valid() {
-        let config = OssConfig::new("my-bucket", "endpoint", "key", "secret");
+        let config = S3Config::new("my-bucket", "endpoint", "key", "secret");
         assert!(config.validate_bucket_name().is_ok());
     }
 
     #[test]
     fn test_oss_config_bucket_too_short() {
-        let config = OssConfig::new("ab", "endpoint", "key", "secret");
+        let config = S3Config::new("ab", "endpoint", "key", "secret");
         let result = config.validate_bucket_name();
         assert!(matches!(result, Err(StorageError::InvalidPath(_))));
     }
@@ -1027,42 +1037,42 @@ mod tests {
     #[test]
     fn test_oss_config_bucket_too_long() {
         let long_name = "a".repeat(64);
-        let config = OssConfig::new(&long_name, "endpoint", "key", "secret");
+        let config = S3Config::new(&long_name, "endpoint", "key", "secret");
         let result = config.validate_bucket_name();
         assert!(matches!(result, Err(StorageError::InvalidPath(_))));
     }
 
     #[test]
     fn test_oss_config_bucket_uppercase() {
-        let config = OssConfig::new("MyBucket", "endpoint", "key", "secret");
+        let config = S3Config::new("MyBucket", "endpoint", "key", "secret");
         let result = config.validate_bucket_name();
         assert!(matches!(result, Err(StorageError::InvalidPath(_))));
     }
 
     #[test]
     fn test_oss_config_bucket_starts_with_hyphen() {
-        let config = OssConfig::new("-mybucket", "endpoint", "key", "secret");
+        let config = S3Config::new("-mybucket", "endpoint", "key", "secret");
         let result = config.validate_bucket_name();
         assert!(matches!(result, Err(StorageError::InvalidPath(_))));
     }
 
     #[test]
     fn test_oss_config_bucket_ends_with_hyphen() {
-        let config = OssConfig::new("mybucket-", "endpoint", "key", "secret");
+        let config = S3Config::new("mybucket-", "endpoint", "key", "secret");
         let result = config.validate_bucket_name();
         assert!(matches!(result, Err(StorageError::InvalidPath(_))));
     }
 
     #[test]
     fn test_oss_config_bucket_ip_address() {
-        let config = OssConfig::new("192.168.1.1", "endpoint", "key", "secret");
+        let config = S3Config::new("192.168.1.1", "endpoint", "key", "secret");
         let result = config.validate_bucket_name();
         assert!(matches!(result, Err(StorageError::InvalidPath(_))));
     }
 
     #[test]
     fn test_oss_config_debug_redacts_credentials() {
-        let config = OssConfig::new("bucket", "endpoint", "secret-key-id", "secret-key-value");
+        let config = S3Config::new("bucket", "endpoint", "secret-key-id", "secret-key-value");
         let debug_str = format!("{:?}", config);
 
         // Credentials should be redacted
@@ -1077,49 +1087,49 @@ mod tests {
 
     #[test]
     fn test_oss_config_allow_http_defaults_false() {
-        let config = OssConfig::new("bucket", "endpoint", "key", "secret");
+        let config = S3Config::new("bucket", "endpoint", "key", "secret");
         assert!(!config.allow_http);
     }
 
     #[test]
     fn test_oss_config_allow_http() {
-        let config = OssConfig::new("bucket", "endpoint", "key", "secret").with_allow_http(true);
+        let config = S3Config::new("bucket", "endpoint", "key", "secret").with_allow_http(true);
         assert!(config.allow_http);
     }
 
     #[test]
     fn test_oss_config_endpoint_http_when_allowed() {
         let config =
-            OssConfig::new("bucket", "localhost:9000", "key", "secret").with_allow_http(true);
+            S3Config::new("bucket", "localhost:9000", "key", "secret").with_allow_http(true);
         assert_eq!(config.endpoint_url(), "http://localhost:9000");
     }
 
     #[test]
     fn test_oss_config_endpoint_https_by_default() {
-        let config = OssConfig::new("bucket", "localhost:9000", "key", "secret");
+        let config = S3Config::new("bucket", "localhost:9000", "key", "secret");
         // Default should be HTTPS
         assert_eq!(config.endpoint_url(), "https://localhost:9000");
     }
 
     // ========================================================================
-    // OssStorage Runtime Behavior Tests
+    // S3Storage Runtime Behavior Tests
     // ========================================================================
 
     #[test]
     fn test_oss_storage_creates_runtime_without_existing() {
-        // This test verifies OssStorage can be created outside a Tokio runtime
+        // This test verifies S3Storage can be created outside a Tokio runtime
         // It should create its own runtime in this case
         let result = std::panic::catch_unwind(|| {
             // The storage creation should not panic (we can't test the actual runtime
             // creation without real credentials, but we verify no panic occurs)
-            OssStorage::new("bucket", "endpoint", "key", "secret")
+            S3Storage::new("bucket", "endpoint", "key", "secret")
         });
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_oss_storage_detects_existing_runtime() {
-        // This test verifies OssStorage can detect an existing Tokio runtime
+        // This test verifies S3Storage can detect an existing Tokio runtime
         // and won't create a nested one
         use tokio::runtime::Handle;
 
@@ -1129,13 +1139,13 @@ mod tests {
     }
 
     // ========================================================================
-    // Integration-Style Tests for AsyncOssStorage
+    // Integration-Style Tests for AsyncS3Storage
     // ========================================================================
 
     #[tokio::test]
     async fn test_async_oss_storage_config_validation() {
         // Verify bucket name validation is called during creation
-        let result = AsyncOssStorage::new(
+        let result = AsyncS3Storage::new(
             "invalid-bucket-name!", // Invalid character
             "endpoint",
             "key",
@@ -1146,7 +1156,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_async_oss_storage_bucket_too_short() {
-        let result = AsyncOssStorage::new(
+        let result = AsyncS3Storage::new(
             "ab", // Too short
             "endpoint", "key", "secret",
         );
@@ -1155,7 +1165,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_async_oss_storage_config_methods() {
-        let config = OssConfig::new("my-bucket", "endpoint", "key", "secret")
+        let config = S3Config::new("my-bucket", "endpoint", "key", "secret")
             .with_prefix("data")
             .with_region("us-west-2");
 
@@ -1167,7 +1177,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_async_storage_config_with_prefix() {
-        let config = OssConfig::new("bucket", "endpoint", "key", "secret").with_prefix("datasets");
+        let config = S3Config::new("bucket", "endpoint", "key", "secret").with_prefix("datasets");
         assert_eq!(config.full_key(Path::new("test.txt")), "datasets/test.txt");
     }
 
@@ -1178,7 +1188,7 @@ mod tests {
     #[tokio::test]
     async fn test_async_storage_config_http_warning() {
         // Verify HTTP connections emit a warning
-        let config = OssConfig::new("bucket", "endpoint", "key", "secret").with_allow_http(true);
+        let config = S3Config::new("bucket", "endpoint", "key", "secret").with_allow_http(true);
 
         // Creating storage with HTTP allowed should log a warning
         // (we can't easily test for logging output, but we verify the config is correct)
@@ -1202,7 +1212,7 @@ mod tests {
         ];
 
         for name in invalid_names {
-            let result = AsyncOssStorage::new(name, "endpoint", "key", "secret");
+            let result = AsyncS3Storage::new(name, "endpoint", "key", "secret");
             assert!(result.is_err(), "Bucket name '{}' should be rejected", name);
         }
     }

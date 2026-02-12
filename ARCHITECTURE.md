@@ -26,7 +26,7 @@ Roboflow is a distributed data transformation pipeline that converts robotics ba
 | Crate | Purpose | Key Types |
 |-------|---------|-----------|
 | `roboflow-core` | Foundation types, error handling, registry | `RoboflowError`, `CodecValue`, `TypeRegistry` |
-| `roboflow-storage` | Storage abstraction layer | `Storage`, `LocalStorage`, `OssStorage`, `StorageFactory` |
+| `roboflow-storage` | Storage abstraction layer | `Storage`, `LocalStorage`, `S3Storage`, `StorageFactory` |
 | `roboflow-dataset` | Dataset format writers | `LerobotWriter`, `DatasetWriter`, `ImageData` |
 | `roboflow-distributed` | Distributed coordination via TiKV | `TiKVClient`, `BatchController`, `Worker`, `Catalog` |
 | `roboflow-pipeline` | Processing pipeline framework | `Pipeline`, `Source`, `Sink`, compression stages |

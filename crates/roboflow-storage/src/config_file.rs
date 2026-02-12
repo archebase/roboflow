@@ -15,21 +15,21 @@ const DEFAULT_CONFIG_PATH: &str = ".roboflow/config.toml";
 /// Roboflow configuration file structure.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoboflowConfig {
-    /// OSS credential configuration.
+    /// S3 credential configuration.
     #[serde(default)]
-    pub oss: Option<OssConfigSection>,
+    pub s3: Option<S3ConfigSection>,
 }
 
-/// OSS credential section in config file.
+/// S3 credential section in config file.
 #[derive(Debug, Clone, Deserialize)]
-pub struct OssConfigSection {
-    /// OSS access key ID.
+pub struct S3ConfigSection {
+    /// S3 access key ID.
     pub access_key_id: Option<String>,
-    /// OSS access key secret.
+    /// S3 access key secret.
     pub access_key_secret: Option<String>,
-    /// OSS endpoint (e.g., oss-cn-hangzhou.aliyuncs.com).
+    /// S3 endpoint (e.g., s3.amazonaws.com, oss-cn-hangzhou.aliyuncs.com).
     pub endpoint: Option<String>,
-    /// OSS region.
+    /// S3 region.
     pub region: Option<String>,
 }
 
@@ -80,24 +80,24 @@ impl RoboflowConfig {
         Ok(Some(config))
     }
 
-    /// Get OSS access key ID from config.
-    pub fn oss_access_key_id(&self) -> Option<&str> {
-        self.oss.as_ref()?.access_key_id.as_deref()
+    /// Get S3 access key ID from config.
+    pub fn s3_access_key_id(&self) -> Option<&str> {
+        self.s3.as_ref()?.access_key_id.as_deref()
     }
 
-    /// Get OSS access key secret from config.
-    pub fn oss_access_key_secret(&self) -> Option<&str> {
-        self.oss.as_ref()?.access_key_secret.as_deref()
+    /// Get S3 access key secret from config.
+    pub fn s3_access_key_secret(&self) -> Option<&str> {
+        self.s3.as_ref()?.access_key_secret.as_deref()
     }
 
-    /// Get OSS endpoint from config.
-    pub fn oss_endpoint(&self) -> Option<&str> {
-        self.oss.as_ref()?.endpoint.as_deref()
+    /// Get S3 endpoint from config.
+    pub fn s3_endpoint(&self) -> Option<&str> {
+        self.s3.as_ref()?.endpoint.as_deref()
     }
 
-    /// Get OSS region from config.
-    pub fn oss_region(&self) -> Option<&str> {
-        self.oss.as_ref()?.region.as_deref()
+    /// Get S3 region from config.
+    pub fn s3_region(&self) -> Option<&str> {
+        self.s3.as_ref()?.region.as_deref()
     }
 }
 

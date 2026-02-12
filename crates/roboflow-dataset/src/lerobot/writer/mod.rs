@@ -542,7 +542,7 @@ impl LerobotWriter {
             );
 
             // Use video_files returned by encode_videos (contains (camera, PathBuf) tuples)
-            // When use_cloud_storage is true with OssStorage:
+            // When use_cloud_storage is true with S3Storage:
             //   - encode_videos_with_coordinator uploads videos directly to S3 and returns empty video_files
             //   - Only the parquet file needs to be uploaded
             // When use_cloud_storage is false:
@@ -779,7 +779,7 @@ impl LerobotWriter {
             && self
                 .storage
                 .as_any()
-                .downcast_ref::<roboflow_storage::OssStorage>()
+                .downcast_ref::<roboflow_storage::S3Storage>()
                 .is_some()
         {
             tracing::info!(
@@ -836,17 +836,18 @@ impl LerobotWriter {
         );
 
         // Get the object store from storage
-        let object_store = self
+        let s3_storage = self
             .storage
             .as_any()
-            .downcast_ref::<roboflow_storage::OssStorage>()
-            .map(|oss| oss.async_storage().object_store())
+            .downcast_ref::<roboflow_storage::S3Storage>()
             .ok_or_else(|| {
                 roboflow_core::RoboflowError::encode(
                     "LerobotWriter",
                     "Object store not available for streaming coordinator",
                 )
             })?;
+        let object_store = s3_storage.async_storage().object_store();
+        let bucket = s3_storage.bucket();
 
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|e| roboflow_core::RoboflowError::other(format!("No tokio runtime: {}", e)))?;
@@ -854,12 +855,12 @@ impl LerobotWriter {
         // Resolve video configuration
         let resolved = ResolvedConfig::from_video_config(&self.config.video);
 
-        // Build S3/OSS URL prefix
+        // Build S3 URL prefix using bucket from storage and output_prefix as path
+        // output_prefix is just a path (e.g., "datasets" or empty), not a full URL
         let s3_prefix = if self.output_prefix.is_empty() {
-            // Extract bucket from storage (assuming OSS storage format)
-            "oss://roboflow".to_string()
+            format!("s3://{}", bucket)
         } else {
-            format!("oss://{}", self.output_prefix.trim_end_matches('/'))
+            format!("s3://{}/{}", bucket, self.output_prefix.trim_end_matches('/'))
         };
 
         // Create streaming coordinator configuration
