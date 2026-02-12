@@ -109,6 +109,7 @@ impl CameraPipeline {
             video: config.video_config,
             temp_dir: config.temp_dir,
             max_frames_per_fragment: config.frames_per_fragment,
+            camera_id: config.camera.clone(),
         };
 
         let encoder = FragmentEncoder::new(encoder_config)?;

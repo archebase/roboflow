@@ -820,7 +820,7 @@ impl LerobotWriter {
         );
 
         // Get the S3 storage backend
-        let s3_storage = self
+        let _s3_storage = self
             .storage
             .as_any()
             .downcast_ref::<roboflow_storage::S3Storage>()
@@ -837,21 +837,15 @@ impl LerobotWriter {
         // Resolve video configuration
         let resolved = ResolvedConfig::from_video_config(&self.config.video);
 
-        // Build S3 URL prefix
-        let bucket = s3_storage.bucket();
-        let s3_prefix = if self.output_prefix.is_empty() {
-            format!("s3://{}", bucket)
-        } else {
-            format!(
-                "s3://{}/{}",
-                bucket,
-                self.output_prefix.trim_end_matches('/')
-            )
-        };
+        // Use relative path prefix (not full S3 URL) - the storage backend already knows the bucket
+        let key_prefix = self.output_prefix.trim_end_matches('/').to_string();
 
         // Create concurrent encoder configuration
+        // Note: chunk_index is currently 0 (single chunk). Future: compute from episode_index.
         let encoder_config = ConcurrentEncoderConfig {
-            s3_prefix,
+            key_prefix,
+            chunk_index: 0,
+            episode_index: self.episode_index as u32,
             frames_per_fragment: 300, // 10 seconds @ 30fps
             temp_dir: self._local_buffer.clone(),
             video_config: resolved.to_encoder_config(self.config.dataset.fps),
@@ -859,11 +853,8 @@ impl LerobotWriter {
         };
 
         // Create concurrent encoder - pass the storage Arc directly
-        let mut encoder = ConcurrentVideoEncoder::new(
-            encoder_config,
-            self.storage.clone(),
-            runtime,
-        )?;
+        let mut encoder =
+            ConcurrentVideoEncoder::new(encoder_config, self.storage.clone(), runtime)?;
 
         // Add all frames from all cameras
         let mut skipped_frames = 0;
@@ -1575,7 +1566,9 @@ impl LerobotWriter {
 
         self.storage
             .upload_file(local_path, &remote_path)
-            .map_err(|e| roboflow_core::RoboflowError::encode("Storage", format!("Upload failed: {}", e)))?;
+            .map_err(|e| {
+                roboflow_core::RoboflowError::encode("Storage", format!("Upload failed: {}", e))
+            })?;
 
         tracing::info!(
             local = %local_path.display(),
@@ -1612,7 +1605,9 @@ impl LerobotWriter {
 
         self.storage
             .upload_file(local_path, &remote_path)
-            .map_err(|e| roboflow_core::RoboflowError::encode("Storage", format!("Upload failed: {}", e)))?;
+            .map_err(|e| {
+                roboflow_core::RoboflowError::encode("Storage", format!("Upload failed: {}", e))
+            })?;
 
         tracing::info!(
             local = %local_path.display(),

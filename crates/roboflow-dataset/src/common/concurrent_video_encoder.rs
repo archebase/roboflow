@@ -51,18 +51,23 @@ use roboflow_core::{Result, RoboflowError};
 use roboflow_storage::{MultipartUpload, S3Storage, Storage, StorageStreamingExt};
 use tokio::runtime::Handle;
 
+use crate::common::ImageData;
 use crate::common::camera_pipeline::{
-    spawn_camera_pipeline, CameraPipelineConfig, CameraPipelineHandle,
+    CameraPipelineConfig, CameraPipelineHandle, spawn_camera_pipeline,
 };
 use crate::common::video::VideoEncoderConfig;
-use crate::common::ImageData;
 
 /// Configuration for concurrent video encoder.
 #[derive(Debug, Clone)]
 pub struct ConcurrentEncoderConfig {
-    /// S3/OSS prefix for output videos (e.g., "s3://bucket/path").
-    /// Videos will be saved as "{prefix}/videos/{camera}.mp4".
-    pub s3_prefix: String,
+    /// Key prefix for output videos within the storage bucket.
+    /// This should be a relative path (e.g., "dataset/episode_001"), not a full URL.
+    pub key_prefix: String,
+    /// Chunk index for video organization (0 = chunk-000).
+    /// Videos will be saved as "{prefix}/videos/chunk-{chunk:03d}/{camera}/episode_{episode:06d}.mp4".
+    pub chunk_index: u32,
+    /// Episode index for video filename (0 = episode_000000).
+    pub episode_index: u32,
     /// Frames per fragment (affects memory usage and upload frequency).
     pub frames_per_fragment: usize,
     /// Temp directory for fragment files.
@@ -76,8 +81,10 @@ pub struct ConcurrentEncoderConfig {
 impl Default for ConcurrentEncoderConfig {
     fn default() -> Self {
         Self {
-            s3_prefix: String::new(),
-            frames_per_fragment: 300, // 10 seconds @ 30fps
+            key_prefix: String::new(),
+            chunk_index: 0,
+            episode_index: 0,
+            frames_per_fragment: 300,
             temp_dir: std::env::temp_dir(),
             video_config: VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
@@ -148,10 +155,14 @@ impl ConcurrentVideoEncoder {
         })
     }
 
-    /// Build the destination URL for a camera.
+    /// Build the destination key for a camera in LeRobot v2.1 format.
+    /// Format: {prefix}/videos/chunk-{chunk:03}/{camera}/episode_{episode:06}.mp4
     fn build_dest_url(&self, camera: &str) -> String {
-        let prefix = self.config.s3_prefix.trim_end_matches('/');
-        format!("{}/videos/{}.mp4", prefix, camera)
+        let prefix = self.config.key_prefix.trim_end_matches('/');
+        format!(
+            "{}/videos/chunk-{:03}/{}/episode_{:06}.mp4",
+            prefix, self.config.chunk_index, camera, self.config.episode_index
+        )
     }
 
     /// Ensure a pipeline exists for the given camera.
@@ -192,9 +203,7 @@ impl ConcurrentVideoEncoder {
                     upload_rx,
                 )
             })
-            .map_err(|e| {
-                RoboflowError::other(format!("Failed to spawn upload thread: {}", e))
-            })?;
+            .map_err(|e| RoboflowError::other(format!("Failed to spawn upload thread: {}", e)))?;
 
         // Spawn pipeline
         let handle = spawn_camera_pipeline(pipeline_config, upload_tx)?;

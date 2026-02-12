@@ -287,28 +287,29 @@ fn test_concurrent_encoder_with_minio() {
     );
 
     // Test video encoding with S3 upload using ConcurrentVideoEncoder
-    let s3_prefix = format!("s3://{}/test_videos", config.bucket);
+    let key_prefix = "test_videos".to_string();
     let encoder_config = ConcurrentEncoderConfig {
-        s3_prefix,
+        key_prefix,
+        chunk_index: 0,
+        episode_index: 0,
         frames_per_fragment: 300,
         temp_dir: std::env::temp_dir(),
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 64,
     };
 
-    let mut encoder = ConcurrentVideoEncoder::new(
-        encoder_config,
-        s3_storage,
-        runtime.handle().clone(),
-    )
-    .expect("Failed to create encoder");
+    let mut encoder =
+        ConcurrentVideoEncoder::new(encoder_config, s3_storage, runtime.handle().clone())
+            .expect("Failed to create encoder");
 
     // Add test frames
     let width = 160u32;
     let height = 120u32;
     for i in 0..10 {
         let image_data = create_test_image(width, height, (i * 25) as u8);
-        encoder.add_frame("encoder_test", image_data).expect("Failed to add frame");
+        encoder
+            .add_frame("encoder_test", image_data)
+            .expect("Failed to add frame");
     }
 
     // Finalize and upload
@@ -316,7 +317,10 @@ fn test_concurrent_encoder_with_minio() {
 
     assert_eq!(results.len(), 1, "Should have 1 camera result");
     assert_eq!(results[0].frames_encoded, 10, "Should encode 10 frames");
-    assert!(results[0].url.contains("encoder_test.mp4"), "URL should contain camera name");
+    assert!(
+        results[0].url.contains("encoder_test.mp4"),
+        "URL should contain camera name"
+    );
 
     println!("✓ ConcurrentVideoEncoder with MinIO test passed");
 }
@@ -341,21 +345,20 @@ fn test_concurrent_encoder_multicam_with_minio() {
     );
 
     // Create concurrent encoder
-    let s3_prefix = format!("s3://{}/test_coordinator", config.bucket);
+    let key_prefix = "test_coordinator".to_string();
     let encoder_config = ConcurrentEncoderConfig {
-        s3_prefix,
+        key_prefix,
+        chunk_index: 0,
+        episode_index: 0,
         frames_per_fragment: 300,
         temp_dir: std::env::temp_dir(),
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 100,
     };
 
-    let mut encoder = ConcurrentVideoEncoder::new(
-        encoder_config,
-        s3_storage,
-        runtime.handle().clone(),
-    )
-    .expect("Failed to create encoder");
+    let mut encoder =
+        ConcurrentVideoEncoder::new(encoder_config, s3_storage, runtime.handle().clone())
+            .expect("Failed to create encoder");
 
     // Add frames for 2 cameras
     let width = 160u32;
@@ -411,21 +414,20 @@ fn test_compressed_images_with_minio_upload() {
     );
 
     // Create concurrent encoder
-    let s3_prefix = format!("s3://{}/test_compressed", config.bucket);
+    let key_prefix = "test_compressed".to_string();
     let encoder_config = ConcurrentEncoderConfig {
-        s3_prefix,
+        key_prefix,
+        chunk_index: 0,
+        episode_index: 0,
         frames_per_fragment: 300,
         temp_dir: std::env::temp_dir(),
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 100,
     };
 
-    let mut encoder = ConcurrentVideoEncoder::new(
-        encoder_config,
-        s3_storage,
-        runtime.handle().clone(),
-    )
-    .expect("Failed to create encoder");
+    let mut encoder =
+        ConcurrentVideoEncoder::new(encoder_config, s3_storage, runtime.handle().clone())
+            .expect("Failed to create encoder");
 
     let width = 160u32;
     let height = 120u32;
@@ -523,29 +525,26 @@ fn test_concurrent_minio_uploads() {
     );
 
     // Create 3 encoders in parallel (simulating 3 workers)
-    let s3_base = format!("s3://{}/test_concurrent", config.bucket);
-
     let handles: Vec<_> = (0..3)
         .map(|worker_id| {
-            let s3_prefix = format!("{}/worker_{}", s3_base, worker_id);
+            let key_prefix = format!("test_concurrent/worker_{}", worker_id);
             let s3_storage_clone = s3_storage.clone();
             let runtime_handle = runtime.handle().clone();
 
             std::thread::spawn(move || {
                 let encoder_config = ConcurrentEncoderConfig {
-                    s3_prefix,
+                    key_prefix,
+                    chunk_index: 0,
+                    episode_index: worker_id as u32,
                     frames_per_fragment: 300,
                     temp_dir: std::env::temp_dir(),
                     video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
                     frame_channel_capacity: 50,
                 };
 
-                let mut encoder = ConcurrentVideoEncoder::new(
-                    encoder_config,
-                    s3_storage_clone,
-                    runtime_handle,
-                )
-                .expect("Failed to create encoder");
+                let mut encoder =
+                    ConcurrentVideoEncoder::new(encoder_config, s3_storage_clone, runtime_handle)
+                        .expect("Failed to create encoder");
 
                 // Add 5 frames
                 for i in 0..5 {
@@ -561,7 +560,8 @@ fn test_concurrent_minio_uploads() {
         .collect();
 
     // Wait for all workers and collect results
-    let mut results: Vec<Result<Vec<roboflow_dataset::common::ConcurrentEncoderResult>, _>> = vec![];
+    let mut results: Vec<Result<Vec<roboflow_dataset::common::ConcurrentEncoderResult>, _>> =
+        vec![];
     for handle in handles {
         let result = handle.join().expect("Thread panicked");
         results.push(result);
@@ -624,4 +624,201 @@ fn test_large_file_upload_to_minio() {
         .unwrap();
 
     println!("✓ Large file upload test passed (5MB)");
+}
+
+// =============================================================================
+// Test: LeRobot v2.1 video path structure with ConcurrentVideoEncoder
+// =============================================================================
+
+/// Test that ConcurrentVideoEncoder produces LeRobot v2.1 compliant video paths.
+///
+/// This test verifies:
+/// 1. Videos are uploaded to `{prefix}/videos/chunk-{chunk:03}/{camera}/episode_{episode:06}.mp4`
+/// 2. Multiple cameras produce unique paths (no overwrites)
+/// 3. Files actually exist at the expected locations
+#[test]
+fn test_lerobot_v21_video_path_structure() {
+    let config = MinioConfig::default();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    // Create S3 storage wrapped in Arc
+    let s3_storage = Arc::new(
+        config
+            .create_sync_storage()
+            .expect("Failed to create MinIO storage"),
+    );
+
+    // Test configuration
+    let key_prefix = "test_lerobot_v21".to_string();
+    let chunk_index = 0u32;
+    let episode_index = 42u32; // Use non-zero to verify formatting
+
+    let encoder_config = ConcurrentEncoderConfig {
+        key_prefix: key_prefix.clone(),
+        chunk_index,
+        episode_index,
+        frames_per_fragment: 300,
+        temp_dir: std::env::temp_dir(),
+        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
+        frame_channel_capacity: 64,
+    };
+
+    let mut encoder =
+        ConcurrentVideoEncoder::new(encoder_config, s3_storage.clone(), runtime.handle().clone())
+            .expect("Failed to create encoder");
+
+    // Add frames for multiple cameras (simulating multi-camera setup)
+    let cameras = vec![
+        "observation.images.cam_left",
+        "observation.images.cam_right",
+        "observation.images.cam_high",
+    ];
+
+    for camera in &cameras {
+        for i in 0..10 {
+            let img = create_test_image(160, 120, (i * 25) as u8);
+            encoder.add_frame(camera, img).expect("Failed to add frame");
+        }
+    }
+
+    // Finalize and get results
+    let results = encoder.finalize().expect("Failed to finalize encoder");
+
+    // Verify all cameras were processed
+    assert_eq!(results.len(), 3, "Should have 3 camera results");
+
+    // Verify the URL format matches LeRobot v2.1 structure
+    for result in &results {
+        // Expected format: {prefix}/videos/chunk-{chunk:03}/{camera}/episode_{episode:06}.mp4
+        let expected_prefix = format!("{}/videos/chunk-{:03}/", key_prefix, chunk_index);
+        assert!(
+            result.url.starts_with(&expected_prefix),
+            "URL '{}' should start with '{}'",
+            result.url,
+            expected_prefix
+        );
+
+        // Verify episode number in filename
+        assert!(
+            result
+                .url
+                .contains(&format!("episode_{:06}.mp4", episode_index)),
+            "URL '{}' should contain 'episode_{:06}.mp4'",
+            result.url,
+            episode_index
+        );
+
+        // Verify camera name is in the path
+        assert!(
+            result.url.contains(&result.camera),
+            "URL '{}' should contain camera name '{}'",
+            result.url,
+            result.camera
+        );
+
+        println!("✓ Camera '{}' uploaded to: {}", result.camera, result.url);
+    }
+
+    // Verify files actually exist in S3
+    let async_storage = config
+        .create_storage()
+        .expect("Failed to create async storage");
+
+    runtime
+        .block_on(async {
+            for result in &results {
+                let path = std::path::Path::new(&result.url);
+                let exists = async_storage.exists(path).await;
+                assert!(exists, "Video file should exist at '{}'", result.url);
+
+                // Also verify file has reasonable size (should be > 1KB for a video)
+                let metadata = async_storage
+                    .metadata(path)
+                    .await
+                    .expect("Failed to get metadata");
+                assert!(
+                    metadata.size > 1024,
+                    "Video file '{}' should be larger than 1KB, got {} bytes",
+                    result.url,
+                    metadata.size
+                );
+            }
+
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+        .unwrap();
+
+    // Cleanup test files
+    config.cleanup_dir(&runtime, "test_lerobot_v21");
+
+    println!("✓ LeRobot v2.1 video path structure test passed");
+}
+
+/// Test that different cameras with similar names produce unique temp files.
+///
+/// Regression test for the race condition where cameras like "cam_left" and
+/// "cam_right" would overwrite each other's temp files.
+#[test]
+fn test_multi_camera_unique_temp_files() {
+    let config = MinioConfig::default();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    // Create S3 storage wrapped in Arc
+    let s3_storage = Arc::new(
+        config
+            .create_sync_storage()
+            .expect("Failed to create MinIO storage"),
+    );
+
+    let encoder_config = ConcurrentEncoderConfig {
+        key_prefix: "test_unique_temp".to_string(),
+        chunk_index: 0,
+        episode_index: 0,
+        frames_per_fragment: 10, // Small fragment size to trigger multiple fragments
+        temp_dir: std::env::temp_dir(),
+        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
+        frame_channel_capacity: 64,
+    };
+
+    let mut encoder =
+        ConcurrentVideoEncoder::new(encoder_config, s3_storage, runtime.handle().clone())
+            .expect("Failed to create encoder");
+
+    // Add frames for cameras with similar names (simultaneously)
+    // This would previously cause temp file collisions
+    for i in 0..30 {
+        let img_left = create_test_image(160, 120, i as u8);
+        let img_right = create_test_image(160, 120, (i + 128) as u8);
+
+        encoder
+            .add_frame("observation.images.cam_left", img_left)
+            .expect("Failed to add left frame");
+        encoder
+            .add_frame("observation.images.cam_right", img_right)
+            .expect("Failed to add right frame");
+    }
+
+    // Finalize should succeed without "file not found" errors
+    let results = encoder.finalize().expect("Failed to finalize encoder");
+
+    // Both cameras should have encoded all frames
+    assert_eq!(results.len(), 2, "Should have 2 camera results");
+
+    for result in &results {
+        assert_eq!(
+            result.frames_encoded, 30,
+            "Camera '{}' should have encoded 30 frames",
+            result.camera
+        );
+        assert_eq!(
+            result.frames_skipped, 0,
+            "Camera '{}' should have 0 skipped frames",
+            result.camera
+        );
+    }
+
+    // Cleanup test files
+    config.cleanup_dir(&runtime, "test_unique_temp");
+
+    println!("✓ Multi-camera unique temp files test passed (regression test)");
 }

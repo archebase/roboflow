@@ -34,7 +34,12 @@ The project uses a Cargo workspace with 6 crates:
 ```bash
 cargo build                              # Standard build
 cargo test                               # All tests
-cargo test --test kps_v12_tests         # KPS v1.2 spec tests
+cargo test --test minio_integration_tests # MinIO integration tests
+```
+
+**Note:** MinIO integration tests require running docker-compose infrastructure:
+```bash
+docker compose up -d minio minio-init
 ```
 
 ## Code Quality
@@ -189,6 +194,43 @@ Automated review tools (e.g., Greptile) may provide feedback on PRs. When addres
 
 **Note:** Storage (S3/OSS) and dataset formats (Parquet, LeRobot) are always available.
 
+## Development Infrastructure
+
+The project uses docker-compose for local development infrastructure:
+
+```bash
+docker compose up -d       # Start all services (MinIO, TiKV, PD)
+docker compose up -d minio minio-init  # Start only MinIO
+docker compose down        # Stop all services
+```
+
+**Services:**
+| Service | Purpose | Ports |
+|---------|---------|-------|
+| MinIO | S3-compatible object storage | 9000 (API), 9001 (Console) |
+| TiKV | Distributed KV storage | 20160 |
+| PD | TiKV placement driver | 2379, 2380 |
+
+**Pre-created buckets:** `roboflow-datasets`, `roboflow-raw`, `roboflow-temp`
+
+## LeRobot v2.1 Format
+
+Video files follow the LeRobot v2.1 directory structure:
+
+```
+{prefix}/videos/chunk-{chunk:03d}/{camera}/episode_{episode:06d}.mp4
+```
+
+**Example:**
+```
+dataset/episode_001/videos/chunk-000/observation.images.cam_left/episode_000000.mp4
+```
+
+**Key configuration:**
+- `ConcurrentEncoderConfig.key_prefix`: Relative path within bucket (e.g., `"dataset/episode_001"`), NOT a full S3 URL
+- `chunk_index`: Typically 0 for single-episode datasets
+- `episode_index`: Zero-padded episode number
+
 ## Key Conventions
 
 ### Storage Layer
@@ -201,6 +243,11 @@ Automated review tools (e.g., Greptile) may provide feedback on PRs. When addres
 - TOML config at `crates/roboflow-dataset/src/kps/config.rs` for topic mappings
 - v1.2 spec tests in `tests/kps_v12_tests.rs` are authoritative
 - Writers use streaming patterns
+
+### Video Encoding
+- `FragmentEncoder` requires unique `camera_id` for each camera to prevent temp file collisions
+- `ConcurrentEncoderConfig.key_prefix` must be a relative path (not `s3://bucket/...`)
+- Temp filenames include camera ID: `fragment_{pid}_{camera_id}_{counter}_{nonce}.mp4`
 
 ### Memory
 - **Always use arena allocation** for message data (~22% overhead if skipped)

@@ -26,8 +26,8 @@ use std::path::PathBuf;
 
 use roboflow_core::{Result, RoboflowError};
 
-use crate::common::video::{VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
 use crate::common::rsmpeg_encoder::RsmpegMp4Encoder;
+use crate::common::video::{VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
 
 /// Metadata about an encoded fragment.
 #[derive(Debug)]
@@ -60,7 +60,10 @@ impl FragmentInfo {
     /// Read the fragment data from the temp file.
     pub fn read_data(&self) -> Result<Vec<u8>> {
         std::fs::read(&self.path).map_err(|e| {
-            RoboflowError::encode("FragmentInfo", format!("Failed to read fragment data: {}", e))
+            RoboflowError::encode(
+                "FragmentInfo",
+                format!("Failed to read fragment data: {}", e),
+            )
         })
     }
 }
@@ -74,6 +77,8 @@ pub struct FragmentEncoderConfig {
     pub temp_dir: PathBuf,
     /// Maximum frames per fragment.
     pub max_frames_per_fragment: usize,
+    /// Camera identifier for unique temp file names.
+    pub camera_id: String,
 }
 
 impl Default for FragmentEncoderConfig {
@@ -82,6 +87,7 @@ impl Default for FragmentEncoderConfig {
             video: VideoEncoderConfig::default(),
             temp_dir: std::env::temp_dir(),
             max_frames_per_fragment: 300, // 10 seconds @ 30fps
+            camera_id: String::new(),
         }
     }
 }
@@ -147,9 +153,18 @@ impl FragmentEncoder {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         self.fragment_counter += 1;
+
+        // Sanitize camera_id for use in filename (replace non-alphanumeric with underscore)
+        let safe_camera_id: String = self
+            .config
+            .camera_id
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect();
+
         let temp_path = self.config.temp_dir.join(format!(
-            "fragment_{}_{}_{}.mp4",
-            self.pid, self.fragment_counter, nonce
+            "fragment_{}_{}_{}_{}.mp4",
+            self.pid, safe_camera_id, self.fragment_counter, nonce
         ));
 
         let frame_count = frames.len();
@@ -224,6 +239,7 @@ mod tests {
         let config = FragmentEncoderConfig::default();
         assert_eq!(config.max_frames_per_fragment, 300);
         assert_eq!(config.video.fps, 30);
+        assert_eq!(config.camera_id, "");
     }
 
     #[test]
@@ -266,5 +282,64 @@ mod tests {
 
         // Temp file should be cleaned up
         assert!(!path.exists());
+    }
+
+    /// Regression test for race condition: different camera IDs should produce
+    /// different temp file paths even when encoding at the same time.
+    /// See: https://github.com/archebase/roboflow/issues/XXX
+    #[test]
+    fn test_different_cameras_produce_unique_filenames() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create two encoders with different camera IDs
+        let config1 = FragmentEncoderConfig {
+            video: VideoEncoderConfig::default(),
+            temp_dir: temp_dir.path().to_path_buf(),
+            max_frames_per_fragment: 300,
+            camera_id: "observation.images.cam_left".to_string(),
+        };
+        let config2 = FragmentEncoderConfig {
+            video: VideoEncoderConfig::default(),
+            temp_dir: temp_dir.path().to_path_buf(),
+            max_frames_per_fragment: 300,
+            camera_id: "observation.images.cam_right".to_string(),
+        };
+
+        let mut encoder1 = FragmentEncoder::new(config1).unwrap();
+        let mut encoder2 = FragmentEncoder::new(config2).unwrap();
+
+        // Create test frames
+        let rgb_data = vec![128u8; 64 * 64 * 3];
+        let frame = VideoFrame::new(64, 64, rgb_data.clone());
+
+        // Encode from both encoders (simulating concurrent encoding)
+        let fragment1 = encoder1.encode(vec![frame]).unwrap();
+        let frame2 = VideoFrame::new(64, 64, rgb_data);
+        let fragment2 = encoder2.encode(vec![frame2]).unwrap();
+
+        // The paths should be different because camera IDs are different
+        assert_ne!(
+            fragment1.path, fragment2.path,
+            "Fragments from different cameras must have unique paths"
+        );
+
+        // Verify the camera ID is embedded in the filename
+        let filename1 = fragment1.path.file_name().unwrap().to_str().unwrap();
+        let filename2 = fragment2.path.file_name().unwrap().to_str().unwrap();
+
+        assert!(
+            filename1.contains("cam_left"),
+            "Expected 'cam_left' in filename, got: {}",
+            filename1
+        );
+        assert!(
+            filename2.contains("cam_right"),
+            "Expected 'cam_right' in filename, got: {}",
+            filename2
+        );
+
+        // Both files should exist simultaneously (no overwrites)
+        assert!(fragment1.path.exists());
+        assert!(fragment2.path.exists());
     }
 }

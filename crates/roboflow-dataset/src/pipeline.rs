@@ -1101,7 +1101,10 @@ mod tests {
         let mut mapped_image = HashMap::new();
         mapped_image.insert("width".to_string(), CodecValue::UInt32(width));
         mapped_image.insert("height".to_string(), CodecValue::UInt32(height));
-        mapped_image.insert("data".to_string(), CodecValue::Bytes(compressed_jpeg.clone()));
+        mapped_image.insert(
+            "data".to_string(),
+            CodecValue::Bytes(compressed_jpeg.clone()),
+        );
 
         let mapped_msg = TimestampedMessage {
             topic: "/camera/mapped".to_string(),
@@ -1152,7 +1155,10 @@ mod tests {
             let mut image = HashMap::new();
             image.insert("width".to_string(), CodecValue::UInt32(width));
             image.insert("height".to_string(), CodecValue::UInt32(height));
-            image.insert("data".to_string(), CodecValue::Bytes(compressed_jpeg.clone()));
+            image.insert(
+                "data".to_string(),
+                CodecValue::Bytes(compressed_jpeg.clone()),
+            );
 
             let msg = TimestampedMessage {
                 topic: topic.to_string(),
