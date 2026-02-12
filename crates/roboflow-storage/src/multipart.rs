@@ -171,8 +171,6 @@ impl MultipartStats {
 
 /// Multipart uploader for large files.
 ///
-/// Only available when the `cloud-storage` feature is enabled.
-///
 /// This wraps the `object_store::MultipartUpload` trait with a more convenient
 /// synchronous API that handles retries, progress tracking, and error handling.
 pub struct MultipartUploader {

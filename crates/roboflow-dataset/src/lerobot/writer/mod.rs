@@ -108,7 +108,7 @@ impl CameraExtrinsic {
 
 /// LeRobot v2.1 dataset writer.
 pub struct LerobotWriter {
-    /// Storage backend for writing data (only available with cloud-storage feature)
+    /// Storage backend for writing data
     storage: std::sync::Arc<dyn roboflow_storage::Storage>,
 
     /// Output prefix within storage (empty for local filesystem root)
@@ -183,8 +183,7 @@ impl LerobotWriter {
     /// Create a new LeRobot writer for local filesystem output.
     ///
     /// This is the recommended constructor for local filesystem output.
-    /// For cloud storage support, use the storage-aware constructors when
-    /// the `cloud-storage` feature is enabled.
+    /// For cloud storage support, use the `new_with_storage` constructor.
     ///
     /// # Arguments
     ///

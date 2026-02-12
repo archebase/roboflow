@@ -136,8 +136,6 @@ sources = ["dep:roboflow-sources"]
 sinks = ["dep:roboflow-sinks"]
 
 # Note: Cloud storage (S3, OSS) is always available via roboflow-storage
-# The cloud-storage feature is kept for compatibility but does nothing
-cloud-storage = []
 
 # Use jemalloc as global allocator on Linux (better for concurrent workloads)
 # On macOS, the default allocator is already excellent and jemalloc is not used

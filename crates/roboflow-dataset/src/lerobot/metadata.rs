@@ -373,7 +373,7 @@ impl MetadataCollector {
 }
 
 // =============================================================================
-// Storage Backend Support (cloud-storage feature)
+// Storage Backend Support
 // =============================================================================
 
 impl MetadataCollector {
