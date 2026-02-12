@@ -6,10 +6,14 @@
 mod config;
 mod convert;
 mod error;
+mod lerobot_factory;
 mod registry;
 
 // Sink implementations
 pub mod lerobot;
+
+// Re-export factory for external use (e.g., TaskExecutor in roboflow-distributed)
+pub use lerobot_factory::{LerobotWriterConfig, LerobotWriterResult, create_lerobot_writer};
 
 pub use config::{SinkConfig, SinkType};
 pub use error::{SinkError, SinkResult};

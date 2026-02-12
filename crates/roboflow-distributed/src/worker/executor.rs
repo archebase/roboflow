@@ -23,8 +23,8 @@ use roboflow_core::RoboflowError;
 use roboflow_dataset::lerobot::{LerobotConfig, LerobotWriter};
 use roboflow_dataset::streaming::config::StreamingConfig;
 use roboflow_dataset::{PipelineConfig, PipelineExecutor};
+use roboflow_sinks::{LerobotWriterConfig, create_lerobot_writer};
 use roboflow_sources::{SourceConfig, create_source};
-use roboflow_storage::LocalStorage;
 
 use super::metrics::ProcessingResult;
 use super::registry::JobRegistry;
@@ -39,9 +39,6 @@ pub struct ExecutionResult {
     /// Number of videos created.
     pub videos_created: usize,
 }
-
-/// Storage setup result containing storage backend, optional prefix, and local buffer path.
-type StorageSetup = (Arc<dyn roboflow_storage::Storage>, Option<String>, PathBuf);
 
 /// Context for running a pipeline execution.
 struct PipelineContext {
@@ -122,33 +119,9 @@ impl TaskExecutor {
 
         // Step 2: Determine output path
         let output_path = self.resolve_output_path(unit);
-        let output_path_str = output_path.to_string_lossy();
+        let output_path_str = output_path.to_string_lossy().to_string();
 
-        // Step 3: Setup storage
-        let (storage, output_prefix, local_buffer_path) = {
-            // Validate cloud URL format
-            if output_path_str.starts_with("s3:") && !output_path_str.starts_with("s3://") {
-                return ProcessingResult::Failed {
-                    error: format!(
-                        "Malformed cloud URL '{}': use s3://bucket/path (double slash required)",
-                        output_path_str
-                    ),
-                };
-            }
-
-            if output_path_str.starts_with("s3://") {
-                match self.setup_cloud_storage(&output_path_str) {
-                    Ok(result) => result,
-                    Err(e) => return ProcessingResult::Failed { error: e },
-                }
-            } else {
-                let local_storage: Arc<dyn roboflow_storage::Storage> =
-                    Arc::new(LocalStorage::new(std::env::temp_dir()));
-                (local_storage, None, output_path.clone())
-            }
-        };
-
-        // Step 4: Load configuration
+        // Step 3: Load configuration
         let config = match self.load_config(unit).await {
             Ok(config) => config,
             Err(e) => {
@@ -158,7 +131,7 @@ impl TaskExecutor {
             }
         };
 
-        // Step 5: Create source
+        // Step 4: Create source
         let source_config = Self::create_source_config(source_url);
         let source = match create_source(&source_config) {
             Ok(s) => s,
@@ -169,22 +142,26 @@ impl TaskExecutor {
             }
         };
 
-        // Step 6: Create writer
-        let writer = match self.create_writer(&storage, &output_prefix, &local_buffer_path, &config)
-        {
-            Ok(w) => w,
-            Err(e) => return ProcessingResult::Failed { error: e },
+        // Step 5: Create writer using the consolidated factory
+        let factory_config = LerobotWriterConfig::new(&output_path_str, config.clone());
+        let writer_result = match create_lerobot_writer(&factory_config) {
+            Ok(result) => result,
+            Err(e) => {
+                return ProcessingResult::Failed {
+                    error: format!("Failed to create writer: {}", e),
+                };
+            }
         };
 
-        // Step 7: Build topic mappings and pipeline config
+        // Step 6: Build topic mappings and pipeline config
         let topic_mappings = Self::build_topic_mappings(&config);
         let pipeline_config = Self::create_pipeline_config(&config, topic_mappings);
 
-        // Step 8: Execute pipeline with timeout
+        // Step 7: Execute pipeline with timeout
         let ctx = PipelineContext {
             source,
             source_config,
-            writer,
+            writer: writer_result.writer,
             pipeline_config,
             unit_id: unit.id.clone(),
             job_registry: self.job_registry.clone(),
@@ -203,25 +180,6 @@ impl TaskExecutor {
                 unit.id
             ))
         }
-    }
-
-    /// Setup cloud storage for S3 output.
-    fn setup_cloud_storage(&self, output_path_str: &str) -> Result<StorageSetup, String> {
-        let storage: Arc<dyn roboflow_storage::Storage> =
-            roboflow_storage::StorageFactory::from_env()
-                .create(output_path_str)
-                .map_err(|e| format!("Failed to create storage: {}", e))?;
-
-        // Extract prefix from S3 URL
-        let prefix = output_path_str
-            .strip_prefix("s3://")
-            .and_then(|s| s.find('/').map(|i| &s[i + 1..]))
-            .unwrap_or("")
-            .trim_end_matches('/')
-            .to_string();
-
-        let local_buffer = std::env::temp_dir();
-        Ok((storage, Some(prefix), local_buffer))
     }
 
     /// Load configuration for a work unit.
@@ -302,28 +260,6 @@ impl TaskExecutor {
         } else {
             // Default to MCAP for local files
             SourceConfig::mcap(source_url)
-        }
-    }
-
-    /// Create writer based on storage configuration.
-    fn create_writer(
-        &self,
-        storage: &Arc<dyn roboflow_storage::Storage>,
-        output_prefix: &Option<String>,
-        local_buffer_path: &PathBuf,
-        config: &LerobotConfig,
-    ) -> std::result::Result<LerobotWriter, String> {
-        if let Some(prefix) = output_prefix {
-            LerobotWriter::new(
-                Arc::clone(storage),
-                prefix.clone(),
-                std::env::temp_dir(),
-                config.clone(),
-            )
-            .map_err(|e| format!("Failed to create cloud writer: {}", e))
-        } else {
-            LerobotWriter::new_local(local_buffer_path, config.clone())
-                .map_err(|e| format!("Failed to create local writer: {}", e))
         }
     }
 

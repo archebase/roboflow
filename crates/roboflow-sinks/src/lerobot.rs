@@ -13,13 +13,12 @@
 //! FFmpeg cannot write to S3 URLs directly.
 
 use crate::convert::dataset_frame_to_aligned;
+use crate::lerobot_factory::{LerobotWriterConfig, create_lerobot_writer};
 use crate::{DatasetFrame, Sink, SinkCheckpoint, SinkConfig, SinkError, SinkResult, SinkStats};
 use roboflow_dataset::lerobot::LerobotConfig;
 use roboflow_dataset::lerobot::writer::LerobotWriter;
 use roboflow_dataset::lerobot::{CameraExtrinsic, CameraIntrinsic};
-use roboflow_storage::StorageUrl;
 use std::collections::HashMap;
-use std::str::FromStr;
 
 /// LeRobot dataset sink.
 ///
@@ -111,78 +110,14 @@ impl Sink for LerobotSink {
             "Initializing LeRobot sink"
         );
 
-        // Reject malformed cloud URLs (e.g. "s3:" or "s3:/bucket" missing "//")
-        if (self.output_path.starts_with("s3:") && !self.output_path.starts_with("s3://"))
-            || (self.output_path.starts_with("oss:") && !self.output_path.starts_with("oss://"))
-        {
-            return Err(SinkError::CreateFailed {
-                path: self.output_path.clone().into(),
-                error: Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!(
-                        "Malformed cloud URL '{}': use s3://bucket/path or oss://bucket/path (double slash required)",
-                        self.output_path
-                    ),
-                )),
-            });
-        }
+        // Use the consolidated factory to create the writer
+        let factory_config = LerobotWriterConfig::new(&self.output_path, lerobot_config);
+        let result = create_lerobot_writer(&factory_config).map_err(|e| SinkError::CreateFailed {
+            path: self.output_path.clone().into(),
+            error: Box::new(std::io::Error::other(e)),
+        })?;
 
-        let writer = if self.output_path.starts_with("s3://")
-            || self.output_path.starts_with("oss://")
-        {
-            // Cloud URL: use local buffer for all file I/O (Parquet + FFmpeg), then upload to S3/OSS.
-            // FFmpeg only accepts local paths; we must not pass s3:// to it.
-            let storage = roboflow_storage::StorageFactory::from_env()
-                .create(&self.output_path)
-                .map_err(|e| SinkError::CreateFailed {
-                    path: self.output_path.clone().into(),
-                    error: Box::new(e),
-                })?;
-
-            // Extract the key (path within bucket) as output_prefix.
-            // The storage backend is already scoped to the bucket, so output_prefix
-            // should only contain the path within the bucket, not the bucket name itself.
-            // For s3://bucket/path/to/data, output_prefix should be "path/to/data".
-            // For s3://bucket (no key), output_prefix should be "" (bucket root).
-            let output_prefix = StorageUrl::from_str(&self.output_path)
-                .map(|u| u.path().trim_end_matches('/').to_string())
-                .unwrap_or_default();
-
-            let local_buffer = std::env::temp_dir().join("roboflow").join(format!(
-                "{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or(std::time::Duration::ZERO)
-                    .as_nanos()
-            ));
-            std::fs::create_dir_all(&local_buffer).map_err(|e| SinkError::CreateFailed {
-                path: local_buffer.clone(),
-                error: Box::new(e),
-            })?;
-
-            tracing::info!(
-                output_path = %self.output_path,
-                output_prefix = %output_prefix,
-                local_buffer = %local_buffer.display(),
-                "Using local buffer for cloud output (videos/parquet written locally then uploaded)"
-            );
-
-            LerobotWriter::new(storage, output_prefix, &local_buffer, lerobot_config).map_err(
-                |e| SinkError::CreateFailed {
-                    path: self.output_path.clone().into(),
-                    error: Box::new(e),
-                },
-            )?
-        } else {
-            LerobotWriter::new_local(&self.output_path, lerobot_config).map_err(|e| {
-                SinkError::CreateFailed {
-                    path: self.output_path.clone().into(),
-                    error: Box::new(e),
-                }
-            })?
-        };
-
-        self.writer = Some(writer);
+        self.writer = Some(result.writer);
         self.start_time = Some(std::time::Instant::now());
 
         Ok(())
