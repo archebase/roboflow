@@ -4104,7 +4104,6 @@ dependencies = [
  "rayon",
  "robocodec",
  "roboflow-core",
- "roboflow-sources",
  "roboflow-storage",
  "roboflow-video",
  "rsmpeg",

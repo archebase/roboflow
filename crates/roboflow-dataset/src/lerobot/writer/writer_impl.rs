@@ -24,7 +24,7 @@ use crate::lerobot::video_profiles::ResolvedConfig;
 use roboflow_core::Result;
 
 use super::camera::{CameraExtrinsic, CameraIntrinsic};
-use super::encoding::{encode_videos, EncodeStats};
+use super::encoding::{EncodeStats, encode_videos};
 use super::frame::LerobotFrame;
 use super::stats;
 
@@ -633,8 +633,11 @@ impl LerobotWriter {
 
     /// Write current episode to Parquet file.
     fn write_episode_parquet(&mut self) -> Result<(PathBuf, usize)> {
-        let (parquet_path, size) =
-            super::parquet::write_episode_parquet(&self.frame_data, self.episode_index, &self.output_dir)?;
+        let (parquet_path, size) = super::parquet::write_episode_parquet(
+            &self.frame_data,
+            self.episode_index,
+            &self.output_dir,
+        )?;
 
         self.output_bytes += size as u64;
 

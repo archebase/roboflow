@@ -23,8 +23,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use roboflow_core::{Result, RoboflowError};
-use roboflow_sources::TimestampedMessage;
+use roboflow_core::{Result, RoboflowError, TimestampedMessage};
 use tracing::{debug, info, instrument, trace, warn};
 
 use crate::common::base::{AlignedFrame, DatasetWriter, ImageData};

@@ -20,6 +20,7 @@
 pub mod config;
 pub mod error;
 pub mod logging;
+pub mod message;
 pub mod registry;
 pub mod retry;
 pub mod trace;
@@ -29,6 +30,7 @@ pub mod value;
 pub use config::{Validate, validators};
 pub use error::{ErrorCategory, Result, RoboflowError};
 pub use logging::{LogFormat, LoggingConfig, init_logging, init_logging_with};
+pub use message::TimestampedMessage;
 pub use registry::{
     Encoding, FactoryGuard, FactoryRegistry, GlobalFactoryRegistry, SchemaProvider, TypeAccessor,
     TypeRegistry,

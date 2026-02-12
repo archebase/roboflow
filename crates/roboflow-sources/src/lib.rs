@@ -24,8 +24,10 @@ pub use registry::{
 pub use rrd::RrdSource;
 pub use s3_prefix::S3PrefixSource;
 
+// Re-export TimestampedMessage from roboflow-core for backward compatibility
+pub use roboflow_core::TimestampedMessage;
+
 use async_trait::async_trait;
-use robocodec::CodecValue;
 
 /// Register all built-in source types with the global registry.
 ///
@@ -57,20 +59,6 @@ pub fn register_builtin_sources() {
         "s3-prefix",
         Box::new(|| Box::new(S3PrefixSource::new("s3://placeholder/").unwrap()) as Box<dyn Source>),
     );
-}
-
-/// A decoded message from a source.
-///
-/// This is the primary output type for all sources, providing a unified
-/// interface regardless of the underlying file format (MCAP, Bag, HDF5, etc.).
-#[derive(Debug, Clone)]
-pub struct TimestampedMessage {
-    /// Channel/topic name
-    pub topic: String,
-    /// Log timestamp (nanoseconds)
-    pub log_time: u64,
-    /// Decoded message data
-    pub data: CodecValue,
 }
 
 /// Trait for reading robotics data from various sources.
