@@ -39,6 +39,14 @@ impl SourceConfig {
         }
     }
 
+    /// Create an S3 prefix source configuration.
+    pub fn s3_prefix(url: impl Into<String>) -> Self {
+        Self {
+            source_type: SourceType::S3Prefix { url: url.into() },
+            options: HashMap::new(),
+        }
+    }
+
     /// Create an HDF5 source configuration.
     #[cfg(feature = "hdf5")]
     pub fn hdf5(path: impl Into<String>) -> Self {
@@ -49,11 +57,14 @@ impl SourceConfig {
     }
 
     /// Get the path for this source.
+    ///
+    /// For S3Prefix sources, returns the URL.
     pub fn path(&self) -> &str {
         match &self.source_type {
             SourceType::Mcap { path } => path,
             SourceType::Bag { path } => path,
             SourceType::Rrd { path } => path,
+            SourceType::S3Prefix { url } => url,
             #[cfg(feature = "hdf5")]
             SourceType::Hdf5 { path } => path,
         }
@@ -95,6 +106,11 @@ pub enum SourceType {
         /// Path to the .rrd file
         path: String,
     },
+    /// S3/OSS prefix containing multiple files
+    S3Prefix {
+        /// S3/OSS URL prefix (e.g., "s3://bucket/path/to/data/")
+        url: String,
+    },
     /// HDF5 file format (when feature is enabled)
     #[cfg(feature = "hdf5")]
     Hdf5 {
@@ -110,17 +126,21 @@ impl SourceType {
             Self::Mcap { .. } => "mcap",
             Self::Bag { .. } => "bag",
             Self::Rrd { .. } => "rrd",
+            Self::S3Prefix { .. } => "s3-prefix",
             #[cfg(feature = "hdf5")]
             Self::Hdf5 { .. } => "hdf5",
         }
     }
 
     /// Get the path for this source type.
+    ///
+    /// For S3Prefix, returns the URL.
     pub fn path(&self) -> &str {
         match self {
             Self::Mcap { path } => path,
             Self::Bag { path } => path,
             Self::Rrd { path } => path,
+            Self::S3Prefix { url } => url,
             #[cfg(feature = "hdf5")]
             Self::Hdf5 { path } => path,
         }
@@ -164,5 +184,20 @@ mod tests {
             .name(),
             "bag"
         );
+        assert_eq!(
+            SourceType::S3Prefix {
+                url: "s3://bucket/prefix/".to_string()
+            }
+            .name(),
+            "s3-prefix"
+        );
+    }
+
+    #[test]
+    fn test_source_config_s3_prefix() {
+        let config = SourceConfig::s3_prefix("s3://bucket/data/episode_001/");
+
+        assert_eq!(config.path(), "s3://bucket/data/episode_001/");
+        assert_eq!(config.source_type.name(), "s3-prefix");
     }
 }

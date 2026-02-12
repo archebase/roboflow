@@ -11,6 +11,7 @@ pub mod mcap;
 mod metadata;
 mod registry;
 mod rrd;
+mod s3_prefix;
 
 pub use bag::BagSource;
 pub use config::{SourceConfig, SourceType};
@@ -19,6 +20,7 @@ pub use mcap::McapSource;
 pub use metadata::{SourceMetadata, TopicMetadata};
 pub use registry::{SourceRegistry, create_source, global_registry, register_source};
 pub use rrd::RrdSource;
+pub use s3_prefix::S3PrefixSource;
 
 use async_trait::async_trait;
 use robocodec::CodecValue;
@@ -28,7 +30,7 @@ use robocodec::CodecValue;
 /// This function should be called once at program startup to ensure
 /// all source types are available for dynamic creation.
 pub fn register_builtin_sources() {
-    use crate::{BagSource, McapSource, RrdSource, Source};
+    use crate::{BagSource, McapSource, RrdSource, S3PrefixSource, Source};
 
     // Register Bag source
     register_source(
@@ -46,6 +48,14 @@ pub fn register_builtin_sources() {
     register_source(
         "rrd",
         Box::new(|| Box::new(RrdSource::new("").unwrap()) as Box<dyn Source>),
+    );
+
+    // Register S3 prefix source
+    register_source(
+        "s3-prefix",
+        Box::new(|| {
+            Box::new(S3PrefixSource::new("s3://placeholder/").unwrap()) as Box<dyn Source>
+        }),
     );
 }
 
