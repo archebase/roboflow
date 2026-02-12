@@ -10,7 +10,7 @@
 use super::schema::MergeState;
 use crate::tikv::error::TikvError;
 use polars::prelude::*;
-use roboflow_storage::Storage;
+use roboflow_storage::{Storage, StorageUrl};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -241,8 +241,16 @@ impl ParquetMergeExecutor {
 
     /// Write the merged parquet file to storage.
     async fn write_merged_parquet(&self, df: &DataFrame) -> Result<(), TikvError> {
-        // Determine output path
-        let output_prefix = Path::new(&self.output_path);
+        // Parse the output URL and extract the path/key portion
+        let output_url: StorageUrl =
+            self.output_path
+                .parse()
+                .map_err(|e: roboflow_storage::StorageError| {
+                    TikvError::Serialization(format!("Failed to parse output path: {}", e))
+                })?;
+
+        // Get the path prefix (key for S3, path for local)
+        let output_prefix = Path::new(output_url.path());
         let data_dir = output_prefix.join("data/chunk-000");
 
         // Create a unique merged parquet filename
@@ -264,7 +272,7 @@ impl ParquetMergeExecutor {
         }
 
         // Upload to storage if using cloud storage
-        if self.output_path.starts_with("s3://") {
+        if output_url.is_remote() {
             let mut reader = std::fs::File::open(&local_path).map_err(|e| {
                 TikvError::Serialization(format!("Failed to open temp file: {}", e))
             })?;
