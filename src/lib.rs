@@ -39,6 +39,7 @@ static GLOBAL: Jemalloc = Jemalloc;
 // Core modules (minimal public API - prefer crate::* imports)
 // =============================================================================
 pub mod config;
+pub mod convert;
 
 // Re-export from roboflow-core
 pub use roboflow_core::{
@@ -150,3 +151,9 @@ pub trait Decoder: Send + Sync {
     /// Decode data into a DecodedMessage.
     fn decode(&self, data: &[u8], schema: &str, type_name: Option<&str>) -> Result<DecodedMessage>;
 }
+
+// =============================================================================
+// High-level Conversion API
+// =============================================================================
+#[cfg(all(feature = "sources", feature = "sinks"))]
+pub use convert::{convert, convert_with_defaults, ConvertBuilder, ConversionReport};

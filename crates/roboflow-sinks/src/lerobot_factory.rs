@@ -107,17 +107,20 @@ fn create_cloud_writer(config: &LerobotWriterConfig) -> Result<LerobotWriterResu
         .unwrap_or_default();
 
     // Create unique local buffer directory
-    let local_buffer = std::env::temp_dir()
-        .join("roboflow")
-        .join(format!(
-            "{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or(std::time::Duration::ZERO)
-                .as_nanos()
-        ));
-    std::fs::create_dir_all(&local_buffer)
-        .map_err(|e| format!("Failed to create local buffer {}: {}", local_buffer.display(), e))?;
+    let local_buffer = std::env::temp_dir().join("roboflow").join(format!(
+        "{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or(std::time::Duration::ZERO)
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&local_buffer).map_err(|e| {
+        format!(
+            "Failed to create local buffer {}: {}",
+            local_buffer.display(),
+            e
+        )
+    })?;
 
     tracing::info!(
         output_path = %output_path,
@@ -154,7 +157,9 @@ fn create_local_writer(config: &LerobotWriterConfig) -> Result<LerobotWriterResu
     // For local storage, create a simple LocalStorage wrapper
     let storage: std::sync::Arc<dyn roboflow_storage::Storage> =
         std::sync::Arc::new(roboflow_storage::LocalStorage::new(
-            std::path::PathBuf::from(output_path).parent().unwrap_or(std::path::Path::new("")),
+            std::path::PathBuf::from(output_path)
+                .parent()
+                .unwrap_or(std::path::Path::new("")),
         ));
 
     let writer = LerobotWriter::new_local(output_path, config.lerobot_config.clone())
@@ -213,7 +218,8 @@ mod tests {
     #[test]
     fn test_local_writer_creation() {
         let temp_dir = std::env::temp_dir().join(format!("test_lerobot_{}", std::process::id()));
-        let config = LerobotWriterConfig::new(temp_dir.to_string_lossy().to_string(), test_config());
+        let config =
+            LerobotWriterConfig::new(temp_dir.to_string_lossy().to_string(), test_config());
         let result = create_lerobot_writer(&config);
         // This should succeed (creating a local writer)
         assert!(result.is_ok());

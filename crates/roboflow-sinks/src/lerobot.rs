@@ -112,10 +112,11 @@ impl Sink for LerobotSink {
 
         // Use the consolidated factory to create the writer
         let factory_config = LerobotWriterConfig::new(&self.output_path, lerobot_config);
-        let result = create_lerobot_writer(&factory_config).map_err(|e| SinkError::CreateFailed {
-            path: self.output_path.clone().into(),
-            error: Box::new(std::io::Error::other(e)),
-        })?;
+        let result =
+            create_lerobot_writer(&factory_config).map_err(|e| SinkError::CreateFailed {
+                path: self.output_path.clone().into(),
+                error: Box::new(std::io::Error::other(e)),
+            })?;
 
         self.writer = Some(result.writer);
         self.start_time = Some(std::time::Instant::now());
