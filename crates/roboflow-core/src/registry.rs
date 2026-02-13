@@ -325,7 +325,7 @@ impl<V> FactoryRegistry<V> {
     ///
     /// If a factory with the same name already exists, it will be replaced.
     pub fn register(&self, name: impl Into<String>, factory: V) {
-        let mut inner = self.inner.write().unwrap();
+        let mut inner = self.inner.write().expect("registry lock poisoned");
         inner.insert(name.into(), factory);
     }
 
@@ -336,7 +336,7 @@ impl<V> FactoryRegistry<V> {
     where
         V: Clone,
     {
-        let inner = self.inner.read().unwrap();
+        let inner = self.inner.read().expect("registry lock poisoned");
         inner.get(name).cloned()
     }
 
@@ -344,7 +344,7 @@ impl<V> FactoryRegistry<V> {
     ///
     /// Returns a reference that is valid while the guard is held.
     pub fn get_ref(&self, name: &str) -> Option<FactoryGuard<'_, V>> {
-        let guard = self.inner.read().unwrap();
+        let guard = self.inner.read().expect("registry lock poisoned");
         // Safety: The guard keeps the read lock alive
         let value_ptr = guard.get(name)? as *const V;
         Some(FactoryGuard {
@@ -355,13 +355,13 @@ impl<V> FactoryRegistry<V> {
 
     /// Check if a factory is registered.
     pub fn contains(&self, name: &str) -> bool {
-        let inner = self.inner.read().unwrap();
+        let inner = self.inner.read().expect("registry lock poisoned");
         inner.contains_key(name)
     }
 
     /// Get all registered factory names.
     pub fn names(&self) -> Vec<String> {
-        let inner = self.inner.read().unwrap();
+        let inner = self.inner.read().expect("registry lock poisoned");
         inner.keys().cloned().collect()
     }
 
@@ -369,13 +369,13 @@ impl<V> FactoryRegistry<V> {
     ///
     /// Returns true if the factory was removed.
     pub fn remove(&self, name: &str) -> bool {
-        let mut inner = self.inner.write().unwrap();
+        let mut inner = self.inner.write().expect("registry lock poisoned");
         inner.remove(name).is_some()
     }
 
     /// Get the number of registered factories.
     pub fn len(&self) -> usize {
-        let inner = self.inner.read().unwrap();
+        let inner = self.inner.read().expect("registry lock poisoned");
         inner.len()
     }
 
@@ -386,7 +386,7 @@ impl<V> FactoryRegistry<V> {
 
     /// Clear all factories from the registry.
     pub fn clear(&self) {
-        let mut inner = self.inner.write().unwrap();
+        let mut inner = self.inner.write().expect("registry lock poisoned");
         inner.clear();
     }
 }

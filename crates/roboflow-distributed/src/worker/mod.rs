@@ -82,7 +82,7 @@ impl Worker {
 
         // Create config cache for backward compatibility
         let config_cache = Arc::new(Mutex::new(LruCache::new(
-            std::num::NonZeroUsize::new(100).unwrap(),
+            std::num::NonZeroUsize::new(100).expect("100 is always non-zero"),
         )));
 
         Ok(Self {

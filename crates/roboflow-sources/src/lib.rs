@@ -37,27 +37,39 @@ pub fn register_builtin_sources() {
     use crate::{BagSource, McapSource, RrdSource, S3PrefixSource, Source};
 
     // Register Bag source
+    // Note: The placeholder path is safe because Source::new() never fails for empty paths
     register_source(
         "bag",
-        Box::new(|| Box::new(BagSource::new("").unwrap()) as Box<dyn Source>),
+        Box::new(|| {
+            Box::new(BagSource::new("").expect("empty path is valid for placeholder")) as Box<dyn Source>
+        }),
     );
 
     // Register MCAP source
     register_source(
         "mcap",
-        Box::new(|| Box::new(McapSource::new("").unwrap()) as Box<dyn Source>),
+        Box::new(|| {
+            Box::new(McapSource::new("").expect("empty path is valid for placeholder")) as Box<dyn Source>
+        }),
     );
 
     // Register RRD source
     register_source(
         "rrd",
-        Box::new(|| Box::new(RrdSource::new("").unwrap()) as Box<dyn Source>),
+        Box::new(|| {
+            Box::new(RrdSource::new("").expect("empty path is valid for placeholder")) as Box<dyn Source>
+        }),
     );
 
     // Register S3 prefix source
     register_source(
         "s3-prefix",
-        Box::new(|| Box::new(S3PrefixSource::new("s3://placeholder/").unwrap()) as Box<dyn Source>),
+        Box::new(|| {
+            Box::new(
+                S3PrefixSource::new("s3://placeholder/")
+                    .expect("placeholder URL is valid for factory"),
+            ) as Box<dyn Source>
+        }),
     );
 }
 

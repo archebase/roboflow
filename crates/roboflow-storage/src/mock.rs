@@ -69,17 +69,17 @@ impl MockStorage {
 
     /// Get the number of stored objects.
     pub fn count(&self) -> usize {
-        self.data.read().unwrap().len()
+        self.data.read().expect("mock storage lock poisoned").len()
     }
 
     /// Check if the storage is empty.
     pub fn is_empty(&self) -> bool {
-        self.data.read().unwrap().is_empty()
+        self.data.read().expect("mock storage lock poisoned").is_empty()
     }
 
     /// Clear all stored objects.
     pub fn clear(&self) {
-        self.data.write().unwrap().clear();
+        self.data.write().expect("mock storage lock poisoned").clear();
     }
 
     fn path_to_key(&self, path: &Path) -> String {
@@ -90,7 +90,7 @@ impl MockStorage {
 impl Storage for MockStorage {
     fn reader(&self, path: &Path) -> StorageResult<Box<dyn Read + Send + 'static>> {
         let key = self.path_to_key(path);
-        let data = self.data.read().unwrap();
+        let data = self.data.read().expect("mock storage lock poisoned");
         let content = data
             .get(&key)
             .ok_or_else(|| StorageError::NotFound(key.clone()))?
@@ -106,12 +106,12 @@ impl Storage for MockStorage {
 
     fn exists(&self, path: &Path) -> bool {
         let key = self.path_to_key(path);
-        self.data.read().unwrap().contains_key(&key)
+        self.data.read().expect("mock storage lock poisoned").contains_key(&key)
     }
 
     fn size(&self, path: &Path) -> StorageResult<u64> {
         let key = self.path_to_key(path);
-        let data = self.data.read().unwrap();
+        let data = self.data.read().expect("mock storage lock poisoned");
         data.get(&key)
             .map(|v| v.len() as u64)
             .ok_or(StorageError::NotFound(key))
@@ -119,7 +119,7 @@ impl Storage for MockStorage {
 
     fn metadata(&self, path: &Path) -> StorageResult<ObjectMetadata> {
         let key = self.path_to_key(path);
-        let data = self.data.read().unwrap();
+        let data = self.data.read().expect("mock storage lock poisoned");
         data.get(&key)
             .map(|v| ObjectMetadata {
                 path: key.clone(),
@@ -133,7 +133,7 @@ impl Storage for MockStorage {
 
     fn list(&self, prefix: &Path) -> StorageResult<Vec<ObjectMetadata>> {
         let prefix_str = self.path_to_key(prefix);
-        let data = self.data.read().unwrap();
+        let data = self.data.read().expect("mock storage lock poisoned");
         let results: Vec<ObjectMetadata> = data
             .iter()
             .filter(|(k, _)| k.starts_with(&prefix_str))
@@ -150,7 +150,7 @@ impl Storage for MockStorage {
 
     fn delete(&self, path: &Path) -> StorageResult<()> {
         let key = self.path_to_key(path);
-        let mut data = self.data.write().unwrap();
+        let mut data = self.data.write().expect("mock storage lock poisoned");
         data.remove(&key)
             .map(|_| ())
             .ok_or(StorageError::NotFound(key))
@@ -159,13 +159,16 @@ impl Storage for MockStorage {
     fn copy(&self, from: &Path, to: &Path) -> StorageResult<()> {
         let from_key = self.path_to_key(from);
         let to_key = self.path_to_key(to);
-        let data = self.data.read().unwrap();
+        let data = self.data.read().expect("mock storage lock poisoned");
         let content = data
             .get(&from_key)
             .ok_or_else(|| StorageError::NotFound(from_key.clone()))?
             .clone();
         drop(data);
-        self.data.write().unwrap().insert(to_key, content);
+        self.data
+            .write()
+            .expect("mock storage lock poisoned")
+            .insert(to_key, content);
         Ok(())
     }
 
@@ -201,7 +204,7 @@ struct MockWriter {
 
 impl Write for MockWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut data = self.data.write().unwrap();
+        let mut data = self.data.write().expect("mock storage lock poisoned");
         let entry = data.entry(self.key.clone()).or_default();
         entry.extend_from_slice(buf);
         Ok(buf.len())

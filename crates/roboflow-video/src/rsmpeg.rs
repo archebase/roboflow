@@ -467,7 +467,10 @@ impl RsmpegEncoder {
         // STEP 5: Encode frame
         // =============================================================
 
-        let codec_context = self.codec_context.as_mut().unwrap();
+        let codec_context = self
+            .codec_context
+            .as_mut()
+            .expect("codec_context is always Some before finalization");
 
         // Send frame to encoder
         codec_context.send_frame(Some(&yuv_frame)).map_err(|e| {
@@ -485,8 +488,14 @@ impl RsmpegEncoder {
 
     /// Receive encoded packets and send them through the channel
     fn receive_and_send_packets(&mut self) -> Result<(), RoboflowError> {
-        let codec_context = self.codec_context.as_mut().unwrap();
-        let tx = self.encoded_tx.as_ref().unwrap();
+        let codec_context = self
+            .codec_context
+            .as_mut()
+            .expect("codec_context is always Some before finalization");
+        let tx = self
+            .encoded_tx
+            .as_ref()
+            .expect("encoded_tx is always Some before finalization");
 
         loop {
             match codec_context.receive_packet() {
@@ -540,7 +549,10 @@ impl RsmpegEncoder {
 
         self.finalized = true;
 
-        let codec_context = self.codec_context.as_mut().unwrap();
+        let codec_context = self
+            .codec_context
+            .as_mut()
+            .expect("codec_context is always Some before finalization");
 
         // Send NULL frame to signal EOF
         let _ = codec_context.send_frame(None);
