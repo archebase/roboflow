@@ -44,7 +44,7 @@ Functions exceeding clippy's complexity threshold (25):
 |----------|----------|------------|--------|
 | `distributed/scanner.rs` | `process_batch` | ~~40~~ **FIXED** | ✅ Extracted helper methods |
 | `streaming/alignment.rs:140` | `process_message` | ~~36~~ **FIXED** | ✅ Extracted helper methods |
-| `worker/coordinator.rs:283` | `run_worker_loop` | 37 | Extract task handlers |
+| `worker/coordinator.rs:283` | `run_worker_loop` | ~~37~~ **FIXED** | ✅ Extracted helper methods |
 | `merge/coordinator.rs:367` | `try_claim_merge` | 30 | Extract phases |
 
 ### 1.3 Unsafe Code Analysis
@@ -170,7 +170,7 @@ Missing:
 1. Reduce cognitive complexity (3 functions)
    - scanner.rs:process_batch ✅ COMPLETED (reduced from 40 to acceptable)
    - streaming/alignment.rs:process_message ✅ COMPLETED (reduced from 36 to acceptable)
-   - worker/coordinator.rs:run_worker_loop (pending)
+   - worker/coordinator.rs:run_worker_loop ✅ COMPLETED (reduced from 37 to acceptable)
    - merge/coordinator.rs:try_claim_merge (pending)
    Effort: 12h
    Impact: Maintainability +30%
