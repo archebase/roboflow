@@ -40,6 +40,10 @@ static GLOBAL: Jemalloc = Jemalloc;
 // =============================================================================
 pub mod config;
 pub mod convert;
+pub mod pipeline_config;
+
+// Re-export unified pipeline configuration
+pub use pipeline_config::{PipelineConfig, PipelineConfigBuilder, ProcessingConfig};
 
 // Re-export from roboflow-core
 pub use roboflow_core::{
