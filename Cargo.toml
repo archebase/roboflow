@@ -15,7 +15,7 @@ resolver = "2"
 # Internal crates
 roboflow-core = { path = "crates/roboflow-core", version = "0.2.0" }
 roboflow-storage = { path = "crates/roboflow-storage", version = "0.2.0" }
-roboflow-video = { path = "crates/roboflow-video", version = "0.1.0" }
+roboflow-video = { path = "crates/roboflow-video", version = "0.2.0" }
 roboflow-distributed = { path = "crates/roboflow-distributed", version = "0.2.0" }
 roboflow-dataset = { path = "crates/roboflow-dataset", version = "0.2.0" }
 roboflow-sources = { path = "crates/roboflow-sources", version = "0.2.0" }
