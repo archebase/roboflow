@@ -362,14 +362,20 @@ impl Coordinator {
                     }
                     None => {
                         // No work available - wait with shutdown handling
-                        if self.wait_with_shutdown(shutdown_rx, self.config.poll_interval).await? {
+                        if self
+                            .wait_with_shutdown(shutdown_rx, self.config.poll_interval)
+                            .await?
+                        {
                             return Ok(());
                         }
                     }
                 }
             } else {
                 // At capacity - brief sleep with shutdown handling
-                if self.wait_with_shutdown(shutdown_rx, Duration::from_millis(100)).await? {
+                if self
+                    .wait_with_shutdown(shutdown_rx, Duration::from_millis(100))
+                    .await?
+                {
                     return Ok(());
                 }
             }
@@ -398,7 +404,8 @@ impl Coordinator {
         let result = executor.execute(unit).await;
 
         // Handle result
-        self.handle_execution_result(&batch_id, &unit_id, result).await
+        self.handle_execution_result(&batch_id, &unit_id, result)
+            .await
     }
 
     /// Handle the result of work unit execution.

@@ -202,9 +202,15 @@ impl FrameAlignmentBuffer {
         // Step 6: Add state/action data
         if !values.values.is_empty() {
             if values.is_action {
-                entry.frame.actions.insert(feature_name.to_string(), values.values);
+                entry
+                    .frame
+                    .actions
+                    .insert(feature_name.to_string(), values.values);
             } else {
-                entry.frame.states.insert(feature_name.to_string(), values.values);
+                entry
+                    .frame
+                    .states
+                    .insert(feature_name.to_string(), values.values);
             }
         }
 
@@ -233,7 +239,11 @@ impl FrameAlignmentBuffer {
     /// Extract image data from a message.
     ///
     /// Returns extracted image data including width, height, raw bytes, and encoding status.
-    fn extract_image_data(&self, msg: &HashMap<String, CodecValue>, feature_name: &str) -> Option<ExtractedImageData> {
+    fn extract_image_data(
+        &self,
+        msg: &HashMap<String, CodecValue>,
+        feature_name: &str,
+    ) -> Option<ExtractedImageData> {
         let mut width = 0u32;
         let mut height = 0u32;
         let mut image_data: Option<Vec<u8>> = None;

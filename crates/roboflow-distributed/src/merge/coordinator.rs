@@ -389,7 +389,8 @@ impl MergeCoordinator {
 
         // Phase 4: Transition to Merging (CAS)
         let status_key = BatchKeys::status(job_id);
-        self.transition_to_merging(&status_key, &current_status).await?;
+        self.transition_to_merging(&status_key, &current_status)
+            .await?;
 
         // Phase 5: Verify we won the race
         if !self.verify_cas_won(&status_key, &current_status).await? {
@@ -508,7 +509,9 @@ impl MergeCoordinator {
         status_key: &[u8],
     ) -> Result<MergeResult, TikvError> {
         // Get or create merge state
-        let mut state = self.get_or_create_merge_state(job_id, expected_workers, &output_path).await?;
+        let mut state = self
+            .get_or_create_merge_state(job_id, expected_workers, &output_path)
+            .await?;
 
         // Check if ready to merge
         if !self.ensure_merge_ready(&mut state, expected_workers, &output_path) {
@@ -540,12 +543,17 @@ impl MergeCoordinator {
             Ok(frames) => frames,
             Err(e) => {
                 let _ = self.fail_merge_with_status(job_id, &e.to_string()).await;
-                return Ok(MergeResult::Failed { error: e.to_string() });
+                return Ok(MergeResult::Failed {
+                    error: e.to_string(),
+                });
             }
         };
 
         // Complete the merge
-        match self.complete_merge_with_status(job_id, actual_frames, &state.output_path).await {
+        match self
+            .complete_merge_with_status(job_id, actual_frames, &state.output_path)
+            .await
+        {
             Ok(()) => {
                 self.semaphore.record_success();
                 Ok(MergeResult::Success {
@@ -553,7 +561,9 @@ impl MergeCoordinator {
                     total_frames: actual_frames,
                 })
             }
-            Err(e) => Ok(MergeResult::Failed { error: e.to_string() }),
+            Err(e) => Ok(MergeResult::Failed {
+                error: e.to_string(),
+            }),
         }
     }
 
@@ -628,9 +638,10 @@ impl MergeCoordinator {
         let executor =
             ParquetMergeExecutor::new(storage, state.output_path.clone(), self.temp_dir.clone());
 
-        executor.execute(state).await.map_err(|e| {
-            TikvError::Other(format!("Merge execution failed: {}", e))
-        })
+        executor
+            .execute(state)
+            .await
+            .map_err(|e| TikvError::Other(format!("Merge execution failed: {}", e)))
     }
 
     /// Mark the merge as failed by transitioning batch status from Merging to Failed.
