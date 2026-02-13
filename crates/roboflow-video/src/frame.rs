@@ -340,7 +340,11 @@ mod tests {
         let size = 100 * 100 * 3;
 
         for _ in 0..10 {
-            assert!(buffer.add_frame(VideoFrame::new(100, 100, vec![0u8; size])).is_ok());
+            assert!(
+                buffer
+                    .add_frame(VideoFrame::new(100, 100, vec![0u8; size]))
+                    .is_ok()
+            );
         }
         assert_eq!(buffer.len(), 10);
         assert_eq!(buffer.dimensions(), Some((100, 100)));

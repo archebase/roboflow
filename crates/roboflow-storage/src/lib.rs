@@ -41,6 +41,7 @@ pub mod cached;
 pub mod config_file;
 pub mod factory;
 pub mod local;
+pub mod mock;
 pub mod multipart;
 pub mod multipart_parallel;
 pub mod retry;
