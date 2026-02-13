@@ -24,7 +24,6 @@ pub mod parquet_base;
 pub mod progress;
 pub mod ring_buffer;
 pub mod rsmpeg_encoder;
-pub mod simd_convert;
 pub mod streaming_encoder;
 pub mod streaming_uploader;
 pub mod video;
@@ -60,8 +59,8 @@ pub use video::{
     print_encoder_diagnostics, select_best_encoder,
 };
 
-// Re-export SIMD RGB to YUV conversion
-pub use simd_convert::{ConversionStrategy, optimal_strategy, rgb_to_nv12, rgb_to_yuv420p};
+// Re-export SIMD RGB to YUV conversion from roboflow-video (canonical location)
+pub use roboflow_video::{ConversionStrategy, optimal_strategy, rgb_to_nv12, rgb_to_yuv420p};
 
 // Platform-specific re-exports
 #[cfg(target_os = "macos")]
