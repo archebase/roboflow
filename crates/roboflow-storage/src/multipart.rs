@@ -324,7 +324,13 @@ impl MultipartUploader {
             if retry_count > config.max_retries {
                 // Abort the multipart upload on too many failures
                 let _ = self.abort();
-                return Err(last_error.unwrap());
+                return Err(last_error.unwrap_or_else(|| {
+                    StorageError::Cloud(format!(
+                        "Part {} failed after {} retries (no error captured)",
+                        part_index + 1,
+                        config.max_retries
+                    ))
+                }));
             }
 
             // Report progress

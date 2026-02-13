@@ -463,10 +463,12 @@ impl AsyncStorage for AsyncS3Storage {
 
     async fn read_range(&self, path: &Path, start: u64, end: Option<u64>) -> Result<bytes::Bytes> {
         let key = self.path_to_key(path);
-        let object_size = if end.is_some() {
-            None
-        } else {
-            Some(
+
+        // Determine the end offset
+        let end = match end {
+            Some(e) => e,
+            None => {
+                // Get object size if end not specified
                 self.store
                     .head(&key)
                     .await
@@ -476,11 +478,9 @@ impl AsyncStorage for AsyncS3Storage {
                         }
                         _ => StorageError::Cloud(e.to_string()),
                     })?
-                    .size as u64,
-            )
+                    .size as u64
+            }
         };
-
-        let end = end.unwrap_or_else(|| object_size.unwrap());
 
         // Validate bounds
         if start > end {

@@ -306,12 +306,11 @@ impl Storage for LocalStorage {
 
         let full_path = self.full_path(path)?;
 
-        // Get file size if end not specified
-        // Get file size if end not specified
-        let file_size = if end.is_some() {
-            None
-        } else {
-            Some(
+        // Determine the end offset
+        let end = match end {
+            Some(e) => e,
+            None => {
+                // Get file size if end not specified
                 fs::metadata(&full_path)
                     .map_err(|e| {
                         if e.kind() == std::io::ErrorKind::NotFound {
@@ -320,11 +319,9 @@ impl Storage for LocalStorage {
                             StorageError::Io(e)
                         }
                     })?
-                    .len(),
-            )
+                    .len()
+            }
         };
-
-        let end = end.unwrap_or_else(|| file_size.unwrap());
 
         // Validate bounds
         if start > end {
