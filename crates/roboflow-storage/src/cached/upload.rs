@@ -84,7 +84,8 @@ impl CacheEntry {
 
     /// Record an access to this cache entry.
     pub fn record_access(&self) {
-        self.access_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.access_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
