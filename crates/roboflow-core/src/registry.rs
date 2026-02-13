@@ -6,6 +6,38 @@
 //!
 //! Defines the abstractions that all roboflow crates use for schema registration
 //! and lookup.
+//!
+//! # Architecture
+//!
+//! The registry system provides a three-tier abstraction:
+//!
+//! 1. **[`SchemaProvider`]** - Parses schema definitions from various formats
+//!    (IDL, .proto, ROS .msg, etc.) into internal type descriptors.
+//!
+//! 2. **[`TypeAccessor`]** - Provides lookup of type descriptors by name,
+//!    with support for variant resolution (e.g., "std_msgs/Header" vs
+//!    "std_msgs/msg/Header").
+//!
+//! 3. **[`TypeRegistry`]** - Thread-safe storage for parsed schemas,
+//!    allowing concurrent reads with exclusive writes.
+//!
+//! # Example
+//!
+//! ```ignore
+//! use roboflow_core::{TypeRegistry, SchemaProvider};
+//!
+//! // Create a registry for parsed schemas
+//! let registry = TypeRegistry::new();
+//!
+//! // Register a schema
+//! let schema = provider.parse_schema("MyType", "definition...")?;
+//! registry.register("my_package/MyType", schema)?;
+//!
+//! // Look up later
+//! if let Some(schema) = registry.get("my_package/MyType")? {
+//!     // Use schema for decoding
+//! }
+//! ```
 
 use super::error::Result;
 use std::collections::HashMap;
@@ -13,31 +45,115 @@ use std::sync::RwLock;
 
 /// Trait for types that can provide schema information.
 ///
-/// Implementations can parse schemas from various formats (IDL, .proto, etc.)
+/// Implementations can parse schemas from various formats (IDL, .proto, ROS .msg, etc.)
 /// and provide type descriptors for decoding.
+///
+/// # Implementations
+///
+/// - `rosmsg` crate: Parses ROS .msg/.srv files
+/// - `protodec` crate: Parses Protocol Buffer definitions
+/// - Custom implementations for other formats
+///
+/// # Example
+///
+/// ```ignore
+/// use roboflow_core::SchemaProvider;
+///
+/// struct RosSchemaProvider;
+///
+/// impl SchemaProvider for RosSchemaProvider {
+///     type Schema = RosMessageSchema;
+///
+///     fn parse_schema(&self, name: &str, definition: &str) -> Result<Self::Schema> {
+///         RosMessageSchema::parse(name, definition)
+///     }
+/// }
+/// ```
 pub trait SchemaProvider {
     /// Type of schema this provider produces.
+    ///
+    /// This is typically a format-specific type descriptor that can be
+    /// used for decoding message data.
     type Schema;
 
-    /// Parse a schema from a string.
+    /// Parse a schema from a string definition.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Fully qualified type name (e.g., "std_msgs/Header")
+    /// * `definition` - Raw schema definition text
+    ///
+    /// # Returns
+    ///
+    /// Parsed schema on success, error on parse failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the schema definition is malformed or
+    /// contains unsupported features.
     fn parse_schema(&self, name: &str, definition: &str) -> Result<Self::Schema>;
 }
 
 /// Trait for accessing type definitions from a schema.
+///
+/// Provides lookup of type descriptors with support for variant resolution,
+/// which handles different naming conventions across formats.
+///
+/// # Variant Resolution
+///
+/// ROS message types can be referenced in multiple ways:
+/// - Full path: `std_msgs/msg/Header`
+/// - Short path: `std_msgs/Header`
+/// - Just type name: `Header` (when unambiguous)
+///
+/// This trait handles all these cases automatically.
+///
+/// # Example
+///
+/// ```ignore
+/// use roboflow_core::TypeAccessor;
+///
+/// // Look up a type with automatic variant resolution
+/// if let Some(type_desc) = accessor.get_type_variants("geometry_msgs/Pose") {
+///     // Use type descriptor for decoding
+/// }
+/// ```
 pub trait TypeAccessor {
     /// The type descriptor this accessor provides.
+    ///
+    /// Typically contains field information needed for decoding
+    /// binary message data into structured values.
     type TypeDescriptor;
 
-    /// Look up a type by name.
+    /// Look up a type by exact name.
+    ///
+    /// Performs an exact match without any variant resolution.
+    /// Use [`get_type_variants`](Self::get_type_variants) for flexible matching.
+    ///
+    /// # Arguments
+    ///
+    /// * `type_name` - Exact type name to look up
+    ///
+    /// # Returns
+    ///
+    /// `Some(descriptor)` if found, `None` otherwise.
     fn get_type(&self, type_name: &str) -> Option<&Self::TypeDescriptor>;
 
     /// Look up a type by name with variant resolution.
     ///
-    /// Tries multiple resolution strategies:
-    /// - Exact match
-    /// - With /msg/ suffix (e.g., "std_msgs/Header" → "std_msgs/msg/Header")
-    /// - Without /msg/ suffix (e.g., "std_msgs/msg/Header" → "std_msgs/Header")
-    /// - Short name match (e.g., "Pose" → "geometry_msgs/Pose")
+    /// Tries multiple resolution strategies in order:
+    /// 1. Exact match
+    /// 2. With `/msg/` suffix (e.g., "std_msgs/Header" → "std_msgs/msg/Header")
+    /// 3. Without `/msg/` suffix (e.g., "std_msgs/msg/Header" → "std_msgs/Header")
+    /// 4. Short name match (e.g., "Pose" → "geometry_msgs/Pose")
+    ///
+    /// # Arguments
+    ///
+    /// * `type_name` - Type name to look up (may be partial or have variant format)
+    ///
+    /// # Returns
+    ///
+    /// `Some(descriptor)` if any variant is found, `None` otherwise.
     fn get_type_variants(&self, type_name: &str) -> Option<&Self::TypeDescriptor>;
 }
 
