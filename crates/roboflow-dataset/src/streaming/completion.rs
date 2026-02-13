@@ -123,4 +123,84 @@ mod tests {
         received.insert("any_feature".to_string());
         assert!(criteria.is_complete(&received));
     }
+
+    #[test]
+    fn test_default_same_as_new() {
+        let new_criteria = FrameCompletionCriteria::new();
+        let default_criteria = FrameCompletionCriteria::default();
+        assert_eq!(
+            new_criteria.required_feature_count(),
+            default_criteria.required_feature_count()
+        );
+        assert_eq!(
+            new_criteria.min_completeness,
+            default_criteria.min_completeness
+        );
+    }
+
+    #[test]
+    fn test_min_completeness_negative_clamp() {
+        let criteria = FrameCompletionCriteria::new().with_min_completeness(-0.5);
+        assert_eq!(criteria.min_completeness, 0.0);
+    }
+
+    #[test]
+    fn test_with_min_completeness_zero() {
+        let criteria = FrameCompletionCriteria::new().with_min_completeness(0.0);
+        assert_eq!(criteria.min_completeness, 0.0);
+    }
+
+    #[test]
+    fn test_empty_features_empty_received() {
+        let criteria = FrameCompletionCriteria::new();
+        let received = HashSet::new();
+        // Empty criteria and empty received = not complete
+        assert!(!criteria.is_complete(&received));
+    }
+
+    #[test]
+    fn test_debug_impl() {
+        let criteria = FrameCompletionCriteria::new().require_feature("test", 1);
+        let debug_str = format!("{:?}", criteria);
+        assert!(debug_str.contains("FrameCompletionCriteria"));
+        assert!(debug_str.contains("features"));
+    }
+
+    #[test]
+    fn test_clone() {
+        let criteria = FrameCompletionCriteria::new()
+            .require_feature("camera", 1)
+            .with_min_completeness(0.5);
+        let cloned = criteria.clone();
+        assert_eq!(criteria.required_feature_count(), cloned.required_feature_count());
+        assert_eq!(criteria.min_completeness, cloned.min_completeness);
+    }
+
+    #[test]
+    fn test_partial_requirements() {
+        let criteria = FrameCompletionCriteria::new()
+            .require_feature("camera_0", 1)
+            .require_feature("camera_1", 1)
+            .require_feature("state", 1);
+
+        let mut received = HashSet::new();
+        received.insert("camera_0".to_string());
+        received.insert("state".to_string());
+        // Missing camera_1
+        assert!(!criteria.is_complete(&received));
+
+        received.insert("camera_1".to_string());
+        assert!(criteria.is_complete(&received));
+    }
+
+    #[test]
+    fn test_builder_chain() {
+        let criteria = FrameCompletionCriteria::new()
+            .require_feature("feature_a", 2)
+            .require_feature("feature_b", 1)
+            .with_min_completeness(0.8);
+
+        assert_eq!(criteria.required_feature_count(), 2);
+        assert!((criteria.min_completeness - 0.8).abs() < 0.001);
+    }
 }

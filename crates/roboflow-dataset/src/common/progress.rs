@@ -426,4 +426,155 @@ mod tests {
         assert!(receiver.latest().is_some());
         assert!(receiver.latest().is_none());
     }
+
+    #[test]
+    fn test_is_complete() {
+        let update = ProgressUpdate::Completed {
+            stats: WriterStats::default(),
+        };
+        assert!(update.is_complete());
+
+        let update = ProgressUpdate::Started {
+            input_file: "test".to_string(),
+            estimated_frames: None,
+        };
+        assert!(!update.is_complete());
+    }
+
+    #[test]
+    fn test_is_error() {
+        let update = ProgressUpdate::Error {
+            message: "test error".to_string(),
+            recoverable: false,
+        };
+        assert!(update.is_error());
+
+        let update = ProgressUpdate::Warning {
+            category: "test".to_string(),
+            message: "warning".to_string(),
+            context: "".to_string(),
+        };
+        assert!(!update.is_error());
+    }
+
+    #[test]
+    fn test_is_warning() {
+        let update = ProgressUpdate::Warning {
+            category: "test".to_string(),
+            message: "warning".to_string(),
+            context: "".to_string(),
+        };
+        assert!(update.is_warning());
+
+        let update = ProgressUpdate::Started {
+            input_file: "test".to_string(),
+            estimated_frames: None,
+        };
+        assert!(!update.is_warning());
+    }
+
+    #[test]
+    fn test_variant_types() {
+        let update = ProgressUpdate::Started {
+            input_file: "test".to_string(),
+            estimated_frames: None,
+        };
+        assert_eq!(update.variant_type(), "started");
+
+        let update = ProgressUpdate::FrameProgress {
+            frames_processed: 100,
+            estimated_total: 1000,
+            fps: 30.0,
+            eta: Duration::from_secs(30),
+        };
+        assert_eq!(update.variant_type(), "frame_progress");
+
+        let update = ProgressUpdate::VideoProgress {
+            camera: "cam0".to_string(),
+            frame: 50,
+            total: 100,
+        };
+        assert_eq!(update.variant_type(), "video_progress");
+
+        let update = ProgressUpdate::ParquetProgress {
+            shard: 0,
+            frames_written: 100,
+        };
+        assert_eq!(update.variant_type(), "parquet_progress");
+
+        let update = ProgressUpdate::Error {
+            message: "err".to_string(),
+            recoverable: false,
+        };
+        assert_eq!(update.variant_type(), "error");
+    }
+
+    #[test]
+    fn test_frames_processed_completed() {
+        let mut stats = WriterStats::default();
+        stats.frames_written = 100;
+
+        let update = ProgressUpdate::Completed { stats };
+        assert_eq!(update.frames_processed(), Some(100));
+    }
+
+    #[test]
+    fn test_estimated_total_started() {
+        let update = ProgressUpdate::Started {
+            input_file: "test".to_string(),
+            estimated_frames: Some(1000),
+        };
+        assert_eq!(update.estimated_total(), Some(1000));
+
+        let update = ProgressUpdate::Started {
+            input_file: "test".to_string(),
+            estimated_frames: None,
+        };
+        assert_eq!(update.estimated_total(), None);
+    }
+
+    #[test]
+    fn test_video_progress_validation() {
+        let update = ProgressUpdate::video_progress("cam0".to_string(), 50, 100);
+        assert_eq!(update.percent_complete(), Some(50.0));
+    }
+
+    #[test]
+    fn test_sender_clone() {
+        let (sender, receiver) = ProgressSender::new(10);
+        let cloned_sender = sender.clone();
+
+        cloned_sender.started("test1".to_string(), None);
+        sender.started("test2".to_string(), None);
+
+        // Both should work
+        assert!(receiver.latest().is_some());
+    }
+
+    #[test]
+    fn test_percent_complete_started() {
+        let update = ProgressUpdate::Started {
+            input_file: "test".to_string(),
+            estimated_frames: None,
+        };
+        assert_eq!(update.percent_complete(), Some(0.0));
+    }
+
+    #[test]
+    fn test_percent_complete_completed() {
+        let update = ProgressUpdate::Completed {
+            stats: WriterStats::default(),
+        };
+        assert_eq!(update.percent_complete(), Some(100.0));
+    }
+
+    #[test]
+    fn test_percent_complete_zero_total() {
+        let update = ProgressUpdate::VideoProgress {
+            camera: "cam".to_string(),
+            frame: 50,
+            total: 0,
+        };
+        assert_eq!(update.percent_complete(), None);
+    }
 }

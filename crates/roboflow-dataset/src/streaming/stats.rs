@@ -160,4 +160,61 @@ mod tests {
         // With 2 frames in at least 10ms, FPS should be <= 200
         assert!(fps <= 200.0, "FPS should be reasonable, got {}", fps);
     }
+
+    #[test]
+    fn test_default_same_as_new() {
+        let new_stats = AlignmentStats::new();
+        let default_stats = AlignmentStats::default();
+        assert_eq!(new_stats.frames_processed, default_stats.frames_processed);
+        assert_eq!(new_stats.normal_completions, default_stats.normal_completions);
+        assert_eq!(new_stats.force_completions, default_stats.force_completions);
+        assert_eq!(new_stats.peak_buffer_size, default_stats.peak_buffer_size);
+    }
+
+    #[test]
+    fn test_add_alignment_time() {
+        let mut stats = AlignmentStats::new();
+        stats.add_alignment_time(10.5);
+        stats.add_alignment_time(5.5);
+        assert!((stats.total_alignment_time_ms - 16.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_completion_rate_zero_frames() {
+        let stats = AlignmentStats::new();
+        // Completion rate should be 1.0 (100%) when no frames processed
+        assert_eq!(stats.completion_rate(), 1.0);
+    }
+
+    #[test]
+    fn test_duration() {
+        let stats = AlignmentStats::new();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let duration = stats.duration();
+        assert!(duration.as_millis() >= 10);
+    }
+
+    #[test]
+    fn test_debug_impl() {
+        let stats = AlignmentStats::new();
+        let debug_str = format!("{:?}", stats);
+        assert!(debug_str.contains("AlignmentStats"));
+        assert!(debug_str.contains("frames_processed"));
+    }
+
+    #[test]
+    fn test_clone() {
+        let mut stats = AlignmentStats::new();
+        stats.record_normal_completion();
+        let cloned = stats.clone();
+        assert_eq!(stats.frames_processed, cloned.frames_processed);
+    }
+
+    #[test]
+    fn test_all_force_completions() {
+        let mut stats = AlignmentStats::new();
+        stats.record_force_completion();
+        stats.record_force_completion();
+        assert_eq!(stats.completion_rate(), 0.0);
+    }
 }

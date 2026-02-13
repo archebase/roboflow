@@ -657,4 +657,163 @@ mod tests {
         assert_eq!(audio.duration(), 0.0);
         assert_eq!(audio.frames(), 0);
     }
+
+    #[test]
+    fn test_aligned_frame_new() {
+        let frame = AlignedFrame::new(42, 1_000_000_000);
+        assert_eq!(frame.frame_index, 42);
+        assert_eq!(frame.timestamp, 1_000_000_000);
+        assert!(frame.images.is_empty());
+        assert!(frame.states.is_empty());
+        assert!(frame.actions.is_empty());
+    }
+
+    #[test]
+    fn test_aligned_frame_is_empty() {
+        let frame = AlignedFrame::new(0, 0);
+        assert!(frame.is_empty());
+
+        let mut frame = AlignedFrame::new(0, 0);
+        frame.add_state("test".to_string(), vec![1.0]);
+        assert!(!frame.is_empty());
+    }
+
+    #[test]
+    fn test_aligned_frame_timestamp_sec() {
+        let frame = AlignedFrame::new(0, 500_000_000); // 0.5 seconds
+        assert!((frame.timestamp_sec() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_aligned_frame_add_methods() {
+        let mut frame = AlignedFrame::new(0, 0);
+
+        frame.add_state("state".to_string(), vec![1.0, 2.0]);
+        assert_eq!(frame.states.get("state"), Some(&vec![1.0, 2.0]));
+
+        frame.add_action("action".to_string(), vec![0.5]);
+        assert_eq!(frame.actions.get("action"), Some(&vec![0.5]));
+
+        frame.add_timestamp("ts".to_string(), 123);
+        assert_eq!(frame.timestamps.get("ts"), Some(&123));
+
+        frame.add_audio("audio".to_string(), AudioData::new(vec![], 16000, 1, 0));
+        assert!(frame.audio.contains_key("audio"));
+    }
+
+    #[test]
+    fn test_aligned_frame_add_image() {
+        let mut frame = AlignedFrame::new(0, 0);
+        let img = ImageData::new(640, 480, vec![0u8; 640 * 480 * 3]);
+        frame.add_image("camera".to_string(), img);
+
+        assert!(frame.images.contains_key("camera"));
+        assert!(!frame.is_empty());
+    }
+
+    #[test]
+    fn test_aligned_frame_add_image_arc() {
+        let mut frame = AlignedFrame::new(0, 0);
+        let img = Arc::new(ImageData::new(640, 480, vec![0u8; 640 * 480 * 3]));
+        frame.add_image_arc("camera".to_string(), img.clone());
+
+        assert!(frame.images.contains_key("camera"));
+    }
+
+    #[test]
+    fn test_writer_stats_default() {
+        let stats = WriterStats::default();
+        assert_eq!(stats.frames_written, 0);
+        assert_eq!(stats.images_encoded, 0);
+        assert_eq!(stats.state_records, 0);
+        assert_eq!(stats.output_bytes, 0);
+        assert_eq!(stats.duration_sec, 0.0);
+        assert_eq!(stats.decode_failures, 0);
+    }
+
+    #[test]
+    fn test_writer_stats_mb_per_sec() {
+        let mut stats = WriterStats::default();
+        stats.output_bytes = 10 * 1024 * 1024; // 10 MB
+        stats.duration_sec = 2.0;
+
+        assert_eq!(stats.mb_per_sec(), 5.0);
+    }
+
+    #[test]
+    fn test_writer_stats_decode_failure_rate() {
+        let mut stats = WriterStats::default();
+        stats.images_encoded = 90;
+        stats.decode_failures = 10;
+
+        assert_eq!(stats.decode_failure_rate(), 10.0);
+
+        // Zero case
+        stats.images_encoded = 0;
+        stats.decode_failures = 0;
+        assert_eq!(stats.decode_failure_rate(), 0.0);
+    }
+
+    #[test]
+    fn test_image_data_depth() {
+        let img = ImageData::depth(640, 480, vec![0u8; 640 * 480 * 2]);
+        assert!(img.is_depth);
+        assert!(!img.is_encoded);
+    }
+
+    #[test]
+    fn test_image_data_with_timestamp() {
+        let img = ImageData::with_timestamp(640, 480, vec![0u8; 640 * 480 * 3], 123456);
+        assert_eq!(img.original_timestamp, 123456);
+    }
+
+    #[test]
+    fn test_image_data_new_rgb_success() {
+        let result = ImageData::new_rgb(2, 2, vec![0u8; 12]);
+        assert!(result.is_ok());
+        let img = result.unwrap();
+        assert_eq!(img.width, 2);
+        assert_eq!(img.height, 2);
+    }
+
+    #[test]
+    fn test_image_data_new_rgb_error() {
+        let result = ImageData::new_rgb(2, 2, vec![0u8; 6]); // Wrong size
+        assert!(result.is_err());
+        if let Err(ImageDataError::SizeMismatch { width, height, expected_size, actual_size }) = result {
+            assert_eq!(width, 2);
+            assert_eq!(height, 2);
+            assert_eq!(expected_size, 12);
+            assert_eq!(actual_size, 6);
+        }
+    }
+
+    #[test]
+    fn test_audio_data_stereo() {
+        let samples = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]; // 3 stereo frames
+        let audio = AudioData::new(samples, 44100, 2, 0);
+        assert_eq!(audio.frames(), 3);
+        assert!((audio.duration() - (3.0 / 44100.0)).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_dataset_writer_error_display() {
+        let err = DatasetWriterError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"));
+        assert!(err.to_string().contains("I/O error"));
+
+        let err = DatasetWriterError::Encoding("test".to_string());
+        assert!(err.to_string().contains("Encoding error"));
+
+        let err = DatasetWriterError::NotInitialized;
+        assert!(err.to_string().contains("not initialized"));
+    }
+
+    #[test]
+    fn test_aligned_frame_clone() {
+        let mut frame = AlignedFrame::new(0, 100);
+        frame.add_state("test".to_string(), vec![1.0]);
+        let cloned = frame.clone();
+        assert_eq!(frame.frame_index, cloned.frame_index);
+        assert_eq!(frame.timestamp, cloned.timestamp);
+    }
 }

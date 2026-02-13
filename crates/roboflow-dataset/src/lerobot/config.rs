@@ -451,4 +451,322 @@ feature = "observation.state"
         assert_eq!(cameras[1].camera_key(), "left_camera");
         assert_eq!(cameras[1].feature, "observation.images.cam_left");
     }
+
+    // =============================================================================
+    // Additional VideoConfig Tests
+    // =============================================================================
+
+    #[test]
+    fn test_video_config_default() {
+        let config = VideoConfig::default();
+        assert_eq!(config.codec, "libx264");
+        assert_eq!(config.crf, 18);
+        assert_eq!(config.preset, "fast");
+        assert!(config.profile.is_none());
+    }
+
+    #[test]
+    fn test_video_config_with_profile() {
+        let toml = r#"
+[dataset]
+name = "test"
+fps = 30
+
+[video]
+profile = "quality"
+"#;
+
+        let config: LerobotConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.video.profile, Some("quality".to_string()));
+    }
+
+    #[test]
+    fn test_video_config_custom_values() {
+        let toml = r#"
+[dataset]
+name = "test"
+fps = 30
+
+[video]
+codec = "h264_nvenc"
+crf = 23
+preset = "medium"
+"#;
+
+        let config: LerobotConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.video.codec, "h264_nvenc");
+        assert_eq!(config.video.crf, 23);
+        assert_eq!(config.video.preset, "medium");
+    }
+
+    // =============================================================================
+    // FlushingConfig Tests
+    // =============================================================================
+
+    #[test]
+    fn test_flushing_config_default() {
+        let config = FlushingConfig::default();
+        assert_eq!(config.max_frames_per_chunk, 1000);
+        assert_eq!(config.max_memory_bytes, 2 * 1024 * 1024 * 1024);
+        assert!(config.incremental_video_encoding);
+    }
+
+    #[test]
+    fn test_flushing_config_should_flush() {
+        let config = FlushingConfig::default();
+
+        // Should not flush when under limits
+        assert!(!config.should_flush(500, 1024 * 1024 * 1024));
+
+        // Should flush when frame limit reached
+        assert!(config.should_flush(1000, 1024 * 1024 * 1024));
+
+        // Should flush when memory limit reached
+        assert!(config.should_flush(500, 2 * 1024 * 1024 * 1024));
+    }
+
+    #[test]
+    fn test_flushing_config_is_limited() {
+        let config = FlushingConfig::default();
+        assert!(config.is_limited());
+
+        let unlimited = FlushingConfig {
+            max_frames_per_chunk: 0,
+            max_memory_bytes: 0,
+            incremental_video_encoding: false,
+        };
+        assert!(!unlimited.is_limited());
+    }
+
+    #[test]
+    fn test_flushing_config_custom_values() {
+        let toml = r#"
+[dataset]
+name = "test"
+fps = 30
+
+[flushing]
+max_frames_per_chunk = 500
+max_memory_bytes = 1073741824
+incremental_video_encoding = false
+"#;
+
+        let config: LerobotConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.flushing.max_frames_per_chunk, 500);
+        assert_eq!(config.flushing.max_memory_bytes, 1073741824);
+        assert!(!config.flushing.incremental_video_encoding);
+    }
+
+    // =============================================================================
+    // StreamingConfig Tests
+    // =============================================================================
+
+    #[test]
+    fn test_streaming_config_default() {
+        let config = StreamingConfig::default();
+        assert!(config.enabled.is_none());
+        assert!(!config.use_coordinator);
+        assert_eq!(config.ring_buffer_size, 128);
+        assert_eq!(config.upload_part_size, 16 * 1024 * 1024);
+        assert_eq!(config.buffer_timeout_secs, 5);
+    }
+
+    #[test]
+    fn test_streaming_config_custom_values() {
+        let toml = r#"
+[dataset]
+name = "test"
+fps = 30
+
+[streaming]
+enabled = true
+use_coordinator = true
+ring_buffer_size = 256
+upload_part_size = 33554432
+buffer_timeout_secs = 10
+"#;
+
+        let config: LerobotConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.streaming.enabled, Some(true));
+        assert!(config.streaming.use_coordinator);
+        assert_eq!(config.streaming.ring_buffer_size, 256);
+        assert_eq!(config.streaming.upload_part_size, 33554432);
+        assert_eq!(config.streaming.buffer_timeout_secs, 10);
+    }
+
+    // =============================================================================
+    // DatasetConfig Tests
+    // =============================================================================
+
+    #[test]
+    fn test_dataset_config_deref() {
+        let toml = r#"
+[dataset]
+name = "test_dataset"
+fps = 60
+robot_type = "arm"
+env_type = "simulation"
+"#;
+
+        let config: LerobotConfig = toml::from_str(toml).unwrap();
+        // Deref to base config fields
+        assert_eq!(config.dataset.name, "test_dataset");
+        assert_eq!(config.dataset.fps, 60);
+        assert_eq!(config.dataset.robot_type, Some("arm".to_string()));
+        // Direct field access
+        assert_eq!(config.dataset.env_type, Some("simulation".to_string()));
+    }
+
+    // =============================================================================
+    // Mapping Tests
+    // =============================================================================
+
+    #[test]
+    fn test_state_mappings() {
+        let toml = r#"
+[dataset]
+name = "test"
+fps = 30
+
+[[mappings]]
+topic = "/joint_states"
+feature = "observation.state"
+mapping_type = "state"
+
+[[mappings]]
+topic = "/joint_cmd"
+feature = "action"
+mapping_type = "action"
+"#;
+
+        let config: LerobotConfig = toml::from_str(toml).unwrap();
+        let states = config.state_mappings();
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].feature, "observation.state");
+    }
+
+    #[test]
+    fn test_action_mappings() {
+        let toml = r#"
+[dataset]
+name = "test"
+fps = 30
+
+[[mappings]]
+topic = "/joint_states"
+feature = "observation.state"
+mapping_type = "state"
+
+[[mappings]]
+topic = "/joint_cmd"
+feature = "action"
+mapping_type = "action"
+
+[[mappings]]
+topic = "/joint_cmd2"
+feature = "action2"
+mapping_type = "action"
+"#;
+
+        let config: LerobotConfig = toml::from_str(toml).unwrap();
+        let actions = config.action_mappings();
+        assert_eq!(actions.len(), 2);
+    }
+
+    #[test]
+    fn test_mappings_by_topic() {
+        let toml = r#"
+[dataset]
+name = "test"
+fps = 30
+
+[[mappings]]
+topic = "/cam_h/color"
+feature = "observation.images.cam_high"
+mapping_type = "image"
+
+[[mappings]]
+topic = "/joint_states"
+feature = "observation.state"
+mapping_type = "state"
+"#;
+
+        let config: LerobotConfig = toml::from_str(toml).unwrap();
+        let map = config.mappings_by_topic();
+
+        assert_eq!(map.len(), 2);
+        assert!(map.contains_key("/cam_h/color"));
+        assert!(map.contains_key("/joint_states"));
+    }
+
+    // =============================================================================
+    // Validation Tests
+    // =============================================================================
+
+    #[test]
+    fn test_validate_duplicate_topic() {
+        let toml = r#"
+[dataset]
+name = "test"
+fps = 30
+
+[[mappings]]
+topic = "/same_topic"
+feature = "feature1"
+mapping_type = "image"
+
+[[mappings]]
+topic = "/same_topic"
+feature = "feature2"
+mapping_type = "state"
+"#;
+
+        let result = toml::from_str::<LerobotConfig>(toml);
+        // TOML parsing may succeed, but validation should fail
+        if let Ok(config) = result {
+            assert!(config.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn test_env_type_optional() {
+        let toml = r#"
+[dataset]
+name = "test"
+fps = 30
+"#;
+
+        let config: LerobotConfig = toml::from_str(toml).unwrap();
+        assert!(config.dataset.env_type.is_none());
+    }
+
+    // =============================================================================
+    // Annotation File Tests
+    // =============================================================================
+
+    #[test]
+    fn test_annotation_file_optional() {
+        let toml = r#"
+[dataset]
+name = "test"
+fps = 30
+"#;
+
+        let config: LerobotConfig = toml::from_str(toml).unwrap();
+        assert!(config.annotation_file.is_none());
+    }
+
+    #[test]
+    fn test_annotation_file_specified() {
+        let toml = r#"
+annotation_file = "/path/to/annotations.json"
+
+[dataset]
+name = "test"
+fps = 30
+"#;
+
+        let config: LerobotConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.annotation_file, Some("/path/to/annotations.json".to_string()));
+    }
 }

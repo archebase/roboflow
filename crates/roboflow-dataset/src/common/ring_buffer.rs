@@ -529,4 +529,201 @@ mod tests {
         // The clone can no longer pop since the frame was consumed
         assert!(buffer_clone.try_pop().is_none());
     }
+
+    // =============================================================================
+    // Additional Tests
+    // =============================================================================
+
+    #[test]
+    fn test_ring_buffer_capacity_power_of_two() {
+        // Test various capacities are rounded to power of 2
+        assert_eq!(FrameRingBuffer::new(1).capacity(), 1);
+        assert_eq!(FrameRingBuffer::new(3).capacity(), 4);
+        assert_eq!(FrameRingBuffer::new(7).capacity(), 8);
+        assert_eq!(FrameRingBuffer::new(100).capacity(), 128);
+        assert_eq!(FrameRingBuffer::new(200).capacity(), 256);
+    }
+
+    #[test]
+    fn test_ring_buffer_error_display() {
+        assert_eq!(format!("{}", RingBufferError::Full), "Ring buffer is full");
+        assert_eq!(format!("{}", RingBufferError::Empty), "Ring buffer is empty");
+        assert_eq!(format!("{}", RingBufferError::Closed), "Ring buffer is closed");
+        assert_eq!(
+            format!("{}", RingBufferError::Timeout),
+            "Ring buffer operation timed out"
+        );
+    }
+
+    #[test]
+    fn test_ring_buffer_error_equality() {
+        assert_eq!(RingBufferError::Full, RingBufferError::Full);
+        assert_eq!(RingBufferError::Empty, RingBufferError::Empty);
+        assert_ne!(RingBufferError::Full, RingBufferError::Empty);
+        assert_ne!(RingBufferError::Closed, RingBufferError::Timeout);
+    }
+
+    #[test]
+    fn test_ring_buffer_error_clone() {
+        let err = RingBufferError::Full;
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+    }
+
+    #[test]
+    fn test_ring_buffer_multi_push_pop() {
+        let buffer = FrameRingBuffer::new(16);
+        let frame = VideoFrame::new(100, 100, vec![0; 100 * 100 * 3]);
+
+        // Push multiple frames
+        for i in 0..8 {
+            let mut f = frame.clone();
+            f.width = 100 + i as u32;
+            buffer.try_push(f).unwrap();
+        }
+
+        assert_eq!(buffer.len(), 8);
+
+        // Pop frames and verify order (FIFO)
+        for i in 0..8 {
+            let popped = buffer.try_pop().unwrap();
+            assert_eq!(popped.width, 100 + i as u32);
+        }
+
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_ring_buffer_snapshot_fill_ratio() {
+        let buffer = FrameRingBuffer::new(16);
+        let frame = VideoFrame::new(100, 100, vec![0; 100 * 100 * 3]);
+
+        // Empty
+        assert_eq!(buffer.snapshot().fill_ratio(), 0.0);
+
+        // Half full
+        for _ in 0..8 {
+            buffer.try_push(frame.clone()).unwrap();
+        }
+        assert_eq!(buffer.snapshot().fill_ratio(), 0.5);
+
+        // Full
+        for _ in 0..8 {
+            buffer.try_push(frame.clone()).unwrap();
+        }
+        assert_eq!(buffer.snapshot().fill_ratio(), 1.0);
+    }
+
+    #[test]
+    fn test_ring_buffer_snapshot_debug() {
+        let snapshot = RingBufferSnapshot {
+            capacity: 16,
+            len: 4,
+            is_empty: false,
+            is_full: false,
+            is_closed: false,
+        };
+        let debug_str = format!("{:?}", snapshot);
+        assert!(debug_str.contains("capacity"));
+        assert!(debug_str.contains("16"));
+    }
+
+    #[test]
+    fn test_ring_buffer_partial_fill() {
+        let buffer = FrameRingBuffer::new(8);
+        let frame = VideoFrame::new(100, 100, vec![0; 100 * 100 * 3]);
+
+        // Push 3 frames
+        for _ in 0..3 {
+            buffer.try_push(frame.clone()).unwrap();
+        }
+
+        assert!(!buffer.is_empty());
+        assert!(!buffer.is_full());
+        assert_eq!(buffer.len(), 3);
+    }
+
+    #[test]
+    fn test_ring_buffer_interleaved_push_pop() {
+        let buffer = FrameRingBuffer::new(8);
+        let frame = VideoFrame::new(100, 100, vec![0; 100 * 100 * 3]);
+
+        // Interleave push and pop operations
+        buffer.try_push(frame.clone()).unwrap();
+        assert_eq!(buffer.len(), 1);
+
+        buffer.try_push(frame.clone()).unwrap();
+        buffer.try_pop().unwrap();
+        assert_eq!(buffer.len(), 1);
+
+        buffer.try_push(frame.clone()).unwrap();
+        buffer.try_push(frame.clone()).unwrap();
+        buffer.try_pop().unwrap();
+        assert_eq!(buffer.len(), 2);
+
+        // Drain
+        while buffer.try_pop().is_some() {}
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_ring_buffer_large_capacity() {
+        let buffer = FrameRingBuffer::new(1024);
+        let frame = VideoFrame::new(100, 100, vec![0; 100 * 100 * 3]);
+
+        // Verify capacity is power of 2
+        assert_eq!(buffer.capacity(), 1024);
+
+        // Fill half
+        for _ in 0..512 {
+            buffer.try_push(frame.clone()).unwrap();
+        }
+        assert_eq!(buffer.len(), 512);
+        assert!(!buffer.is_full());
+    }
+
+    #[test]
+    fn test_ring_buffer_frame_data_integrity() {
+        let buffer = FrameRingBuffer::new(4);
+        let original_data = vec![42u8; 100 * 100 * 3];
+        let frame = VideoFrame::new(100, 100, original_data.clone());
+
+        buffer.try_push(frame).unwrap();
+        let popped = buffer.try_pop().unwrap();
+
+        // Verify data integrity
+        assert_eq!(popped.data.len(), original_data.len());
+        assert!(popped.data.iter().all(|&b| b == 42));
+    }
+
+    #[test]
+    #[should_panic(expected = "Ring buffer capacity must be > 0")]
+    fn test_ring_buffer_zero_capacity_panics() {
+        let _ = FrameRingBuffer::new(0);
+    }
+
+    #[test]
+    fn test_ring_buffer_close_propagates_to_clone() {
+        let buffer = FrameRingBuffer::new(8);
+        let buffer_clone = buffer.clone();
+
+        // Close original
+        buffer.close();
+
+        // Clone should also see closed state
+        assert!(buffer_clone.is_closed());
+    }
+
+    #[test]
+    fn test_ring_buffer_snapshot_after_close() {
+        let buffer = FrameRingBuffer::new(8);
+        let frame = VideoFrame::new(100, 100, vec![0; 100 * 100 * 3]);
+
+        buffer.try_push(frame).unwrap();
+        buffer.close();
+
+        let snapshot = buffer.snapshot();
+        assert!(snapshot.is_closed);
+        assert_eq!(snapshot.len, 1);
+    }
 }

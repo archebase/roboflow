@@ -1098,8 +1098,7 @@ mod tests {
 
     #[test]
     fn test_config_with_preset() {
-        let config = RsmpegEncoderConfig::new()
-            .with_preset("fast");
+        let config = RsmpegEncoderConfig::new().with_preset("fast");
 
         assert_eq!(config.preset, "fast");
         assert_eq!(config.gop_size, 30); // Default unchanged

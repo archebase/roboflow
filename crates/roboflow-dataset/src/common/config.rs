@@ -224,4 +224,71 @@ type = "audio"
     fn test_mapping_type_variants() {
         assert_eq!(MappingType::default(), MappingType::State);
     }
+
+    #[test]
+    fn test_mapping_type_equality() {
+        assert_eq!(MappingType::Image, MappingType::Image);
+        assert_ne!(MappingType::Image, MappingType::State);
+        assert_ne!(MappingType::State, MappingType::Action);
+    }
+
+    #[test]
+    fn test_mapping_type_clone() {
+        let t1 = MappingType::Image;
+        let t2 = t1.clone();
+        assert_eq!(t1, t2);
+    }
+
+    #[test]
+    fn test_mapping_type_debug() {
+        let debug_str = format!("{:?}", MappingType::Image);
+        assert!(debug_str.contains("Image"));
+    }
+
+    #[test]
+    fn test_mapping_with_all_fields() {
+        let toml_str = r#"
+topic = "/camera/color"
+feature = "observation.images.camera"
+mapping_type = "image"
+camera_key = "cam_high"
+"#;
+        let mapping: Mapping = toml::from_str(toml_str).unwrap();
+        assert_eq!(mapping.topic, "/camera/color");
+        assert_eq!(mapping.feature, "observation.images.camera");
+        assert_eq!(mapping.mapping_type, MappingType::Image);
+        assert_eq!(mapping.camera_key, Some("cam_high".to_string()));
+    }
+
+    #[test]
+    fn test_dataset_base_config_fps() {
+        let toml_str = r#"
+name = "test"
+fps = 30
+"#;
+        let config: DatasetBaseConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.fps, 30);
+    }
+
+    #[test]
+    fn test_mapping_feature_extraction() {
+        let mapping = Mapping {
+            topic: "/test".to_string(),
+            feature: "observation.state.joint".to_string(),
+            mapping_type: MappingType::State,
+            camera_key: None,
+        };
+        assert_eq!(mapping.feature, "observation.state.joint");
+    }
+
+    #[test]
+    fn test_mapping_topic_extraction() {
+        let mapping = Mapping {
+            topic: "/joint_states".to_string(),
+            feature: "state".to_string(),
+            mapping_type: MappingType::State,
+            camera_key: None,
+        };
+        assert_eq!(mapping.topic, "/joint_states");
+    }
 }
