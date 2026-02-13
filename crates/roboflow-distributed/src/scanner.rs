@@ -642,8 +642,10 @@ impl Scanner {
 
         if jobs_created == 0 && files_discovered == 0 {
             status.transition_to(BatchPhase::Failed);
-            status.error =
-                Some(format!("No files discovered from {} source(s)", total_sources));
+            status.error = Some(format!(
+                "No files discovered from {} source(s)",
+                total_sources
+            ));
             tracing::warn!(
                 batch_id = %batch_id,
                 sources = total_sources,
@@ -686,7 +688,8 @@ impl Scanner {
         }
 
         // Initialize discovery phase if needed
-        self.initialize_discovery_phase(batch_id, &mut status, spec).await?;
+        self.initialize_discovery_phase(batch_id, &mut status, spec)
+            .await?;
 
         // Track which sources we've already processed
         let sources_processed = status
@@ -702,12 +705,7 @@ impl Scanner {
         // Process each source that hasn't been processed yet
         for source in spec.spec.sources.iter().skip(sources_processed) {
             let result = self
-                .process_single_source(
-                    batch_id,
-                    &source.url,
-                    &spec.spec.config,
-                    &spec.spec.output,
-                )
+                .process_single_source(batch_id, &source.url, &spec.spec.config, &spec.spec.output)
                 .await;
 
             match result {
