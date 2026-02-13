@@ -42,6 +42,7 @@
 //! - [`LerobotFrame`] - Frame data structure
 //! - [`CameraIntrinsic`], [`CameraExtrinsic`], [`ExtrinsicData`] - Camera calibration types
 
+mod builder;
 mod camera;
 mod camera_params;
 mod cloud_upload;
@@ -52,6 +53,7 @@ mod stats;
 mod writer_impl;
 
 // Re-export public API
+pub use builder::LerobotWriterBuilder;
 pub use camera::{CameraExtrinsic, CameraIntrinsic, ExtrinsicData};
 pub use frame::LerobotFrame;
-pub use writer_impl::{LerobotWriter, LerobotWriterBuilder};
+pub use writer_impl::LerobotWriter;

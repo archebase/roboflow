@@ -987,12 +987,12 @@ impl LerobotWriter {
     // ========================================================================
 
     /// Create a builder for configuring a LeRobot writer.
-    pub fn builder() -> LerobotWriterBuilder {
-        LerobotWriterBuilder::new()
+    pub fn builder() -> super::builder::LerobotWriterBuilder {
+        super::builder::LerobotWriterBuilder::new()
     }
 
     /// Internal constructor used by the builder.
-    fn new_internal(
+    pub(super) fn new_internal(
         storage: Arc<dyn roboflow_storage::Storage>,
         output_prefix: String,
         local_buffer: PathBuf,
@@ -1273,166 +1273,5 @@ impl FromAlignedFrame for LerobotFrame {
             task_index: None,
             image_frames,
         }
-    }
-}
-
-// ============================================================================
-// Builder
-// ============================================================================
-
-/// Builder for creating [`LerobotWriter`] instances.
-///
-/// # Example
-///
-/// ```ignore
-/// use roboflow::dataset::lerobot::{LerobotWriter, LerobotConfig};
-///
-/// let config = LerobotConfig::default();
-/// let writer = LerobotWriter::builder()
-///     .output_dir("/output")
-///     .config(config)
-///     .build()?;
-/// ```
-pub struct LerobotWriterBuilder {
-    output_dir: Option<PathBuf>,
-    storage: Option<Arc<dyn roboflow_storage::Storage>>,
-    output_prefix: Option<String>,
-    local_buffer: Option<PathBuf>,
-    config: Option<LerobotConfig>,
-}
-
-impl Default for LerobotWriterBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl LerobotWriterBuilder {
-    /// Create a new builder with default settings.
-    pub fn new() -> Self {
-        Self {
-            output_dir: None,
-            storage: None,
-            output_prefix: None,
-            local_buffer: None,
-            config: None,
-        }
-    }
-
-    /// Set the output directory for local filesystem output.
-    ///
-    /// When this is set without `storage`, the writer uses LocalStorage.
-    pub fn output_dir(mut self, path: impl AsRef<Path>) -> Self {
-        self.output_dir = Some(path.as_ref().to_path_buf());
-        self
-    }
-
-    /// Set the storage backend for cloud storage support.
-    ///
-    /// When set, the writer will use this storage backend for writing data.
-    /// The `output_dir` is still used as a local buffer for temporary files.
-    pub fn storage(mut self, storage: Arc<dyn roboflow_storage::Storage>) -> Self {
-        self.storage = Some(storage);
-        self
-    }
-
-    /// Set the output prefix within storage.
-    ///
-    /// This is used as a prefix for all files written to cloud storage.
-    /// For example, "datasets/my_dataset" would result in files at
-    /// "datasets/my_dataset/data/chunk-000/...".
-    pub fn output_prefix(mut self, prefix: String) -> Self {
-        self.output_prefix = Some(prefix);
-        self
-    }
-
-    /// Set the local buffer directory for temporary files.
-    ///
-    /// This is where Parquet files and videos are created before being
-    /// uploaded to cloud storage (if a storage backend is configured).
-    pub fn local_buffer(mut self, path: impl AsRef<Path>) -> Self {
-        self.local_buffer = Some(path.as_ref().to_path_buf());
-        self
-    }
-
-    /// Set the LeRobot configuration.
-    pub fn config(mut self, config: LerobotConfig) -> Self {
-        self.config = Some(config);
-        self
-    }
-
-    /// Build the writer.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if required fields are not set.
-    pub fn build(self) -> Result<LerobotWriter> {
-        let config = self.config.ok_or_else(|| {
-            roboflow_core::RoboflowError::required("LerobotWriterBuilder", "config")
-        })?;
-
-        // Determine if we're using cloud storage
-        let use_cloud_storage = self.storage.is_some();
-
-        let (storage, output_prefix, local_buffer, _output_dir) = if let Some(storage) =
-            self.storage
-        {
-            let local_buffer = self.local_buffer.ok_or_else(|| {
-                roboflow_core::RoboflowError::required("LerobotWriterBuilder", "local_buffer")
-            })?;
-            let output_dir = local_buffer.clone();
-            let output_prefix = self.output_prefix.unwrap_or_default();
-            (storage, output_prefix, local_buffer, output_dir)
-        } else {
-            // Local storage mode
-            let output_dir = self.output_dir.ok_or_else(|| {
-                roboflow_core::RoboflowError::required("LerobotWriterBuilder", "output_dir")
-            })?;
-
-            // Validate output_dir is not a cloud storage URL
-            let output_dir_str = output_dir.to_string_lossy();
-            let lower = output_dir_str.to_lowercase();
-            if lower.starts_with("s3://") || lower.starts_with("oss://") {
-                return Err(roboflow_core::RoboflowError::config(
-                    "LerobotWriterBuilder",
-                    "output_dir cannot be a cloud storage URL (s3:// or oss://). Use storage() method with local_buffer() instead.",
-                ));
-            }
-
-            // Validate that output_dir is not a cloud storage URL
-            let output_dir_str = output_dir.as_os_str().to_string_lossy();
-            if output_dir_str.starts_with("s3://")
-                || output_dir_str.starts_with("oss://")
-                || output_dir_str.starts_with("S3://")
-                || output_dir_str.starts_with("OSS://")
-            {
-                return Err(roboflow_core::RoboflowError::config(
-                    "LerobotWriterBuilder",
-                    format!(
-                        "output_dir appears to be a cloud storage URL ('{}'). For cloud storage, use the storage() method with StorageFactory instead.\n\n\
-                             Example:\n\n\
-                               let storage = StorageFactory::new().create(\"{}\")?;\n\n\
-                               LerobotWriter::builder()\n\n\
-                                   .storage(storage)\n\n\
-                                   .output_prefix(\"datasets\")\n\n\
-                                   .local_buffer(\"/tmp/roboflow_buffer\")\n\n\
-                                   .config(config)",
-                        output_dir_str, output_dir_str
-                    ),
-                ));
-            }
-            let storage = Arc::new(roboflow_storage::LocalStorage::new(&output_dir)) as _;
-            let local_buffer = output_dir.clone();
-            let output_prefix = self.output_prefix.unwrap_or_default();
-            (storage, output_prefix, local_buffer, output_dir)
-        };
-
-        LerobotWriter::new_internal(
-            storage,
-            output_prefix,
-            local_buffer,
-            config,
-            use_cloud_storage,
-        )
     }
 }
