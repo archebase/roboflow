@@ -1,0 +1,9 @@
+# Clippy configuration for roboflow
+# See: https://rust-lang.github.io/rust-clippy/master/index.html
+
+# Cognitive complexity threshold (default is 25)
+# Functions exceeding this will trigger a warning
+cognitive-complexity-threshold = 25
+
+# Type complexity threshold
+type-complexity-threshold = 250

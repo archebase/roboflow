@@ -177,3 +177,35 @@ path = "examples/rust/lerobot_convert.rs"
 
 [profile.release]
 debug = true
+
+# =============================================================================
+# Workspace Lints - Technical Debt Prevention
+# =============================================================================
+#
+# These lints are configured to prevent future technical debt while allowing
+# existing code patterns. More strict lints can be enabled incrementally as
+# debt is paid down.
+
+[workspace.lints.clippy]
+# Complexity - prevent cognitive complexity hotspots (key for maintainability)
+cognitive_complexity = "warn"
+
+# Code quality - encourage best practices
+# Note: unwrap_used and expect_used set to allow due to existing debt (~600 occurrences)
+unwrap_used = "allow"
+expect_used = "allow"
+
+# Allowed due to existing debt - can be enabled incrementally
+doc_markdown = "allow"
+items_after_statements = "allow"
+str_to_string = "allow"
+use_self = "allow"
+wildcard_imports = "allow"
+enum_glob_use = "allow"
+needless_continue = "allow"
+manual_assert = "allow"
+map_unwrap_or = "allow"
+
+# Inherit workspace lints in all workspace members
+[lints]
+workspace = true
