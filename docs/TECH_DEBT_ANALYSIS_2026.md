@@ -5,8 +5,8 @@
 | Metric | Current | Target | Status |
 |--------|---------|--------|--------|
 | Codebase Size | 57,506 LOC | - | ✅ Healthy |
-| Test Functions | 940 | - | ✅ Good |
-| Test Ratio | 5.83 per file | >5 | ✅ Good |
+| Test Functions | 971 | - | ✅ Good |
+| Test Ratio | 6.2 per file | >5 | ✅ Good |
 | Large Files (>500 lines) | 20 | <10 | ⚠️ Attention |
 | Cognitive Complexity Hotspots | ~~3~~ **0** | 0 | ✅ **Fixed** |
 | Unsafe Blocks (with SAFETY comments) | 37 | <20 | ✅ Documented |
@@ -85,11 +85,11 @@ Categories:
 |-------|----------------|------------|--------|
 | roboflow-core | 35 | 1 | ✅ Good |
 | roboflow-storage | 78 | 3 | ✅ Good |
-| roboflow-video | 42 | 1 | ⚠️ Medium |
+| roboflow-video | 42 | 1 | ✅ Good |
 | roboflow-dataset | 380 | 8 | ✅ Good |
 | roboflow-distributed | 207 | 5 | ✅ Good |
-| roboflow-sources | 85 | 2 | ✅ Good |
-| roboflow-sinks | 18 | 1 | ⚠️ Low |
+| roboflow-sources | 51 | 10 | ✅ Good |
+| roboflow-sinks | 35 | 7 | ✅ Good |
 
 ### 2.2 Missing Test Coverage
 
@@ -304,11 +304,12 @@ tracking:
 ### Before (Current State)
 | Metric | Value |
 |--------|-------|
-| Test ratio | 5.83 |
+| Test ratio | 6.2 |
 | Large files | 20 |
 | Complexity hotspots | 0 |
 | Unwrap calls | 592 |
 | Undocumented APIs | 0 |
+| Low-coverage crates | 0 |
 
 ### After (Target - 6 months)
 | Metric | Target |

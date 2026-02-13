@@ -189,8 +189,7 @@ mod tests {
         assert!(json.contains("bag"));
         assert!(json.contains("test.bag"));
 
-        let decoded: SourceMetadata =
-            serde_json::from_str(&json).expect("Failed to deserialize");
+        let decoded: SourceMetadata = serde_json::from_str(&json).expect("Failed to deserialize");
         assert_eq!(decoded.source_type, "bag");
         assert_eq!(decoded.duration_ns, Some(1000));
     }
@@ -213,11 +212,12 @@ mod tests {
     #[test]
     fn test_source_metadata_additional_fields() {
         let mut metadata = SourceMetadata::new("mcap".to_string(), "test.mcap".to_string());
-        metadata.metadata.insert(
-            "compression".to_string(),
-            serde_json::json!("zstd"),
-        );
-        metadata.metadata.insert("version".to_string(), serde_json::json!(2));
+        metadata
+            .metadata
+            .insert("compression".to_string(), serde_json::json!("zstd"));
+        metadata
+            .metadata
+            .insert("version".to_string(), serde_json::json!(2));
 
         assert_eq!(metadata.metadata.len(), 2);
         assert_eq!(
@@ -228,9 +228,13 @@ mod tests {
 
     #[test]
     fn test_topic_metadata_additional_fields() {
-        let mut topic =
-            TopicMetadata::new("/joint_states".to_string(), "sensor_msgs/JointState".to_string());
-        topic.metadata.insert("joint_count".to_string(), serde_json::json!(7));
+        let mut topic = TopicMetadata::new(
+            "/joint_states".to_string(),
+            "sensor_msgs/JointState".to_string(),
+        );
+        topic
+            .metadata
+            .insert("joint_count".to_string(), serde_json::json!(7));
         topic
             .metadata
             .insert("frame_id".to_string(), serde_json::json!("base_link"));
