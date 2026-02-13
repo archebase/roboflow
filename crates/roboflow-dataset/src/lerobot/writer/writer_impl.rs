@@ -24,6 +24,7 @@ use crate::lerobot::video_profiles::ResolvedConfig;
 use roboflow_core::Result;
 
 use super::camera::{CameraExtrinsic, CameraIntrinsic};
+use super::cloud_upload::CloudUploader;
 use super::encoding::{EncodeStats, encode_videos};
 use super::frame::LerobotFrame;
 use super::stats;
@@ -89,6 +90,9 @@ pub struct LerobotWriter {
 
     /// Upload coordinator for cloud uploads (optional).
     upload_coordinator: Option<Arc<crate::lerobot::upload::EpisodeUploadCoordinator>>,
+
+    /// Helper for cloud uploads
+    cloud_uploader: CloudUploader,
 }
 
 impl LerobotWriter {
@@ -154,9 +158,11 @@ impl LerobotWriter {
         fs::create_dir_all(&params_dir)?;
 
         // Create LocalStorage for backward compatibility
-        let storage = Arc::new(roboflow_storage::LocalStorage::new(output_dir));
+        let storage: Arc<dyn roboflow_storage::Storage> =
+            Arc::new(roboflow_storage::LocalStorage::new(output_dir));
         let local_buffer = output_dir.to_path_buf();
         let output_prefix = String::new();
+        let cloud_uploader = CloudUploader::new(Arc::clone(&storage), output_prefix.clone());
 
         Ok(Self {
             storage,
@@ -179,6 +185,7 @@ impl LerobotWriter {
             failed_encodings: 0,
             use_cloud_storage: false,
             upload_coordinator: None,
+            cloud_uploader,
         })
     }
 
@@ -314,6 +321,8 @@ impl LerobotWriter {
             None
         };
 
+        let cloud_uploader = CloudUploader::new(Arc::clone(&storage), output_prefix.clone());
+
         Ok(Self {
             storage,
             output_prefix,
@@ -335,6 +344,7 @@ impl LerobotWriter {
             failed_encodings: 0,
             use_cloud_storage,
             upload_coordinator: upload_coordinator.clone(),
+            cloud_uploader,
         })
     }
 
@@ -504,7 +514,7 @@ impl LerobotWriter {
                     // Fallback: upload this episode synchronously so data still reaches cloud
                     if self.use_cloud_storage {
                         if parquet_path.exists() {
-                            if let Err(upload_e) = self.upload_parquet_file(&parquet_path) {
+                            if let Err(upload_e) = self.cloud_uploader.upload_parquet(&parquet_path) {
                                 tracing::error!(
                                     episode = self.episode_index,
                                     error = %upload_e,
@@ -519,7 +529,7 @@ impl LerobotWriter {
                         }
                         for (camera, path) in &video_paths_for_upload {
                             if path.exists() {
-                                if let Err(upload_e) = self.upload_video_file(path, camera) {
+                                if let Err(upload_e) = self.cloud_uploader.upload_video(path, camera) {
                                     tracing::error!(
                                         episode = self.episode_index,
                                         camera = %camera,
@@ -646,7 +656,7 @@ impl LerobotWriter {
             && self.upload_coordinator.is_none()
             && !parquet_path.as_os_str().is_empty()
         {
-            self.upload_parquet_file(&parquet_path)?;
+            self.cloud_uploader.upload_parquet(&parquet_path)?;
         }
 
         Ok((parquet_path, size))
@@ -709,7 +719,7 @@ impl LerobotWriter {
 
         // Upload videos to cloud storage (without upload coordinator)
         if self.use_cloud_storage && self.upload_coordinator.is_none() && !video_files.is_empty() {
-            self.upload_videos_parallel(&video_files)?;
+            self.cloud_uploader.upload_videos_parallel(&video_files)?;
             // Clear video files after upload to avoid double-upload
             video_files.clear();
         }
@@ -1084,6 +1094,8 @@ impl LerobotWriter {
             None
         };
 
+        let cloud_uploader = CloudUploader::new(Arc::clone(&storage), output_prefix.clone());
+
         Ok(Self {
             storage,
             output_prefix,
@@ -1105,106 +1117,8 @@ impl LerobotWriter {
             failed_encodings: 0,
             use_cloud_storage,
             upload_coordinator,
+            cloud_uploader,
         })
-    }
-
-    // ========================================================================
-    // Cloud upload helpers
-    // ========================================================================
-
-    /// Upload a Parquet file to cloud storage.
-    fn upload_parquet_file(&self, local_path: &Path) -> Result<()> {
-        let filename = local_path
-            .file_name()
-            .ok_or_else(|| roboflow_core::RoboflowError::parse("Path", "Invalid file name"))?;
-
-        let remote_path = if self.output_prefix.is_empty() {
-            Path::new("data/chunk-000").join(filename)
-        } else {
-            Path::new(&self.output_prefix)
-                .join("data/chunk-000")
-                .join(filename)
-        };
-
-        self.storage
-            .upload_file(local_path, &remote_path)
-            .map_err(|e| {
-                roboflow_core::RoboflowError::encode("Storage", format!("Upload failed: {}", e))
-            })?;
-
-        tracing::info!(
-            local = %local_path.display(),
-            remote = %remote_path.display(),
-            "Uploaded Parquet file to cloud storage"
-        );
-
-        // Clean up local file after successful upload
-        if let Err(e) = fs::remove_file(local_path) {
-            tracing::error!(
-                path = %local_path.display(),
-                error = %e,
-                "Failed to delete local file after upload - disk space may leak"
-            );
-        }
-
-        Ok(())
-    }
-
-    /// Upload a video file to cloud storage.
-    fn upload_video_file(&self, local_path: &Path, camera: &str) -> Result<()> {
-        let filename = local_path
-            .file_name()
-            .ok_or_else(|| roboflow_core::RoboflowError::parse("Path", "Invalid file name"))?;
-
-        let remote_path = if self.output_prefix.is_empty() {
-            Path::new("videos/chunk-000").join(camera).join(filename)
-        } else {
-            Path::new(&self.output_prefix)
-                .join("videos/chunk-000")
-                .join(camera)
-                .join(filename)
-        };
-
-        self.storage
-            .upload_file(local_path, &remote_path)
-            .map_err(|e| {
-                roboflow_core::RoboflowError::encode("Storage", format!("Upload failed: {}", e))
-            })?;
-
-        tracing::info!(
-            local = %local_path.display(),
-            remote = %remote_path.display(),
-            camera = %camera,
-            "Uploaded video file to cloud storage"
-        );
-
-        // Clean up local file after successful upload
-        if let Err(e) = fs::remove_file(local_path) {
-            tracing::error!(
-                path = %local_path.display(),
-                error = %e,
-                "Failed to delete local file after upload - disk space may leak"
-            );
-        }
-
-        Ok(())
-    }
-
-    /// Upload multiple video files to cloud storage in parallel.
-    fn upload_videos_parallel(&self, video_files: &[(PathBuf, String)]) -> Result<()> {
-        use rayon::prelude::*;
-
-        let results: Vec<Result<()>> = video_files
-            .par_iter()
-            .map(|(path, camera)| self.upload_video_file(path, camera))
-            .collect();
-
-        // Check for any errors
-        for result in results {
-            result?;
-        }
-
-        Ok(())
     }
 }
 
