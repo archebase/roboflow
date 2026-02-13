@@ -2,37 +2,10 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Cached storage backend with local buffering and background uploads.
+//! Main cached storage implementation.
 //!
-//! This module provides a caching layer that combines:
-//! - **Read-through caching**: Check local cache first, download from remote on miss
-//! - **Write-behind caching**: Write to local cache, queue for background upload
-//! - **LRU eviction**: Automatically evict oldest cached files when size limit is reached
-//! - **Graceful shutdown**: Flush pending uploads before shutdown
-//!
-//! # Example
-//!
-//! ```ignore
-//! use roboflow::storage::{Storage, LocalStorage, cached::{CachedStorage, CacheConfig}};
-//! use std::sync::Arc;
-//!
-//! let remote = Arc::new(S3Storage::new(...)?);
-//! let cache_dir = "/tmp/cache";
-//! let config = CacheConfig::new(cache_dir);
-//! let storage = CachedStorage::new(remote, config)?;
-//!
-//! // Reads check cache first
-//! let reader = storage.reader(Path::new("dataset.bag"))?;
-//!
-//! // Writes go to cache and are uploaded in background
-//! let writer = storage.writer(Path::new("output.bag"))?;
-//! writer.write_all(data)?;
-//! drop(writer); // Triggers background upload
-//!
-//! // Graceful shutdown
-//! storage.flush()?;
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
+//! Provides the `CachedStorage` struct that wraps a remote storage backend
+//! with a local cache layer for read-through and write-behind caching.
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -44,24 +17,14 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use crossbeam_channel::{Receiver, Sender, bounded};
-use serde::{Deserialize, Serialize};
 
 use crate::{
     ObjectMetadata, SeekRead, SeekableStorage, Storage, StorageError, StorageResult as Result,
     local::LocalStorage,
 };
 
-/// Eviction policy for cached files.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EvictionPolicy {
-    /// Least Recently Used - evict files with oldest access time.
-    #[default]
-    Lru,
-    /// Least Frequently Used - evict files with lowest access count.
-    Lfu,
-    /// First In First Out - evict oldest cached files.
-    Fifo,
-}
+use super::eviction::EvictionPolicy;
+use super::upload::{CacheEntry, CacheStats, UploadTask, spawn_upload_workers};
 
 /// Configuration for the cached storage backend.
 #[derive(Debug, Clone)]
@@ -142,84 +105,6 @@ impl CacheConfig {
     }
 }
 
-/// Cache entry metadata for tracking and eviction.
-#[derive(Debug)]
-struct CacheEntry {
-    /// Relative path within cache.
-    _path: PathBuf,
-    /// File size in bytes.
-    size: u64,
-    /// Last access time (for LRU).
-    last_accessed: SystemTime,
-    /// Creation time (for FIFO).
-    created_at: SystemTime,
-    /// Access count (for LFU).
-    access_count: AtomicU64,
-    /// Whether a file has a pending upload.
-    pending_upload: bool,
-}
-
-impl CacheEntry {
-    fn new(path: PathBuf, size: u64) -> Self {
-        let now = SystemTime::now();
-        Self {
-            _path: path,
-            size,
-            last_accessed: now,
-            created_at: now,
-            access_count: AtomicU64::new(1),
-            pending_upload: false,
-        }
-    }
-
-    fn record_access(&self) {
-        self.access_count.fetch_add(1, Ordering::Relaxed);
-    }
-}
-
-/// Upload task for the background worker queue.
-#[derive(Debug)]
-struct UploadTask {
-    /// Local cache file path.
-    local_path: PathBuf,
-    /// Remote destination path.
-    remote_path: PathBuf,
-    /// File size for tracking.
-    size: u64,
-}
-
-/// Statistics about cache performance.
-#[derive(Debug, Clone, Default)]
-pub struct CacheStats {
-    /// Number of cache hits.
-    pub cache_hits: u64,
-    /// Number of cache misses.
-    pub cache_misses: u64,
-    /// Total bytes currently cached.
-    pub total_cached_bytes: u64,
-    /// Number of files currently cached.
-    pub cached_file_count: u64,
-    /// Number of pending uploads.
-    pub pending_uploads: u64,
-    /// Total uploads completed.
-    pub uploads_completed: u64,
-    /// Total uploads failed.
-    pub uploads_failed: u64,
-    /// Total bytes uploaded.
-    pub bytes_uploaded: u64,
-}
-
-impl CacheStats {
-    /// Calculate cache hit rate as a percentage.
-    pub fn hit_rate(&self) -> f64 {
-        let total = self.cache_hits + self.cache_misses;
-        if total == 0 {
-            return 0.0;
-        }
-        (self.cache_hits as f64 / total as f64) * 100.0
-    }
-}
-
 /// Cached storage backend.
 ///
 /// Wraps a remote storage backend with a local cache layer. Reads are served
@@ -238,12 +123,12 @@ pub struct CachedStorage {
     cache_size: AtomicU64,
     /// Upload task sender.
     upload_sender: Sender<UploadTask>,
-    /// Upload task receiver (kept to spawn workers).
-    upload_receiver: Receiver<UploadTask>,
+    /// Upload task receiver (kept for channel lifetime management).
+    _upload_receiver: Receiver<UploadTask>,
     /// Cache statistics.
     stats: Arc<Mutex<CacheStats>>,
     /// Upload worker thread handles.
-    upload_workers: Mutex<Vec<thread::JoinHandle<()>>>,
+    _upload_workers: Mutex<Vec<thread::JoinHandle<()>>>,
     /// Shutdown signal (Arc-shared with workers).
     shutdown: Arc<AtomicUsize>,
 }
@@ -265,195 +150,36 @@ impl CachedStorage {
         // Create bounded channel for upload tasks
         let (upload_sender, upload_receiver) = bounded(config.max_pending_uploads);
 
+        let stats = Arc::new(Mutex::new(CacheStats::default()));
+        let shutdown = Arc::new(AtomicUsize::new(0));
+        let entries = Arc::new(Mutex::new(HashMap::new()));
+
+        // Spawn upload workers using the extracted module
+        let workers = spawn_upload_workers(
+            config.upload_concurrency,
+            upload_receiver.clone(),
+            Arc::clone(&remote),
+            Arc::clone(&stats),
+            Arc::clone(&shutdown),
+            Arc::clone(&entries),
+            config.delete_after_upload,
+            config.cache_directory.clone(),
+        )?;
+
         let storage = Self {
             remote,
             local,
             config,
-            entries: Arc::new(Mutex::new(HashMap::new())),
+            entries,
             cache_size: AtomicU64::new(0),
             upload_sender,
-            upload_receiver,
-            stats: Arc::new(Mutex::new(CacheStats::default())),
-            upload_workers: Mutex::new(Vec::new()),
-            shutdown: Arc::new(AtomicUsize::new(0)),
+            _upload_receiver: upload_receiver,
+            stats,
+            _upload_workers: Mutex::new(workers),
+            shutdown,
         };
 
-        // Spawn upload worker threads
-        storage.spawn_upload_workers()?;
-
         Ok(storage)
-    }
-
-    /// Spawn background upload worker threads.
-    fn spawn_upload_workers(&self) -> Result<()> {
-        let mut workers = self
-            .upload_workers
-            .lock()
-            .map_err(|e| StorageError::Other(format!("Failed to acquire workers lock: {}", e)))?;
-
-        for worker_id in 0..self.config.upload_concurrency {
-            let receiver = self.upload_receiver.clone();
-            let remote = self.remote.clone();
-            let local = self.local.clone();
-            let delete_after_upload = self.config.delete_after_upload;
-            let cache_dir = self.config.cache_directory.clone();
-            let stats = Arc::clone(&self.stats);
-            let shutdown = Arc::clone(&self.shutdown);
-            let entries = Arc::clone(&self.entries);
-
-            let handle = thread::Builder::new()
-                .name(format!("cached-upload-{}", worker_id))
-                .spawn(move || {
-                    Self::upload_worker(
-                        worker_id,
-                        receiver,
-                        remote,
-                        local,
-                        delete_after_upload,
-                        cache_dir,
-                        stats,
-                        shutdown,
-                        entries,
-                    )
-                })
-                .map_err(|e| {
-                    StorageError::Other(format!("Failed to spawn upload worker: {}", e))
-                })?;
-
-            workers.push(handle);
-        }
-
-        Ok(())
-    }
-
-    /// Background upload worker function.
-    #[allow(clippy::too_many_arguments)]
-    fn upload_worker(
-        worker_id: usize,
-        receiver: Receiver<UploadTask>,
-        remote: Arc<dyn Storage>,
-        local: Arc<LocalStorage>,
-        delete_after_upload: bool,
-        cache_dir: PathBuf,
-        stats: Arc<Mutex<CacheStats>>,
-        shutdown: Arc<AtomicUsize>,
-        entries: Arc<Mutex<HashMap<PathBuf, CacheEntry>>>,
-    ) {
-        tracing::info!("Upload worker {} started", worker_id);
-
-        loop {
-            // Check for shutdown signal with timeout
-            match receiver.recv_timeout(Duration::from_millis(100)) {
-                Ok(task) => {
-                    // Double-check shutdown before processing
-                    if shutdown.load(Ordering::Acquire) != 0 {
-                        // Shutdown requested, don't process this task
-                        // Task will remain in cache for upload on next restart
-                        break;
-                    }
-
-                    tracing::debug!(
-                        "Worker {} uploading {} ({} bytes)",
-                        worker_id,
-                        task.local_path.display(),
-                        task.size
-                    );
-
-                    let result =
-                        Self::upload_file(&local, &remote, &task, delete_after_upload, &cache_dir);
-
-                    // Clear pending_upload flag after upload attempt (success or failure)
-                    // This allows eviction to proceed even if upload failed
-                    if let Ok(mut entries) = entries.lock()
-                        && let Some(entry) = entries.get_mut(&task.remote_path)
-                    {
-                        entry.pending_upload = false;
-                    }
-
-                    // Update stats
-                    if let Ok(mut s) = stats.lock() {
-                        if result.is_ok() {
-                            s.uploads_completed += 1;
-                            s.bytes_uploaded += task.size;
-                            s.pending_uploads = s.pending_uploads.saturating_sub(1);
-                        } else {
-                            s.uploads_failed += 1;
-                            s.pending_uploads = s.pending_uploads.saturating_sub(1);
-                        }
-                    }
-
-                    if let Err(e) = result {
-                        tracing::error!(
-                            "Worker {} failed to upload {}: {}",
-                            worker_id,
-                            task.local_path.display(),
-                            e
-                        );
-                    }
-                }
-                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                    // Check shutdown signal on timeout
-                    if shutdown.load(Ordering::Acquire) != 0 {
-                        break;
-                    }
-                    // Continue loop to check for shutdown again
-                }
-                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                    // Channel closed, exit
-                    break;
-                }
-            }
-        }
-
-        tracing::info!("Upload worker {} stopped", worker_id);
-    }
-
-    /// Upload a single file from cache to remote storage.
-    ///
-    /// Uses streaming copy to avoid loading entire file into memory.
-    fn upload_file(
-        _local: &LocalStorage,
-        remote: &Arc<dyn Storage>,
-        task: &UploadTask,
-        delete_after_upload: bool,
-        _cache_dir: &Path,
-    ) -> Result<()> {
-        // Open local file
-        let local_path = &task.local_path;
-        let remote_path = &task.remote_path;
-
-        // Stream upload using fixed buffer to avoid OOM on large files
-        const BUFFER_SIZE: usize = 64 * 1024; // 64KB buffer
-        let mut file = File::open(local_path)
-            .map_err(|e| StorageError::Other(format!("Failed to open cached file: {}", e)))?;
-
-        let mut remote_writer = remote.writer(remote_path)?;
-        let mut buffer = vec![0u8; BUFFER_SIZE];
-
-        loop {
-            let n_read = file
-                .read(&mut buffer)
-                .map_err(|e| StorageError::Other(format!("Failed to read cached file: {}", e)))?;
-            if n_read == 0 {
-                break;
-            }
-            remote_writer.write_all(&buffer[..n_read])?;
-        }
-
-        remote_writer.flush()?;
-
-        tracing::debug!(
-            "Uploaded {} to remote {}",
-            local_path.display(),
-            remote_path.display()
-        );
-
-        // Delete local file if configured
-        if delete_after_upload {
-            let _ = fs::remove_file(local_path);
-        }
-
-        Ok(())
     }
 
     /// Get the full local cache path for a remote path.
@@ -1097,13 +823,6 @@ mod tests {
         stats.cache_hits = 0;
         stats.cache_misses = 0;
         assert_eq!(stats.hit_rate(), 0.0);
-    }
-
-    #[test]
-    fn test_eviction_policy_display() {
-        assert_eq!(format!("{:?}", EvictionPolicy::Lru), "Lru");
-        assert_eq!(format!("{:?}", EvictionPolicy::Lfu), "Lfu");
-        assert_eq!(format!("{:?}", EvictionPolicy::Fifo), "Fifo");
     }
 
     #[test]
