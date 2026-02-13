@@ -313,7 +313,9 @@ impl RsmpegEncoder {
         // STEP 5: Encode frame
         // =============================================================
 
-        let codec_context = self.codec_context.as_mut().unwrap();
+        let codec_context = self.codec_context.as_mut().ok_or_else(|| {
+            RoboflowError::encode("RsmpegEncoder", "Codec context not initialized")
+        })?;
 
         // Send frame to encoder
         codec_context.send_frame(Some(&yuv_frame)).map_err(|e| {
@@ -331,8 +333,12 @@ impl RsmpegEncoder {
 
     /// Receive encoded packets and send them through the channel
     fn receive_and_send_packets(&mut self) -> Result<()> {
-        let codec_context = self.codec_context.as_mut().unwrap();
-        let tx = self.encoded_tx.as_ref().unwrap();
+        let codec_context = self.codec_context.as_mut().ok_or_else(|| {
+            RoboflowError::encode("RsmpegEncoder", "Codec context not initialized")
+        })?;
+        let tx = self.encoded_tx.as_ref().ok_or_else(|| {
+            RoboflowError::encode("RsmpegEncoder", "Encoded channel not available")
+        })?;
 
         loop {
             match codec_context.receive_packet() {
@@ -386,7 +392,9 @@ impl RsmpegEncoder {
 
         self.finalized = true;
 
-        let codec_context = self.codec_context.as_mut().unwrap();
+        let codec_context = self.codec_context.as_mut().ok_or_else(|| {
+            RoboflowError::encode("RsmpegEncoder", "Codec context not initialized")
+        })?;
 
         // =============================================================
         // STEP 1: Flush encoder

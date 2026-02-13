@@ -138,7 +138,12 @@ impl StorageRsmpegEncoder {
 
         // Get the encoded data
         let data = {
-            let guard = self.encoded_data.lock().unwrap();
+            let guard = self.encoded_data.lock().map_err(|e| {
+                RoboflowError::encode(
+                    "StorageRsmpegEncoder",
+                    format!("Failed to acquire lock on encoded data: {}", e),
+                )
+            })?;
             guard.clone()
         };
 

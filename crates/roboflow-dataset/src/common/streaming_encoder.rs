@@ -591,7 +591,9 @@ impl StreamingMp4Encoder {
         // STEP 4: Encode frame
         // =============================================================
 
-        let codec_context = self.codec_context.as_mut().unwrap();
+        let codec_context = self.codec_context.as_mut().ok_or_else(|| {
+            RoboflowError::encode("StreamingMp4Encoder", "Codec context not initialized")
+        })?;
 
         // Send frame to encoder
         codec_context.send_frame(Some(&yuv_frame)).map_err(|e| {
@@ -612,8 +614,12 @@ impl StreamingMp4Encoder {
 
     /// Receive encoded packets and write to format context.
     fn receive_and_write_packets(&mut self) -> Result<()> {
-        let codec_context = self.codec_context.as_mut().unwrap();
-        let format_context = self.format_context.as_mut().unwrap();
+        let codec_context = self.codec_context.as_mut().ok_or_else(|| {
+            RoboflowError::encode("StreamingMp4Encoder", "Codec context not initialized")
+        })?;
+        let format_context = self.format_context.as_mut().ok_or_else(|| {
+            RoboflowError::encode("StreamingMp4Encoder", "Format context not initialized")
+        })?;
 
         loop {
             match codec_context.receive_packet() {
