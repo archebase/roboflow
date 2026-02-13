@@ -297,7 +297,9 @@ impl Source for S3PrefixSource {
                         break;
                     }
                     // open_next_file() returning true guarantees current_source is set
-                    self.current_source.as_mut().expect("open_next_file set current_source")
+                    self.current_source
+                        .as_mut()
+                        .expect("open_next_file set current_source")
                 }
             };
 

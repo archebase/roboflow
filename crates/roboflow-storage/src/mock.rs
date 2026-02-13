@@ -74,12 +74,18 @@ impl MockStorage {
 
     /// Check if the storage is empty.
     pub fn is_empty(&self) -> bool {
-        self.data.read().expect("mock storage lock poisoned").is_empty()
+        self.data
+            .read()
+            .expect("mock storage lock poisoned")
+            .is_empty()
     }
 
     /// Clear all stored objects.
     pub fn clear(&self) {
-        self.data.write().expect("mock storage lock poisoned").clear();
+        self.data
+            .write()
+            .expect("mock storage lock poisoned")
+            .clear();
     }
 
     fn path_to_key(&self, path: &Path) -> String {
@@ -106,7 +112,10 @@ impl Storage for MockStorage {
 
     fn exists(&self, path: &Path) -> bool {
         let key = self.path_to_key(path);
-        self.data.read().expect("mock storage lock poisoned").contains_key(&key)
+        self.data
+            .read()
+            .expect("mock storage lock poisoned")
+            .contains_key(&key)
     }
 
     fn size(&self, path: &Path) -> StorageResult<u64> {

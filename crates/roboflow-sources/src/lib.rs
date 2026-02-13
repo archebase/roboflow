@@ -41,7 +41,8 @@ pub fn register_builtin_sources() {
     register_source(
         "bag",
         Box::new(|| {
-            Box::new(BagSource::new("").expect("empty path is valid for placeholder")) as Box<dyn Source>
+            Box::new(BagSource::new("").expect("empty path is valid for placeholder"))
+                as Box<dyn Source>
         }),
     );
 
@@ -49,7 +50,8 @@ pub fn register_builtin_sources() {
     register_source(
         "mcap",
         Box::new(|| {
-            Box::new(McapSource::new("").expect("empty path is valid for placeholder")) as Box<dyn Source>
+            Box::new(McapSource::new("").expect("empty path is valid for placeholder"))
+                as Box<dyn Source>
         }),
     );
 
@@ -57,7 +59,8 @@ pub fn register_builtin_sources() {
     register_source(
         "rrd",
         Box::new(|| {
-            Box::new(RrdSource::new("").expect("empty path is valid for placeholder")) as Box<dyn Source>
+            Box::new(RrdSource::new("").expect("empty path is valid for placeholder"))
+                as Box<dyn Source>
         }),
     );
 
