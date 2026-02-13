@@ -207,4 +207,46 @@ mod tests {
         assert_eq!(msg.topic, "/test/topic");
         assert_eq!(msg.log_time, 1234567890);
     }
+
+    #[test]
+    fn test_timestamped_message_with_bytes() {
+        let msg = TimestampedMessage {
+            topic: "/camera/image".to_string(),
+            log_time: 9876543210,
+            data: CodecValue::Bytes(vec![0xFF, 0xD8, 0xFF, 0xE0]), // JPEG header
+        };
+
+        assert_eq!(msg.topic, "/camera/image");
+        assert_eq!(msg.log_time, 9876543210);
+        if let CodecValue::Bytes(data) = &msg.data {
+            assert_eq!(data.len(), 4);
+        } else {
+            panic!("Expected Bytes variant");
+        }
+    }
+
+    #[test]
+    fn test_timestamped_message_empty_data() {
+        // Test with empty bytes to verify message creation
+        let msg = TimestampedMessage {
+            topic: "/empty/topic".to_string(),
+            log_time: 0,
+            data: CodecValue::Bytes(vec![]),
+        };
+
+        assert_eq!(msg.topic, "/empty/topic");
+        assert_eq!(msg.log_time, 0);
+        if let CodecValue::Bytes(data) = &msg.data {
+            assert!(data.is_empty());
+        } else {
+            panic!("Expected Bytes variant");
+        }
+    }
+
+    #[test]
+    fn test_source_factory_type() {
+        // Test that SourceFactory is a valid type alias
+        fn _check_factory_type(_factory: SourceFactory) {}
+        // This compiles if the type alias is correct
+    }
 }

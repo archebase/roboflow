@@ -167,4 +167,98 @@ mod tests {
         let camera_topic = metadata.topic("/camera").unwrap();
         assert_eq!(camera_topic.message_type, "sensor_msgs/Image");
     }
+
+    #[test]
+    fn test_topic_metadata_with_md5sum() {
+        let topic = TopicMetadata::new("/camera".to_string(), "sensor_msgs/Image".to_string())
+            .with_md5sum("060021388200f6f0e4d60356d122abc".to_string());
+
+        assert_eq!(
+            topic.md5sum,
+            Some("060021388200f6f0e4d60356d122abc".to_string())
+        );
+    }
+
+    #[test]
+    fn test_source_metadata_serialization() {
+        let metadata = SourceMetadata::new("bag".to_string(), "test.bag".to_string())
+            .with_duration(1000, 2000)
+            .with_message_count(100);
+
+        let json = serde_json::to_string(&metadata).expect("Failed to serialize");
+        assert!(json.contains("bag"));
+        assert!(json.contains("test.bag"));
+
+        let decoded: SourceMetadata =
+            serde_json::from_str(&json).expect("Failed to deserialize");
+        assert_eq!(decoded.source_type, "bag");
+        assert_eq!(decoded.duration_ns, Some(1000));
+    }
+
+    #[test]
+    fn test_topic_metadata_serialization() {
+        let topic = TopicMetadata::new("/imu".to_string(), "sensor_msgs/Imu".to_string())
+            .with_frequency(100.0)
+            .with_message_count(10000);
+
+        let json = serde_json::to_string(&topic).expect("Failed to serialize");
+        assert!(json.contains("/imu"));
+        assert!(json.contains("sensor_msgs/Imu"));
+
+        let decoded: TopicMetadata = serde_json::from_str(&json).expect("Failed to deserialize");
+        assert_eq!(decoded.name, "/imu");
+        assert_eq!(decoded.frequency_hz, Some(100.0));
+    }
+
+    #[test]
+    fn test_source_metadata_additional_fields() {
+        let mut metadata = SourceMetadata::new("mcap".to_string(), "test.mcap".to_string());
+        metadata.metadata.insert(
+            "compression".to_string(),
+            serde_json::json!("zstd"),
+        );
+        metadata.metadata.insert("version".to_string(), serde_json::json!(2));
+
+        assert_eq!(metadata.metadata.len(), 2);
+        assert_eq!(
+            metadata.metadata.get("compression"),
+            Some(&serde_json::json!("zstd"))
+        );
+    }
+
+    #[test]
+    fn test_topic_metadata_additional_fields() {
+        let mut topic =
+            TopicMetadata::new("/joint_states".to_string(), "sensor_msgs/JointState".to_string());
+        topic.metadata.insert("joint_count".to_string(), serde_json::json!(7));
+        topic
+            .metadata
+            .insert("frame_id".to_string(), serde_json::json!("base_link"));
+
+        assert_eq!(topic.metadata.len(), 2);
+        assert_eq!(
+            topic.metadata.get("joint_count"),
+            Some(&serde_json::json!(7))
+        );
+    }
+
+    #[test]
+    fn test_empty_source_metadata() {
+        let metadata = SourceMetadata::new("mcap".to_string(), "empty.mcap".to_string());
+
+        assert!(metadata.duration_ns.is_none());
+        assert!(metadata.start_time_ns.is_none());
+        assert!(metadata.end_time_ns.is_none());
+        assert!(metadata.message_count.is_none());
+        assert!(metadata.topics.is_empty());
+        assert!(metadata.metadata.is_empty());
+    }
+
+    #[test]
+    fn test_topic_not_found() {
+        let metadata = SourceMetadata::new("mcap".to_string(), "test.mcap".to_string());
+
+        assert!(!metadata.has_topic("/nonexistent"));
+        assert!(metadata.topic("/nonexistent").is_none());
+    }
 }

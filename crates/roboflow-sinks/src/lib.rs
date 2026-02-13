@@ -304,6 +304,60 @@ mod tests {
     }
 
     #[test]
+    fn test_dataset_frame_with_images() {
+        let image = ImageData {
+            width: 640,
+            height: 480,
+            data: vec![0u8; 640 * 480 * 3],
+            format: ImageFormat::Rgb8,
+        };
+
+        let frame = DatasetFrame::new(0, 0, 0.0).with_image("camera_left", image);
+
+        assert_eq!(frame.images.len(), 1);
+        assert!(frame.images.contains_key("camera_left"));
+        let img = &frame.images["camera_left"];
+        assert_eq!(img.width, 640);
+        assert_eq!(img.height, 480);
+        assert_eq!(img.format, ImageFormat::Rgb8);
+    }
+
+    #[test]
+    fn test_dataset_frame_with_camera_info() {
+        let camera_info = CameraInfo {
+            camera_name: "left_camera".to_string(),
+            width: 640,
+            height: 480,
+            k: [500.0, 0.0, 320.0, 0.0, 500.0, 240.0, 0.0, 0.0, 1.0],
+            d: vec![0.1, 0.2, 0.0, 0.0, 0.0],
+            r: None,
+            p: None,
+            distortion_model: "plumb_bob".to_string(),
+        };
+
+        let frame = DatasetFrame::new(0, 0, 0.0)
+            .with_camera_info("left_camera", camera_info.clone());
+
+        assert_eq!(frame.camera_info.len(), 1);
+        let info = &frame.camera_info["left_camera"];
+        assert_eq!(info.width, 640);
+        assert_eq!(info.distortion_model, "plumb_bob");
+    }
+
+    #[test]
+    fn test_dataset_frame_with_task_index() {
+        let mut frame = DatasetFrame::new(5, 1, 1.5);
+        frame.task_index = Some(3);
+        frame.additional_data.insert("custom".to_string(), vec![1.0]);
+
+        assert_eq!(frame.frame_index, 5);
+        assert_eq!(frame.episode_index, 1);
+        assert_eq!(frame.timestamp, 1.5);
+        assert_eq!(frame.task_index, Some(3));
+        assert_eq!(frame.additional_data.get("custom"), Some(&vec![1.0]));
+    }
+
+    #[test]
     fn test_sink_stats() {
         let stats = SinkStats::new().with_metric("test_metric", serde_json::json!(42));
 
@@ -315,10 +369,178 @@ mod tests {
     }
 
     #[test]
+    fn test_sink_stats_default() {
+        let stats = SinkStats::default();
+        assert_eq!(stats.frames_written, 0);
+        assert_eq!(stats.episodes_written, 0);
+        assert_eq!(stats.duration_sec, 0.0);
+        assert!(stats.total_bytes.is_none());
+    }
+
+    #[test]
+    fn test_sink_stats_multiple_metrics() {
+        let stats = SinkStats::new()
+            .with_metric("frames_per_sec", serde_json::json!(30.0))
+            .with_metric("bytes_written", serde_json::json!(1024))
+            .with_metric("compression_ratio", serde_json::json!(0.85));
+
+        assert_eq!(stats.metrics.len(), 3);
+        assert_eq!(stats.metrics.get("frames_per_sec"), Some(&serde_json::json!(30.0)));
+        assert_eq!(stats.metrics.get("bytes_written"), Some(&serde_json::json!(1024)));
+    }
+
+    #[test]
     fn test_sink_checkpoint() {
         let checkpoint = SinkCheckpoint::new(10, 2);
 
         assert_eq!(checkpoint.last_frame_index, 10);
         assert_eq!(checkpoint.last_episode_index, 2);
+        assert!(checkpoint.data.is_empty());
+    }
+
+    #[test]
+    fn test_sink_checkpoint_timestamp() {
+        let before = chrono::Utc::now().timestamp();
+        let checkpoint = SinkCheckpoint::new(0, 0);
+        let after = chrono::Utc::now().timestamp();
+
+        assert!(checkpoint.checkpoint_time >= before);
+        assert!(checkpoint.checkpoint_time <= after);
+    }
+
+    #[test]
+    fn test_camera_info_fields() {
+        let info = CameraInfo {
+            camera_name: "test_cam".to_string(),
+            width: 1920,
+            height: 1080,
+            k: [1000.0, 0.0, 960.0, 0.0, 1000.0, 540.0, 0.0, 0.0, 1.0],
+            d: vec![0.1, 0.2, 0.01, 0.02, 0.0],
+            r: Some([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]),
+            p: Some([1000.0, 0.0, 960.0, 0.0, 0.0, 1000.0, 540.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+            distortion_model: "rational_polynomial".to_string(),
+        };
+
+        assert_eq!(info.width, 1920);
+        assert_eq!(info.height, 1080);
+        assert!(info.r.is_some());
+        assert!(info.p.is_some());
+        assert_eq!(info.d.len(), 5);
+    }
+
+    #[test]
+    fn test_image_data_jpeg() {
+        let image = ImageData {
+            width: 640,
+            height: 480,
+            data: vec![0xFF, 0xD8, 0xFF], // JPEG header bytes
+            format: ImageFormat::Jpeg,
+        };
+
+        assert_eq!(image.format, ImageFormat::Jpeg);
+        assert_eq!(image.data.len(), 3);
+    }
+
+    #[test]
+    fn test_dataset_frame_multiple_images() {
+        let img1 = ImageData {
+            width: 100, height: 100, data: vec![0u8; 30000], format: ImageFormat::Rgb8,
+        };
+        let img2 = ImageData {
+            width: 200, height: 150, data: vec![0u8; 90000], format: ImageFormat::Rgb8,
+        };
+
+        let frame = DatasetFrame::new(0, 0, 0.0)
+            .with_image("left", img1)
+            .with_image("right", img2);
+
+        assert_eq!(frame.images.len(), 2);
+        assert!(frame.images.contains_key("left"));
+        assert!(frame.images.contains_key("right"));
+    }
+
+    #[test]
+    fn test_camera_info_with_projection_matrix() {
+        // Test camera info with full P matrix (3x4 projection)
+        let info = CameraInfo {
+            camera_name: "stereo_left".to_string(),
+            width: 1280,
+            height: 720,
+            k: [1000.0, 0.0, 640.0, 0.0, 1000.0, 360.0, 0.0, 0.0, 1.0],
+            d: vec![0.0, 0.0, 0.0, 0.0, 0.0], // No distortion
+            r: Some([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]),
+            p: Some([
+                1000.0, 0.0, 640.0, -100.0, // Baseline offset for stereo
+                0.0, 1000.0, 360.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+            ]),
+            distortion_model: "plumb_bob".to_string(),
+        };
+
+        assert!(info.r.is_some());
+        assert!(info.p.is_some());
+        let p = info.p.unwrap();
+        assert_eq!(p.len(), 12); // 3x4 matrix
+        assert_eq!(p[3], -100.0); // Baseline offset
+    }
+
+    #[test]
+    fn test_sink_stats_serialization() {
+        let stats = SinkStats::new()
+            .with_metric("frames_per_sec", serde_json::json!(30.5))
+            .with_metric("total_time", serde_json::json!(10.0));
+
+        // Test serialization
+        let json = serde_json::to_string(&stats).expect("Failed to serialize");
+        assert!(json.contains("frames_written"));
+        assert!(json.contains("frames_per_sec"));
+
+        // Test deserialization
+        let decoded: SinkStats = serde_json::from_str(&json).expect("Failed to deserialize");
+        assert_eq!(decoded.frames_written, 0);
+        assert_eq!(decoded.metrics.len(), 2);
+    }
+
+    #[test]
+    fn test_sink_checkpoint_with_data() {
+        let mut checkpoint = SinkCheckpoint::new(100, 5);
+        checkpoint.data.insert("last_camera".to_string(), serde_json::json!("left"));
+        checkpoint.data.insert("pending_uploads".to_string(), serde_json::json!(3));
+
+        assert_eq!(checkpoint.last_frame_index, 100);
+        assert_eq!(checkpoint.last_episode_index, 5);
+        assert_eq!(checkpoint.data.len(), 2);
+        assert_eq!(
+            checkpoint.data.get("last_camera"),
+            Some(&serde_json::json!("left"))
+        );
+        assert_eq!(
+            checkpoint.data.get("pending_uploads"),
+            Some(&serde_json::json!(3))
+        );
+    }
+
+    #[test]
+    fn test_dataset_frame_builder_chain() {
+        // Test that builder methods can be chained
+        let frame = DatasetFrame::new(10, 2, 1.5)
+            .with_observation_state(vec![0.0, 1.0, 2.0])
+            .with_action(vec![0.5, -0.5])
+            .with_camera_info("cam", CameraInfo {
+                camera_name: "cam".to_string(),
+                width: 640,
+                height: 480,
+                k: [1.0; 9],
+                d: vec![],
+                r: None,
+                p: None,
+                distortion_model: "none".to_string(),
+            });
+
+        assert_eq!(frame.frame_index, 10);
+        assert_eq!(frame.episode_index, 2);
+        assert_eq!(frame.timestamp, 1.5);
+        assert!(frame.observation_state.is_some());
+        assert!(frame.action.is_some());
+        assert!(frame.camera_info.contains_key("cam"));
     }
 }

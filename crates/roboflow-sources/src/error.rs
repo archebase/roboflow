@@ -72,4 +72,51 @@ mod tests {
         let err = SourceError::SeekNotSupported;
         assert!(err.to_string().contains("not supported"));
     }
+
+    #[test]
+    fn test_unsupported_format_error() {
+        let err = SourceError::UnsupportedFormat("xyz".to_string());
+        assert!(err.to_string().contains("Unsupported source format"));
+        assert!(err.to_string().contains("xyz"));
+    }
+
+    #[test]
+    fn test_invalid_config_error() {
+        let err = SourceError::InvalidConfig("missing path".to_string());
+        assert!(err.to_string().contains("Invalid configuration"));
+        assert!(err.to_string().contains("missing path"));
+    }
+
+    #[test]
+    fn test_topic_not_found_error() {
+        let err = SourceError::TopicNotFound("/camera/left".to_string());
+        assert!(err.to_string().contains("/camera/left"));
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_decode_failed_error() {
+        let err = SourceError::DecodeFailed("invalid CDR".to_string());
+        assert!(err.to_string().contains("Failed to decode"));
+        assert!(err.to_string().contains("invalid CDR"));
+    }
+
+    #[test]
+    fn test_storage_error() {
+        let err = SourceError::Storage("S3 access denied".to_string());
+        assert!(err.to_string().contains("Storage error"));
+        assert!(err.to_string().contains("S3 access denied"));
+    }
+
+    #[test]
+    fn test_end_of_stream_error() {
+        let err = SourceError::EndOfStream;
+        assert!(err.to_string().contains("End of stream"));
+    }
+
+    #[test]
+    fn test_clone_not_supported_error() {
+        let err = SourceError::CloneNotSupported;
+        assert!(err.to_string().contains("Clone operation not supported"));
+    }
 }
