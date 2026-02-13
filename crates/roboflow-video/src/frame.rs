@@ -271,6 +271,37 @@ mod tests {
     }
 
     #[test]
+    fn test_video_frame_expected_size() {
+        let frame = VideoFrame::new(640, 480, vec![]);
+        assert_eq!(frame.expected_size(), 640 * 480 * 3);
+    }
+
+    #[test]
+    fn test_video_frame_from_jpeg() {
+        // Valid JPEG magic bytes: FF D8 FF
+        let jpeg_data = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+        let frame = VideoFrame::from_jpeg(640, 480, jpeg_data.clone());
+        assert!(frame.validate().is_ok());
+        assert!(frame.is_jpeg);
+        assert_eq!(frame.data, jpeg_data);
+        assert_eq!(frame.expected_size(), jpeg_data.len());
+    }
+
+    #[test]
+    fn test_video_frame_invalid_jpeg_too_short() {
+        let jpeg_data = vec![0xFF, 0xD8]; // Only 2 bytes
+        let frame = VideoFrame::from_jpeg(640, 480, jpeg_data);
+        assert!(frame.validate().is_err());
+    }
+
+    #[test]
+    fn test_video_frame_invalid_jpeg_magic() {
+        let jpeg_data = vec![0x00, 0x00, 0x00, 0x00]; // Wrong magic bytes
+        let frame = VideoFrame::from_jpeg(640, 480, jpeg_data);
+        assert!(frame.validate().is_err());
+    }
+
+    #[test]
     fn test_frame_buffer_add_frame() {
         let mut buffer = VideoFrameBuffer::new();
 
@@ -295,5 +326,72 @@ mod tests {
         buffer.clear();
         assert_eq!(buffer.len(), 0);
         assert_eq!(buffer.dimensions(), None);
+    }
+
+    #[test]
+    fn test_frame_buffer_is_empty() {
+        let buffer = VideoFrameBuffer::new();
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_frame_buffer_multiple_same_size() {
+        let mut buffer = VideoFrameBuffer::new();
+        let size = 100 * 100 * 3;
+
+        for _ in 0..10 {
+            assert!(buffer.add_frame(VideoFrame::new(100, 100, vec![0u8; size])).is_ok());
+        }
+        assert_eq!(buffer.len(), 10);
+        assert_eq!(buffer.dimensions(), Some((100, 100)));
+    }
+
+    #[test]
+    fn test_depth_frame_validate() {
+        let frame = DepthFrame::new(2, 2, vec![0u8; 8]); // 2*2*2 = 8
+        assert!(frame.validate().is_ok());
+
+        let invalid_frame = DepthFrame::new(2, 2, vec![0u8; 6]);
+        assert!(invalid_frame.validate().is_err());
+    }
+
+    #[test]
+    fn test_depth_frame_expected_size() {
+        let frame = DepthFrame::new(640, 480, vec![]);
+        assert_eq!(frame.expected_size(), 640 * 480 * 2);
+    }
+
+    #[test]
+    fn test_depth_frame_buffer() {
+        let mut buffer = DepthFrameBuffer::new();
+        assert!(buffer.is_empty());
+
+        let frame = DepthFrame::new(100, 100, vec![0u8; 100 * 100 * 2]);
+        assert!(buffer.add_frame(frame).is_ok());
+        assert_eq!(buffer.len(), 1);
+        assert_eq!(buffer.dimensions(), Some((100, 100)));
+    }
+
+    #[test]
+    fn test_depth_frame_buffer_inconsistent_size() {
+        let mut buffer = DepthFrameBuffer::new();
+
+        let frame1 = DepthFrame::new(100, 100, vec![0u8; 100 * 100 * 2]);
+        assert!(buffer.add_frame(frame1).is_ok());
+
+        let frame2 = DepthFrame::new(200, 200, vec![0u8; 200 * 200 * 2]);
+        assert!(buffer.add_frame(frame2).is_err());
+    }
+
+    #[test]
+    fn test_video_frame_write_ppm() {
+        let frame = VideoFrame::new(2, 2, vec![255u8; 12]);
+        let mut output = Vec::new();
+        assert!(frame.write_ppm(&mut output).is_ok());
+
+        // PPM format: P6 header, dimensions, max value, then binary data
+        // Header is ASCII, data is binary
+        assert!(output.starts_with(b"P6\n"));
+        assert!(output.len() > 12); // Has header + data
     }
 }
