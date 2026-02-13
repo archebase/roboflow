@@ -83,7 +83,7 @@ impl TaskExecutor {
     ) -> Self {
         Self {
             config_cache: Arc::new(Mutex::new(LruCache::new(
-                std::num::NonZeroUsize::new(100).unwrap(),
+                std::num::NonZeroUsize::new(100).expect("100 is always a valid non-zero usize"),
             ))),
             tikv,
             job_registry,

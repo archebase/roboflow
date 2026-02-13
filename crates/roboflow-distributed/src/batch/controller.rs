@@ -661,12 +661,12 @@ impl BatchController {
             )
             .await?;
 
-        if result.is_none() {
+        let Some(data) = result else {
             return Ok(None);
-        }
+        };
 
         // Deserialize the claimed work unit
-        let unit: WorkUnit = deserialize(&result.unwrap())
+        let unit: WorkUnit = deserialize(&data)
             .map_err(|e| TikvError::Deserialization(format!("work unit: {}", e)))?;
 
         tracing::debug!(
