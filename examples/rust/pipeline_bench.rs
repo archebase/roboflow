@@ -84,7 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state_channel = "/kuavo_arm_traj";
     let action_channel = "/joint_cmd";
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Read and process messages
     println!("Processing messages...");

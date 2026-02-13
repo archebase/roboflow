@@ -31,6 +31,9 @@ serde_yaml_ng = "0.10"
 # Datetime
 chrono = { workspace = true }
 
+# Async traits
+async-trait = { workspace = true }
+
 # Error handling
 thiserror = "1.0"
 

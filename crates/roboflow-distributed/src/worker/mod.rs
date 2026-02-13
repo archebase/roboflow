@@ -25,7 +25,7 @@ pub use config::{
     DEFAULT_MAX_CONCURRENT_JOBS, DEFAULT_POLL_INTERVAL_SECS, WorkerConfig,
 };
 pub use coordinator::{Coordinator, send_heartbeat_inner};
-pub use executor::{ExecutionResult, TaskExecutor};
+pub use executor::{DEFAULT_EPISODES_PER_CHUNK, ExecutionResult, TaskExecutor};
 pub use metrics::{ProcessingResult, WorkerMetrics, WorkerMetricsSnapshot};
 pub use registry::JobRegistry;
 
@@ -38,6 +38,8 @@ use lru::LruCache;
 
 // Dataset conversion imports
 use roboflow_dataset::lerobot::LerobotConfig;
+
+use crate::episode::EpisodeAllocator;
 
 /// Default cancellation check interval in seconds.
 pub const DEFAULT_CANCELLATION_CHECK_INTERVAL_SECS: u64 = 5;
@@ -78,6 +80,80 @@ impl Worker {
             job_registry,
             config.output_prefix.clone(),
             config.job_timeout,
+        );
+
+        // Create config cache for backward compatibility
+        let config_cache = Arc::new(Mutex::new(LruCache::new(
+            std::num::NonZeroUsize::new(100).expect("100 is always non-zero"),
+        )));
+
+        Ok(Self {
+            coordinator,
+            executor,
+            cancellation_token,
+            config_cache,
+        })
+    }
+
+    /// Create a worker with episode allocation for distributed processing.
+    ///
+    /// This enables:
+    /// - Centralized episode index allocation via TiKV
+    /// - Automatic chunk index calculation
+    /// - LeRobot v2.1 compliant output structure
+    ///
+    /// # Arguments
+    ///
+    /// * `pod_id` - Unique identifier for this worker instance
+    /// * `tikv` - TiKV client for coordination
+    /// * `config` - Worker configuration
+    /// * `episode_allocator` - Episode allocator (e.g., TiKVEpisodeAllocator)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use roboflow_distributed::{
+    ///     Worker, WorkerConfig, TiKVEpisodeAllocator,
+    /// };
+    ///
+    /// let config = WorkerConfig::new()
+    ///     .with_output_prefix("s3://bucket/dataset")
+    ///     .with_episodes_per_chunk(500);
+    ///
+    /// let allocator = Arc::new(TiKVEpisodeAllocator::new(
+    ///     tikv_client,
+    ///     "batch-001".to_string(),
+    ///     500,
+    /// ));
+    ///
+    /// let worker = Worker::with_episode_allocator(
+    ///     "worker-1",
+    ///     tikv_client,
+    ///     config,
+    ///     allocator,
+    /// )?;
+    /// ```
+    pub fn with_episode_allocator(
+        pod_id: impl Into<String>,
+        tikv: Arc<TikvClient>,
+        config: WorkerConfig,
+        episode_allocator: Arc<dyn EpisodeAllocator>,
+    ) -> Result<Self, TikvError> {
+        let pod_id = pod_id.into();
+        let cancellation_token = Arc::new(tokio_util::sync::CancellationToken::new());
+        let job_registry = Arc::new(RwLock::new(JobRegistry::default()));
+
+        // Create coordinator
+        let coordinator = Coordinator::new(pod_id.clone(), tikv.clone(), config.clone())?;
+
+        // Create executor with episode allocator
+        let executor = TaskExecutor::with_episode_allocator(
+            tikv,
+            job_registry,
+            config.output_prefix.clone(),
+            config.job_timeout,
+            episode_allocator,
+            config.episodes_per_chunk,
         );
 
         // Create config cache for backward compatibility

@@ -57,7 +57,7 @@ fn test_lerobot_writer_basic_flow() {
     let img_data = ImageData::new(64, 48, vec![128u8; 64 * 48 * 3]);
 
     // Write a test episode
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
     writer.add_image("observation.images.camera_0".to_string(), img_data);
     writer.finish_episode(Some(0)).unwrap();
 

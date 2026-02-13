@@ -63,7 +63,7 @@ fn test_lerobot_end_to_end_conversion() {
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
     // Write a simple episode
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add some images
     writer.add_image(
@@ -103,11 +103,11 @@ fn test_lerobot_episode_segmentation() {
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
     // First episode with task_index = 0
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
 
     // Second episode with task_index = 1
-    writer.start_episode(Some(1));
+    let _ = writer.start_episode(Some(1));
     writer.finish_episode(Some(1)).unwrap();
 
     let stats = writer.finalize_with_config().unwrap();
@@ -127,7 +127,7 @@ fn test_lerobot_multi_camera() {
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add images for multiple cameras
     writer.add_image(
@@ -163,7 +163,7 @@ fn test_lerobot_empty_dataset() {
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
     // Start and finish episode without any frames
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
 
     let stats = writer.finalize_with_config().unwrap();
@@ -204,7 +204,7 @@ fn test_lerobot_writer_state() {
     assert_eq!(writer.frame_count(), 0);
 
     // Start and finish an episode
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
 
     // Finalize
@@ -223,7 +223,7 @@ fn test_lerobot_image_buffer() {
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add images for different cameras
     writer.add_image(
@@ -255,7 +255,7 @@ fn test_lerobot_metadata() {
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add some images
     writer.add_image(
@@ -286,7 +286,7 @@ fn test_lerobot_video_codec_config() {
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     writer.add_image(
         "observation.images.camera_0".to_string(),
@@ -310,7 +310,7 @@ fn test_lerobot_ffmpeg_missing_graceful() {
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add images
     for _ in 0..3 {
@@ -347,7 +347,7 @@ fn test_lerobot_timestamps() {
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add images with different timestamps
     writer.add_image(

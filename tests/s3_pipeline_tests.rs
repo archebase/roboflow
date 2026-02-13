@@ -70,7 +70,7 @@ fn test_incremental_flushing_small_chunks() {
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add 15 frames with images (should trigger 3 flushes: 0-4, 5-9, 10-14)
     for i in 0..15 {
@@ -120,7 +120,7 @@ fn test_incremental_flushing_memory_based() {
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add large images that will exceed the memory limit
     // Each image: 320x240x3 = 230KB
@@ -167,7 +167,7 @@ fn test_multi_chunk_episode() {
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add 25 frames (should create 3 chunks: 10 + 10 + 5)
     for i in 0..25 {
@@ -361,7 +361,7 @@ fn test_e2e_pipeline_local_storage() {
 
     let mut writer = LerobotWriter::new_local(&target_dir, config.clone()).unwrap();
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Simulate decoding and adding frames
     for i in 0..10 {
@@ -448,7 +448,7 @@ fn test_large_episode_incremental_flush() {
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Simulate a large episode (500 frames)
     // This would use ~2.7GB at 640x480 RGB without flushing
@@ -498,7 +498,7 @@ fn test_multi_camera_mid_frame_flush_prevention() {
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add 10 frames, each with 3 cameras
     // This will trigger multiple flushes during processing
@@ -568,7 +568,7 @@ fn test_multi_camera_incremental_flush_data_preservation() {
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     let num_frames = 15;
     let num_cameras = 4;
@@ -643,7 +643,7 @@ fn test_multi_camera_memory_based_flushing() {
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add large images that will trigger memory-based flushing
     // Each image: 160x120x3 = 57,600 bytes
@@ -711,7 +711,7 @@ fn test_exact_frame_count_after_incremental_flush() {
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     let expected_frames = 25;
     let expected_cameras = 2;
@@ -782,7 +782,7 @@ fn test_flush_timing_between_frames_not_mid_frame() {
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Track how many unique patterns we see per camera
     let mut seen_patterns: std::collections::HashMap<String, std::collections::HashSet<u8>> =
@@ -861,7 +861,7 @@ fn test_single_camera_incremental_flush() {
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Single camera should work correctly too
     for frame_idx in 0..20 {
@@ -918,7 +918,7 @@ fn test_no_data_loss_with_many_small_flushes() {
     };
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     let num_frames = 50;
     let num_cameras = 5;

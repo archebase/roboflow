@@ -71,7 +71,7 @@ fn test_video_encoding_accepts_compressed_images() {
     let mut writer =
         LerobotWriter::new_local(output_dir.path(), config).expect("Failed to create writer");
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Create compressed JPEG images (with proper header to simulate compressed data)
     let width = 64u32;
@@ -142,7 +142,7 @@ fn test_video_encoding_raw_images() {
     let mut writer =
         LerobotWriter::new_local(output_dir.path(), config).expect("Failed to create writer");
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     let width = 64u32;
     let height = 48u32;
@@ -218,7 +218,7 @@ fn test_video_encoding_mixed_images() {
     let mut writer =
         LerobotWriter::new_local(output_dir.path(), config).expect("Failed to create writer");
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     let width = 64u32;
     let height = 48u32;

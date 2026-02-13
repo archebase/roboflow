@@ -79,6 +79,13 @@ pub struct WorkerConfig {
     /// After merge completes, the final dataset will be at:
     /// `{output_storage_url}/{merge_output_path}/`
     pub merge_output_path: String,
+
+    /// Number of episodes per chunk for LeRobot v2.1 format.
+    ///
+    /// Default is 500 (LeRobot v2.1 spec).
+    /// When episode allocation is enabled, each work unit gets a unique episode index,
+    /// and chunk directories are automatically created based on this value.
+    pub episodes_per_chunk: u32,
 }
 
 impl Default for WorkerConfig {
@@ -96,6 +103,7 @@ impl Default for WorkerConfig {
             output_storage_url: None,
             expected_workers: 1,
             merge_output_path: String::from("datasets/merged"),
+            episodes_per_chunk: super::executor::DEFAULT_EPISODES_PER_CHUNK,
         }
     }
 }
@@ -166,6 +174,15 @@ impl WorkerConfig {
     /// Enable or disable async checkpointing.
     pub fn with_checkpoint_async(mut self, async_mode: bool) -> Self {
         self.checkpoint_async = async_mode;
+        self
+    }
+
+    /// Set the episodes per chunk for LeRobot v2.1 format.
+    ///
+    /// Default is 500. This setting is used when episode allocation is enabled
+    /// to determine which chunk directory each episode belongs to.
+    pub fn with_episodes_per_chunk(mut self, episodes: u32) -> Self {
+        self.episodes_per_chunk = episodes;
         self
     }
 }
@@ -286,5 +303,15 @@ mod tests {
             .with_checkpoint_interval_seconds(0);
 
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_worker_config_episodes_per_chunk() {
+        let config = WorkerConfig::new().with_episodes_per_chunk(250);
+        assert_eq!(config.episodes_per_chunk, 250);
+
+        // Default should be 500
+        let default_config = WorkerConfig::default();
+        assert_eq!(default_config.episodes_per_chunk, 500);
     }
 }

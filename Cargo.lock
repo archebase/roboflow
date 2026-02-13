@@ -4121,6 +4121,7 @@ dependencies = [
 name = "roboflow-distributed"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
  "bincode",
  "chrono",
  "fastrand",

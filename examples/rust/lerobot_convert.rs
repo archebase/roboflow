@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // The segment boundaries are given by mark.start_position and mark.end_position
 
             // For demonstration, create a placeholder episode
-            writer.start_episode(Some(i));
+            let _ = writer.start_episode(Some(i));
 
             // In production, you would:
             // 1. Seek to mark.start_position in the bag
@@ -88,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("No annotations provided, treating entire bag as one episode");
 
         // Process entire bag as one episode
-        writer.start_episode(None);
+        let _ = writer.start_episode(None);
         // TODO: Extract all data from bag
         writer.finish_episode(None)?;
     }

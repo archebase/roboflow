@@ -205,8 +205,12 @@ pub enum WorkerStatus {
 /// including mid-multipart uploads. Essential for Spot Instance tolerance.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CheckpointState {
-    /// Job ID being processed.
+    /// Job ID being processed (typically file hash or source identifier).
     pub job_id: String,
+
+    /// Batch ID this checkpoint belongs to (for distributed processing).
+    #[serde(default)]
+    pub batch_id: String,
 
     /// Processing pod ID.
     pub pod_id: String,
@@ -217,8 +221,16 @@ pub struct CheckpointState {
     /// Last successfully processed frame index.
     pub last_frame: u64,
 
-    /// Current episode index.
+    /// Current episode index (global across the batch).
     pub episode_idx: u64,
+
+    /// Current chunk index (computed as episode_idx / episodes_per_chunk).
+    #[serde(default)]
+    pub chunk_idx: u32,
+
+    /// Number of episodes per chunk configuration.
+    #[serde(default = "default_episodes_per_chunk")]
+    pub episodes_per_chunk: u32,
 
     /// Total frames in the file.
     pub total_frames: u64,
@@ -234,6 +246,10 @@ pub struct CheckpointState {
 
     /// Processing state version.
     pub version: u64,
+}
+
+fn default_episodes_per_chunk() -> u32 {
+    500
 }
 
 /// State for a single video's multipart upload.
@@ -287,10 +303,38 @@ impl CheckpointState {
     pub fn new(job_id: String, pod_id: String, total_frames: u64) -> Self {
         Self {
             job_id,
+            batch_id: String::new(),
             pod_id,
             byte_offset: 0,
             last_frame: 0,
             episode_idx: 0,
+            chunk_idx: 0,
+            episodes_per_chunk: default_episodes_per_chunk(),
+            total_frames,
+            video_uploads: Vec::new(),
+            parquet_upload: None,
+            updated_at: Utc::now(),
+            version: 1,
+        }
+    }
+
+    /// Create checkpoint with batch context for distributed processing.
+    pub fn with_batch(
+        job_id: String,
+        batch_id: String,
+        pod_id: String,
+        total_frames: u64,
+        episodes_per_chunk: u32,
+    ) -> Self {
+        Self {
+            job_id,
+            batch_id,
+            pod_id,
+            byte_offset: 0,
+            last_frame: 0,
+            episode_idx: 0,
+            chunk_idx: 0,
+            episodes_per_chunk,
             total_frames,
             video_uploads: Vec::new(),
             parquet_upload: None,
@@ -318,10 +362,49 @@ impl CheckpointState {
 
         Self {
             job_id,
+            batch_id: String::new(),
             pod_id,
             byte_offset: 0,
             last_frame: 0,
             episode_idx: 0,
+            chunk_idx: 0,
+            episodes_per_chunk: default_episodes_per_chunk(),
+            total_frames,
+            video_uploads,
+            parquet_upload: None,
+            updated_at: Utc::now(),
+            version: 1,
+        }
+    }
+
+    /// Create checkpoint with batch and video tracking for distributed processing.
+    pub fn with_batch_and_videos(
+        job_id: String,
+        batch_id: String,
+        pod_id: String,
+        total_frames: u64,
+        episodes_per_chunk: u32,
+        camera_ids: Vec<String>,
+    ) -> Self {
+        let video_uploads = camera_ids
+            .into_iter()
+            .map(|camera_id| VideoUploadState {
+                camera_id,
+                upload_id: String::new(),
+                parts: Vec::new(),
+                last_keyframe_offset: 0,
+            })
+            .collect();
+
+        Self {
+            job_id,
+            batch_id,
+            pod_id,
+            byte_offset: 0,
+            last_frame: 0,
+            episode_idx: 0,
+            chunk_idx: 0,
+            episodes_per_chunk,
             total_frames,
             video_uploads,
             parquet_upload: None,
@@ -346,10 +429,40 @@ impl CheckpointState {
     }
 
     /// Update episode index.
+    ///
+    /// Also automatically updates `chunk_idx` based on the formula:
+    /// `chunk_idx = episode_idx / episodes_per_chunk`
     pub fn update_episode(&mut self, episode: u64) {
         self.episode_idx = episode;
+        self.chunk_idx = (episode / self.episodes_per_chunk as u64) as u32;
         self.updated_at = Utc::now();
         self.version += 1;
+    }
+
+    /// Set distributed processing fields at once.
+    ///
+    /// This is used when recovering a checkpoint or initializing
+    /// distributed processing context.
+    pub fn set_distributed_context(
+        &mut self,
+        batch_id: String,
+        episode_index: u64,
+        episodes_per_chunk: u32,
+    ) {
+        self.batch_id = batch_id;
+        self.episode_idx = episode_index;
+        self.episodes_per_chunk = episodes_per_chunk;
+        self.chunk_idx = (episode_index / episodes_per_chunk as u64) as u32;
+        self.updated_at = Utc::now();
+        self.version += 1;
+    }
+
+    /// Validate that a recovered checkpoint's episode index is consistent.
+    ///
+    /// Returns true if the chunk_idx matches the expected calculation.
+    pub fn validate_episode_consistency(&self) -> bool {
+        let expected_chunk = (self.episode_idx / self.episodes_per_chunk as u64) as u32;
+        self.chunk_idx == expected_chunk
     }
 
     /// Get or create video upload state for a camera.
@@ -601,5 +714,114 @@ mod tests {
         let json = serde_json::to_string(&checkpoint).unwrap();
         let json_decoded: CheckpointState = serde_json::from_str(&json).unwrap();
         assert_eq!(checkpoint, json_decoded);
+    }
+
+    #[test]
+    fn test_checkpoint_with_batch() {
+        let checkpoint = CheckpointState::with_batch(
+            "job-1".to_string(),
+            "batch-42".to_string(),
+            "pod-1".to_string(),
+            1000,
+            500,
+        );
+
+        assert_eq!(checkpoint.batch_id, "batch-42");
+        assert_eq!(checkpoint.episodes_per_chunk, 500);
+        assert_eq!(checkpoint.episode_idx, 0);
+        assert_eq!(checkpoint.chunk_idx, 0);
+    }
+
+    #[test]
+    fn test_checkpoint_with_batch_and_videos() {
+        let checkpoint = CheckpointState::with_batch_and_videos(
+            "job-1".to_string(),
+            "batch-42".to_string(),
+            "pod-1".to_string(),
+            1000,
+            500,
+            vec!["cam_left".to_string(), "cam_right".to_string()],
+        );
+
+        assert_eq!(checkpoint.batch_id, "batch-42");
+        assert_eq!(checkpoint.episodes_per_chunk, 500);
+        assert_eq!(checkpoint.video_uploads.len(), 2);
+    }
+
+    #[test]
+    fn test_update_episode_updates_chunk() {
+        let mut checkpoint = CheckpointState::new("job-1".to_string(), "pod-1".to_string(), 1000);
+        checkpoint.episodes_per_chunk = 500;
+
+        // Episode 0 should be in chunk 0
+        checkpoint.update_episode(0);
+        assert_eq!(checkpoint.chunk_idx, 0);
+
+        // Episode 499 should be in chunk 0
+        checkpoint.update_episode(499);
+        assert_eq!(checkpoint.chunk_idx, 0);
+
+        // Episode 500 should be in chunk 1
+        checkpoint.update_episode(500);
+        assert_eq!(checkpoint.chunk_idx, 1);
+
+        // Episode 999 should be in chunk 1
+        checkpoint.update_episode(999);
+        assert_eq!(checkpoint.chunk_idx, 1);
+
+        // Episode 1000 should be in chunk 2
+        checkpoint.update_episode(1000);
+        assert_eq!(checkpoint.chunk_idx, 2);
+    }
+
+    #[test]
+    fn test_set_distributed_context() {
+        let mut checkpoint = CheckpointState::new("job-1".to_string(), "pod-1".to_string(), 1000);
+
+        checkpoint.set_distributed_context("batch-99".to_string(), 1234, 500);
+
+        assert_eq!(checkpoint.batch_id, "batch-99");
+        assert_eq!(checkpoint.episode_idx, 1234);
+        assert_eq!(checkpoint.episodes_per_chunk, 500);
+        assert_eq!(checkpoint.chunk_idx, 2); // 1234 / 500 = 2
+    }
+
+    #[test]
+    fn test_validate_episode_consistency() {
+        let mut checkpoint = CheckpointState::new("job-1".to_string(), "pod-1".to_string(), 1000);
+        checkpoint.episodes_per_chunk = 500;
+
+        // Consistent state
+        checkpoint.episode_idx = 750;
+        checkpoint.chunk_idx = 1; // 750 / 500 = 1
+        assert!(checkpoint.validate_episode_consistency());
+
+        // Inconsistent state
+        checkpoint.episode_idx = 750;
+        checkpoint.chunk_idx = 0; // Should be 1
+        assert!(!checkpoint.validate_episode_consistency());
+    }
+
+    #[test]
+    fn test_backward_compatibility_deserialization() {
+        // Old checkpoint without new fields (simulated with JSON defaults)
+        let old_json = r#"{
+            "job_id": "job-1",
+            "pod_id": "pod-1",
+            "byte_offset": 5000,
+            "last_frame": 50,
+            "episode_idx": 0,
+            "total_frames": 100,
+            "video_uploads": [],
+            "parquet_upload": null,
+            "updated_at": "2024-01-01T00:00:00Z",
+            "version": 1
+        }"#;
+
+        let checkpoint: CheckpointState = serde_json::from_str(old_json).unwrap();
+        assert_eq!(checkpoint.job_id, "job-1");
+        assert_eq!(checkpoint.batch_id, ""); // Should default to empty
+        assert_eq!(checkpoint.chunk_idx, 0); // Should default to 0
+        assert_eq!(checkpoint.episodes_per_chunk, 500); // Should use default function
     }
 }

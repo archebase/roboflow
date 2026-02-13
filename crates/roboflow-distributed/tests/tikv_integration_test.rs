@@ -526,10 +526,13 @@ mod tests {
             let frames_written = i * 10;
             let checkpoint = CheckpointState {
                 job_id: job_id.clone(),
+                batch_id: String::new(),
                 pod_id: pod_id.to_string(),
                 byte_offset: frames_written * 100,
                 last_frame: frames_written,
                 episode_idx: 0,
+                chunk_idx: 0,
+                episodes_per_chunk: 500,
                 total_frames,
                 video_uploads: Vec::new(),
                 parquet_upload: None,
@@ -879,10 +882,13 @@ mod tests {
             let handle = tokio::spawn(async move {
                 let checkpoint = CheckpointState {
                     job_id: job_id_clone,
+                    batch_id: String::new(),
                     pod_id: format!("pod-{}", i),
                     byte_offset: i * 1000,
                     last_frame: i * 100,
                     episode_idx: i,
+                    chunk_idx: (i / 500) as u32,
+                    episodes_per_chunk: 500,
                     total_frames: 1000,
                     video_uploads: Vec::new(),
                     parquet_upload: None,

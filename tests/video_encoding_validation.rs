@@ -189,7 +189,7 @@ fn test_video_encoding_with_ffprobe_validation() {
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone())
         .expect("Failed to create writer");
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     let width = 320u32;
     let height = 240u32;
@@ -300,7 +300,7 @@ fn test_multi_camera_video_encoding() {
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone())
         .expect("Failed to create writer");
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     let width = 160u32;
     let height = 120u32;
@@ -446,7 +446,7 @@ fn test_various_video_resolutions() {
         let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone())
             .expect("Failed to create writer");
 
-        writer.start_episode(Some(0));
+        let _ = writer.start_episode(Some(0));
 
         // Add a few frames
         for i in 0..5 {
@@ -548,7 +548,7 @@ fn test_dimension_mismatch_handled_gracefully() {
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone())
         .expect("Failed to create writer");
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add frames with consistent dimensions first
     for i in 0..3 {
@@ -659,7 +659,7 @@ fn test_high_frame_count_encoding() {
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone())
         .expect("Failed to create writer");
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     let width = 320u32;
     let height = 240u32;

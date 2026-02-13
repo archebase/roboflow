@@ -30,6 +30,10 @@ use super::encoding::{EncodeStats, encode_videos};
 use super::frame::LerobotFrame;
 use super::stats;
 
+/// Default episodes per chunk for LeRobot v2.1 format.
+/// This matches LeRobot's default of 500 episodes per chunk.
+pub const DEFAULT_EPISODES_PER_CHUNK: u32 = 500;
+
 /// LeRobot v2.1 dataset writer.
 pub struct LerobotWriter {
     /// Storage backend for writing data
@@ -49,6 +53,11 @@ pub struct LerobotWriter {
 
     /// Current episode index
     episode_index: usize,
+
+    /// Number of episodes per chunk for LeRobot v2.1 format.
+    /// Episodes 0 to episodes_per_chunk-1 go to chunk-000,
+    /// episodes episodes_per_chunk to 2*episodes_per_chunk-1 go to chunk-001, etc.
+    episodes_per_chunk: u32,
 
     /// Frame data for current episode
     frame_data: Vec<LerobotFrame>,
@@ -172,6 +181,7 @@ impl LerobotWriter {
             output_dir: output_dir.to_path_buf(),
             config,
             episode_index: 0,
+            episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
             image_buffers: HashMap::new(),
             metadata: MetadataCollector::new(),
@@ -331,6 +341,7 @@ impl LerobotWriter {
             output_dir: local_buffer.to_path_buf(),
             config,
             episode_index: 0,
+            episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
             image_buffers: HashMap::new(),
             metadata: MetadataCollector::new(),
@@ -356,6 +367,81 @@ impl LerobotWriter {
             has_upload_coordinator = self.upload_coordinator.is_some(),
             "LerobotWriter upload state"
         );
+    }
+
+    /// Calculate the chunk index for the current episode.
+    ///
+    /// Uses `episode_index / episodes_per_chunk` to determine which chunk
+    /// the current episode belongs to.
+    #[inline]
+    fn chunk_index(&self) -> u32 {
+        (self.episode_index / self.episodes_per_chunk as usize) as u32
+    }
+
+    /// Get the chunk directory name (e.g., "chunk-000", "chunk-001").
+    #[inline]
+    fn chunk_dir_name(&self) -> String {
+        format!("chunk-{:03}", self.chunk_index())
+    }
+
+    /// Get the data directory path for the current chunk.
+    ///
+    /// Returns path like: `{output_dir}/data/chunk-000`
+    fn data_chunk_dir(&self) -> PathBuf {
+        self.output_dir.join("data").join(self.chunk_dir_name())
+    }
+
+    /// Get the videos directory path for the current chunk.
+    ///
+    /// Returns path like: `{output_dir}/videos/chunk-000`
+    fn videos_chunk_dir(&self) -> PathBuf {
+        self.output_dir.join("videos").join(self.chunk_dir_name())
+    }
+
+    /// Get the parquet file path for the current episode.
+    ///
+    /// Returns path like: `{output_dir}/data/chunk-000/episode_000000.parquet`
+    fn parquet_path(&self) -> PathBuf {
+        self.data_chunk_dir()
+            .join(format!("episode_{:06}.parquet", self.episode_index))
+    }
+
+    /// Ensure chunk directories exist (locally and remotely if using cloud storage).
+    fn ensure_chunk_dirs(&self) -> Result<()> {
+        // Create local directories
+        fs::create_dir_all(self.data_chunk_dir())?;
+        fs::create_dir_all(self.videos_chunk_dir())?;
+
+        // Create remote directories if using cloud storage
+        if self.use_cloud_storage && !self.output_prefix.is_empty() {
+            let data_prefix = format!("{}/data/{}", self.output_prefix, self.chunk_dir_name());
+            let videos_prefix = format!("{}/videos/{}", self.output_prefix, self.chunk_dir_name());
+
+            self.storage
+                .create_dir_all(Path::new(&data_prefix))
+                .map_err(|e| {
+                    roboflow_core::RoboflowError::encode(
+                        "Storage",
+                        format!(
+                            "Failed to create remote data directory '{}': {}",
+                            data_prefix, e
+                        ),
+                    )
+                })?;
+            self.storage
+                .create_dir_all(Path::new(&videos_prefix))
+                .map_err(|e| {
+                    roboflow_core::RoboflowError::encode(
+                        "Storage",
+                        format!(
+                            "Failed to create remote videos directory '{}': {}",
+                            videos_prefix, e
+                        ),
+                    )
+                })?;
+        }
+
+        Ok(())
     }
 
     /// Add a frame to the current episode.
@@ -405,8 +491,67 @@ impl LerobotWriter {
     }
 
     /// Start a new episode.
-    pub fn start_episode(&mut self, _task_index: Option<usize>) {
-        self.episode_index = self.frame_data.len();
+    ///
+    /// This ensures chunk directories exist for the current episode.
+    /// In distributed mode, `set_episode_index()` should be called before this
+    /// to set the externally-allocated episode index.
+    pub fn start_episode(&mut self, _task_index: Option<usize>) -> Result<()> {
+        // Ensure chunk directories exist for this episode
+        self.ensure_chunk_dirs()?;
+
+        // Reset episode state (frame_data is cleared in finish_episode)
+        self.start_time = Some(std::time::Instant::now());
+
+        Ok(())
+    }
+
+    /// Set the episode index for distributed processing.
+    ///
+    /// In distributed mode, episode indices are allocated centrally by
+    /// an `EpisodeAllocator`. This method allows setting the externally
+    /// allocated episode index before processing begins.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The allocated episode index (global across the batch)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // In a distributed worker
+    /// let allocation = episode_allocator.allocate().await?;
+    /// writer.set_episode_index(allocation.episode_index as usize);
+    /// writer.start_episode(Some(task_index))?;
+    /// ```
+    pub fn set_episode_index(&mut self, index: usize) {
+        self.episode_index = index;
+    }
+
+    /// Set the number of episodes per chunk.
+    ///
+    /// This determines how episodes are grouped into chunks.
+    /// Default is 500 (matching LeRobot's convention).
+    ///
+    /// # Arguments
+    ///
+    /// * `count` - Number of episodes per chunk (e.g., 500)
+    pub fn set_episodes_per_chunk(&mut self, count: u32) {
+        self.episodes_per_chunk = count;
+    }
+
+    /// Get the current episode index.
+    pub fn get_episode_index(&self) -> usize {
+        self.episode_index
+    }
+
+    /// Get the current chunk index.
+    pub fn get_chunk_index(&self) -> u32 {
+        self.chunk_index()
+    }
+
+    /// Get the episodes per chunk configuration.
+    pub fn get_episodes_per_chunk(&self) -> u32 {
+        self.episodes_per_chunk
     }
 
     /// Finish the current episode and write its data.
@@ -589,10 +734,7 @@ impl LerobotWriter {
 
         // Queue uploads if coordinator available
         if self.upload_coordinator.is_some() && !video_files.is_empty() {
-            let parquet_path = self.output_dir.join(format!(
-                "data/chunk-000/episode_{:06}.parquet",
-                self.episode_index
-            ));
+            let parquet_path = self.parquet_path();
             let video_paths: Vec<(String, PathBuf)> = video_files
                 .into_iter()
                 .map(|(path, camera)| (camera, path))
@@ -613,9 +755,13 @@ impl LerobotWriter {
 
     /// Write current episode to Parquet file.
     fn write_episode_parquet(&mut self) -> Result<(PathBuf, usize)> {
-        let (parquet_path, size) = super::parquet::write_episode_parquet(
+        // Ensure chunk directory exists
+        fs::create_dir_all(self.data_chunk_dir())?;
+
+        let (parquet_path, size) = super::parquet::write_episode_parquet_with_chunk(
             &self.frame_data,
             self.episode_index,
+            self.chunk_index(),
             &self.output_dir,
         )?;
 
@@ -644,12 +790,14 @@ impl LerobotWriter {
         let total_images: usize = self.image_buffers.values().map(|v| v.len()).sum();
         tracing::debug!(
             episode_index = self.episode_index,
+            chunk_index = self.chunk_index(),
             cameras = self.image_buffers.len(),
             total_frames = total_images,
             "Encoding videos"
         );
 
-        let videos_dir = self.output_dir.join("videos/chunk-000");
+        // Ensure videos chunk directory exists
+        fs::create_dir_all(self.videos_chunk_dir())?;
 
         // Collect camera data for encoding
         let camera_data: Vec<(String, Vec<ImageData>)> = self
@@ -672,6 +820,7 @@ impl LerobotWriter {
         {
             tracing::info!(
                 episode_index = self.episode_index,
+                chunk_index = self.chunk_index(),
                 "Using streaming coordinator for direct S3/OSS upload"
             );
             self.encode_videos_with_coordinator()?
@@ -680,7 +829,7 @@ impl LerobotWriter {
             encode_videos(
                 &camera_data,
                 self.episode_index,
-                &videos_dir,
+                &self.videos_chunk_dir(),
                 &resolved,
                 self.config.dataset.fps,
                 self.use_cloud_storage,
@@ -744,11 +893,10 @@ impl LerobotWriter {
         // Use relative path prefix (not full S3 URL) - the storage backend already knows the bucket
         let key_prefix = self.output_prefix.trim_end_matches('/').to_string();
 
-        // Create concurrent encoder configuration
-        // Note: chunk_index is currently 0 (single chunk). Future: compute from episode_index.
+        // Create concurrent encoder configuration with dynamic chunk index
         let encoder_config = ConcurrentEncoderConfig {
             key_prefix,
-            chunk_index: 0,
+            chunk_index: self.chunk_index(),
             episode_index: self.episode_index as u32,
             chunk_size: 256 * 1024, // 256KB chunks for streaming
             video_config: resolved.to_encoder_config(self.config.dataset.fps),
@@ -1061,6 +1209,7 @@ impl LerobotWriter {
             output_dir: local_buffer,
             config,
             episode_index: 0,
+            episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
             image_buffers: HashMap::new(),
             metadata: MetadataCollector::new(),

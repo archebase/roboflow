@@ -18,6 +18,8 @@
 
 pub mod batch;
 pub mod catalog;
+pub mod converter;
+pub mod episode;
 pub mod finalizer;
 pub mod heartbeat;
 pub mod merge;
@@ -86,6 +88,18 @@ pub use shutdown::{
 pub use merge::{
     DEFAULT_MAX_CONCURRENT_MERGES as MERGE_DEFAULT_MAX_CONCURRENT, MergeConfig, MergeCoordinator,
     MergePermit, MergeResult, MergeSemaphore, MergeSemaphoreMetrics,
+};
+
+// Re-export public types from episode (episode index allocation)
+pub use episode::{
+    EpisodeAllocation, EpisodeAllocator, EpisodeAllocatorError, LocalEpisodeAllocator,
+    TiKVEpisodeAllocator, chunk_index_from_episode,
+};
+
+// Re-export public types from converter (LeRobot converter orchestrator)
+pub use converter::{
+    ConverterConfig, ConverterError,
+    DEFAULT_EPISODES_PER_CHUNK as CONVERTER_DEFAULT_EPISODES_PER_CHUNK, LeRobotConverter,
 };
 
 // =============================================================================
