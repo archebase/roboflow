@@ -177,7 +177,7 @@ impl BatchController {
     /// to avoid unnecessary TiKV writes and WriteConflict contention.
     async fn reconcile_batch(&self, _spec_key: &[u8], spec_data: &[u8]) -> Result<(), TikvError> {
         // Deserialize spec
-        let spec: BatchSpec = serde_yaml::from_slice(spec_data)
+        let spec: BatchSpec = serde_yaml_ng::from_slice(spec_data)
             .map_err(|e| TikvError::Deserialization(format!("batch spec: {}", e)))?;
 
         let batch_id = super::batch_id_from_spec(&spec);
@@ -445,7 +445,7 @@ impl BatchController {
 
         // Save spec and status in a single transaction
         let spec_key = BatchKeys::spec(&batch_id);
-        let spec_data = serde_yaml::to_string(spec)
+        let spec_data = serde_yaml_ng::to_string(spec)
             .map_err(|e| TikvError::Serialization(format!("yaml: {}", e)))?
             .into_bytes();
 
@@ -496,7 +496,7 @@ impl BatchController {
 
         match data {
             Some(bytes) => {
-                let spec: BatchSpec = serde_yaml::from_slice(&bytes)
+                let spec: BatchSpec = serde_yaml_ng::from_slice(&bytes)
                     .map_err(|e| TikvError::Deserialization(e.to_string()))?;
                 Ok(Some(spec))
             }

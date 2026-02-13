@@ -452,7 +452,7 @@ impl Scanner {
                         continue;
                     }
                 };
-                let spec: BatchSpec = match serde_yaml::from_slice(&spec_data) {
+                let spec: BatchSpec = match serde_yaml_ng::from_slice(&spec_data) {
                     Ok(s) => s,
                     Err(e) => {
                         tracing::warn!(batch_id = %batch_id, error = %e, "Failed to deserialize batch spec");

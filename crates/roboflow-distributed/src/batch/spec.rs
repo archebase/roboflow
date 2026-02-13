@@ -333,13 +333,13 @@ impl BatchSpec {
 
     /// Create from YAML.
     pub fn from_yaml(yaml: &str) -> Result<Self, BatchSpecError> {
-        serde_yaml::from_str(yaml)
+        serde_yaml_ng::from_str(yaml)
             .map_err(|e| BatchSpecError::Serialization(format!("failed to parse YAML: {}", e)))
     }
 
     /// Convert to YAML.
     pub fn to_yaml(&self) -> Result<String, BatchSpecError> {
-        serde_yaml::to_string(self)
+        serde_yaml_ng::to_string(self)
             .map_err(|e| BatchSpecError::Serialization(format!("failed to serialize: {}", e)))
     }
 

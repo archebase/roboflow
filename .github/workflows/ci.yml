@@ -133,3 +133,32 @@ jobs:
           files: ./lcov.info
           flags: rust
           name: codecov-umbrella
+
+  security:
+    name: Security Audit
+    needs: license
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo-deny
+        uses: actions/cache@v4
+        id: cache-deny
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-cargo-deny-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-deny
+        if: steps.cache-deny.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny
+
+      - name: Check dependencies for security advisories
+        run: cargo deny check advisories
+
+      - name: Check dependencies for license compliance
+        run: cargo deny check licenses
+
+      - name: Check for duplicate dependencies
+        run: cargo deny check bans

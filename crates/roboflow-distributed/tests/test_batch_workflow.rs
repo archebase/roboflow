@@ -60,7 +60,7 @@ async fn test_controller_does_not_skip_merge_phase() {
 
     // Write spec, status, phase index, work unit to TiKV
     let spec_key = BatchKeys::spec(batch_id);
-    let spec_data = serde_yaml::to_string(&spec).unwrap().into_bytes();
+    let spec_data = serde_yaml_ng::to_string(&spec).unwrap().into_bytes();
     let status_key = BatchKeys::status(batch_id);
     let status_data = bincode::serialize(&status).unwrap();
     let phase_key = BatchIndexKeys::phase(BatchPhase::Running, batch_id);

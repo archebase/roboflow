@@ -409,7 +409,8 @@ impl<V> std::ops::Deref for FactoryGuard<'_, V> {
     type Target = V;
 
     fn deref(&self) -> &Self::Target {
-        // Safety: value_ptr is valid as long as _guard is alive
+        // SAFETY: value_ptr is valid as long as _guard is alive.
+        // The guard holds a reference to the factory, which keeps the value alive.
         unsafe { &*self.value_ptr }
     }
 }

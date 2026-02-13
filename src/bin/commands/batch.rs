@@ -444,7 +444,7 @@ impl BatchCommand {
         let spec_content = tokio::fs::read_to_string(spec_file)
             .await
             .map_err(|e| format!("Failed to read spec file '{}': {}", spec_file, e))?;
-        let spec: BatchSpec = serde_yaml::from_str(&spec_content)
+        let spec: BatchSpec = serde_yaml_ng::from_str(&spec_content)
             .map_err(|e| format!("Failed to parse spec file: {}", e))?;
 
         // Connect to TiKV

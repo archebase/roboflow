@@ -581,11 +581,14 @@ mod tests {
 
     #[test]
     fn test_parse_cloud_url_oss() {
+        // SAFETY: This is test code that modifies environment variables.
+        // The test runs in isolation and cleans up after itself.
         unsafe {
             std::env::set_var("OSS_ENDPOINT", "https://oss-cn-hangzhou.aliyuncs.com");
         }
         let result = parse_cloud_url("oss://my-bucket/path/to/file.bag");
         assert!(result.is_ok());
+        // SAFETY: Cleaning up the environment variable we set above.
         unsafe {
             std::env::remove_var("OSS_ENDPOINT");
         }

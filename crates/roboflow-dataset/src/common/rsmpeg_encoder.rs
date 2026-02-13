@@ -308,6 +308,8 @@ impl RsmpegEncoder {
 
         codec_context.set_pix_fmt(pix_fmt);
         // Set color range to full (JPEG) - RGB from decoded images uses full range
+        // SAFETY: We have exclusive mutable access to codec_context via as_mut_ptr().
+        // The AVCodecContext is properly initialized and this field write is safe.
         unsafe {
             (*codec_context.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
         }
@@ -442,6 +444,8 @@ impl RsmpegEncoder {
         // Copy RGB data to frame
         let frame_data_array = input_frame.data_mut();
         let frame_data = frame_data_array[0];
+        // SAFETY: frame_data is a valid pointer to the frame's data buffer allocated by FFmpeg.
+        // The buffer size matches rgb_data.len() based on the frame dimensions and RGB24 format.
         let frame_data_slice =
             unsafe { std::slice::from_raw_parts_mut(frame_data, rgb_data.len()) };
         frame_data_slice.copy_from_slice(rgb_data);
@@ -466,6 +470,8 @@ impl RsmpegEncoder {
         if let Some(ref sws) = self.sws_context {
             // sws_scale signature:
             // sws_scale(c, src, src_stride, src_slice_y, src_h, dst, dst_stride)
+            // SAFETY: sws_scale is called with valid sws_context, input_frame, and yuv_frame.
+            // Both frames have been properly allocated with get_buffer() and data ranges are valid.
             unsafe {
                 ffi::sws_scale(
                     sws.as_ptr() as *mut _,
@@ -489,6 +495,8 @@ impl RsmpegEncoder {
         // =============================================================
         // RGB from decoded images uses full range (0-255). Explicitly set
         // color_range so VideoToolbox/NVENC don't assume MPEG range.
+        // SAFETY: We have exclusive mutable access to yuv_frame via as_mut_ptr().
+        // The AVFrame is properly allocated and this field write is safe.
         unsafe {
             (*yuv_frame.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
         }
@@ -529,6 +537,9 @@ impl RsmpegEncoder {
             match codec_context.receive_packet() {
                 Ok(pkt) => {
                     // Extract packet data - pkt derefs to ffi::AVPacket which has data and size fields
+                    // SAFETY: av_packet.data and av_packet.size are valid for the lifetime of pkt.
+                    // We check for null pointer and positive size before creating the slice.
+                    // The data is copied immediately to a Vec before pkt is dropped.
                     let data = unsafe {
                         let av_packet: &ffi::AVPacket = &pkt;
                         let ptr = av_packet.data;
@@ -1000,6 +1011,8 @@ impl RsmpegMp4Encoder {
         codec_context.set_max_b_frames(0); // Disable B-frames for simplicity
         codec_context.set_pix_fmt(pixel_format_enum);
         // Set color range to full (JPEG) - RGB from decoded images uses full range
+        // SAFETY: We have exclusive mutable access to codec_context via as_mut_ptr().
+        // The AVCodecContext is properly initialized and this field write is safe.
         unsafe {
             (*codec_context.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
         }
@@ -1090,6 +1103,8 @@ impl RsmpegMp4Encoder {
             // Copy RGB data to frame
             let frame_data_array = input_frame.data_mut();
             let frame_data_ptr = frame_data_array[0];
+            // SAFETY: frame_data_ptr is a valid pointer to the frame's data buffer allocated by FFmpeg.
+            // The buffer size matches frame.data.len() based on the frame dimensions and RGB24 format.
             let frame_data_slice =
                 unsafe { std::slice::from_raw_parts_mut(frame_data_ptr, frame.data.len()) };
             frame_data_slice.copy_from_slice(&frame.data);
@@ -1104,6 +1119,9 @@ impl RsmpegMp4Encoder {
                 VideoEncoderError::FfmpegFailed(-1, format!("Failed to allocate YUV frame: {}", e))
             })?;
 
+            // SAFETY: sws_scale is called with valid sws_context, input_frame, and yuv_frame.
+            // Both frames have been properly allocated with get_buffer() and data ranges are valid.
+            // The color_range field write is safe as we have exclusive access to yuv_frame.
             unsafe {
                 // SwsContext does expose as_ptr method
                 ffi::sws_scale(
