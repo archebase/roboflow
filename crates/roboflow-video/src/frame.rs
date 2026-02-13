@@ -11,24 +11,31 @@ use std::io::Write;
 /// Errors that can occur during video encoding.
 #[derive(Debug, thiserror::Error)]
 pub enum VideoEncoderError {
+    /// I/O error during encoding.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// FFmpeg executable not found on system PATH.
     #[error("ffmpeg not found. Please install ffmpeg to enable MP4 video encoding.")]
     FfmpegNotFound,
 
+    /// FFmpeg process exited with non-zero status.
     #[error("ffmpeg failed with status {0}: {1}")]
     FfmpegFailed(i32, String),
 
+    /// Attempted to encode with no frames in buffer.
     #[error("No frames to encode")]
     NoFrames,
 
+    /// Frame dimensions don't match across buffer.
     #[error("Inconsistent frame sizes in buffer")]
     InconsistentFrameSizes,
 
+    /// Frame data is invalid or corrupted.
     #[error("Invalid frame data")]
     InvalidFrameData,
 
+    /// Generic encoding failure.
     #[error("Encoding error: {0}")]
     Encoding(String),
 }
@@ -213,16 +220,23 @@ impl DepthFrame {
 /// Buffer for depth video frames.
 #[derive(Debug, Clone, Default)]
 pub struct DepthFrameBuffer {
+    /// The depth frames in this buffer.
     pub frames: Vec<DepthFrame>,
+    /// Width of frames in pixels (None until first frame added).
     pub width: Option<u32>,
+    /// Height of frames in pixels (None until first frame added).
     pub height: Option<u32>,
 }
 
 impl DepthFrameBuffer {
+    /// Create a new empty depth frame buffer.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Add a depth frame to the buffer.
+    ///
+    /// Returns an error if the frame dimensions don't match existing frames.
     pub fn add_frame(&mut self, frame: DepthFrame) -> Result<(), VideoEncoderError> {
         frame.validate()?;
 
@@ -241,14 +255,17 @@ impl DepthFrameBuffer {
         Ok(())
     }
 
+    /// Returns the number of frames in the buffer.
     pub fn len(&self) -> usize {
         self.frames.len()
     }
 
+    /// Returns true if the buffer contains no frames.
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
 
+    /// Returns the frame dimensions as (width, height), or None if no frames.
     pub fn dimensions(&self) -> Option<(u32, u32)> {
         match (self.width, self.height) {
             (Some(w), Some(h)) => Some((w, h)),

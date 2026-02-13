@@ -43,6 +43,7 @@ pub struct ImageDecoderConfig {
 
     /// Maximum image dimensions (security limit to prevent OOM)
     pub max_width: u32,
+    /// Maximum image height in pixels.
     pub max_height: u32,
 
     /// Number of threads for CPU decoder

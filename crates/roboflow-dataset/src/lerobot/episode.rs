@@ -42,7 +42,12 @@ pub enum EpisodeAction {
     /// Continue with current episode
     Continue,
     /// Finish current episode and start a new one
-    FinishAndStart { old_index: usize, new_index: usize },
+    FinishAndStart {
+        /// Index of the episode being finished.
+        old_index: usize,
+        /// Index of the new episode starting.
+        new_index: usize,
+    },
 }
 
 /// Episode boundary tracker.

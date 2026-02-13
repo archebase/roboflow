@@ -233,30 +233,39 @@ pub trait DatasetWriter: Send + std::any::Any {
 /// Format-specific writers may add their own error variants.
 #[derive(Debug, thiserror::Error)]
 pub enum DatasetWriterError {
+    /// I/O error during write operation.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// HDF5 library error.
     #[error("HDF5 error: {0}")]
     Hdf5(String),
 
+    /// Parquet encoding error.
     #[error("Parquet error: {0}")]
     Parquet(String),
 
+    /// Video/image encoding error.
     #[error("Encoding error: {0}")]
     Encoding(String),
 
+    /// Invalid or malformed message data.
     #[error("Invalid message data: {0}")]
     InvalidData(String),
 
+    /// Required channel/topic not found.
     #[error("Channel not found: {0}")]
     ChannelNotFound(String),
 
+    /// Feature not mapped in configuration.
     #[error("Feature not mapped: {0}")]
     FeatureNotMapped(String),
 
+    /// Writer was used before initialization.
     #[error("Writer not initialized")]
     NotInitialized,
 
+    /// Writer was used after finalization.
     #[error("Writer already finalized")]
     AlreadyFinalized,
 }
@@ -323,11 +332,16 @@ impl WriterStats {
 /// Error type for image data operations.
 #[derive(Debug, thiserror::Error)]
 pub enum ImageDataError {
+    /// Image dimensions don't match the data size.
     #[error("Size mismatch: {width}x{height} expects {expected_size} bytes, got {actual_size}")]
     SizeMismatch {
+        /// Image width in pixels.
         width: u32,
+        /// Image height in pixels.
         height: u32,
+        /// Expected data size based on dimensions.
         expected_size: usize,
+        /// Actual data size received.
         actual_size: usize,
     },
 }

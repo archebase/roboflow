@@ -67,18 +67,23 @@ pub use parallel::{ParallelDecodeStats, decode_images_parallel, decode_images_pa
 /// Image decoding errors.
 #[derive(Debug, thiserror::Error)]
 pub enum ImageError {
+    /// The image format is not supported.
     #[error("Unsupported image format: {0}")]
     UnsupportedFormat(String),
 
+    /// Decoding the image failed.
     #[error("Image decoding failed: {0}")]
     DecodeFailed(String),
 
+    /// Image decoding feature is not enabled in this build.
     #[error("Image decoding not enabled")]
     NotEnabled,
 
+    /// The image data is invalid or corrupted.
     #[error("Invalid image data: {0}")]
     InvalidData(String),
 
+    /// GPU decoder is not available.
     #[error("GPU decoder unavailable: {0}")]
     GpuUnavailable(String),
 }
@@ -126,6 +131,10 @@ fn shared_decoder() -> &'static dyn ImageDecoderBackend {
         .as_ref()
 }
 
+/// Decode a compressed image using the shared decoder.
+///
+/// This is a convenience function that reuses a process-wide decoder
+/// to avoid per-frame initialization overhead.
 pub fn decode_compressed_image(data: &[u8], format: ImageFormat) -> Result<DecodedImage> {
     shared_decoder().decode(data, format)
 }

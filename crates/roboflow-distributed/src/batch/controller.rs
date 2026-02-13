@@ -751,15 +751,25 @@ impl BatchController {
 /// Summary of a batch job.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BatchSummary {
+    /// Unique batch identifier.
     pub id: String,
+    /// Human-readable batch name.
     pub name: String,
+    /// Namespace for isolation.
     pub namespace: String,
+    /// Current phase of the batch.
     pub phase: BatchPhase,
+    /// Total number of files to process.
     pub files_total: u32,
+    /// Number of files successfully completed.
     pub files_completed: u32,
+    /// Number of files that failed.
     pub files_failed: u32,
+    /// When the batch was created.
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// When processing started (if started).
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When processing completed (if completed).
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 

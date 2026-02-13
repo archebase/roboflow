@@ -263,6 +263,7 @@ pub struct NvencEncoder {
 }
 
 impl NvencEncoder {
+    /// Create a new NVENC encoder with default configuration.
     pub fn new() -> Self {
         Self {
             config: VideoEncoderConfig::default(),
@@ -271,6 +272,7 @@ impl NvencEncoder {
         }
     }
 
+    /// Create a new NVENC encoder with the specified configuration.
     pub fn with_config(config: VideoEncoderConfig) -> Self {
         Self {
             config,
@@ -279,11 +281,13 @@ impl NvencEncoder {
         }
     }
 
+    /// Set the GPU device ID for encoding.
     pub fn with_device(mut self, device_id: u32) -> Self {
         self.device_id = Some(device_id);
         self
     }
 
+    /// Encode a buffer of video frames to an MP4 file.
     pub fn encode_buffer(
         &self,
         buffer: &VideoFrameBuffer,
@@ -382,6 +386,7 @@ pub struct VideoToolboxEncoder {
 
 #[cfg(target_os = "macos")]
 impl VideoToolboxEncoder {
+    /// Create a new VideoToolbox encoder with default configuration.
     pub fn new() -> Self {
         Self {
             config: VideoEncoderConfig::default(),
@@ -389,6 +394,7 @@ impl VideoToolboxEncoder {
         }
     }
 
+    /// Create a new VideoToolbox encoder with the specified configuration.
     pub fn with_config(config: VideoEncoderConfig) -> Self {
         Self {
             config,
@@ -396,6 +402,7 @@ impl VideoToolboxEncoder {
         }
     }
 
+    /// Encode a buffer of video frames to an MP4 file.
     pub fn encode_buffer(
         &self,
         buffer: &VideoFrameBuffer,
@@ -482,6 +489,7 @@ pub struct DepthMkvEncoder {
 }
 
 impl DepthMkvEncoder {
+    /// Create a new depth MKV encoder with default configuration.
     pub fn new() -> Self {
         Self {
             config: DepthEncoderConfig::default(),
@@ -489,6 +497,7 @@ impl DepthMkvEncoder {
         }
     }
 
+    /// Create a new depth MKV encoder with the specified configuration.
     pub fn with_config(config: DepthEncoderConfig) -> Self {
         Self {
             config,
@@ -510,6 +519,7 @@ impl DepthMkvEncoder {
         }
     }
 
+    /// Encode a buffer of depth frames to an MKV file.
     pub fn encode_buffer(
         &self,
         buffer: &DepthFrameBuffer,

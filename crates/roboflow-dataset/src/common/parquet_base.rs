@@ -41,9 +41,13 @@ pub trait ParquetWriterBase {
 /// Statistics for a feature.
 #[derive(Debug, Clone, Serialize)]
 pub struct FeatureStats {
+    /// Minimum value per dimension.
     pub min: Vec<f32>,
+    /// Maximum value per dimension.
     pub max: Vec<f32>,
+    /// Mean value per dimension.
     pub mean: Vec<f32>,
+    /// Standard deviation per dimension.
     pub std: Vec<f32>,
 }
 

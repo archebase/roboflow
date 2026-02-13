@@ -64,8 +64,11 @@ impl VideoEncoderConfig {
 /// Configuration for depth MKV encoding.
 #[derive(Debug, Clone)]
 pub struct DepthEncoderConfig {
+    /// Frames per second for the output video.
     pub fps: u32,
+    /// Video codec (e.g., "ffv1" for lossless).
     pub codec: String,
+    /// Encoding preset (e.g., "fast", "medium", "slow").
     pub preset: String,
 }
 

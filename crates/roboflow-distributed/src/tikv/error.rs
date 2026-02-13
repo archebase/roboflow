@@ -29,7 +29,12 @@ pub enum TikvError {
 
     /// CAS (Compare-And-Swap) operation failed.
     #[error("CAS operation failed: expected version {expected}, got {got}")]
-    CasFailed { expected: u64, got: u64 },
+    CasFailed {
+        /// Expected version number.
+        expected: u64,
+        /// Actual version number found.
+        got: u64,
+    },
 
     /// Lock acquisition failed.
     #[error("Failed to acquire lock: {0}")]
@@ -54,8 +59,11 @@ pub enum TikvError {
     /// Retryable error with context.
     #[error("Retryable error (attempt {attempt}/{max}): {message}")]
     Retryable {
+        /// Current retry attempt number.
         attempt: u32,
+        /// Maximum retry attempts allowed.
         max: u32,
+        /// Error message describing the failure.
         message: String,
     },
 
@@ -65,7 +73,10 @@ pub enum TikvError {
 
     /// Circuit breaker is open - requests are failing fast.
     #[error("Circuit breaker is open (failures: {failures}) - rejecting call")]
-    CircuitOpen { failures: u32 },
+    CircuitOpen {
+        /// Number of consecutive failures that triggered the circuit.
+        failures: u32,
+    },
 }
 
 impl TikvError {

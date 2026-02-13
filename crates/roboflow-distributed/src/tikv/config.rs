@@ -12,14 +12,24 @@ use roboflow_core::validators;
 use super::error::TikvError;
 
 // Constants from parent module
+
+/// Key prefix for all roboflow data in TiKV.
 pub const KEY_PREFIX: &str = "/roboflow/v1/";
+/// Default PD endpoints for local development.
 pub const DEFAULT_PD_ENDPOINTS: &str = "127.0.0.1:2379";
+/// Default connection timeout in seconds.
 pub const DEFAULT_CONNECTION_TIMEOUT_SECS: u64 = 10;
+/// Default operation timeout in seconds.
 pub const DEFAULT_OPERATION_TIMEOUT_SECS: u64 = 30;
+/// Default transaction timeout in seconds.
 pub const DEFAULT_TRANSACTION_TIMEOUT_SECS: u64 = 60;
+/// Default lock TTL in seconds.
 pub const DEFAULT_LOCK_TTL_SECS: i64 = 60;
+/// Default lock acquire timeout in seconds.
 pub const DEFAULT_LOCK_ACQUIRE_TIMEOUT_SECS: u64 = 10;
+/// Default maximum retry count.
 pub const DEFAULT_MAX_RETRIES: u32 = 10;
+/// Default base delay between retries in milliseconds.
 pub const DEFAULT_RETRY_BASE_DELAY_MS: u64 = 50;
 
 /// Configuration for TiKV cluster connection.

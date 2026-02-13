@@ -11,7 +11,10 @@ pub enum ProcessingResult {
     /// Job completed successfully.
     Success,
     /// Job failed with retryable error.
-    Failed { error: String },
+    Failed {
+        /// Error message describing the failure.
+        error: String,
+    },
     /// Job was cancelled by user request.
     Cancelled,
 }

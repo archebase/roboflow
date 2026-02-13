@@ -362,15 +362,24 @@ impl Default for WorkUnitConfig {
 /// Errors related to batch specification.
 #[derive(Debug, thiserror::Error)]
 pub enum BatchSpecError {
+    /// The batch name is invalid.
     #[error("invalid name: {0}")]
     InvalidName(String),
 
+    /// Validation of the batch spec failed.
     #[error("validation error: {0}")]
     Validation(String),
 
+    /// The URL is malformed or unsupported.
     #[error("invalid URL '{url}': {reason}")]
-    InvalidUrl { url: String, reason: String },
+    InvalidUrl {
+        /// The invalid URL.
+        url: String,
+        /// Reason why the URL is invalid.
+        reason: String,
+    },
 
+    /// Serialization or deserialization failed.
     #[error("serialization error: {0}")]
     Serialization(String),
 }

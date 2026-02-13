@@ -30,7 +30,10 @@ use crate::common::{ImageData, decode_to_rgb};
 #[derive(Debug)]
 pub enum StreamingCommand {
     /// Add a frame to the pipeline.
-    AddFrame { image: ImageData },
+    AddFrame {
+        /// Image data to add.
+        image: ImageData,
+    },
     /// Flush remaining frames and finish.
     Flush,
     /// Shutdown immediately (abort).
@@ -85,9 +88,15 @@ pub struct StreamingPipelineResult {
 #[derive(Debug)]
 pub enum StreamingUploadCommand {
     /// Upload an encoded chunk.
-    UploadChunk { chunk: EncodedChunk },
+    UploadChunk {
+        /// Encoded video chunk to upload.
+        chunk: EncodedChunk,
+    },
     /// Finish upload.
-    Finish { camera: String },
+    Finish {
+        /// Camera name for this upload.
+        camera: String,
+    },
     /// Abort all uploads.
     AbortAll,
 }

@@ -98,27 +98,33 @@ use roboflow_core::Result;
 
 /// Coordinator trait for distributed job coordination.
 pub trait Coordinator: Send + Sync {
-    // Lock operations
+    /// Acquire a distributed lock on a resource.
     fn acquire_lock(&self, resource: &str, owner: &str, ttl: Duration) -> Result<bool>;
+    /// Release a previously acquired lock.
     fn release_lock(&self, resource: &str, owner: &str) -> Result<bool>;
 
-    // Heartbeat
+    /// Send a heartbeat to indicate the worker is still alive.
     fn heartbeat(&self, pod_id: &str, status: &WorkerStatus) -> Result<()>;
 
-    // Checkpoint
+    /// Save checkpoint state for recovery.
     fn save_checkpoint(&self, state: &CheckpointState) -> Result<()>;
+    /// Load checkpoint state for a file.
     fn load_checkpoint(&self, file_hash: &str) -> Result<Option<CheckpointState>>;
 }
 
 /// Catalog trait for episode metadata.
 pub trait Catalog: Send + Sync {
-    // Episode metadata
+    /// Save episode metadata to the catalog.
     fn save_episode(&self, metadata: &EpisodeMetadata) -> Result<()>;
+    /// Get episode metadata by ID.
     fn get_episode(&self, id: &str) -> Result<Option<EpisodeMetadata>>;
+    /// List episodes with a given prefix.
     fn list_episodes(&self, prefix: &str) -> Result<Vec<EpisodeMetadata>>;
 
-    // Upload tracking
+    /// Mark an upload as started.
     fn start_upload(&self, id: &str) -> Result<()>;
+    /// Mark an upload as completed.
     fn complete_upload(&self, id: &str) -> Result<()>;
+    /// Get the current upload status.
     fn get_upload_status(&self, id: &str) -> Result<UploadStatus>;
 }
