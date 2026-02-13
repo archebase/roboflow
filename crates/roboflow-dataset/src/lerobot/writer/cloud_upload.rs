@@ -15,6 +15,9 @@ use rayon::prelude::*;
 use roboflow_core::{Result, RoboflowError};
 use roboflow_storage::Storage;
 
+// Import the unified upload coordinator trait
+use crate::common::upload_coordinator::{UploadCoordinator, UploadProgress};
+
 /// Helper for uploading files to cloud storage.
 ///
 /// Encapsulates the logic for constructing remote paths and cleaning up
@@ -123,6 +126,64 @@ impl CloudUploader {
                 "Failed to delete local file after upload - disk space may leak"
             );
         }
+    }
+}
+
+// =============================================================================
+// UploadCoordinator Trait Implementation
+// =============================================================================
+
+impl UploadCoordinator for CloudUploader {
+    fn upload(&self, local_path: &Path, remote_path: &Path) -> Result<()> {
+        // Use the storage backend directly for a simple upload
+        self.storage
+            .upload_file(local_path, remote_path)
+            .map_err(|e| RoboflowError::encode("Storage", format!("Upload failed: {}", e)))?;
+
+        tracing::info!(
+            local = %local_path.display(),
+            remote = %remote_path.display(),
+            "Uploaded file to cloud storage"
+        );
+
+        self.cleanup_local_file(local_path);
+        Ok(())
+    }
+
+    fn upload_parallel(&self, items: &[(PathBuf, PathBuf)]) -> Result<()> {
+        // Use the existing parallel upload implementation
+        let video_files: Vec<(PathBuf, String)> = items
+            .iter()
+            .map(|(local, remote)| {
+                // Try to extract camera name from remote path
+                // Expected format: .../videos/chunk-000/{camera}/filename
+                let camera = remote
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                (local.clone(), camera)
+            })
+            .collect();
+
+        // If we have video files, use the parallel upload
+        if !video_files.is_empty() {
+            self.upload_videos_parallel(&video_files)?;
+        }
+
+        Ok(())
+    }
+
+    fn progress(&self) -> UploadProgress {
+        // CloudUploader is synchronous and doesn't track progress
+        // Return an empty progress
+        UploadProgress::new()
+    }
+
+    fn flush(&self) -> Result<()> {
+        // CloudUploader is synchronous, no buffering
+        Ok(())
     }
 }
 

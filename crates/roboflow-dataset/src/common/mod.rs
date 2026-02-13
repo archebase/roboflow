@@ -26,6 +26,7 @@ pub mod ring_buffer;
 pub mod rsmpeg_encoder;
 pub mod streaming_encoder;
 pub mod streaming_uploader;
+pub mod upload_coordinator;
 pub mod video;
 
 // Re-export core types (shared across all formats)
@@ -67,7 +68,10 @@ pub use roboflow_video::{ConversionStrategy, optimal_strategy, rgb_to_nv12, rgb_
 pub use video::VideoToolboxEncoder as AppleVideoEncoder;
 
 // Re-export streaming uploader
-pub use streaming_uploader::{StreamingUploader, UploadConfig, UploadProgress, UploadStats};
+pub use streaming_uploader::{
+    StreamingUploader, UploadConfig as StreamingUploadConfig,
+    UploadProgress as StreamingUploadProgress, UploadStats,
+};
 
 // Re-export rsmpeg encoder
 pub use rsmpeg_encoder::{
@@ -88,3 +92,6 @@ pub use camera_streaming_pipeline::{
 pub use concurrent_video_encoder::{
     ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder,
 };
+
+// Re-export upload coordinator trait
+pub use upload_coordinator::{UploadCoordinator, UploadProgress};

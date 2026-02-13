@@ -7,7 +7,7 @@
 //! This module provides coordinated parallel upload of episode files (Parquet + videos)
 //! with progress tracking and statistics collection.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -36,6 +36,9 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 use roboflow_storage::Storage;
 
 use roboflow_core::Result;
+
+// Import the unified upload coordinator trait
+use crate::common::upload_coordinator::{UploadCoordinator, UploadProgress as UnifiedProgress};
 
 /// Progress callback type for upload progress tracking.
 ///
@@ -932,6 +935,66 @@ impl Drop for EpisodeUploadCoordinator {
                 self.files_in_progress.load(Ordering::Relaxed)
             ),
         }
+    }
+}
+
+// =============================================================================
+// UploadCoordinator Trait Implementation
+// =============================================================================
+
+impl UploadCoordinator for EpisodeUploadCoordinator {
+    fn upload(&self, local_path: &Path, remote_path: &Path) -> Result<()> {
+        // Check if local file exists
+        if !local_path.exists() {
+            return Err(roboflow_core::RoboflowError::io(format!(
+                "Local file does not exist: {}",
+                local_path.display()
+            )));
+        }
+
+        // Get file size
+        let metadata = std::fs::metadata(local_path).map_err(|e| {
+            roboflow_core::RoboflowError::io(format!("Failed to get file size: {}", e))
+        })?;
+
+        // Create and queue the upload task
+        let task = UploadTask {
+            local_path: local_path.to_path_buf(),
+            remote_path: remote_path.to_path_buf(),
+            file_size: metadata.len(),
+            episode_index: None,
+            file_type: UploadFileType::Parquet, // Default to Parquet type
+        };
+
+        self.sender.send(task).map_err(|e| {
+            roboflow_core::RoboflowError::other(format!("Failed to queue upload task: {}", e))
+        })?;
+
+        self.files_pending.fetch_add(1, Ordering::Relaxed);
+
+        Ok(())
+    }
+
+    fn upload_parallel(&self, items: &[(PathBuf, PathBuf)]) -> Result<()> {
+        for (local_path, remote_path) in items {
+            self.upload(local_path, remote_path)?;
+        }
+        Ok(())
+    }
+
+    fn progress(&self) -> UnifiedProgress {
+        UnifiedProgress {
+            files_uploaded: self.files_uploaded.load(Ordering::Relaxed) as u64,
+            files_failed: self.files_failed.load(Ordering::Relaxed) as u64,
+            bytes_uploaded: self.bytes_uploaded.load(Ordering::Relaxed),
+            files_pending: self.files_pending.load(Ordering::Relaxed) as u64,
+            files_in_progress: self.files_in_progress.load(Ordering::Relaxed) as u64,
+        }
+    }
+
+    fn flush(&self) -> Result<()> {
+        // Call the existing flush implementation from EpisodeUploadCoordinator
+        EpisodeUploadCoordinator::flush(self)
     }
 }
 
