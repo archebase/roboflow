@@ -199,3 +199,80 @@ impl Validate for WorkerConfig {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_worker_config_default() {
+        let config = WorkerConfig::default();
+
+        assert_eq!(config.max_concurrent_jobs, DEFAULT_MAX_CONCURRENT_JOBS);
+        assert_eq!(config.poll_interval, Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS));
+        assert_eq!(config.max_attempts, DEFAULT_MAX_ATTEMPTS);
+        assert_eq!(config.job_timeout, Duration::from_secs(DEFAULT_JOB_TIMEOUT_SECS));
+        assert_eq!(config.heartbeat_interval, Duration::from_secs(DEFAULT_HEARTBEAT_INTERVAL_SECS));
+        assert!(config.output_storage_url.is_none());
+    }
+
+    #[test]
+    fn test_worker_config_builder() {
+        let config = WorkerConfig::new()
+            .with_max_concurrent_jobs(4)
+            .with_poll_interval(Duration::from_secs(10))
+            .with_max_attempts(5)
+            .with_job_timeout(Duration::from_secs(7200))
+            .with_heartbeat_interval(Duration::from_secs(15))
+            .with_output_prefix("custom/output/")
+            .with_output_storage_url("s3://my-bucket/datasets");
+
+        assert_eq!(config.max_concurrent_jobs, 4);
+        assert_eq!(config.poll_interval, Duration::from_secs(10));
+        assert_eq!(config.max_attempts, 5);
+        assert_eq!(config.job_timeout, Duration::from_secs(7200));
+        assert_eq!(config.heartbeat_interval, Duration::from_secs(15));
+        assert_eq!(config.output_prefix, "custom/output/");
+        assert_eq!(config.output_storage_url, Some("s3://my-bucket/datasets".to_string()));
+    }
+
+    #[test]
+    fn test_worker_config_validation_valid() {
+        let config = WorkerConfig::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_worker_config_validation_zero_concurrent_jobs() {
+        let config = WorkerConfig::new().with_max_concurrent_jobs(0);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_worker_config_validation_zero_attempts() {
+        let config = WorkerConfig::new().with_max_attempts(0);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_worker_config_checkpoint_settings() {
+        let config = WorkerConfig::new()
+            .with_checkpoint_interval_frames(200)
+            .with_checkpoint_interval_seconds(20)
+            .with_checkpoint_async(false);
+
+        assert_eq!(config.checkpoint_interval_frames, 200);
+        assert_eq!(config.checkpoint_interval_seconds, 20);
+        assert!(!config.checkpoint_async);
+    }
+
+    #[test]
+    fn test_worker_config_zero_checkpoint_disables() {
+        // Zero checkpoint interval is valid (disables checkpointing)
+        let config = WorkerConfig::new()
+            .with_checkpoint_interval_frames(0)
+            .with_checkpoint_interval_seconds(0);
+
+        assert!(config.validate().is_ok());
+    }
+}

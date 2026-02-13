@@ -63,3 +63,78 @@ impl JobRegistry {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_job_registry_new() {
+        let registry = JobRegistry::default();
+        assert!(registry.job_ids().is_empty());
+    }
+
+    #[test]
+    fn test_job_registry_register() {
+        let mut registry = JobRegistry::default();
+        let token = Arc::new(CancellationToken::new());
+
+        registry.register("job-1".to_string(), token);
+
+        let job_ids = registry.job_ids();
+        assert_eq!(job_ids.len(), 1);
+        assert!(job_ids.contains(&"job-1".to_string()));
+    }
+
+    #[test]
+    fn test_job_registry_unregister() {
+        let mut registry = JobRegistry::default();
+        let token = Arc::new(CancellationToken::new());
+
+        registry.register("job-1".to_string(), token.clone());
+        registry.unregister("job-1");
+
+        assert!(registry.job_ids().is_empty());
+    }
+
+    #[test]
+    fn test_job_registry_cancel_job() {
+        let mut registry = JobRegistry::default();
+        let token = Arc::new(CancellationToken::new());
+
+        registry.register("job-1".to_string(), token.clone());
+
+        assert!(!token.is_cancelled());
+        registry.cancel_job("job-1");
+        assert!(token.is_cancelled());
+    }
+
+    #[test]
+    fn test_job_registry_cancel_nonexistent_job() {
+        let mut registry = JobRegistry::default();
+
+        // Should not panic when canceling non-existent job
+        registry.cancel_job("nonexistent");
+    }
+
+    #[test]
+    fn test_job_registry_multiple_jobs() {
+        let mut registry = JobRegistry::default();
+
+        let token1 = Arc::new(CancellationToken::new());
+        let token2 = Arc::new(CancellationToken::new());
+        let token3 = Arc::new(CancellationToken::new());
+
+        registry.register("job-1".to_string(), token1);
+        registry.register("job-2".to_string(), token2);
+        registry.register("job-3".to_string(), token3);
+
+        assert_eq!(registry.job_ids().len(), 3);
+
+        registry.cancel_job("job-2");
+
+        assert!(!registry.active_jobs.get("job-1").unwrap().is_cancelled());
+        assert!(registry.active_jobs.get("job-2").unwrap().is_cancelled());
+        assert!(!registry.active_jobs.get("job-3").unwrap().is_cancelled());
+    }
+}
