@@ -194,6 +194,7 @@ pub type SourceFactory = Box<dyn Fn() -> Box<dyn Source> + Send + Sync>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use robocodec::CodecValue;
 
     #[test]
     fn test_timestamped_message() {

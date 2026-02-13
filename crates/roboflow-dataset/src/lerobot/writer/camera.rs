@@ -97,3 +97,96 @@ impl CameraExtrinsic {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_camera_intrinsic_creation() {
+        let intrinsic = CameraIntrinsic {
+            fx: 500.0,
+            fy: 500.0,
+            ppx: 320.0,
+            ppy: 240.0,
+            distortion_model: "plumb_bob".to_string(),
+            k1: 0.1,
+            k2: 0.01,
+            k3: 0.001,
+            p1: 0.0,
+            p2: 0.0,
+        };
+
+        assert_eq!(intrinsic.fx, 500.0);
+        assert_eq!(intrinsic.fy, 500.0);
+        assert_eq!(intrinsic.ppx, 320.0);
+        assert_eq!(intrinsic.ppy, 240.0);
+        assert_eq!(intrinsic.distortion_model, "plumb_bob");
+    }
+
+    #[test]
+    fn test_camera_intrinsic_serialization() {
+        let intrinsic = CameraIntrinsic {
+            fx: 500.0,
+            fy: 500.0,
+            ppx: 320.0,
+            ppy: 240.0,
+            distortion_model: "plumb_bob".to_string(),
+            k1: 0.1,
+            k2: 0.01,
+            k3: 0.001,
+            p1: 0.0,
+            p2: 0.0,
+        };
+
+        let json = serde_json::to_string(&intrinsic).unwrap();
+        let deserialized: CameraIntrinsic = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.fx, intrinsic.fx);
+        assert_eq!(deserialized.fy, intrinsic.fy);
+        assert_eq!(deserialized.distortion_model, intrinsic.distortion_model);
+    }
+
+    #[test]
+    fn test_camera_extrinsic_new() {
+        let rotation = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let translation = [0.0, 0.0, 0.0];
+
+        let extrinsic = CameraExtrinsic::new(rotation, translation);
+
+        assert_eq!(extrinsic.extrinsic.rotation_matrix.len(), 3);
+        assert_eq!(extrinsic.extrinsic.rotation_matrix[0], vec![1.0, 0.0, 0.0]);
+        assert_eq!(extrinsic.extrinsic.translation_vector, vec![0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_camera_extrinsic_from_arrays() {
+        let rotation_flat = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        let translation = [1.0, 2.0, 3.0];
+
+        let extrinsic = CameraExtrinsic::from_arrays(rotation_flat, translation);
+
+        assert_eq!(extrinsic.extrinsic.rotation_matrix.len(), 3);
+        assert_eq!(extrinsic.extrinsic.rotation_matrix[0], vec![1.0, 0.0, 0.0]);
+        assert_eq!(extrinsic.extrinsic.rotation_matrix[1], vec![0.0, 1.0, 0.0]);
+        assert_eq!(extrinsic.extrinsic.rotation_matrix[2], vec![0.0, 0.0, 1.0]);
+        assert_eq!(extrinsic.extrinsic.translation_vector, vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_camera_extrinsic_serialization() {
+        let extrinsic = CameraExtrinsic::new([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], [0.0, 0.0, 0.0]);
+
+        let json = serde_json::to_string(&extrinsic).unwrap();
+        let deserialized: CameraExtrinsic = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            deserialized.extrinsic.rotation_matrix,
+            extrinsic.extrinsic.rotation_matrix
+        );
+        assert_eq!(
+            deserialized.extrinsic.translation_vector,
+            extrinsic.extrinsic.translation_vector
+        );
+    }
+}
