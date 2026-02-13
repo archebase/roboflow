@@ -77,6 +77,9 @@ pub struct SubmitCommand {
 
     /// Verbose output.
     pub verbose: bool,
+
+    /// Episodes per chunk for LeRobot v2.1 format.
+    pub episodes_per_chunk: u32,
 }
 
 impl SubmitCommand {
@@ -91,6 +94,7 @@ impl SubmitCommand {
         let mut output_format = OutputFormat::Table;
         let mut tikv_endpoints = None;
         let mut verbose = false;
+        let mut episodes_per_chunk = 500u32; // Default LeRobot v2.1 spec
 
         let mut i = 0;
         while i < args.len() {
@@ -145,6 +149,19 @@ impl SubmitCommand {
                 "--verbose" | "-v" => {
                     verbose = true;
                 }
+                "--episodes-per-chunk" => {
+                    i += 1;
+                    if i >= args.len() {
+                        return Err("--episodes-per-chunk requires a value".to_string());
+                    }
+                    let val: u32 = args[i].parse().map_err(|_| {
+                        format!("invalid episodes-per-chunk: {}", args[i])
+                    })?;
+                    if val == 0 {
+                        return Err("--episodes-per-chunk must be greater than 0".to_string());
+                    }
+                    episodes_per_chunk = val;
+                }
                 "--help" | "-h" => {
                     print_submit_help();
                     return Ok(None);
@@ -173,6 +190,7 @@ impl SubmitCommand {
             output_format,
             tikv_endpoints,
             verbose,
+            episodes_per_chunk,
         }))
     }
 
@@ -316,7 +334,7 @@ impl SubmitCommand {
             ttl_seconds: 86400, // 24 hours
             priority: 0,
             work_unit_config: WorkUnitConfig::default(),
-            episodes_per_chunk: 500, // Default LeRobot v2.1 spec
+            episodes_per_chunk: self.episodes_per_chunk,
         };
 
         let batch_spec = BatchSpec {
@@ -569,7 +587,7 @@ impl SubmitCommand {
                 ttl_seconds: 86400,
                 priority: 0,
                 work_unit_config: WorkUnitConfig::default(),
-                episodes_per_chunk: 500, // Default LeRobot v2.1 spec
+                episodes_per_chunk: self.episodes_per_chunk,
             };
 
             let batch_spec = BatchSpec {
@@ -1035,6 +1053,10 @@ OPTIONS:
                             If a 64-char hex string: uses as hash directly
                             (default: "default")
         --max-attempts <N>  Maximum retry attempts per job (default: 3)
+        --episodes-per-chunk <N>
+                            Episodes per chunk for LeRobot v2.1 format
+                            Controls chunk directory structure: chunk_index = episode_index / N
+                            (default: 500)
         --dry-run           Show what would be submitted without submitting
         --json              Output in JSON format
         --csv               Output in CSV format
