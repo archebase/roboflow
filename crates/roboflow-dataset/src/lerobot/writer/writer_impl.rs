@@ -514,41 +514,7 @@ impl LerobotWriter {
                     );
                     // Fallback: upload this episode synchronously so data still reaches cloud
                     if self.use_cloud_storage {
-                        if parquet_path.exists() {
-                            if let Err(upload_e) = self.cloud_uploader.upload_parquet(&parquet_path)
-                            {
-                                tracing::error!(
-                                    episode = self.episode_index,
-                                    error = %upload_e,
-                                    "Fallback Parquet upload failed"
-                                );
-                            } else {
-                                tracing::info!(
-                                    episode = self.episode_index,
-                                    "Uploaded episode Parquet via fallback (coordinator unavailable)"
-                                );
-                            }
-                        }
-                        for (camera, path) in &video_paths_for_upload {
-                            if path.exists() {
-                                if let Err(upload_e) =
-                                    self.cloud_uploader.upload_video(path, camera)
-                                {
-                                    tracing::error!(
-                                        episode = self.episode_index,
-                                        camera = %camera,
-                                        error = %upload_e,
-                                        "Fallback video upload failed"
-                                    );
-                                } else {
-                                    tracing::debug!(
-                                        episode = self.episode_index,
-                                        camera = %camera,
-                                        "Uploaded episode video via fallback"
-                                    );
-                                }
-                            }
-                        }
+                        self.upload_fallback_sync(&parquet_path, &video_paths_for_upload);
                     }
                 }
             }
@@ -887,6 +853,55 @@ impl LerobotWriter {
                 "queue_episode_upload: no coordinator available"
             );
             Ok(false)
+        }
+    }
+
+    /// Upload episode files synchronously as fallback when coordinator fails.
+    fn upload_fallback_sync(
+        &self,
+        parquet_path: &Path,
+        video_paths: &[(String, PathBuf)],
+    ) {
+        // Upload parquet file
+        if parquet_path.exists() {
+            match self.cloud_uploader.upload_parquet(parquet_path) {
+                Ok(()) => {
+                    tracing::info!(
+                        episode = self.episode_index,
+                        "Uploaded episode Parquet via fallback (coordinator unavailable)"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        episode = self.episode_index,
+                        error = %e,
+                        "Fallback Parquet upload failed"
+                    );
+                }
+            }
+        }
+
+        // Upload video files
+        for (camera, path) in video_paths {
+            if path.exists() {
+                match self.cloud_uploader.upload_video(path, camera) {
+                    Ok(()) => {
+                        tracing::debug!(
+                            episode = self.episode_index,
+                            camera = %camera,
+                            "Uploaded episode video via fallback"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            episode = self.episode_index,
+                            camera = %camera,
+                            error = %e,
+                            "Fallback video upload failed"
+                        );
+                    }
+                }
+            }
         }
     }
 

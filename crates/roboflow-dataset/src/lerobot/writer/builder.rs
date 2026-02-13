@@ -102,36 +102,35 @@ impl LerobotWriterBuilder {
     ///
     /// Returns an error if required fields are not set.
     pub fn build(self) -> Result<LerobotWriter> {
-        let config = self.config.ok_or_else(|| {
-            RoboflowError::required("LerobotWriterBuilder", "config")
-        })?;
+        let config = self
+            .config
+            .ok_or_else(|| RoboflowError::required("LerobotWriterBuilder", "config"))?;
 
         // Determine if we're using cloud storage
         let use_cloud_storage = self.storage.is_some();
 
-        let (storage, output_prefix, local_buffer, _output_dir) = if let Some(storage) =
-            self.storage
-        {
-            let local_buffer = self.local_buffer.ok_or_else(|| {
-                RoboflowError::required("LerobotWriterBuilder", "local_buffer")
-            })?;
-            let output_dir = local_buffer.clone();
-            let output_prefix = self.output_prefix.unwrap_or_default();
-            (storage, output_prefix, local_buffer, output_dir)
-        } else {
-            // Local storage mode
-            let output_dir = self.output_dir.ok_or_else(|| {
-                RoboflowError::required("LerobotWriterBuilder", "output_dir")
-            })?;
+        let (storage, output_prefix, local_buffer, _output_dir) =
+            if let Some(storage) = self.storage {
+                let local_buffer = self.local_buffer.ok_or_else(|| {
+                    RoboflowError::required("LerobotWriterBuilder", "local_buffer")
+                })?;
+                let output_dir = local_buffer.clone();
+                let output_prefix = self.output_prefix.unwrap_or_default();
+                (storage, output_prefix, local_buffer, output_dir)
+            } else {
+                // Local storage mode
+                let output_dir = self
+                    .output_dir
+                    .ok_or_else(|| RoboflowError::required("LerobotWriterBuilder", "output_dir"))?;
 
-            // Validate output_dir is not a cloud storage URL
-            validate_not_cloud_url(&output_dir)?;
+                // Validate output_dir is not a cloud storage URL
+                validate_not_cloud_url(&output_dir)?;
 
-            let storage = Arc::new(roboflow_storage::LocalStorage::new(&output_dir)) as _;
-            let local_buffer = output_dir.clone();
-            let output_prefix = self.output_prefix.unwrap_or_default();
-            (storage, output_prefix, local_buffer, output_dir)
-        };
+                let storage = Arc::new(roboflow_storage::LocalStorage::new(&output_dir)) as _;
+                let local_buffer = output_dir.clone();
+                let output_prefix = self.output_prefix.unwrap_or_default();
+                (storage, output_prefix, local_buffer, output_dir)
+            };
 
         LerobotWriter::new_internal(
             storage,
@@ -199,9 +198,7 @@ mod tests {
 
     #[test]
     fn test_builder_requires_config() {
-        let result = LerobotWriterBuilder::new()
-            .output_dir("/tmp/test")
-            .build();
+        let result = LerobotWriterBuilder::new().output_dir("/tmp/test").build();
 
         assert!(result.is_err());
         if let Err(e) = result {
