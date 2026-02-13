@@ -8,11 +8,33 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
+use robocodec::CodecValue;
+
 use crate::common::AlignedFrame;
 use crate::image::{ImageDecoderFactory, ImageFormat};
 use crate::streaming::completion::FrameCompletionCriteria;
 use crate::streaming::config::StreamingConfig;
 use crate::streaming::stats::AlignmentStats;
+
+/// Extracted image data from a message.
+struct ExtractedImageData {
+    /// Image width in pixels
+    width: u32,
+    /// Image height in pixels
+    height: u32,
+    /// Raw or encoded image bytes
+    data: Vec<u8>,
+    /// Whether the image is encoded (JPEG/PNG) or raw RGB
+    is_encoded: bool,
+}
+
+/// Extracted state/action values from a message.
+struct ExtractedValues {
+    /// The numeric values extracted
+    values: Vec<f32>,
+    /// Whether this is an action (vs state)
+    is_action: bool,
+}
 
 /// A partially complete frame waiting for more messages.
 ///
@@ -143,13 +165,75 @@ impl FrameAlignmentBuffer {
         feature_name: &str,
     ) -> Vec<AlignedFrame> {
         use crate::common::ImageData;
-        use robocodec::CodecValue;
 
         // Update current timestamp
         self.current_timestamp = timestamped_msg.log_time;
-
-        // Extract image data (if any) before borrowing entry
         let msg = &timestamped_msg.message;
+
+        // Step 1: Extract and decode image data (if any)
+        let (image_info, decoded_data, final_is_encoded) =
+            self.process_image_data(msg, feature_name);
+
+        // Step 2: Extract state/action values (before mutable borrow)
+        let values = Self::extract_state_action_values_static(msg, feature_name);
+
+        // Step 3: Align timestamp to frame boundary and get/create frame
+        let aligned_ts = self.align_to_frame_boundary(timestamped_msg.log_time);
+        let entry = self.find_or_create_frame(aligned_ts);
+
+        // Step 4: Add feature to the partial frame
+        entry.add_feature(feature_name);
+
+        // Step 5: Add image data to the frame (if we extracted any)
+        if let Some(data) = decoded_data {
+            entry.frame.images.insert(
+                feature_name.to_string(),
+                Arc::new(ImageData {
+                    width: image_info.as_ref().map(|i| i.width).unwrap_or(0),
+                    height: image_info.as_ref().map(|i| i.height).unwrap_or(0),
+                    data,
+                    original_timestamp: timestamped_msg.log_time,
+                    is_encoded: final_is_encoded,
+                    is_depth: false,
+                }),
+            );
+        }
+
+        // Step 6: Add state/action data
+        if !values.values.is_empty() {
+            if values.is_action {
+                entry.frame.actions.insert(feature_name.to_string(), values.values);
+            } else {
+                entry.frame.states.insert(feature_name.to_string(), values.values);
+            }
+        }
+
+        // Step 7: Check for completed frames
+        self.check_completions()
+    }
+
+    /// Process image data from a message.
+    ///
+    /// Returns (image_info, decoded_data, is_encoded).
+    fn process_image_data(
+        &mut self,
+        msg: &HashMap<String, CodecValue>,
+        feature_name: &str,
+    ) -> (Option<ExtractedImageData>, Option<Vec<u8>>, bool) {
+        let Some(mut image_info) = self.extract_image_data(msg, feature_name) else {
+            return (None, None, false);
+        };
+
+        let (decoded_data, final_is_encoded) =
+            self.decode_image_if_needed(&mut image_info, feature_name);
+
+        (Some(image_info), decoded_data, final_is_encoded)
+    }
+
+    /// Extract image data from a message.
+    ///
+    /// Returns extracted image data including width, height, raw bytes, and encoding status.
+    fn extract_image_data(&self, msg: &HashMap<String, CodecValue>, feature_name: &str) -> Option<ExtractedImageData> {
         let mut width = 0u32;
         let mut height = 0u32;
         let mut image_data: Option<Vec<u8>> = None;
@@ -168,92 +252,7 @@ impl FrameAlignmentBuffer {
                     }
                 }
                 "data" => {
-                    match value {
-                        CodecValue::Bytes(b) => {
-                            image_data = Some(b.clone());
-                            tracing::debug!(
-                                feature = %feature_name,
-                                data_type = "Bytes",
-                                data_len = b.len(),
-                                data_size_mb = b.len() as f64 / (1024.0 * 1024.0),
-                                "Found image data field"
-                            );
-                        }
-                        CodecValue::Array(arr) => {
-                            // Helper to extract u8 from any numeric CodecValue
-                            let codec_value_to_u8 = |v: &CodecValue| -> Option<u8> {
-                                match v {
-                                    CodecValue::UInt8(b) => Some(*b),
-                                    CodecValue::Int8(b) if *b >= 0 => Some(*b as u8),
-                                    CodecValue::UInt16(b) if *b <= u8::MAX as u16 => Some(*b as u8),
-                                    CodecValue::Int16(b)
-                                        if *b >= 0 && (*b as u16) <= u8::MAX as u16 =>
-                                    {
-                                        Some(*b as u8)
-                                    }
-                                    CodecValue::UInt32(b) if *b <= u8::MAX as u32 => Some(*b as u8),
-                                    CodecValue::Int32(b)
-                                        if *b >= 0 && (*b as u32) <= u8::MAX as u32 =>
-                                    {
-                                        Some(*b as u8)
-                                    }
-                                    CodecValue::UInt64(b) if *b <= u8::MAX as u64 => Some(*b as u8),
-                                    CodecValue::Int64(b)
-                                        if *b >= 0 && (*b as u64) <= u8::MAX as u64 =>
-                                    {
-                                        Some(*b as u8)
-                                    }
-                                    _ => None,
-                                }
-                            };
-
-                            // Handle encoded image data stored as UInt8 array (most common)
-                            let bytes: Vec<u8> = arr.iter().filter_map(codec_value_to_u8).collect();
-                            if !bytes.is_empty() {
-                                image_data = Some(bytes);
-                                tracing::debug!(
-                                    feature = %feature_name,
-                                    data_type = "Array<UInt8>",
-                                    data_len = image_data.as_ref().unwrap().len(),
-                                    data_size_mb = image_data.as_ref().unwrap().len() as f64 / (1024.0 * 1024.0),
-                                    "Found image data field in Array format"
-                                );
-                            } else {
-                                // Try nested arrays (some codecs use Array<Array<UInt8>>)
-                                for v in arr.iter() {
-                                    if let CodecValue::Array(inner) = v {
-                                        let inner_bytes: Vec<u8> =
-                                            inner.iter().filter_map(codec_value_to_u8).collect();
-                                        if !inner_bytes.is_empty() {
-                                            image_data = Some(inner_bytes);
-                                            tracing::debug!(
-                                                feature = %feature_name,
-                                                data_type = "Array<Array<UInt8>>",
-                                                "Found image data in nested Array format"
-                                            );
-                                            break;
-                                        }
-                                    }
-                                }
-                                if image_data.is_none() {
-                                    tracing::warn!(
-                                        feature = %feature_name,
-                                        array_len = arr.len(),
-                                        "Image 'data' is Array but no valid UInt8 elements found"
-                                    );
-                                }
-                            }
-                        }
-                        other => {
-                            // FIX: Use type_name() instead of type_name_of_val() to get actual variant name
-                            let actual_type = other.type_name();
-                            tracing::warn!(
-                                feature = %feature_name,
-                                value_type = %actual_type,
-                                "Image 'data' field found but not Bytes/Array type"
-                            );
-                        }
-                    }
+                    image_data = self.extract_data_field(value, feature_name);
                 }
                 "format" => {
                     if let CodecValue::String(f) = value {
@@ -281,121 +280,190 @@ impl FrameAlignmentBuffer {
             );
         }
 
-        // Decode compressed image if decoder available and data is present
-        let (decoded_image, final_is_encoded) = if let Some(ref data) = image_data {
-            if is_encoded {
-                // Extract dimensions from header if not provided
-                if width == 0
-                    && height == 0
-                    && let Some((w, h)) = Self::extract_image_dimensions(data)
-                {
-                    width = w;
-                    height = h;
-                }
-            }
+        image_data.map(|data| ExtractedImageData {
+            width,
+            height,
+            data,
+            is_encoded,
+        })
+    }
 
-            // Try decoding if we have compressed data and a decoder
-            if is_encoded {
-                if let Some(decoder) = &mut self.decoder {
-                    let format = ImageFormat::from_magic_bytes(data);
-                    if format != ImageFormat::Unknown {
-                        // SAFETY: We're in &mut self context, so we can call get_decoder
-                        // We need to explicitly reborrow to get mutable access
-                        match decoder.get_decoder().decode(data, format) {
-                            Ok(decoded) => {
-                                tracing::debug!(
-                                    width = decoded.width,
-                                    height = decoded.height,
-                                    feature = %feature_name,
-                                    "Decoded compressed image"
-                                );
-                                (Some(decoded.data), false)
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    error = %e,
-                                    feature = %feature_name,
-                                    "Failed to decode image, storing compressed"
-                                );
-                                (Some(data.clone()), true)
-                            }
-                        }
-                    } else {
-                        (Some(data.clone()), true)
-                    }
-                } else {
-                    (Some(data.clone()), true)
-                }
-            } else {
-                (Some(data.clone()), is_encoded)
+    /// Extract data from a 'data' field value.
+    fn extract_data_field(&self, value: &CodecValue, feature_name: &str) -> Option<Vec<u8>> {
+        match value {
+            CodecValue::Bytes(b) => {
+                tracing::debug!(
+                    feature = %feature_name,
+                    data_type = "Bytes",
+                    data_len = b.len(),
+                    data_size_mb = b.len() as f64 / (1024.0 * 1024.0),
+                    "Found image data field"
+                );
+                Some(b.clone())
             }
-        } else {
-            (None, false)
+            CodecValue::Array(arr) => self.extract_array_data(arr, feature_name),
+            other => {
+                let actual_type = other.type_name();
+                tracing::warn!(
+                    feature = %feature_name,
+                    value_type = %actual_type,
+                    "Image 'data' field found but not Bytes/Array type"
+                );
+                None
+            }
+        }
+    }
+
+    /// Extract bytes from an array data field.
+    fn extract_array_data(&self, arr: &[CodecValue], feature_name: &str) -> Option<Vec<u8>> {
+        // Helper to extract u8 from any numeric CodecValue
+        let codec_value_to_u8 = |v: &CodecValue| -> Option<u8> {
+            match v {
+                CodecValue::UInt8(b) => Some(*b),
+                CodecValue::Int8(b) if *b >= 0 => Some(*b as u8),
+                CodecValue::UInt16(b) if *b <= u8::MAX as u16 => Some(*b as u8),
+                CodecValue::Int16(b) if *b >= 0 && (*b as u16) <= u8::MAX as u16 => Some(*b as u8),
+                CodecValue::UInt32(b) if *b <= u8::MAX as u32 => Some(*b as u8),
+                CodecValue::Int32(b) if *b >= 0 && (*b as u32) <= u8::MAX as u32 => Some(*b as u8),
+                CodecValue::UInt64(b) if *b <= u8::MAX as u64 => Some(*b as u8),
+                CodecValue::Int64(b) if *b >= 0 && (*b as u64) <= u8::MAX as u64 => Some(*b as u8),
+                _ => None,
+            }
         };
 
-        // Align timestamp to frame boundary
-        let aligned_ts = self.align_to_frame_boundary(timestamped_msg.log_time);
-
-        // Get or create partial frame using binary search
-        let entry = self.find_or_create_frame(aligned_ts);
-
-        // Add feature to the partial frame
-        entry.add_feature(feature_name);
-
-        // Add image data to the frame (if we extracted any)
-        if let Some(data) = decoded_image {
-            entry.frame.images.insert(
-                feature_name.to_string(),
-                Arc::new(ImageData {
-                    width,
-                    height,
-                    data,
-                    original_timestamp: timestamped_msg.log_time,
-                    is_encoded: final_is_encoded,
-                    is_depth: false,
-                }),
+        // Handle encoded image data stored as UInt8 array (most common)
+        let bytes: Vec<u8> = arr.iter().filter_map(codec_value_to_u8).collect();
+        if !bytes.is_empty() {
+            tracing::debug!(
+                feature = %feature_name,
+                data_type = "Array<UInt8>",
+                data_len = bytes.len(),
+                data_size_mb = bytes.len() as f64 / (1024.0 * 1024.0),
+                "Found image data field in Array format"
             );
+            return Some(bytes);
         }
 
-        // Process state/action data (needs the message borrow)
+        // Try nested arrays (some codecs use Array<Array<UInt8>>)
+        for v in arr.iter() {
+            if let CodecValue::Array(inner) = v {
+                let inner_bytes: Vec<u8> = inner.iter().filter_map(codec_value_to_u8).collect();
+                if !inner_bytes.is_empty() {
+                    tracing::debug!(
+                        feature = %feature_name,
+                        data_type = "Array<Array<UInt8>>",
+                        "Found image data in nested Array format"
+                    );
+                    return Some(inner_bytes);
+                }
+            }
+        }
+
+        tracing::warn!(
+            feature = %feature_name,
+            array_len = arr.len(),
+            "Image 'data' is Array but no valid UInt8 elements found"
+        );
+        None
+    }
+
+    /// Decode compressed image data if needed.
+    ///
+    /// Returns (decoded_data, is_encoded) tuple.
+    fn decode_image_if_needed(
+        &mut self,
+        image_data: &mut ExtractedImageData,
+        feature_name: &str,
+    ) -> (Option<Vec<u8>>, bool) {
+        // Extract dimensions from header if not provided
+        if image_data.width == 0
+            && image_data.height == 0
+            && let Some((w, h)) = Self::extract_image_dimensions(&image_data.data)
+        {
+            image_data.width = w;
+            image_data.height = h;
+        }
+
+        // Try decoding if we have compressed data and a decoder
+        if !image_data.is_encoded {
+            return (Some(image_data.data.clone()), false);
+        }
+
+        let Some(decoder) = &mut self.decoder else {
+            return (Some(image_data.data.clone()), true);
+        };
+
+        let format = ImageFormat::from_magic_bytes(&image_data.data);
+        if format == ImageFormat::Unknown {
+            return (Some(image_data.data.clone()), true);
+        }
+
+        match decoder.get_decoder().decode(&image_data.data, format) {
+            Ok(decoded) => {
+                tracing::debug!(
+                    width = decoded.width,
+                    height = decoded.height,
+                    feature = %feature_name,
+                    "Decoded compressed image"
+                );
+                // Update dimensions from decoded image
+                image_data.width = decoded.width;
+                image_data.height = decoded.height;
+                (Some(decoded.data), false)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    feature = %feature_name,
+                    "Failed to decode image, storing compressed"
+                );
+                (Some(image_data.data.clone()), true)
+            }
+        }
+    }
+
+    /// Extract state/action values from a message (static version for borrow safety).
+    fn extract_state_action_values_static(
+        msg: &HashMap<String, CodecValue>,
+        feature_name: &str,
+    ) -> ExtractedValues {
         let mut values = Vec::new();
+
         for value in msg.values() {
-            match value {
-                CodecValue::Float32(n) => values.push(*n),
-                CodecValue::Float64(n) => values.push(*n as f32),
-                CodecValue::UInt8(n) => values.push(*n as f32),
-                CodecValue::UInt16(n) => values.push(*n as f32),
-                CodecValue::UInt32(n) => values.push(*n as f32),
-                CodecValue::UInt64(n) => values.push(*n as f32),
-                CodecValue::Int8(n) => values.push(*n as f32),
-                CodecValue::Int16(n) => values.push(*n as f32),
-                CodecValue::Int32(n) => values.push(*n as f32),
-                CodecValue::Int64(n) => values.push(*n as f32),
-                CodecValue::Array(arr) => {
-                    for v in arr.iter() {
-                        match v {
-                            CodecValue::Float32(n) => values.push(*n),
-                            CodecValue::Float64(n) => values.push(*n as f32),
-                            CodecValue::UInt8(n) => values.push(*n as f32),
-                            _ => {}
-                        }
+            Self::extract_numeric_values_static(value, &mut values);
+        }
+
+        ExtractedValues {
+            is_action: feature_name.starts_with("action."),
+            values,
+        }
+    }
+
+    /// Extract numeric values from a CodecValue into the values vector (static version).
+    fn extract_numeric_values_static(value: &CodecValue, values: &mut Vec<f32>) {
+        match value {
+            CodecValue::Float32(n) => values.push(*n),
+            CodecValue::Float64(n) => values.push(*n as f32),
+            CodecValue::UInt8(n) => values.push(*n as f32),
+            CodecValue::UInt16(n) => values.push(*n as f32),
+            CodecValue::UInt32(n) => values.push(*n as f32),
+            CodecValue::UInt64(n) => values.push(*n as f32),
+            CodecValue::Int8(n) => values.push(*n as f32),
+            CodecValue::Int16(n) => values.push(*n as f32),
+            CodecValue::Int32(n) => values.push(*n as f32),
+            CodecValue::Int64(n) => values.push(*n as f32),
+            CodecValue::Array(arr) => {
+                for v in arr.iter() {
+                    match v {
+                        CodecValue::Float32(n) => values.push(*n),
+                        CodecValue::Float64(n) => values.push(*n as f32),
+                        CodecValue::UInt8(n) => values.push(*n as f32),
+                        _ => {}
                     }
                 }
-                _ => {}
             }
+            _ => {}
         }
-
-        // Add as state or action based on feature name
-        if !values.is_empty() {
-            if feature_name.starts_with("action.") {
-                entry.frame.actions.insert(feature_name.to_string(), values);
-            } else {
-                entry.frame.states.insert(feature_name.to_string(), values);
-            }
-        }
-
-        // Check for completed frames
-        self.check_completions()
     }
 
     /// Flush all remaining frames (end of stream).
