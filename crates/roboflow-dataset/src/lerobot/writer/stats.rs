@@ -121,4 +121,66 @@ mod tests {
         // Should have one episode stat entry
         assert_eq!(metadata.episode_stats.len(), 1);
     }
+
+    #[test]
+    fn test_calculate_episode_stats_missing_action() {
+        let mut metadata = MetadataCollector::new();
+        let mut frame = create_test_frame(0, 0, vec![1.0, 2.0, 3.0], vec![0.5]);
+        frame.action = None;
+
+        let frames = vec![frame];
+        let result = calculate_episode_stats(&frames, 0, &mut metadata);
+        assert!(result.is_ok());
+
+        // Should have stats for observation.state only
+        assert_eq!(metadata.episode_stats.len(), 1);
+    }
+
+    #[test]
+    fn test_calculate_episode_stats_high_episode_index() {
+        let mut metadata = MetadataCollector::new();
+        let frames = vec![create_test_frame(999, 0, vec![0.0], vec![1.0])];
+
+        let result = calculate_episode_stats(&frames, 999, &mut metadata);
+        assert!(result.is_ok());
+
+        assert_eq!(metadata.episode_stats.len(), 1);
+        assert_eq!(metadata.episode_stats[0].episode_index, 999);
+    }
+
+    #[test]
+    fn test_calculate_episode_stats_mixed_frames() {
+        let mut metadata = MetadataCollector::new();
+
+        // Mix of frames with and without optional fields
+        let mut frame1 = create_test_frame(0, 0, vec![1.0], vec![0.5]);
+        frame1.observation_state = None;
+
+        let frame2 = create_test_frame(0, 1, vec![2.0], vec![1.0]);
+        let mut frame3 = create_test_frame(0, 2, vec![3.0], vec![1.5]);
+        frame3.action = None;
+
+        let frames = vec![frame1, frame2, frame3];
+        let result = calculate_episode_stats(&frames, 0, &mut metadata);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_calculate_episode_stats_all_missing_state() {
+        let mut metadata = MetadataCollector::new();
+
+        // All frames without observation_state
+        let mut frame1 = create_test_frame(0, 0, vec![], vec![0.5]);
+        frame1.observation_state = None;
+
+        let mut frame2 = create_test_frame(0, 1, vec![], vec![1.0]);
+        frame2.observation_state = None;
+
+        let frames = vec![frame1, frame2];
+        let result = calculate_episode_stats(&frames, 0, &mut metadata);
+        assert!(result.is_ok());
+
+        // Stats should still be created (even if empty)
+        assert_eq!(metadata.episode_stats.len(), 1);
+    }
 }

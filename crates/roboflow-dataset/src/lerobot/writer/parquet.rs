@@ -213,3 +213,157 @@ pub fn write_episode_parquet(
 
     Ok((parquet_path, file_size as usize))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn create_test_frame(
+        episode: usize,
+        frame: usize,
+        state: Option<Vec<f32>>,
+        action: Option<Vec<f32>>,
+    ) -> LerobotFrame {
+        LerobotFrame {
+            episode_index: episode,
+            frame_index: frame,
+            index: episode * 100 + frame,
+            timestamp: frame as f64 / 30.0,
+            observation_state: state,
+            action,
+            task_index: Some(0),
+            image_frames: HashMap::new(),
+        }
+    }
+
+    /// Create the directory structure expected by write_episode_parquet
+    fn setup_output_dir(dir: &Path) {
+        fs::create_dir_all(dir.join("data/chunk-000")).unwrap();
+    }
+
+    #[test]
+    fn test_write_empty_frames() {
+        let dir = tempdir().unwrap();
+        let result = write_episode_parquet(&[], 0, dir.path());
+        assert!(result.is_ok());
+        let (path, size) = result.unwrap();
+        assert!(path.as_os_str().is_empty());
+        assert_eq!(size, 0);
+    }
+
+    #[test]
+    fn test_write_requires_observation_state() {
+        let dir = tempdir().unwrap();
+        setup_output_dir(dir.path());
+        // Frame without observation_state
+        let frames = vec![create_test_frame(0, 0, None, None)];
+
+        let result = write_episode_parquet(&frames, 0, dir.path());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("state dimension"));
+    }
+
+    #[test]
+    fn test_write_basic_episode() {
+        let dir = tempdir().unwrap();
+        setup_output_dir(dir.path());
+        let frames = vec![
+            create_test_frame(0, 0, Some(vec![0.0, 0.0, 0.0]), Some(vec![1.0, 1.0])),
+            create_test_frame(0, 1, Some(vec![0.1, 0.1, 0.1]), Some(vec![1.1, 1.1])),
+            create_test_frame(0, 2, Some(vec![0.2, 0.2, 0.2]), Some(vec![1.2, 1.2])),
+        ];
+
+        let result = write_episode_parquet(&frames, 0, dir.path());
+        assert!(result.is_ok());
+
+        let (path, size) = result.unwrap();
+        assert!(path.to_string_lossy().contains("episode_000000.parquet"));
+        assert!(size > 0);
+
+        // Verify file exists
+        assert!(path.exists());
+
+        // Verify directory structure
+        assert!(path.parent().unwrap().ends_with("chunk-000"));
+    }
+
+    #[test]
+    fn test_write_with_forward_fill_action() {
+        let dir = tempdir().unwrap();
+        setup_output_dir(dir.path());
+        // First frame has action, second doesn't (should forward-fill)
+        let frames = vec![
+            create_test_frame(0, 0, Some(vec![0.0, 0.0]), Some(vec![5.0, 5.0])),
+            create_test_frame(0, 1, Some(vec![0.1, 0.1]), None),
+            create_test_frame(0, 2, Some(vec![0.2, 0.2]), Some(vec![6.0, 6.0])),
+        ];
+
+        let result = write_episode_parquet(&frames, 0, dir.path());
+        assert!(result.is_ok());
+        let (path, _) = result.unwrap();
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn test_write_with_zero_action_fallback() {
+        let dir = tempdir().unwrap();
+        setup_output_dir(dir.path());
+        // No action in any frame (should use zeros)
+        let frames = vec![
+            create_test_frame(0, 0, Some(vec![0.0, 0.0, 0.0]), None),
+            create_test_frame(0, 1, Some(vec![0.1, 0.1, 0.1]), None),
+        ];
+
+        let result = write_episode_parquet(&frames, 0, dir.path());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_write_with_camera_paths() {
+        let dir = tempdir().unwrap();
+        setup_output_dir(dir.path());
+        let mut frame = create_test_frame(0, 0, Some(vec![0.0, 0.0]), Some(vec![1.0, 1.0]));
+        frame.image_frames.insert(
+            "cam_left".to_string(),
+            (
+                "videos/chunk-000/observation.images.cam_left/episode_000000.mp4".to_string(),
+                0.0,
+            ),
+        );
+
+        let frames = vec![frame];
+        let result = write_episode_parquet(&frames, 0, dir.path());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_write_episode_with_high_index() {
+        let dir = tempdir().unwrap();
+        setup_output_dir(dir.path());
+        let frames = vec![create_test_frame(999, 0, Some(vec![0.0]), Some(vec![1.0]))];
+
+        let result = write_episode_parquet(&frames, 999, dir.path());
+        assert!(result.is_ok());
+
+        let (path, _) = result.unwrap();
+        assert!(path.to_string_lossy().contains("episode_000999.parquet"));
+    }
+
+    #[test]
+    fn test_skips_frames_without_state() {
+        let dir = tempdir().unwrap();
+        setup_output_dir(dir.path());
+        let frames = vec![
+            create_test_frame(0, 0, None, None), // Should be skipped
+            create_test_frame(0, 1, Some(vec![0.0]), Some(vec![1.0])), // Valid
+            create_test_frame(0, 2, Some(vec![0.1]), Some(vec![1.1])), // Valid
+        ];
+
+        let result = write_episode_parquet(&frames, 0, dir.path());
+        assert!(result.is_ok());
+        let (path, _) = result.unwrap();
+        assert!(path.exists());
+    }
+}

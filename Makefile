@@ -1,4 +1,4 @@
-.PHONY: all build build-release test test-all coverage coverage-rust clippy fmt lint clean check-license dev-up dev-down dev-logs dev-ps dev-restart dev-clean help
+.PHONY: all build build-release test test-all coverage coverage-rust clippy fmt lint clean check-license dev-up dev-down dev-logs dev-ps dev-restart dev-clean help deny security pre-commit-install pre-commit
 
 # Default target
 all: build
@@ -82,6 +82,40 @@ check-license: ## Check REUSE license compliance
 		echo "⚠ reuse tool not found. Install with: pip install reuse"; \
 		exit 1; \
 	fi
+
+deny: ## Check dependencies for security advisories and license issues
+	@echo "Checking dependencies with cargo-deny..."
+	@if command -v cargo-deny >/dev/null 2>&1; then \
+		cargo deny check; \
+	else \
+		echo "⚠ cargo-deny not found. Install with: cargo install cargo-deny"; \
+		exit 1; \
+	fi
+
+security: deny ## Run all security checks (alias for deny)
+
+pre-commit-install: ## Install pre-commit hooks
+	@echo "Installing pre-commit hooks..."
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit install; \
+		pre-commit install --hook-type commit-msg; \
+		echo "✓ Pre-commit hooks installed"; \
+	else \
+		echo "⚠ pre-commit not found. Install with: pip install pre-commit"; \
+		exit 1; \
+	fi
+
+pre-commit: ## Run pre-commit on all files
+	@echo "Running pre-commit on all files..."
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit run --all-files; \
+	else \
+		echo "⚠ pre-commit not found. Install with: pip install pre-commit"; \
+		exit 1; \
+	fi
+
+ci-local: fmt lint test check-license ## Run all CI checks locally (fmt, lint, test, license)
+	@echo "✓ All local CI checks passed"
 
 # ============================================================================
 # Development (docker-compose)
