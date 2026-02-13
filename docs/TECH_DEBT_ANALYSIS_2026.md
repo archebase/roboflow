@@ -43,7 +43,7 @@ Functions exceeding clippy's complexity threshold (25):
 | Location | Function | Complexity | Action |
 |----------|----------|------------|--------|
 | `distributed/scanner.rs` | `process_batch` | ~~40~~ **FIXED** | ✅ Extracted helper methods |
-| `streaming/alignment.rs:140` | `process_message` | 36 | Extract image extraction |
+| `streaming/alignment.rs:140` | `process_message` | ~~36~~ **FIXED** | ✅ Extracted helper methods |
 | `worker/coordinator.rs:283` | `run_worker_loop` | 37 | Extract task handlers |
 | `merge/coordinator.rs:367` | `try_claim_merge` | 30 | Extract phases |
 
@@ -169,7 +169,7 @@ Missing:
 ```
 1. Reduce cognitive complexity (3 functions)
    - scanner.rs:process_batch ✅ COMPLETED (reduced from 40 to acceptable)
-   - streaming/alignment.rs:process_message (pending)
+   - streaming/alignment.rs:process_message ✅ COMPLETED (reduced from 36 to acceptable)
    - worker/coordinator.rs:run_worker_loop (pending)
    - merge/coordinator.rs:try_claim_merge (pending)
    Effort: 12h
