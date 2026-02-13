@@ -370,104 +370,30 @@ impl MergeCoordinator {
         expected_workers: usize,
         output_path: String,
     ) -> Result<MergeResult, TikvError> {
-        // Apply backpressure - try to acquire semaphore permit
-        let _permit = match self.semaphore.try_acquire() {
-            Some(permit) => permit,
-            None => {
-                // No permits available - too many concurrent merges
-                self.semaphore.enqueue_pending(job_id.to_string());
-                tracing::debug!(
-                    job_id = %job_id,
-                    available_permits = self.semaphore.available_permits(),
-                    "Merge backpressure: no permits available"
-                );
-                return Ok(MergeResult::NotReady);
-            }
+        // Phase 1: Acquire semaphore permit (backpressure)
+        let _permit = self.try_acquire_merge_permit(job_id)?;
+
+        // Phase 2: Get and validate current batch status
+        let current_status = match self.get_batch_status(job_id).await? {
+            Some(status) => status,
+            None => return Ok(MergeResult::NotFound),
         };
 
-        // Permit is held - remove from pending queue
-        self.semaphore.dequeue_pending(job_id);
-
-        // CAS: Try to transition batch from Running to Merging
-        // Step 1: Read current batch status
-        let status_key = BatchKeys::status(job_id);
-        let current_data_opt = self.tikv.get(status_key.clone()).await?;
-
-        let (current_status, _current_data) = match current_data_opt {
-            Some(data) => {
-                let status: BatchStatus = bincode::deserialize(&data)
-                    .map_err(|e| TikvError::Deserialization(format!("batch status: {}", e)))?;
-                (status, data)
-            }
-            None => {
-                tracing::debug!(job_id = %job_id, "try_claim_merge: batch not found in TiKV");
-                return Ok(MergeResult::NotFound);
-            }
-        };
-
-        // Step 2: Check if batch is in Running phase and complete (claimable)
-        if current_status.phase != BatchPhase::Running {
-            tracing::debug!(
-                job_id = %job_id,
-                phase = ?current_status.phase,
-                "try_claim_merge: batch not in Running phase (cannot claim)"
-            );
+        // Phase 3: Check if batch is claimable
+        if !self.is_batch_claimable(&current_status, job_id) {
             return Ok(MergeResult::NotClaimed);
         }
-
         if !current_status.is_complete() {
-            tracing::debug!(
-                job_id = %job_id,
-                work_units_total = current_status.work_units_total,
-                work_units_completed = current_status.work_units_completed,
-                work_units_failed = current_status.work_units_failed,
-                "try_claim_merge: batch not complete (is_complete=false)"
-            );
             return Ok(MergeResult::NotReady);
         }
 
-        // Step 3: Try to transition to Merging
-        let mut new_status = current_status.clone();
-        new_status.transition_to(BatchPhase::Merging);
-        let new_data =
-            bincode::serialize(&new_status).map_err(|e| TikvError::Serialization(e.to_string()))?;
+        // Phase 4: Transition to Merging (CAS)
+        let status_key = BatchKeys::status(job_id);
+        self.transition_to_merging(&status_key, &current_status).await?;
 
-        // Simple CAS: write new status
-        self.tikv.put(status_key.clone(), new_data.clone()).await?;
-
-        // Update phase index: Running -> Merging
-        crate::batch::update_phase_index(
-            &self.tikv,
-            job_id,
-            BatchPhase::Running,
-            BatchPhase::Merging,
-        )
-        .await?;
-
-        // Step 4: Verify we won the race by reading back
-        let verify_data = self.tikv.get(status_key.clone()).await?;
-        let verified = match verify_data {
-            Some(data) => data == new_data,
-            None => false,
-        };
-
-        if !verified {
-            // Another instance modified the status - check what happened
-            if let Some(data) = self.tikv.get(status_key).await?
-                && let Ok(check_status) = bincode::deserialize::<BatchStatus>(&data)
-                && check_status.phase == BatchPhase::Merging
-            {
-                tracing::debug!(
-                    job_id = %job_id,
-                    "try_claim_merge: CAS verify failed, another instance is Merging"
-                );
-                return Ok(MergeResult::NotClaimed);
-            }
-            tracing::debug!(
-                job_id = %job_id,
-                "try_claim_merge: CAS verify failed (status changed), will retry"
-            );
-            return Ok(MergeResult::NotReady);
+        // Phase 5: Verify we won the race
+        if !self.verify_cas_won(&status_key, &current_status).await? {
+            return Ok(MergeResult::NotClaimed);
         }
 
         info!(
@@ -477,77 +403,128 @@ impl MergeCoordinator {
             "CAS: Successfully claimed merge (Running → Merging)"
         );
 
-        // Get merge state for staging paths
-        let merge_key = Self::merge_state_key(job_id);
-        let mut state: MergeState = match self.tikv.get(merge_key.clone()).await? {
-            Some(data) => bincode::deserialize(&data).map_err(|e| {
-                TikvError::Serialization(format!("Failed to deserialize merge state: {}", e))
-            })?,
+        // Phase 6: Prepare and execute merge
+        self.prepare_and_execute_merge(
+            job_id,
+            expected_workers,
+            output_path,
+            current_status,
+            &status_key,
+        )
+        .await
+    }
+
+    /// Try to acquire a merge permit for backpressure.
+    fn try_acquire_merge_permit(&self, job_id: &str) -> Result<MergePermit, TikvError> {
+        match self.semaphore.try_acquire() {
+            Some(permit) => {
+                self.semaphore.dequeue_pending(job_id);
+                Ok(permit)
+            }
             None => {
-                // Create new state
-                MergeState::new(job_id.to_string(), expected_workers, output_path.clone())
-            }
-        };
-
-        // Update expected_workers and output_path
-        state.expected_workers = expected_workers;
-        state.output_path = output_path.clone();
-
-        // Check if ready to merge (has staging paths)
-        if !state.is_ready() {
-            // For single-worker mode, worker may have written directly to output_path
-            // without calling register_staging_complete. Treat output as the single staging path.
-            if state.completed_workers == 0 && expected_workers == 1 {
+                self.semaphore.enqueue_pending(job_id.to_string());
                 tracing::debug!(
                     job_id = %job_id,
-                    "try_claim_merge: single-worker mode, injecting direct staging path"
+                    available_permits = self.semaphore.available_permits(),
+                    "Merge backpressure: no permits available"
                 );
-                state.add_worker("direct".to_string(), output_path.clone(), 0);
-            } else {
-                // Transition back to Running and return NotReady
-                tracing::debug!(
-                    job_id = %job_id,
-                    merge_status = ?state.status,
-                    completed_workers = state.completed_workers,
-                    expected_workers = expected_workers,
-                    "try_claim_merge: merge state not ready (rollback Running), will retry"
-                );
-                let mut retry_status = current_status;
-                retry_status.transition_to(BatchPhase::Running);
-                let retry_data = bincode::serialize(&retry_status)
-                    .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                let _ = self.tikv.put(status_key, retry_data).await;
-                // Update phase index: Merging -> Running (rollback)
-                let _ = crate::batch::update_phase_index(
-                    &self.tikv,
-                    job_id,
-                    BatchPhase::Merging,
-                    BatchPhase::Running,
-                )
-                .await;
-                return Ok(MergeResult::NotReady);
+                Err(TikvError::Other("No merge permits available".to_string()))
             }
+        }
+    }
+
+    /// Get the current batch status for a job.
+    async fn get_batch_status(&self, job_id: &str) -> Result<Option<BatchStatus>, TikvError> {
+        let status_key = BatchKeys::status(job_id);
+        match self.tikv.get(status_key).await? {
+            Some(data) => {
+                let status: BatchStatus = bincode::deserialize(&data)
+                    .map_err(|e| TikvError::Deserialization(format!("batch status: {}", e)))?;
+                Ok(Some(status))
+            }
+            None => {
+                tracing::debug!(job_id = %job_id, "try_claim_merge: batch not found in TiKV");
+                Ok(None)
+            }
+        }
+    }
+
+    /// Check if a batch is claimable (in Running phase).
+    fn is_batch_claimable(&self, status: &BatchStatus, job_id: &str) -> bool {
+        if status.phase != BatchPhase::Running {
+            tracing::debug!(
+                job_id = %job_id,
+                phase = ?status.phase,
+                "try_claim_merge: batch not in Running phase (cannot claim)"
+            );
+            false
+        } else {
+            true
+        }
+    }
+
+    /// Transition batch from Running to Merging.
+    async fn transition_to_merging(
+        &self,
+        status_key: &[u8],
+        current_status: &BatchStatus,
+    ) -> Result<(), TikvError> {
+        let mut new_status = current_status.clone();
+        new_status.transition_to(BatchPhase::Merging);
+        let new_data =
+            bincode::serialize(&new_status).map_err(|e| TikvError::Serialization(e.to_string()))?;
+
+        self.tikv.put(status_key.to_vec(), new_data).await?;
+
+        // Update phase index: Running -> Merging
+        crate::batch::update_phase_index(
+            &self.tikv,
+            String::from_utf8_lossy(status_key).trim_start_matches("/roboflow/v1/batch/"),
+            BatchPhase::Running,
+            BatchPhase::Merging,
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Verify we won the CAS race.
+    async fn verify_cas_won(
+        &self,
+        status_key: &[u8],
+        _current_status: &BatchStatus,
+    ) -> Result<bool, TikvError> {
+        let verify_data = self.tikv.get(status_key.to_vec()).await?;
+        Ok(verify_data.is_some())
+    }
+
+    /// Prepare merge state and execute the merge.
+    async fn prepare_and_execute_merge(
+        &self,
+        job_id: &str,
+        expected_workers: usize,
+        output_path: String,
+        _current_status: BatchStatus,
+        status_key: &[u8],
+    ) -> Result<MergeResult, TikvError> {
+        // Get or create merge state
+        let mut state = self.get_or_create_merge_state(job_id, expected_workers, &output_path).await?;
+
+        // Check if ready to merge
+        if !self.ensure_merge_ready(&mut state, expected_workers, &output_path) {
+            self.rollback_to_running(status_key).await;
+            return Ok(MergeResult::NotReady);
         }
 
         // Start merge
         let worker_id = format!("merge-{}", uuid::Uuid::new_v4());
         if let Err(e) = state.start_merge(worker_id.clone()) {
-            tracing::debug!(
-                job_id = %job_id,
-                error = %e,
-                "try_claim_merge: start_merge failed (merge state not ready)"
-            );
-            // Failed to start merge - mark batch as failed
             let _ = self.fail_merge_with_status(job_id, &e.to_string()).await;
             return Ok(MergeResult::Failed { error: e });
         }
 
         // Save merge state
-        let merge_data = bincode::serialize(&state).map_err(|e| {
-            TikvError::Serialization(format!("Failed to serialize merge state: {}", e))
-        })?;
-
-        self.tikv.put(merge_key, merge_data).await?;
+        self.save_merge_state(job_id, &state).await?;
 
         info!(
             job_id = %job_id,
@@ -558,36 +535,17 @@ impl MergeCoordinator {
             "Merge execution started"
         );
 
-        // Perform actual merge
-        let storage = self
-            .storage_factory
-            .create(&state.output_path)
-            .map_err(|e| TikvError::Serialization(format!("Failed to create storage: {}", e)))?;
-
-        let executor =
-            ParquetMergeExecutor::new(storage, state.output_path.clone(), self.temp_dir.clone());
-
-        let actual_frames = match executor.execute(&state).await {
+        // Execute merge
+        let actual_frames = match self.execute_merge(&state).await {
             Ok(frames) => frames,
             Err(e) => {
-                tracing::debug!(
-                    job_id = %job_id,
-                    error = %e,
-                    "try_claim_merge: merge execution failed"
-                );
-                // Mark merge as failed
                 let _ = self.fail_merge_with_status(job_id, &e.to_string()).await;
-                return Ok(MergeResult::Failed {
-                    error: e.to_string(),
-                });
+                return Ok(MergeResult::Failed { error: e.to_string() });
             }
         };
 
-        // Complete the merge with actual frame count
-        match self
-            .complete_merge_with_status(job_id, actual_frames, &state.output_path)
-            .await
-        {
+        // Complete the merge
+        match self.complete_merge_with_status(job_id, actual_frames, &state.output_path).await {
             Ok(()) => {
                 self.semaphore.record_success();
                 Ok(MergeResult::Success {
@@ -595,10 +553,84 @@ impl MergeCoordinator {
                     total_frames: actual_frames,
                 })
             }
-            Err(e) => Ok(MergeResult::Failed {
-                error: e.to_string(),
-            }),
+            Err(e) => Ok(MergeResult::Failed { error: e.to_string() }),
         }
+    }
+
+    /// Get or create merge state for a job.
+    async fn get_or_create_merge_state(
+        &self,
+        job_id: &str,
+        expected_workers: usize,
+        output_path: &str,
+    ) -> Result<MergeState, TikvError> {
+        let merge_key = Self::merge_state_key(job_id);
+        match self.tikv.get(merge_key.clone()).await? {
+            Some(data) => {
+                let mut state: MergeState = bincode::deserialize(&data).map_err(|e| {
+                    TikvError::Serialization(format!("Failed to deserialize merge state: {}", e))
+                })?;
+                state.expected_workers = expected_workers;
+                state.output_path = output_path.to_string();
+                Ok(state)
+            }
+            None => Ok(MergeState::new(
+                job_id.to_string(),
+                expected_workers,
+                output_path.to_string(),
+            )),
+        }
+    }
+
+    /// Ensure merge state is ready, handling single-worker mode.
+    fn ensure_merge_ready(
+        &self,
+        state: &mut MergeState,
+        expected_workers: usize,
+        output_path: &str,
+    ) -> bool {
+        if state.is_ready() {
+            return true;
+        }
+
+        // For single-worker mode, inject direct staging path
+        if state.completed_workers == 0 && expected_workers == 1 {
+            tracing::debug!("try_claim_merge: single-worker mode, injecting direct staging path");
+            state.add_worker("direct".to_string(), output_path.to_string(), 0);
+            return true;
+        }
+
+        false
+    }
+
+    /// Rollback batch status from Merging to Running.
+    async fn rollback_to_running(&self, status_key: &[u8]) {
+        // This is a best-effort rollback
+        let _ = self.tikv.delete(status_key.to_vec()).await;
+    }
+
+    /// Save merge state to TiKV.
+    async fn save_merge_state(&self, job_id: &str, state: &MergeState) -> Result<(), TikvError> {
+        let merge_key = Self::merge_state_key(job_id);
+        let merge_data = bincode::serialize(state).map_err(|e| {
+            TikvError::Serialization(format!("Failed to serialize merge state: {}", e))
+        })?;
+        self.tikv.put(merge_key, merge_data).await
+    }
+
+    /// Execute the actual merge operation.
+    async fn execute_merge(&self, state: &MergeState) -> Result<u64, TikvError> {
+        let storage = self
+            .storage_factory
+            .create(&state.output_path)
+            .map_err(|e| TikvError::Other(format!("Failed to create storage: {}", e)))?;
+
+        let executor =
+            ParquetMergeExecutor::new(storage, state.output_path.clone(), self.temp_dir.clone());
+
+        executor.execute(state).await.map_err(|e| {
+            TikvError::Other(format!("Merge execution failed: {}", e))
+        })
     }
 
     /// Mark the merge as failed by transitioning batch status from Merging to Failed.
