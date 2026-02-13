@@ -775,4 +775,195 @@ mod tests {
         assert_eq!(config.frames_per_fragment, 300);
         assert_eq!(config.frame_channel_capacity, 64);
     }
+
+    // =============================================================================
+    // ConcurrentEncoderConfig Tests
+    // =============================================================================
+
+    #[test]
+    fn test_config_default_key_prefix() {
+        let config = ConcurrentEncoderConfig::default();
+        assert!(config.key_prefix.is_empty());
+    }
+
+    #[test]
+    fn test_config_default_indices() {
+        let config = ConcurrentEncoderConfig::default();
+        assert_eq!(config.chunk_index, 0);
+        assert_eq!(config.episode_index, 0);
+    }
+
+    #[test]
+    fn test_config_default_video_config() {
+        let config = ConcurrentEncoderConfig::default();
+        assert_eq!(config.video_config.fps, 30);
+        assert_eq!(config.video_config.codec, "libx264");
+    }
+
+    #[test]
+    fn test_config_custom_values() {
+        let config = ConcurrentEncoderConfig {
+            key_prefix: "dataset/episode_042".to_string(),
+            chunk_index: 1,
+            episode_index: 42,
+            frames_per_fragment: 150,
+            temp_dir: PathBuf::from("/tmp/test"),
+            video_config: VideoEncoderConfig::default().with_fps(60),
+            frame_channel_capacity: 128,
+        };
+
+        assert_eq!(config.key_prefix, "dataset/episode_042");
+        assert_eq!(config.chunk_index, 1);
+        assert_eq!(config.episode_index, 42);
+        assert_eq!(config.frames_per_fragment, 150);
+        assert_eq!(config.frame_channel_capacity, 128);
+        assert_eq!(config.video_config.fps, 60);
+    }
+
+    #[test]
+    fn test_config_clone() {
+        let config = ConcurrentEncoderConfig {
+            key_prefix: "test".to_string(),
+            ..Default::default()
+        };
+        let cloned = config.clone();
+        assert_eq!(config.key_prefix, cloned.key_prefix);
+        assert_eq!(config.frames_per_fragment, cloned.frames_per_fragment);
+    }
+
+    // =============================================================================
+    // ConcurrentEncoderResult Tests
+    // =============================================================================
+
+    #[test]
+    fn test_result_fields() {
+        let result = ConcurrentEncoderResult {
+            camera: "cam_left".to_string(),
+            url: "s3://bucket/videos/cam_left.mp4".to_string(),
+            frames_encoded: 1500,
+            frames_skipped: 5,
+        };
+
+        assert_eq!(result.camera, "cam_left");
+        assert_eq!(result.url, "s3://bucket/videos/cam_left.mp4");
+        assert_eq!(result.frames_encoded, 1500);
+        assert_eq!(result.frames_skipped, 5);
+    }
+
+    #[test]
+    fn test_result_clone() {
+        let result = ConcurrentEncoderResult {
+            camera: "cam_right".to_string(),
+            url: "test_url".to_string(),
+            frames_encoded: 100,
+            frames_skipped: 2,
+        };
+        let cloned = result.clone();
+        assert_eq!(result.camera, cloned.camera);
+        assert_eq!(result.frames_encoded, cloned.frames_encoded);
+    }
+
+    #[test]
+    fn test_result_debug() {
+        let result = ConcurrentEncoderResult {
+            camera: "cam_0".to_string(),
+            url: "url".to_string(),
+            frames_encoded: 0,
+            frames_skipped: 0,
+        };
+        let debug_str = format!("{:?}", result);
+        assert!(debug_str.contains("cam_0"));
+        assert!(debug_str.contains("frames_encoded"));
+    }
+
+    // =============================================================================
+    // PipelineCommand Tests
+    // =============================================================================
+
+    #[test]
+    fn test_pipeline_command_debug() {
+        let cmd = PipelineCommand::Flush;
+        let debug_str = format!("{:?}", cmd);
+        assert!(debug_str.contains("Flush"));
+    }
+
+    // =============================================================================
+    // UploadCommand Tests
+    // =============================================================================
+
+    #[test]
+    fn test_upload_command_abort_debug() {
+        let cmd = UploadCommand::AbortAll;
+        let debug_str = format!("{:?}", cmd);
+        assert!(debug_str.contains("AbortAll"));
+    }
+
+    #[test]
+    fn test_upload_command_finish_debug() {
+        let cmd = UploadCommand::Finish {
+            camera: "test".to_string(),
+        };
+        let debug_str = format!("{:?}", cmd);
+        assert!(debug_str.contains("Finish"));
+        assert!(debug_str.contains("test"));
+    }
+
+    // =============================================================================
+    // decode_to_rgb Tests
+    // =============================================================================
+
+    #[test]
+    fn test_decode_to_rgb_zero_dimensions() {
+        let image = ImageData {
+            data: vec![0u8; 100],
+            width: 0,
+            height: 100,
+            is_encoded: false,
+        };
+        assert!(decode_to_rgb(&image).is_none());
+
+        let image2 = ImageData {
+            data: vec![0u8; 100],
+            width: 100,
+            height: 0,
+            is_encoded: false,
+        };
+        assert!(decode_to_rgb(&image2).is_none());
+    }
+
+    #[test]
+    fn test_decode_to_rgb_raw_rgb() {
+        // 2x2 RGB image = 12 bytes
+        let image = ImageData {
+            data: vec![255u8; 12],
+            width: 2,
+            height: 2,
+            is_encoded: false,
+        };
+        let result = decode_to_rgb(&image);
+        assert!(result.is_some());
+        let (w, h, data) = result.unwrap();
+        assert_eq!(w, 2);
+        assert_eq!(h, 2);
+        assert_eq!(data.len(), 12);
+    }
+
+    // =============================================================================
+    // CameraPipelineResult Tests
+    // =============================================================================
+
+    #[test]
+    fn test_camera_pipeline_result_fields() {
+        let result = CameraPipelineResult {
+            camera: "cam_test".to_string(),
+            frames_encoded: 500,
+            fragments_created: 2,
+            frames_skipped: 10,
+        };
+
+        assert_eq!(result.camera, "cam_test");
+        assert_eq!(result.frames_encoded, 500);
+        assert_eq!(result.fragments_created, 2);
+        assert_eq!(result.frames_skipped, 10);
+    }
 }

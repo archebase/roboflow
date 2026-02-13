@@ -794,4 +794,162 @@ mod tests {
         assert!(!encoders.is_empty());
         assert!(encoders.contains(&EncoderChoice::RsmpegLibx264));
     }
+
+    // =============================================================================
+    // Additional EncoderChoice Tests
+    // =============================================================================
+
+    #[test]
+    fn test_encoder_choice_rsmpeg_name() {
+        assert_eq!(EncoderChoice::RsmpegLibx264.name(), "libx264 (rsmpeg)");
+    }
+
+    #[test]
+    fn test_encoder_choice_ffmpeg_name() {
+        assert_eq!(EncoderChoice::FfmpegLibx264.name(), "libx264 (ffmpeg)");
+    }
+
+    #[test]
+    fn test_encoder_choice_rsmpeg_speedup() {
+        assert!(EncoderChoice::RsmpegLibx264.speedup_factor() > 1.0);
+        assert!(EncoderChoice::RsmpegLibx264.speedup_factor() < 5.0);
+    }
+
+    #[test]
+    fn test_encoder_choice_equality() {
+        assert_eq!(EncoderChoice::Nvenc, EncoderChoice::Nvenc);
+        assert_eq!(EncoderChoice::VideoToolbox, EncoderChoice::VideoToolbox);
+        assert_ne!(EncoderChoice::Nvenc, EncoderChoice::VideoToolbox);
+        assert_ne!(EncoderChoice::RsmpegLibx264, EncoderChoice::FfmpegLibx264);
+    }
+
+    #[test]
+    fn test_encoder_choice_clone() {
+        let encoder = EncoderChoice::Nvenc;
+        let cloned = encoder.clone();
+        assert_eq!(encoder, cloned);
+    }
+
+    #[test]
+    fn test_encoder_choice_debug() {
+        let encoder = EncoderChoice::Nvenc;
+        let debug_str = format!("{:?}", encoder);
+        assert!(debug_str.contains("Nvenc"));
+    }
+
+    // =============================================================================
+    // Mp4Encoder Tests
+    // =============================================================================
+
+    #[test]
+    fn test_mp4_encoder_new() {
+        let encoder = Mp4Encoder::new();
+        assert_eq!(encoder.config.fps, 30);
+        assert_eq!(encoder.config.codec, "libx264");
+    }
+
+    #[test]
+    fn test_mp4_encoder_default() {
+        let encoder = Mp4Encoder::default();
+        assert_eq!(encoder.config.fps, 30);
+    }
+
+    #[test]
+    fn test_mp4_encoder_with_config() {
+        let config = VideoEncoderConfig::default().with_fps(60);
+        let encoder = Mp4Encoder::with_config(config);
+        assert_eq!(encoder.config.fps, 60);
+    }
+
+    #[test]
+    fn test_mp4_encoder_custom_ffmpeg_path() {
+        let encoder = Mp4Encoder::new().with_ffmpeg_path("/usr/local/bin/ffmpeg");
+        assert_eq!(
+            encoder.ffmpeg_path,
+            Some(PathBuf::from("/usr/local/bin/ffmpeg"))
+        );
+    }
+
+    // =============================================================================
+    // NvencEncoder Tests
+    // =============================================================================
+
+    #[test]
+    fn test_nvenc_encoder_new() {
+        let encoder = NvencEncoder::new();
+        assert_eq!(encoder.config.fps, 30);
+        assert!(encoder.device_id.is_none());
+    }
+
+    #[test]
+    fn test_nvenc_encoder_default() {
+        let encoder = NvencEncoder::default();
+        assert_eq!(encoder.config.fps, 30);
+    }
+
+    #[test]
+    fn test_nvenc_encoder_with_config() {
+        let config = VideoEncoderConfig::default().with_fps(120);
+        let encoder = NvencEncoder::with_config(config);
+        assert_eq!(encoder.config.fps, 120);
+    }
+
+    #[test]
+    fn test_nvenc_encoder_with_device() {
+        let encoder = NvencEncoder::new().with_device(1);
+        assert_eq!(encoder.device_id, Some(1));
+    }
+
+    // =============================================================================
+    // DepthMkvEncoder Tests
+    // =============================================================================
+
+    #[test]
+    fn test_depth_mkv_encoder_new() {
+        let encoder = DepthMkvEncoder::new();
+        assert_eq!(encoder.config.fps, 30);
+        assert_eq!(encoder.config.codec, "ffv1");
+    }
+
+    #[test]
+    fn test_depth_mkv_encoder_default() {
+        let encoder = DepthMkvEncoder::default();
+        assert_eq!(encoder.config.fps, 30);
+    }
+
+    #[test]
+    fn test_depth_mkv_encoder_with_config() {
+        let config = DepthEncoderConfig {
+            fps: 60,
+            codec: "ffv1".to_string(),
+            preset: "medium".to_string(),
+        };
+        let encoder = DepthMkvEncoder::with_config(config);
+        assert_eq!(encoder.config.fps, 60);
+        assert_eq!(encoder.config.preset, "medium");
+    }
+
+    // =============================================================================
+    // Availability Tests
+    // =============================================================================
+
+    #[test]
+    fn test_is_encoder_available_rsmpeg() {
+        // RsmpegLibx264 is always available
+        assert!(is_encoder_available(EncoderChoice::RsmpegLibx264));
+    }
+
+    #[test]
+    fn test_check_videotoolbox_non_macos() {
+        // On non-macOS, videotoolbox should be false
+        #[cfg(not(target_os = "macos"))]
+        assert!(!check_videotoolbox_available());
+    }
+
+    #[test]
+    fn test_check_videotoolbox_macos() {
+        // On macOS, videotoolbox should be true
+        #[cfg(target_os = "macos")]
+        assert!(check_videotoolbox_available());
+    }
 }

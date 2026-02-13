@@ -384,4 +384,96 @@ mod tests {
         assert_eq!(y.len(), width * height);
         assert_eq!(uv.len(), (width / 2) * (height / 2) * 2);
     }
+
+    // =============================================================================
+    // Additional ConversionStrategy Tests
+    // =============================================================================
+
+    #[test]
+    fn test_conversion_strategy_names() {
+        assert_eq!(ConversionStrategy::Avx512.name(), "AVX-512");
+        assert_eq!(ConversionStrategy::Avx2.name(), "AVX2");
+        assert_eq!(ConversionStrategy::Sse2.name(), "SSE2");
+        assert_eq!(ConversionStrategy::Neon.name(), "NEON");
+        assert_eq!(ConversionStrategy::Scalar.name(), "Scalar");
+    }
+
+    #[test]
+    fn test_conversion_strategy_speedup_factors() {
+        assert!(ConversionStrategy::Avx512.speedup_factor() > 15.0);
+        assert!(ConversionStrategy::Avx2.speedup_factor() > 5.0);
+        assert!(ConversionStrategy::Sse2.speedup_factor() > 3.0);
+        assert!(ConversionStrategy::Neon.speedup_factor() > 5.0);
+        assert_eq!(ConversionStrategy::Scalar.speedup_factor(), 1.0);
+    }
+
+    #[test]
+    fn test_conversion_strategy_equality() {
+        assert_eq!(ConversionStrategy::Avx2, ConversionStrategy::Avx2);
+        assert_eq!(ConversionStrategy::Scalar, ConversionStrategy::Scalar);
+        assert_ne!(ConversionStrategy::Avx2, ConversionStrategy::Sse2);
+        assert_ne!(ConversionStrategy::Neon, ConversionStrategy::Scalar);
+    }
+
+    #[test]
+    fn test_conversion_strategy_clone() {
+        let strategy = ConversionStrategy::Avx2;
+        let cloned = strategy.clone();
+        assert_eq!(strategy, cloned);
+    }
+
+    #[test]
+    fn test_conversion_strategy_debug() {
+        let strategy = ConversionStrategy::Neon;
+        let debug_str = format!("{:?}", strategy);
+        assert!(debug_str.contains("Neon"));
+    }
+
+    // =============================================================================
+    // Additional Conversion Tests
+    // =============================================================================
+
+    #[test]
+    fn test_rgb_to_nv12_invalid_size() {
+        let rgb_data = vec![0u8; 50]; // Invalid size
+        let result = rgb_to_nv12(&rgb_data, 10, 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rgb_to_yuv420p_black_pixels() {
+        // 2x2 black image
+        let rgb_data = vec![0u8; 12];
+        let (y, _u, _v) = rgb_to_yuv420p(&rgb_data, 2, 2).unwrap();
+        // Y should be 16 for black (limited range) or close to 0 for full range
+        // Our implementation uses full range, so Y should be close to 0
+        assert!(y.iter().all(|&val| val < 50));
+    }
+
+    #[test]
+    fn test_rgb_to_yuv420p_white_pixels() {
+        // 2x2 white image
+        let rgb_data = vec![255u8; 12];
+        let (y, _u, _v) = rgb_to_yuv420p(&rgb_data, 2, 2).unwrap();
+        // Y should be close to 235 for white (limited range) or 255 for full range
+        assert!(y.iter().all(|&val| val > 200));
+    }
+
+    #[test]
+    fn test_rgb_to_nv12_black_pixels() {
+        // 2x2 black image
+        let rgb_data = vec![0u8; 12];
+        let (y, _uv) = rgb_to_nv12(&rgb_data, 2, 2).unwrap();
+        // Y should be close to 0 for full range
+        assert!(y.iter().all(|&val| val < 50));
+    }
+
+    #[test]
+    fn test_rgb_to_nv12_white_pixels() {
+        // 2x2 white image
+        let rgb_data = vec![255u8; 12];
+        let (y, _uv) = rgb_to_nv12(&rgb_data, 2, 2).unwrap();
+        // Y should be close to 255 for full range
+        assert!(y.iter().all(|&val| val > 200));
+    }
 }

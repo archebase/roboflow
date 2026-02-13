@@ -1080,4 +1080,201 @@ mod tests {
         let _available = is_hardware_encoding_available();
         // Just check the function doesn't crash
     }
+
+    // =============================================================================
+    // Additional Configuration Tests
+    // =============================================================================
+
+    #[test]
+    fn test_config_with_pixel_format() {
+        let config = RsmpegEncoderConfig::new()
+            .with_pixel_format("nv12")
+            .with_dimensions(1920, 1080);
+
+        assert_eq!(config.pixel_format, "nv12");
+        assert_eq!(config.width, 1920);
+        assert_eq!(config.height, 1080);
+    }
+
+    #[test]
+    fn test_config_with_preset() {
+        let config = RsmpegEncoderConfig::new()
+            .with_preset("fast");
+
+        assert_eq!(config.preset, "fast");
+        assert_eq!(config.gop_size, 30); // Default unchanged
+    }
+
+    #[test]
+    fn test_config_crf_bounds() {
+        // Test minimum CRF (highest quality)
+        let config_min = RsmpegEncoderConfig::new().with_crf(0);
+        assert_eq!(config_min.crf, 0);
+
+        // Test maximum CRF (lowest quality)
+        let config_max = RsmpegEncoderConfig::new().with_crf(51);
+        assert_eq!(config_max.crf, 51);
+
+        // Test typical value
+        let config_typical = RsmpegEncoderConfig::new().with_crf(23);
+        assert_eq!(config_typical.crf, 23);
+    }
+
+    #[test]
+    fn test_config_full_builder_chain() {
+        let config = RsmpegEncoderConfig::new()
+            .with_dimensions(3840, 2160) // 4K
+            .with_fps(60)
+            .with_bitrate(50_000_000) // 50 Mbps
+            .with_codec("hevc_nvenc")
+            .with_pixel_format("nv12")
+            .with_crf(18)
+            .with_preset("p6");
+
+        assert_eq!(config.width, 3840);
+        assert_eq!(config.height, 2160);
+        assert_eq!(config.fps, 60);
+        assert_eq!(config.bitrate, 50_000_000);
+        assert_eq!(config.codec, "hevc_nvenc");
+        assert_eq!(config.pixel_format, "nv12");
+        assert_eq!(config.crf, 18);
+        assert_eq!(config.preset, "p6");
+        assert_eq!(config.gop_size, 30); // Default
+        assert_eq!(config.buffer_size, 4 * 1024 * 1024); // Default 4MB
+        assert_eq!(config.max_b_frames, 1); // Default
+    }
+
+    #[test]
+    fn test_config_bitrate_variations() {
+        // Low bitrate (1 Mbps)
+        let low = RsmpegEncoderConfig::new().with_bitrate(1_000_000);
+        assert_eq!(low.bitrate, 1_000_000);
+
+        // Medium bitrate (5 Mbps - default)
+        let medium = RsmpegEncoderConfig::new();
+        assert_eq!(medium.bitrate, 5_000_000);
+
+        // High bitrate (20 Mbps)
+        let high = RsmpegEncoderConfig::new().with_bitrate(20_000_000);
+        assert_eq!(high.bitrate, 20_000_000);
+    }
+
+    #[test]
+    fn test_config_common_resolutions() {
+        // 720p
+        let hd = RsmpegEncoderConfig::new().with_dimensions(1280, 720);
+        assert_eq!(hd.width, 1280);
+        assert_eq!(hd.height, 720);
+
+        // 1080p
+        let fhd = RsmpegEncoderConfig::new().with_dimensions(1920, 1080);
+        assert_eq!(fhd.width, 1920);
+        assert_eq!(fhd.height, 1080);
+
+        // 4K
+        let uhd = RsmpegEncoderConfig::new().with_dimensions(3840, 2160);
+        assert_eq!(uhd.width, 3840);
+        assert_eq!(uhd.height, 2160);
+    }
+
+    // =============================================================================
+    // EncodeFrame Tests
+    // =============================================================================
+
+    #[test]
+    fn test_encode_frame_rgb_size_calculation() {
+        // 640x480 RGB
+        let frame = EncodeFrame::new(vec![0u8; 640 * 480 * 3], 640, 480, 0);
+        assert_eq!(frame.rgb_size(), 921_600);
+
+        // 1920x1080 RGB
+        let frame_hd = EncodeFrame::new(vec![0u8; 1920 * 1080 * 3], 1920, 1080, 0);
+        assert_eq!(frame_hd.rgb_size(), 6_220_800);
+    }
+
+    #[test]
+    fn test_encode_frame_timestamp_handling() {
+        let frame0 = EncodeFrame::new(vec![0u8; 100], 10, 10, 0);
+        let frame100 = EncodeFrame::new(vec![0u8; 100], 10, 10, 100);
+        let frame_max = EncodeFrame::new(vec![0u8; 100], 10, 10, u64::MAX);
+
+        assert_eq!(frame0.timestamp, 0);
+        assert_eq!(frame100.timestamp, 100);
+        assert_eq!(frame_max.timestamp, u64::MAX);
+    }
+
+    #[test]
+    fn test_encode_frame_small_dimensions() {
+        // 1x1 frame (smallest valid)
+        let tiny = EncodeFrame::new(vec![0u8, 0, 0], 1, 1, 0);
+        assert_eq!(tiny.rgb_size(), 3);
+        assert!(tiny.validate());
+
+        // 16x16 frame (common block size)
+        let block = EncodeFrame::new(vec![0u8; 16 * 16 * 3], 16, 16, 0);
+        assert_eq!(block.rgb_size(), 768);
+        assert!(block.validate());
+    }
+
+    #[test]
+    fn test_encode_frame_validation_edge_cases() {
+        // Empty data
+        let empty = EncodeFrame::new(vec![], 10, 10, 0);
+        assert!(!empty.validate());
+
+        // Data too small
+        let small = EncodeFrame::new(vec![0u8; 10], 10, 10, 0);
+        assert!(!small.validate());
+
+        // Data too large
+        let large = EncodeFrame::new(vec![0u8; 400], 10, 10, 0);
+        assert!(!large.validate());
+
+        // Exact size match
+        let exact = EncodeFrame::new(vec![0u8; 300], 10, 10, 0);
+        assert!(exact.validate());
+    }
+
+    #[test]
+    fn test_encode_frame_clone() {
+        let original = EncodeFrame::new(vec![1, 2, 3], 1, 1, 42);
+        let cloned = original.clone();
+
+        assert_eq!(cloned.data, original.data);
+        assert_eq!(cloned.width, original.width);
+        assert_eq!(cloned.height, original.height);
+        assert_eq!(cloned.timestamp, original.timestamp);
+    }
+
+    // =============================================================================
+    // Utility Function Tests
+    // =============================================================================
+
+    #[test]
+    fn test_is_codec_available_libx264() {
+        // libx264 should always be available (fallback)
+        assert!(RsmpegEncoderConfig::is_codec_available("libx264"));
+    }
+
+    #[test]
+    fn test_is_codec_available_unknown() {
+        // Unknown codec should return false (or fallback behavior)
+        let result = RsmpegEncoderConfig::is_codec_available("nonexistent_codec_xyz");
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_rsmpeg_mp4_encoder_default() {
+        let encoder = RsmpegMp4Encoder::new();
+        // Should have default config
+        assert_eq!(encoder.config.fps, 30);
+    }
+
+    #[test]
+    fn test_rsmpeg_mp4_encoder_with_config() {
+        let config = VideoEncoderConfig::default().with_fps(60);
+        let encoder = RsmpegMp4Encoder::with_config(config);
+
+        assert_eq!(encoder.config.fps, 60);
+    }
 }
