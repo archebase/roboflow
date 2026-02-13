@@ -29,8 +29,8 @@ Files exceeding 500 lines indicate potential god classes:
 
 | File | Lines | Risk | Recommendation |
 |------|-------|------|----------------|
-| `lerobot/writer/writer_impl.rs` | 1,288 | 🔴 High | Split into episode/chunk writers |
-| `video/rsmpeg.rs` | 1,279 | 🔴 High | Extract encoder variants |
+| `lerobot/writer/writer_impl.rs` | 1,288 | 🟡 Medium | Partially modularized (see notes) |
+| `video/rsmpeg.rs` | 1,279 | 🟡 Medium | Well-organized, trait abstractions possible |
 | `storage/s3.rs` | 1,232 | 🟡 Medium | Already split sync/async |
 | `distributed/scanner.rs` | 1,207 | 🟡 Medium | Recently refactored |
 | `dataset/pipeline.rs` | 1,174 | 🟡 Medium | Consider extraction |
@@ -160,10 +160,18 @@ Missing:
    - registry.rs: 1 block documented
    - decode.rs: 2 blocks documented (test code)
 
-2. Replace chrono with time crate
-   Effort: 4h
+2. Replace chrono with time crate ⏸️ DEFERRED
+   Effort: 4h (estimated - actual may be higher)
    Impact: Remove legacy dependency
    ROI: Maintenance reduction
+   Status: Affects 21+ files across crates. Requires careful migration:
+   - roboflow-distributed/: batch/controller.rs, batch/spec.rs, batch/status.rs,
+     batch/work_unit.rs, merge/schema.rs, tikv/schema.rs, heartbeat.rs, catalog/schema.rs
+   - roboflow-storage/: s3.rs, multipart_parallel.rs
+   - roboflow-sinks/: lerobot.rs, lib.rs
+   - src/bin/commands/: batch.rs, submit.rs, audit.rs
+   - tests/: worker_integration_tests.rs, tikv_integration_test.rs, etc.
+   Recommendation: Schedule as dedicated migration task with full test coverage
 ```
 
 ### Phase 2: Code Quality (Month 1, 20h) ✅ COMPLETED
@@ -184,20 +192,28 @@ Missing:
    ROI: 1 month
 ```
 
-### Phase 3: Architecture (Month 2-3, 40h)
+### Phase 3: Architecture (Month 2-3, 40h) ⏳ PLANNING REQUIRED
 
 ```
-1. Split writer_impl.rs (1,288 lines)
-   - Extract EpisodeWriter (~400 lines)
-   - Extract ChunkWriter (~300 lines)
-   - Extract MetadataWriter (~200 lines)
+1. Split writer_impl.rs (1,288 lines) - Analysis complete
+   - NOTE: Substantial extraction already done:
+     - encoding.rs (video encoding)
+     - cloud_upload.rs (CloudUploader helper)
+     - camera_params.rs (CameraParamsWriter)
+     - stats.rs (episode statistics)
+     - parquet/ (parquet writing)
+     - builder.rs (builder pattern)
+   - Remaining: LerobotWriter orchestrator with trait implementations
+   - Recommendation: Evaluate if further splitting provides value vs current modularity
    Effort: 24h
    Impact: Maintainability +50%
    ROI: 3 months
 
-2. Refactor video encoding module
-   - Split rsmpeg.rs into encoder/muxer/config
-   - Add trait abstractions
+2. Refactor video encoding module - Analysis complete
+   - rsmpeg.rs: 1,002 lines production code + 277 lines tests
+   - Already well-organized: RsmpegEncoderConfig, RsmpegEncoder, EncodeFrame, RsmpegMp4Encoder
+   - Recommendation: Current structure is clean; splitting may not provide significant value
+   - Alternative: Add trait abstractions for encoder backends
    Effort: 16h
    Impact: Testability +40%
    ROI: 4 months
