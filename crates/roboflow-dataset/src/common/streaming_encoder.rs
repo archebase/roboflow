@@ -389,6 +389,8 @@ impl StreamingMp4Encoder {
         codec_context.set_pix_fmt(self.pix_fmt);
 
         // Set color range to full (JPEG) - RGB from decoded images uses full range
+        // SAFETY: We have exclusive mutable access to codec_context via as_mut_ptr().
+        // The AVCodecContext is properly initialized and this field write is safe.
         unsafe {
             (*codec_context.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
         }
@@ -535,6 +537,8 @@ impl StreamingMp4Encoder {
         // Copy RGB data to frame
         let frame_data_array = input_frame.data_mut();
         let frame_data = frame_data_array[0];
+        // SAFETY: frame_data is a valid pointer to the frame's data buffer allocated by FFmpeg.
+        // The buffer size matches rgb_data.len() based on the frame dimensions and RGB24 format.
         let frame_data_slice =
             unsafe { std::slice::from_raw_parts_mut(frame_data, rgb_data.len()) };
         frame_data_slice.copy_from_slice(rgb_data);
@@ -556,6 +560,12 @@ impl StreamingMp4Encoder {
         })?;
 
         // Perform pixel format conversion using SWScale
+        // SAFETY: sws_scale is safe to call with valid SwsContext and AVFrame pointers.
+        // - sws: Valid SwsContext created by SwsContext::get_context with matching dimensions
+        // - input_frame: Valid frame with allocated buffer (get_buffer succeeded)
+        // - yuv_frame: Valid frame with allocated buffer (get_buffer succeeded)
+        // - All pointers are valid for the duration of this call
+        // - The conversion parameters match the context initialization
         if let Some(ref sws) = self.sws_context {
             unsafe {
                 ffi::sws_scale(
@@ -575,7 +585,9 @@ impl StreamingMp4Encoder {
             ));
         }
 
-        // Set color range
+        // Set color range to full (JPEG) - maintains full range from RGB source
+        // SAFETY: We have exclusive mutable access to yuv_frame via as_mut_ptr().
+        // The AVFrame is properly initialized with a valid buffer and this field write is safe.
         unsafe {
             (*yuv_frame.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
         }
@@ -633,6 +645,10 @@ impl StreamingMp4Encoder {
                     })?;
 
                     // Extract packet data and send to channel
+                    // SAFETY: The AVPacket is valid and owned by pkt. We check that:
+                    // - ptr is not null before dereferencing
+                    // - len > 0 to ensure there's actual data
+                    // - The slice is immediately copied to a Vec, so lifetime is bounded
                     let data = unsafe {
                         let av_packet: &ffi::AVPacket = &pkt;
                         let ptr = av_packet.data;
