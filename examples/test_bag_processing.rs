@@ -90,7 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start_time = std::time::Instant::now();
     let mut total_images = 0;
 
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Simulate reading from bag - create complete frames with all cameras
     // This is the correct pattern to use write_frame() which triggers flushing

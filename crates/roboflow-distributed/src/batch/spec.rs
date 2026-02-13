@@ -142,6 +142,21 @@ pub struct BatchJobSpec {
     /// Work unit configuration.
     #[serde(default)]
     pub work_unit_config: WorkUnitConfig,
+
+    /// Number of episodes per chunk for LeRobot v2.1 format.
+    ///
+    /// When set, enables distributed episode allocation where each work unit
+    /// (file) is assigned a unique episode index. Chunk directories are
+    /// automatically created based on: `chunk_index = episode_index / episodes_per_chunk`
+    ///
+    /// Default is 500 (LeRobot v2.1 spec).
+    /// For 100K files with 500 episodes/chunk: 200 chunks (chunk-000 to chunk-199)
+    #[serde(default = "default_episodes_per_chunk")]
+    pub episodes_per_chunk: u32,
+}
+
+fn default_episodes_per_chunk() -> u32 {
+    500
 }
 
 fn default_parallelism() -> u32 {
@@ -177,6 +192,7 @@ impl Default for BatchJobSpec {
             ttl_seconds: default_ttl(),
             priority: default_priority(),
             work_unit_config: WorkUnitConfig::default(),
+            episodes_per_chunk: default_episodes_per_chunk(),
         }
     }
 }
@@ -272,6 +288,7 @@ impl BatchSpec {
                 ttl_seconds: default_ttl(),
                 priority: default_priority(),
                 work_unit_config: WorkUnitConfig::default(),
+                episodes_per_chunk: default_episodes_per_chunk(),
             },
         }
     }
@@ -531,5 +548,33 @@ mod tests {
 
         assert_eq!(decoded.metadata.name, spec.metadata.name);
         assert_eq!(decoded.spec.output, spec.spec.output);
+    }
+
+
+    #[test]
+    fn test_batch_spec_episodes_per_chunk_default() {
+        let spec = BatchSpec::new(
+            "test-batch",
+            vec!["s3://bucket/*.bag".to_string()],
+            "s3://output/".to_string(),
+        );
+
+        // Default is 500 (LeRobot v2.1 spec)
+        assert_eq!(spec.spec.episodes_per_chunk, 500);
+    }
+
+    #[test]
+    fn test_batch_spec_episodes_per_chunk_serialization() {
+        let mut spec = BatchSpec::new(
+            "test-batch",
+            vec!["s3://bucket/*.bag".to_string()],
+            "s3://output/".to_string(),
+        );
+        spec.spec.episodes_per_chunk = 250;
+
+        let json = spec.to_json().unwrap();
+        let decoded = BatchSpec::from_json(&json).unwrap();
+
+        assert_eq!(decoded.spec.episodes_per_chunk, 250);
     }
 }

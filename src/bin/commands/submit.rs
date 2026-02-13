@@ -316,6 +316,7 @@ impl SubmitCommand {
             ttl_seconds: 86400, // 24 hours
             priority: 0,
             work_unit_config: WorkUnitConfig::default(),
+            episodes_per_chunk: 500, // Default LeRobot v2.1 spec
         };
 
         let batch_spec = BatchSpec {
@@ -568,6 +569,7 @@ impl SubmitCommand {
                 ttl_seconds: 86400,
                 priority: 0,
                 work_unit_config: WorkUnitConfig::default(),
+                episodes_per_chunk: 500, // Default LeRobot v2.1 spec
             };
 
             let batch_spec = BatchSpec {

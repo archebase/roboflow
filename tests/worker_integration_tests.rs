@@ -905,10 +905,13 @@ fn test_checkpoint_state_progress() {
 
     let checkpoint = CheckpointState {
         job_id: "job-123".to_string(),
+        batch_id: String::new(),
         pod_id: "pod-abc".to_string(),
         byte_offset: 5000,
         last_frame: 50,
         episode_idx: 0,
+        chunk_idx: 0,
+        episodes_per_chunk: 500,
         total_frames: 100,
         video_uploads: vec![],
         parquet_upload: None,
@@ -934,10 +937,13 @@ fn test_checkpoint_state_is_complete() {
 
     let mut checkpoint = CheckpointState {
         job_id: "job-123".to_string(),
+        batch_id: String::new(),
         pod_id: "pod-abc".to_string(),
         byte_offset: 10000,
         last_frame: 100,
         episode_idx: 0,
+        chunk_idx: 0,
+        episodes_per_chunk: 500,
         total_frames: 100,
         video_uploads: vec![],
         parquet_upload: None,
