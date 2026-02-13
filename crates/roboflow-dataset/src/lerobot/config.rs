@@ -767,6 +767,9 @@ fps = 30
 "#;
 
         let config: LerobotConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.annotation_file, Some("/path/to/annotations.json".to_string()));
+        assert_eq!(
+            config.annotation_file,
+            Some("/path/to/annotations.json".to_string())
+        );
     }
 }

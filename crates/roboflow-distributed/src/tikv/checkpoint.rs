@@ -162,8 +162,14 @@ mod tests {
             .with_frame_interval(150)
             .with_time_interval(20);
         let cloned = config.clone();
-        assert_eq!(config.checkpoint_interval_frames, cloned.checkpoint_interval_frames);
-        assert_eq!(config.checkpoint_interval_seconds, cloned.checkpoint_interval_seconds);
+        assert_eq!(
+            config.checkpoint_interval_frames,
+            cloned.checkpoint_interval_frames
+        );
+        assert_eq!(
+            config.checkpoint_interval_seconds,
+            cloned.checkpoint_interval_seconds
+        );
     }
 
     #[test]

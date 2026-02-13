@@ -755,17 +755,18 @@ mod tests {
     #[test]
     fn test_config_partial_builders() {
         // Test that builder methods can be called independently
-        let config = LockManagerConfig::default()
-            .with_default_ttl(Duration::from_secs(600));
+        let config = LockManagerConfig::default().with_default_ttl(Duration::from_secs(600));
         assert_eq!(config.default_ttl, Duration::from_secs(600));
         // Other defaults should remain
-        assert_eq!(config.renewal_interval, Duration::from_secs(DEFAULT_RENEWAL_INTERVAL_SECS));
+        assert_eq!(
+            config.renewal_interval,
+            Duration::from_secs(DEFAULT_RENEWAL_INTERVAL_SECS)
+        );
     }
 
     #[test]
     fn test_backoff_delay_builder() {
-        let config = LockManagerConfig::default()
-            .with_backoff_delay(Duration::from_millis(200));
+        let config = LockManagerConfig::default().with_backoff_delay(Duration::from_millis(200));
         assert_eq!(config.backoff_base_delay, Duration::from_millis(200));
     }
 }

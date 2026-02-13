@@ -826,8 +826,8 @@ impl TikvClient {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::circuit::{CircuitBreaker, CircuitState};
+    use super::*;
 
     #[test]
     fn test_config_validation() {

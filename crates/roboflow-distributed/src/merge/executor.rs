@@ -367,4 +367,46 @@ mod tests {
         assert_eq!(extract_episode_number(Path::new("episode_42.parquet")), 42);
         assert_eq!(extract_episode_number(Path::new("invalid.parquet")), 0);
     }
+
+    #[test]
+    fn test_extract_episode_number_large() {
+        assert_eq!(
+            extract_episode_number(Path::new("episode_999999.parquet")),
+            999999
+        );
+    }
+
+    #[test]
+    fn test_extract_episode_number_with_path() {
+        assert_eq!(
+            extract_episode_number(Path::new("/some/path/episode_00123.parquet")),
+            123
+        );
+        assert_eq!(
+            extract_episode_number(Path::new("relative/path/episode_42.parquet")),
+            42
+        );
+    }
+
+    #[test]
+    fn test_extract_episode_number_edge_cases() {
+        // Missing prefix
+        assert_eq!(extract_episode_number(Path::new("000123.parquet")), 0);
+        // Missing suffix
+        assert_eq!(extract_episode_number(Path::new("episode_123")), 0);
+        // Empty path
+        assert_eq!(extract_episode_number(Path::new("")), 0);
+    }
+
+    #[test]
+    fn test_staged_parquet_file_debug() {
+        let file = StagedParquetFile {
+            path: PathBuf::from("/path/to/file.parquet"),
+            worker_id: "worker-1".to_string(),
+            episode_index: 42,
+        };
+        let debug_str = format!("{:?}", file);
+        assert!(debug_str.contains("StagedParquetFile"));
+        assert!(debug_str.contains("worker-1"));
+    }
 }

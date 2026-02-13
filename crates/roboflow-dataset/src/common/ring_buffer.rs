@@ -547,8 +547,14 @@ mod tests {
     #[test]
     fn test_ring_buffer_error_display() {
         assert_eq!(format!("{}", RingBufferError::Full), "Ring buffer is full");
-        assert_eq!(format!("{}", RingBufferError::Empty), "Ring buffer is empty");
-        assert_eq!(format!("{}", RingBufferError::Closed), "Ring buffer is closed");
+        assert_eq!(
+            format!("{}", RingBufferError::Empty),
+            "Ring buffer is empty"
+        );
+        assert_eq!(
+            format!("{}", RingBufferError::Closed),
+            "Ring buffer is closed"
+        );
         assert_eq!(
             format!("{}", RingBufferError::Timeout),
             "Ring buffer operation timed out"

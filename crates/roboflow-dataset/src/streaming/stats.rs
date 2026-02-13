@@ -166,7 +166,10 @@ mod tests {
         let new_stats = AlignmentStats::new();
         let default_stats = AlignmentStats::default();
         assert_eq!(new_stats.frames_processed, default_stats.frames_processed);
-        assert_eq!(new_stats.normal_completions, default_stats.normal_completions);
+        assert_eq!(
+            new_stats.normal_completions,
+            default_stats.normal_completions
+        );
         assert_eq!(new_stats.force_completions, default_stats.force_completions);
         assert_eq!(new_stats.peak_buffer_size, default_stats.peak_buffer_size);
     }

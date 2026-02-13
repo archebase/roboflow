@@ -780,7 +780,13 @@ mod tests {
     fn test_image_data_new_rgb_error() {
         let result = ImageData::new_rgb(2, 2, vec![0u8; 6]); // Wrong size
         assert!(result.is_err());
-        if let Err(ImageDataError::SizeMismatch { width, height, expected_size, actual_size }) = result {
+        if let Err(ImageDataError::SizeMismatch {
+            width,
+            height,
+            expected_size,
+            actual_size,
+        }) = result
+        {
             assert_eq!(width, 2);
             assert_eq!(height, 2);
             assert_eq!(expected_size, 12);
@@ -798,7 +804,10 @@ mod tests {
 
     #[test]
     fn test_dataset_writer_error_display() {
-        let err = DatasetWriterError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"));
+        let err = DatasetWriterError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file not found",
+        ));
         assert!(err.to_string().contains("I/O error"));
 
         let err = DatasetWriterError::Encoding("test".to_string());

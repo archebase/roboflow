@@ -172,7 +172,10 @@ mod tests {
             .require_feature("camera", 1)
             .with_min_completeness(0.5);
         let cloned = criteria.clone();
-        assert_eq!(criteria.required_feature_count(), cloned.required_feature_count());
+        assert_eq!(
+            criteria.required_feature_count(),
+            cloned.required_feature_count()
+        );
         assert_eq!(criteria.min_completeness, cloned.min_completeness);
     }
 

@@ -176,7 +176,14 @@ mod tests {
     #[test]
     fn test_retryable_constructor() {
         let err = TikvError::retryable(1, 3, "test message");
-        assert!(matches!(err, TikvError::Retryable { attempt: 1, max: 3, .. }));
+        assert!(matches!(
+            err,
+            TikvError::Retryable {
+                attempt: 1,
+                max: 3,
+                ..
+            }
+        ));
         assert!(err.is_retryable());
     }
 
@@ -185,7 +192,10 @@ mod tests {
         let err = TikvError::ConnectionFailed("localhost:2379".to_string());
         assert!(err.to_string().contains("connection failed"));
 
-        let err = TikvError::CasFailed { expected: 1, got: 2 };
+        let err = TikvError::CasFailed {
+            expected: 1,
+            got: 2,
+        };
         assert!(err.to_string().contains("CAS"));
 
         let err = TikvError::CircuitOpen { failures: 5 };

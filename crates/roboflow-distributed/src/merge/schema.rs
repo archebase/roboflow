@@ -204,4 +204,63 @@ mod tests {
         let result = state.start_merge("merge-worker".to_string());
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_merge_state_complete() {
+        let mut state = MergeState::new("job-1".to_string(), 1, "/output/dataset".to_string());
+        state.add_worker("worker-1".to_string(), "staging/job-1/w1".to_string(), 100);
+        state.start_merge("merge-worker".to_string()).unwrap();
+
+        state.complete();
+        assert!(state.is_complete());
+        assert_eq!(state.status, MergeStatus::Complete);
+    }
+
+    #[test]
+    fn test_merge_state_fail() {
+        let mut state = MergeState::new("job-1".to_string(), 1, "/output/dataset".to_string());
+        state.add_worker("worker-1".to_string(), "staging/job-1/w1".to_string(), 100);
+        state.start_merge("merge-worker".to_string()).unwrap();
+
+        state.fail("Something went wrong".to_string());
+        assert!(state.is_failed());
+        assert_eq!(state.status, MergeStatus::Failed);
+        assert_eq!(state.error, Some("Something went wrong".to_string()));
+    }
+
+    #[test]
+    fn test_merge_state_serialization() {
+        let state = MergeState::new("job-123".to_string(), 2, "/output/dataset".to_string());
+        let json = serde_json::to_string(&state).unwrap();
+        let deserialized: MergeState = serde_json::from_str(&json).unwrap();
+        assert_eq!(state.job_id, deserialized.job_id);
+        assert_eq!(state.expected_workers, deserialized.expected_workers);
+    }
+
+    #[test]
+    fn test_merge_status_equality() {
+        assert_eq!(MergeStatus::Pending, MergeStatus::Pending);
+        assert_ne!(MergeStatus::Pending, MergeStatus::InProgress);
+        assert_ne!(MergeStatus::Complete, MergeStatus::Failed);
+    }
+
+    #[test]
+    fn test_merge_state_initial_status() {
+        let state = MergeState::new("job-1".to_string(), 1, "/output/dataset".to_string());
+        assert_eq!(state.status, MergeStatus::Pending);
+        assert!(!state.is_complete());
+        assert!(!state.is_failed());
+    }
+
+    #[test]
+    fn test_merge_state_updated_at_changes() {
+        let mut state = MergeState::new("job-1".to_string(), 1, "/output/dataset".to_string());
+        let initial_updated = state.updated_at;
+
+        // Sleep briefly to ensure time difference
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        state.add_worker("w1".to_string(), "path".to_string(), 10);
+        assert!(state.updated_at > initial_updated);
+    }
 }

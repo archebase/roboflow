@@ -785,4 +785,48 @@ mod tests {
         let key_str = String::from_utf8(key).unwrap();
         assert_eq!(key_str, "/roboflow/v1/merge/job-123");
     }
+
+    #[test]
+    fn test_merge_config_clone() {
+        let config = MergeConfig::default();
+        let cloned = config.clone();
+        assert_eq!(config.merge_timeout, cloned.merge_timeout);
+        assert_eq!(config.max_retries, cloned.max_retries);
+    }
+
+    #[test]
+    fn test_merge_config_debug() {
+        let config = MergeConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("MergeConfig"));
+        assert!(debug_str.contains("merge_timeout"));
+        assert!(debug_str.contains("max_retries"));
+    }
+
+    #[test]
+    fn test_merge_semaphore_metrics_default() {
+        let metrics = MergeSemaphoreMetrics::default();
+        assert_eq!(metrics.available_permits, 0);
+        assert_eq!(metrics.queue_depth, 0);
+        assert_eq!(metrics.total_attempts, 0);
+        assert_eq!(metrics.successful_merges, 0);
+    }
+
+    #[test]
+    fn test_merge_semaphore_metrics_clone() {
+        let metrics = MergeSemaphoreMetrics {
+            available_permits: 5,
+            queue_depth: 2,
+            total_attempts: 100,
+            successful_merges: 95,
+        };
+        let cloned = metrics.clone();
+        assert_eq!(metrics.available_permits, cloned.available_permits);
+        assert_eq!(metrics.queue_depth, cloned.queue_depth);
+    }
+
+    #[test]
+    fn test_default_max_concurrent_merges() {
+        assert_eq!(DEFAULT_MAX_CONCURRENT_MERGES, 3);
+    }
 }
