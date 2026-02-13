@@ -175,7 +175,10 @@ mod tests {
 
     #[test]
     fn test_camera_extrinsic_serialization() {
-        let extrinsic = CameraExtrinsic::new([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], [0.0, 0.0, 0.0]);
+        let extrinsic = CameraExtrinsic::new(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0, 0.0, 0.0],
+        );
 
         let json = serde_json::to_string(&extrinsic).unwrap();
         let deserialized: CameraExtrinsic = serde_json::from_str(&json).unwrap();

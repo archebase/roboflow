@@ -209,10 +209,19 @@ mod tests {
         let config = WorkerConfig::default();
 
         assert_eq!(config.max_concurrent_jobs, DEFAULT_MAX_CONCURRENT_JOBS);
-        assert_eq!(config.poll_interval, Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS));
+        assert_eq!(
+            config.poll_interval,
+            Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS)
+        );
         assert_eq!(config.max_attempts, DEFAULT_MAX_ATTEMPTS);
-        assert_eq!(config.job_timeout, Duration::from_secs(DEFAULT_JOB_TIMEOUT_SECS));
-        assert_eq!(config.heartbeat_interval, Duration::from_secs(DEFAULT_HEARTBEAT_INTERVAL_SECS));
+        assert_eq!(
+            config.job_timeout,
+            Duration::from_secs(DEFAULT_JOB_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            config.heartbeat_interval,
+            Duration::from_secs(DEFAULT_HEARTBEAT_INTERVAL_SECS)
+        );
         assert!(config.output_storage_url.is_none());
     }
 
@@ -233,7 +242,10 @@ mod tests {
         assert_eq!(config.job_timeout, Duration::from_secs(7200));
         assert_eq!(config.heartbeat_interval, Duration::from_secs(15));
         assert_eq!(config.output_prefix, "custom/output/");
-        assert_eq!(config.output_storage_url, Some("s3://my-bucket/datasets".to_string()));
+        assert_eq!(
+            config.output_storage_url,
+            Some("s3://my-bucket/datasets".to_string())
+        );
     }
 
     #[test]

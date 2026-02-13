@@ -54,7 +54,12 @@ mod tests {
     use crate::lerobot::metadata::MetadataCollector;
     use std::collections::HashMap;
 
-    fn create_test_frame(episode: usize, frame: usize, state: Vec<f32>, action: Vec<f32>) -> LerobotFrame {
+    fn create_test_frame(
+        episode: usize,
+        frame: usize,
+        state: Vec<f32>,
+        action: Vec<f32>,
+    ) -> LerobotFrame {
         LerobotFrame {
             episode_index: episode,
             frame_index: frame,

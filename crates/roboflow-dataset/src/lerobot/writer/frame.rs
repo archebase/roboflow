@@ -65,11 +65,17 @@ mod tests {
         let mut image_frames = HashMap::new();
         image_frames.insert(
             "cam_left".to_string(),
-            ("videos/chunk-000/observation.images.cam_left/episode_000000.mp4".to_string(), 0.33),
+            (
+                "videos/chunk-000/observation.images.cam_left/episode_000000.mp4".to_string(),
+                0.33,
+            ),
         );
         image_frames.insert(
             "cam_right".to_string(),
-            ("videos/chunk-000/observation.images.cam_right/episode_000000.mp4".to_string(), 0.33),
+            (
+                "videos/chunk-000/observation.images.cam_right/episode_000000.mp4".to_string(),
+                0.33,
+            ),
         );
 
         let frame = LerobotFrame {

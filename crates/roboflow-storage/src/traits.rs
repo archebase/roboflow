@@ -237,8 +237,7 @@ pub trait SeekableStorage: Storage {
     /// Open a seekable reader for the given path.
     ///
     /// Unlike `reader()`, this returns a type that implements `std::io::Seek`.
-    fn seekable_reader(&self, path: &Path)
-    -> StorageResult<Box<dyn SeekRead + Send + 'static>>;
+    fn seekable_reader(&self, path: &Path) -> StorageResult<Box<dyn SeekRead + Send + 'static>>;
 
     /// Open a reader that can be either seekable or streaming.
     ///
