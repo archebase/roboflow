@@ -24,21 +24,17 @@ maturin build --features python
 
 ## Testing Commands
 
-**IMPORTANT:** Rust and Python tests must be run separately due to PyO3's `extension-module` feature preventing linking in standalone test binaries.
-
 ### Rust Tests
 ```bash
 # Run Rust tests only
 cargo test
 
-# Run Rust tests with KPS features (requires HDF5 installed)
-cargo test --features kps-all
-
 # Run specific Rust test
 cargo test test_name
 
-# Run KPS v1.2 specification tests
-cargo test --test kps_v12_tests --features kps-all
+# Run MinIO integration tests (requires docker-compose)
+docker compose up -d minio minio-init
+cargo test --test minio_integration_tests
 ```
 
 ### Python Tests
@@ -50,9 +46,6 @@ maturin develop --features python
 # Run Python tests
 pytest python/
 
-# Run specific Python test file
-pytest python/tests/test_file.py
-
 # Run with verbose output
 pytest python/ -v
 ```
@@ -61,46 +54,62 @@ pytest python/ -v
 
 ### Format Code
 ```bash
-# Format all code (Rust + Python)
+# Format Rust code
 cargo fmt
-ruff format python/
 ```
 
 ### Lint/Check Code
 ```bash
 # Lint Rust code
 cargo clippy --all-targets -- -D warnings
-
-# Lint Python code
-ruff check python/
-```
-
-### Type Checking
-```bash
-# Type check Python (requires built extension)
-mypy python/roboflow
 ```
 
 ## Running CLI Tools
 
+The CLI is unified under a single binary with subcommands:
+
 ```bash
-# Convert between formats
-cargo run --bin convert -- input.bag output.mcap
+# Submit jobs to distributed queue
+cargo run --bin roboflow -- submit <args>
 
-# Convert to KPS dataset format
-cargo run --bin convert -- to-kps input.mcap ./output config.toml
+# Manage jobs (list, get, retry, cancel, delete, stats)
+cargo run --bin roboflow -- jobs <subcommand>
 
-# Inspect file contents
-cargo run --bin inspect -- data.mcap
+# Manage batch jobs
+cargo run --bin roboflow -- batch <subcommand>
 
-# Extract specific topics
-cargo run --bin extract -- data.bag --topics /camera/image_raw --output extracted/
+# Run unified service (worker + finalizer + reaper)
+cargo run --bin roboflow -- run
+```
 
-# Work with schemas
-cargo run --bin schema -- data.mcap
+### Environment Variables
 
-# Search through data
-cargo run --bin search -- pattern
+**TiKV Configuration:**
+- `TIKV_PD_ENDPOINTS` - PD endpoints (default: 127.0.0.1:2379)
+
+**Storage Configuration:**
+- `OSS_ACCESS_KEY_ID` - Alibaba OSS access key
+- `OSS_ACCESS_KEY_SECRET` - Alibaba OSS secret key
+- `OSS_ENDPOINT` - Alibaba OSS endpoint
+- `AWS_ACCESS_KEY_ID` - AWS access key
+- `AWS_SECRET_ACCESS_KEY` - AWS secret key
+
+**Worker Configuration:**
+- `ROLE` - Role to run: `worker`, `finalizer`, or `unified` (default)
+- `WORKER_POLL_INTERVAL_SECS` - Job poll interval (default: 5)
+- `WORKER_MAX_CONCURRENT_JOBS` - Max concurrent jobs (default: 1)
+
+## Infrastructure (Docker Compose)
+
+```bash
+# Start all services (MinIO, TiKV, PD)
+docker compose up -d
+
+# Start only MinIO
+docker compose up -d minio minio-init
+
+# Stop all services
+docker compose down
 ```
 
 ## Clean Build Artifacts

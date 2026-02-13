@@ -4,45 +4,59 @@ High-level overview of the Roboflow architecture and component organization.
 
 ## System Overview
 
-Roboflow is a universal, schema-driven runtime decoding engine for robotics data. It provides high-performance conversion between different robotics message formats (CDR, Protobuf, JSON) and storage formats (MCAP, ROS1 bag).
+Roboflow is a distributed data transformation pipeline that converts robotics bag/MCAP files to trainable datasets (LeRobot format). Key features:
+- Horizontal scaling for large dataset processing
+- Schema-driven message translation (CDR, Protobuf, JSON)
+- Zero-copy arena allocation for memory efficiency
+- Cloud storage support (OSS, S3) for distributed workloads
 
 ## Workspace Architecture
 
-### Single-Crate Design
-
-The project is a Cargo workspace with one main crate and an external dependency:
+### Multi-Crate Design (8 Crates)
 
 ```
 roboflow (workspace root)
-└── roboflow (main crate)
-    └── depends on → robocodec (external: github.com/archebase/robocodec)
+├── roboflow/                    # Main crate - public API facade
+└── crates/
+    ├── roboflow-core/           # Error types, registry, values
+    ├── roboflow-storage/        # S3, OSS, Local storage
+    ├── roboflow-dataset/        # KPS, LeRobot, streaming converters
+    ├── roboflow-distributed/    # TiKV client, catalog, circuit breaker
+    ├── roboflow-sources/        # Data source implementations
+    ├── roboflow-sinks/          # Data sink implementations
+    ├── roboflow-video/          # Video encoding/decoding
+    └── roflow-dataset/          # (legacy/deprecated)
 ```
 
-### Dependency Direction
+### Dependency Graph
 
 ```
-┌─────────────────────────────────────┐
-│           roboflow                      │
-│  ┌──────────────────────────────┐   │
-│  │ • Pipeline orchestration     │   │
-│  │ • Fluent API                │   │
-│  │ • Python bindings           │   │
-│  │ • KPS dataset conversion   │   │
-│  │ • CLI tools                 │   │
-│  └──────────┬───────────────────┘   │
-└─────────────┼───────────────────────┘
-              │ depends on (git)
-              ↓
-┌─────────────────────────────────────┐
-│       robocodec (external crate)      │
-│  ┌──────────────────────────────┐   │
-│  │ • Format readers/writers     │   │
-│  │ • Message codecs             │   │
-│  │ • Schema parsers             │   │
-│  │ • Arena allocation           │   │
-│  │ • Core types                 │   │
-│  └──────────────────────────────┘   │
-└─────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                      roboflow (facade)                      │
+│  Public API re-exports from sub-crates                      │
+└─────────────────────────────────────────────────────────────┘
+                              │
+       ┌──────────────────────┼──────────────────────┐
+       ▼                      ▼                      ▼
+┌─────────────┐    ┌──────────────────┐    ┌────────────────┐
+│roboflow-core│    │roboflow-dataset  │    │roboflow-distributed│
+│• Error types│    │• PipelineExecutor│    │• TiKV client      │
+│• Registry   │    │• KPS converters  │    │• Catalog          │
+│• Values     │    │• LeRobot format  │    │• Circuit breaker  │
+└─────────────┘    └──────────────────┘    └──────────────────┘
+       │                      │                      │
+       └──────────────────────┼──────────────────────┘
+                              ▼
+                    ┌──────────────────┐
+                    │  robocodec (git) │
+                    │ External crate:  │
+                    │ github.com/      │
+                    │ archebase/       │
+                    │ robocodec        │
+                    │ • Format I/O     │
+                    │ • Codecs         │
+                    │ • Arena alloc    │
+                    └──────────────────┘
 ```
 
 **Key Principle:** `roboflow` depends on external `robocodec` for all I/O operations. This separation allows:
@@ -52,82 +66,75 @@ roboflow (workspace root)
 
 ## Component Organization
 
-### roboflow Crate (Main Layer)
-
-Located at `src/`:
+### Main Crate (src/)
 
 ```
 src/
-├── bin/               # CLI tools
-│   ├── convert.rs    # Unified convert CLI
-│   ├── extract.rs     # Extract messages from files
-│   ├── inspect.rs     # Inspect MCAP/bag files
-│   ├── schema.rs      # Display ROS message schemas
-│   └── search.rs      # Search topics in files
-├── core/              # Core types and registry
-├── dataset/           # Dataset conversion
-│   └── kps/          # KPS dataset format implementation
-│       ├── config.rs
-│       ├── delivery_v12.rs
-│       ├── task_info.rs
-│       ├── hdf5_schema.rs
-│       ├── camera_params.rs
-│       ├── robot_calibration.rs
-│       └── writers/
-├── pipeline/          # Pipeline implementations
-│   ├── stages/       # Standard pipeline stages
-│   ├── hyper/        # 7-stage HyperPipeline
-│   └── fluent/       # Builder API
-├── python/           # PyO3 bindings
-└── config.rs         # Global configuration
+├── bin/                    # CLI tools
+│   └── roboflow.rs        # Main CLI entry point
+├── core/                   # Core types
+├── catalog/                # Catalog management
+├── config.rs              # Global configuration
+├── pipeline_config.rs     # Pipeline configuration structs
+├── convert.rs             # Conversion utilities
+└── lib.rs                 # Crate root with re-exports
 ```
 
-### robocodec Crate (External)
+### Key Sub-Crates
 
-Located at https://github.com/archebase/robocodec:
+#### roboflow-dataset (`crates/roboflow-dataset/src/`)
 
 ```
-robocodec/src/
-├── encoding/          # Message codec implementations
-├── schema/            # Schema parsing (ROS msg, IDL)
-├── io/                # Unified I/O layer
-│   ├── formats/       # MCAP, ROS bag readers/writers
-│   └── kps/           # KPS I/O utilities
-├── transform/         # Data transformations
-└── types/             # Core memory management (arenas)
+├── pipeline.rs            # PipelineExecutor, PipelineStats
+├── zarr.rs                # Zarr format support
+├── common/
+│   ├── camera_pipeline.rs          # Camera streaming
+│   ├── camera_streaming_pipeline.rs
+│   ├── concurrent_video_encoder.rs
+│   └── streaming_uploader.rs
+├── hardware/              # Hardware-aware optimization
+│   ├── strategy.rs
+│   └── mod.rs
+└── image/                 # Image processing
+    ├── config.rs
+    ├── backend.rs
+    └── factory.rs
 ```
+
+#### roboflow-distributed (`crates/roboflow-distributed/src/`)
+
+```
+├── worker/
+│   ├── mod.rs
+│   └── executor.rs        # Distributed worker execution
+└── (TiKV client, catalog, circuit breaker)
+```
+
+#### roboflow-storage (`crates/roboflow-storage/src/`)
+
+- S3 storage backend (AWS SDK)
+- OSS storage backend (Alibaba Cloud)
+- Local filesystem storage
+- `StorageFactory` for URL-based backend selection
 
 ## Pipeline Architecture
 
-### Standard Pipeline (4-stage)
+### Dataset Pipeline (roboflow-dataset)
 
-```
-Input File → [Reader] → [Transform] → [Compress] → [Writer] → Output File
-```
+Located in `crates/roboflow-dataset/src/pipeline.rs`:
 
-Performance: ~200 MB/s
+- **PipelineExecutor**: Main pipeline execution engine
+- **PipelineStats**: Performance metrics collection
+- **PipelineConfig**: Configuration management
 
-### HyperPipeline (7-stage)
+### Camera Streaming Pipeline
 
-```
-Input → [Prefetch] → [Parse] → [Slice] → [Transform] → [Compress] → [Packetize] → [Write] → Output
-```
+Located in `crates/roboflow-dataset/src/common/`:
 
-Additional optimizations:
-- io_uring for async I/O (Linux)
-- Hardware-aware compression
-- Lock-free queues between stages
-- CPU-aware WindowLog for Zstandard
-
-Performance: ~1800 MB/s
-
-### KPS Dataset Pipeline
-
-Located in `src/dataset/kps/`:
-
-- **HDF5 format**: Legacy HDF5-based datasets
-- **Parquet format**: Parquet + MP4 video format
-- **v1.2 specification**: Latest KPS specification with series delivery structure
+- **camera_pipeline.rs**: Individual camera processing
+- **camera_streaming_pipeline.rs**: Multi-camera streaming
+- **concurrent_video_encoder.rs**: Parallel video encoding
+- **fragment_uploader.rs**: Chunked upload to cloud storage
 
 ## Key Design Principles
 
@@ -144,41 +151,32 @@ Located in `src/dataset/kps/`:
 ### 3. Parallel Processing
 - Data parallelism with Rayon
 - Pipeline parallelism with crossbeam channels
-- Lock-free queues in HyperPipeline
+- Concurrent video encoding
 
 ### 4. Hardware-Aware Optimization
 - CPU feature detection (AVX2, AVX-512)
 - Hardware-specific compression presets
 - OS-specific optimizations (io_uring on Linux)
 
-## Extension Points
+## Distributed Features (roboflow-distributed)
 
-### Adding Python Bindings
-1. Add `#[pyfunction]` or `#[pymethods]` in `src/python/`
-2. Rebuild with `maturin develop --features python`
-3. Export from `python/roboflow/__init__.py`
+- **TiKV Integration**: Distributed KV storage for coordination
+- **Catalog**: Dataset metadata management
+- **Circuit Breaker**: Fault tolerance for distributed operations
+- **Worker Executor**: Distributed task execution
 
-### Adding KPS Features
-1. Implement in `src/dataset/kps/`
-2. Add feature flag to `Cargo.toml` if needed
-3. Add tests in `tests/kps_v12_tests.rs` for v1.2 compliance
+## Infrastructure (Docker Compose)
 
-### Running Tools
+| Service | Purpose | Ports |
+|---------|---------|-------|
+| MinIO | S3-compatible storage | 9000 (API), 9001 (Console) |
+| TiKV | Distributed KV storage | 20160 |
+| PD | TiKV placement driver | 2379, 2380 |
 
-```bash
-# Convert files
-cargo run --bin convert -- input.bag output.mcap
-
-# Inspect file
-cargo run --bin inspect -- data.mcap
-
-# Extract topics
-cargo run --bin extract -- data.bag --topics /camera --output out/
-```
+Pre-created buckets: `roboflow-datasets`, `roboflow-raw`, `roboflow-temp`
 
 ## Related Documentation
 
 - `CLAUDE.md` - Project overview for Claude Code
-- `docs/PIPELINE.md` - Detailed pipeline architecture
-- `docs/MEMORY.md` - Memory management details
-- `docs/ARCHITECTURE.md` - High-level system design
+- `memory://pipeline_system` - Pipeline system details
+- `memory://style_and_conventions` - Coding conventions
