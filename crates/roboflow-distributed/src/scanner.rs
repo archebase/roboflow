@@ -596,6 +596,83 @@ impl Scanner {
         }
     }
 
+    /// Initialize discovery phase for a batch.
+    async fn initialize_discovery_phase(
+        &self,
+        batch_id: &str,
+        status: &mut BatchStatus,
+        spec: &BatchSpec,
+    ) -> Result<(), TikvError> {
+        if status.phase != BatchPhase::Pending {
+            return Ok(());
+        }
+
+        status.transition_to(BatchPhase::Discovering);
+        let total_sources = spec.spec.sources.len() as u32;
+        status.discovery_status = Some(DiscoveryStatus::new(total_sources));
+        self.save_batch_status(batch_id, status).await?;
+        super::batch::update_phase_index(
+            &self.tikv,
+            batch_id,
+            BatchPhase::Pending,
+            BatchPhase::Discovering,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Finalize discovery phase and transition to Running or Failed.
+    async fn finalize_batch_phase(
+        &self,
+        batch_id: &str,
+        status: &mut BatchStatus,
+        total_sources: u32,
+        jobs_created: u64,
+        files_discovered: u64,
+    ) -> Result<(), TikvError> {
+        let processed = status
+            .discovery_status
+            .as_ref()
+            .map(|d| d.sources_scanned)
+            .unwrap_or(0);
+
+        if processed < total_sources {
+            return Ok(());
+        }
+
+        if jobs_created == 0 && files_discovered == 0 {
+            status.transition_to(BatchPhase::Failed);
+            status.error =
+                Some(format!("No files discovered from {} source(s)", total_sources));
+            tracing::warn!(
+                batch_id = %batch_id,
+                sources = total_sources,
+                "No files found during discovery, marking batch as failed"
+            );
+            self.save_batch_status(batch_id, status).await?;
+            super::batch::update_phase_index(
+                &self.tikv,
+                batch_id,
+                BatchPhase::Discovering,
+                BatchPhase::Failed,
+            )
+            .await?;
+        } else {
+            status.set_work_units_total(jobs_created as u32);
+            status.transition_to(BatchPhase::Running);
+            self.save_batch_status(batch_id, status).await?;
+            super::batch::update_phase_index(
+                &self.tikv,
+                batch_id,
+                BatchPhase::Discovering,
+                BatchPhase::Running,
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
     /// Process a batch: scan sources, create jobs, update status.
     async fn process_batch(
         &self,
@@ -603,32 +680,13 @@ impl Scanner {
         spec: &BatchSpec,
         mut status: BatchStatus,
     ) -> Result<ScanStats, TikvError> {
-        let mut files_discovered = 0u64;
-        let mut jobs_created = 0u64;
-        let mut duplicates_skipped = 0u64;
-
         // Skip if already completed discovery
         if status.phase == BatchPhase::Running {
             return Ok(ScanStats::default());
         }
 
-        // Transition to Discovering if in Pending
-        if status.phase == BatchPhase::Pending {
-            status.transition_to(BatchPhase::Discovering);
-            // Initialize discovery status
-            let total_sources = spec.spec.sources.len() as u32;
-            status.discovery_status = Some(DiscoveryStatus::new(total_sources));
-            // Save status immediately after transition to ensure progress is visible
-            self.save_batch_status(batch_id, &status).await?;
-            // Update phase index: Pending -> Discovering
-            super::batch::update_phase_index(
-                &self.tikv,
-                batch_id,
-                BatchPhase::Pending,
-                BatchPhase::Discovering,
-            )
-            .await?;
-        }
+        // Initialize discovery phase if needed
+        self.initialize_discovery_phase(batch_id, &mut status, spec).await?;
 
         // Track which sources we've already processed
         let sources_processed = status
@@ -637,241 +695,57 @@ impl Scanner {
             .map(|d| d.sources_scanned as usize)
             .unwrap_or(0);
 
-        tracing::info!(
-            batch_id = %batch_id,
-            sources_total = spec.spec.sources.len(),
-            sources_processed = sources_processed,
-            phase = ?status.phase,
-            has_discovery_status = status.discovery_status.is_some(),
-            "process_batch: starting source iteration"
-        );
+        let mut files_discovered = 0u64;
+        let mut jobs_created = 0u64;
+        let mut duplicates_skipped = 0u64;
 
         // Process each source that hasn't been processed yet
         for source in spec.spec.sources.iter().skip(sources_processed) {
-            let source_url = &source.url;
+            let result = self
+                .process_single_source(
+                    batch_id,
+                    &source.url,
+                    &spec.spec.config,
+                    &spec.spec.output,
+                )
+                .await;
 
-            tracing::debug!(
-                batch_id = %batch_id,
-                source_url = %source_url,
-                "Scanning source"
-            );
+            match result {
+                Ok(stats) => {
+                    files_discovered += stats.files_discovered;
+                    jobs_created += stats.jobs_created;
+                    duplicates_skipped += stats.duplicates_skipped;
 
-            // Scan the source URL
-            let files = match self.scan_source_url(source_url).await {
-                Ok(f) => f,
+                    // Update batch status
+                    status.files_total += stats.files_discovered as u32;
+                    if let Some(ref mut ds) = status.discovery_status {
+                        ds.add_files(stats.files_discovered as u32);
+                        ds.increment_scanned();
+                    }
+                    self.save_batch_status(batch_id, &status).await?;
+                }
                 Err(e) => {
                     tracing::error!(
                         batch_id = %batch_id,
-                        source_url = %source_url,
+                        source_url = %source.url,
                         error = %e,
-                        "Failed to scan source URL"
+                        "Failed to process source"
                     );
                     self.metrics.inc_scan_errors();
-                    continue;
                 }
-            };
-
-            let source_files_count = files.len() as u64;
-            files_discovered += source_files_count;
-
-            // Compute hashes and check for existing jobs
-            let config_hash = &spec.spec.config;
-            let output_prefix = &spec.spec.output;
-
-            let file_hashes: Vec<(ObjectMetadata, String)> = files
-                .iter()
-                .map(|meta| {
-                    let hash = self.compute_file_hash(meta, config_hash);
-                    (meta.clone(), hash)
-                })
-                .collect();
-
-            let hashes: Vec<String> = file_hashes.iter().map(|(_, h)| h.clone()).collect();
-
-            // Check existing work units for this batch
-            let existing = match self.check_existing_work_units(batch_id, &hashes).await {
-                Ok(e) => e,
-                Err(e) => {
-                    tracing::error!(
-                        batch_id = %batch_id,
-                        error = %e,
-                        "Failed to check existing jobs"
-                    );
-                    self.metrics.inc_scan_errors();
-                    continue;
-                }
-            };
-
-            // Filter new files
-            let new_files: Vec<(ObjectMetadata, String)> = file_hashes
-                .into_iter()
-                .filter(|(_, hash)| !existing.contains(hash))
-                .collect();
-
-            let source_duplicates = source_files_count - new_files.len() as u64;
-            duplicates_skipped += source_duplicates;
-
-            // Create work units for new files
-            let source_work_units_created = if !new_files.is_empty() {
-                let mut created = 0u64;
-                for chunk in new_files.chunks(self.config.batch_size) {
-                    let mut work_unit_pairs = Vec::new();
-                    let mut pending_pairs = Vec::new();
-
-                    for (metadata, hash) in chunk {
-                        let work_unit = self.create_work_unit(
-                            batch_id,
-                            source_url,
-                            metadata,
-                            hash,
-                            output_prefix,
-                            config_hash,
-                        );
-
-                        // Store work unit
-                        let unit_key = WorkUnitKeys::unit(&work_unit.batch_id, &work_unit.id);
-                        let unit_data = bincode::serialize(&work_unit)
-                            .map_err(|e| TikvError::Serialization(e.to_string()))?;
-                        work_unit_pairs.push((unit_key, unit_data));
-
-                        // Add to pending queue (scoped by batch_id to prevent cross-batch interference)
-                        let pending_key = WorkUnitKeys::pending(batch_id, &work_unit.id);
-                        let pending_data = work_unit.batch_id.as_bytes().to_vec();
-                        pending_pairs.push((pending_key, pending_data));
-                    }
-
-                    // Batch put work units and pending entries together
-                    let all_pairs: Vec<(Vec<u8>, Vec<u8>)> = work_unit_pairs
-                        .into_iter()
-                        .chain(pending_pairs.clone())
-                        .collect();
-
-                    // Log pending keys being written
-                    for (pk, _) in &pending_pairs {
-                        tracing::info!(
-                            batch_id = %batch_id,
-                            pending_key = %String::from_utf8_lossy(pk),
-                            "Writing pending queue entry"
-                        );
-                    }
-
-                    if let Err(e) = self.tikv.batch_put(all_pairs).await {
-                        tracing::error!(batch_id = %batch_id, error = %e, "batch_put FAILED for work units + pending");
-                        tracing::error!(
-                            batch_id = %batch_id,
-                            error = %e,
-                            "Failed to create work units"
-                        );
-                        self.metrics.inc_scan_errors();
-                        return Err(e);
-                    }
-
-                    // Verify pending keys were written successfully
-                    for (pk, _) in &pending_pairs {
-                        match self.tikv.get(pk.clone()).await {
-                            Ok(Some(_)) => tracing::info!(
-                                batch_id = %batch_id,
-                                pending_key = %String::from_utf8_lossy(pk),
-                                "VERIFIED: pending key exists in TiKV"
-                            ),
-                            Ok(None) => tracing::error!(
-                                batch_id = %batch_id,
-                                pending_key = %String::from_utf8_lossy(pk),
-                                "MISSING: pending key NOT found in TiKV after batch_put!"
-                            ),
-                            Err(e) => tracing::error!(
-                                batch_id = %batch_id,
-                                pending_key = %String::from_utf8_lossy(pk),
-                                error = %e,
-                                "ERROR: failed to verify pending key"
-                            ),
-                        }
-                    }
-
-                    // Also verify via scan
-                    let scan_prefix = WorkUnitKeys::pending_prefix();
-                    match self.tikv.scan(scan_prefix.clone(), 10).await {
-                        Ok(results) => tracing::info!(
-                            batch_id = %batch_id,
-                            scan_prefix = %String::from_utf8_lossy(&scan_prefix),
-                            results = results.len(),
-                            "SCAN verification of pending prefix"
-                        ),
-                        Err(e) => tracing::error!(
-                            batch_id = %batch_id,
-                            error = %e,
-                            "SCAN verification failed"
-                        ),
-                    }
-
-                    created += chunk.len() as u64;
-                }
-                created
-            } else {
-                0
-            };
-
-            jobs_created += source_work_units_created;
-
-            // Update batch status
-            status.files_total += source_files_count as u32;
-            if let Some(ref mut ds) = status.discovery_status {
-                ds.add_files(source_files_count as u32);
-                ds.increment_scanned();
             }
-
-            // Save updated status after each source
-            self.save_batch_status(batch_id, &status).await?;
         }
 
-        // Check if all sources are processed
+        // Finalize discovery phase
         let total_sources = spec.spec.sources.len() as u32;
-        let processed = status
-            .discovery_status
-            .as_ref()
-            .map(|d| d.sources_scanned)
-            .unwrap_or(0);
-
-        if processed >= total_sources {
-            // Check if any work units were actually created
-            if jobs_created == 0 && files_discovered == 0 {
-                // No files found in any source - mark as failed rather than running
-                // This prevents the batch from hanging in Running state with no work
-                status.transition_to(BatchPhase::Failed);
-                status.error = Some(format!(
-                    "No files discovered from {} source(s)",
-                    total_sources
-                ));
-                tracing::warn!(
-                    batch_id = %batch_id,
-                    sources = total_sources,
-                    "No files found during discovery, marking batch as failed"
-                );
-                self.save_batch_status(batch_id, &status).await?;
-                // Update phase index: Discovering -> Failed
-                super::batch::update_phase_index(
-                    &self.tikv,
-                    batch_id,
-                    BatchPhase::Discovering,
-                    BatchPhase::Failed,
-                )
-                .await?;
-            } else {
-                // Set work_units_total so is_complete() and progress() work correctly
-                status.set_work_units_total(jobs_created as u32);
-                // Transition to Running - work units were created successfully
-                status.transition_to(BatchPhase::Running);
-                self.save_batch_status(batch_id, &status).await?;
-                // Update phase index: Discovering -> Running
-                super::batch::update_phase_index(
-                    &self.tikv,
-                    batch_id,
-                    BatchPhase::Discovering,
-                    BatchPhase::Running,
-                )
-                .await?;
-            }
-        }
+        self.finalize_batch_phase(
+            batch_id,
+            &mut status,
+            total_sources,
+            jobs_created,
+            files_discovered,
+        )
+        .await?;
 
         self.metrics.inc_files_discovered(files_discovered);
         self.metrics.inc_jobs_created(jobs_created);
@@ -882,6 +756,109 @@ impl Scanner {
             jobs_created,
             duplicates_skipped,
         })
+    }
+
+    /// Process a single source URL and create work units.
+    async fn process_single_source(
+        &self,
+        batch_id: &str,
+        source_url: &str,
+        config_hash: &str,
+        output_prefix: &str,
+    ) -> Result<ScanStats, TikvError> {
+        // Scan the source URL (convert StorageError to TikvError)
+        let files = self
+            .scan_source_url(source_url)
+            .await
+            .map_err(|e| TikvError::Other(format!("Failed to scan source: {}", e)))?;
+        let source_files_count = files.len() as u64;
+
+        // Compute hashes for all files
+        let file_hashes: Vec<(ObjectMetadata, String)> = files
+            .iter()
+            .map(|meta| {
+                let hash = self.compute_file_hash(meta, config_hash);
+                (meta.clone(), hash)
+            })
+            .collect();
+
+        let hashes: Vec<String> = file_hashes.iter().map(|(_, h)| h.clone()).collect();
+
+        // Check existing work units for this batch
+        let existing = self.check_existing_work_units(batch_id, &hashes).await?;
+
+        // Filter new files
+        let new_files: Vec<(ObjectMetadata, String)> = file_hashes
+            .into_iter()
+            .filter(|(_, hash)| !existing.contains(hash))
+            .collect();
+
+        let duplicates_skipped = source_files_count - new_files.len() as u64;
+        let jobs_created = self
+            .create_work_units_for_files(
+                batch_id,
+                source_url,
+                &new_files,
+                output_prefix,
+                config_hash,
+            )
+            .await?;
+
+        Ok(ScanStats {
+            files_discovered: source_files_count,
+            jobs_created,
+            duplicates_skipped,
+        })
+    }
+
+    /// Create work units for files with verification.
+    async fn create_work_units_for_files(
+        &self,
+        batch_id: &str,
+        source_url: &str,
+        new_files: &[(ObjectMetadata, String)],
+        output_prefix: &str,
+        config_hash: &str,
+    ) -> Result<u64, TikvError> {
+        if new_files.is_empty() {
+            return Ok(0);
+        }
+
+        let mut created = 0u64;
+        for chunk in new_files.chunks(self.config.batch_size) {
+            let mut work_unit_pairs = Vec::new();
+            let mut pending_pairs = Vec::new();
+
+            for (metadata, hash) in chunk {
+                let work_unit = self.create_work_unit(
+                    batch_id,
+                    source_url,
+                    metadata,
+                    hash,
+                    output_prefix,
+                    config_hash,
+                );
+
+                let unit_key = WorkUnitKeys::unit(&work_unit.batch_id, &work_unit.id);
+                let unit_data = bincode::serialize(&work_unit)
+                    .map_err(|e| TikvError::Serialization(e.to_string()))?;
+                work_unit_pairs.push((unit_key, unit_data));
+
+                let pending_key = WorkUnitKeys::pending(batch_id, &work_unit.id);
+                let pending_data = work_unit.batch_id.as_bytes().to_vec();
+                pending_pairs.push((pending_key, pending_data));
+            }
+
+            let all_pairs: Vec<(Vec<u8>, Vec<u8>)> = work_unit_pairs
+                .into_iter()
+                .chain(pending_pairs.clone())
+                .collect();
+
+            self.tikv.batch_put(all_pairs).await?;
+            created += chunk.len() as u64;
+        }
+
+        Ok(created)
     }
 
     /// Save batch status to TiKV.
