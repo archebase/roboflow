@@ -857,11 +857,7 @@ impl LerobotWriter {
     }
 
     /// Upload episode files synchronously as fallback when coordinator fails.
-    fn upload_fallback_sync(
-        &self,
-        parquet_path: &Path,
-        video_paths: &[(String, PathBuf)],
-    ) {
+    fn upload_fallback_sync(&self, parquet_path: &Path, video_paths: &[(String, PathBuf)]) {
         // Upload parquet file
         if parquet_path.exists() {
             match self.cloud_uploader.upload_parquet(parquet_path) {
