@@ -286,13 +286,42 @@ impl Coordinator {
         let shutdown_tx = self.shutdown_handler.sender();
 
         // Start heartbeat task
+        let heartbeat_handle = self.spawn_heartbeat_task(shutdown_tx.subscribe());
+
+        tracing::info!(
+            pod_id = %self.pod_id,
+            max_concurrent_jobs = self.config.max_concurrent_jobs,
+            poll_interval_secs = self.config.poll_interval.as_secs(),
+            "Starting coordinator"
+        );
+
+        // Main loop
+        let loop_result = self.run_main_loop(executor, &mut shutdown_rx).await;
+
+        // Wait for heartbeat task
+        let _ = heartbeat_handle.await;
+
+        // Send final draining heartbeat
+        if let Err(e) = self.send_draining_heartbeat().await {
+            tracing::error!(pod_id = %self.pod_id, error = %e, "Failed to send draining heartbeat");
+        }
+
+        tracing::info!(pod_id = %self.pod_id, "Coordinator stopped gracefully");
+
+        loop_result
+    }
+
+    /// Spawn the heartbeat background task.
+    fn spawn_heartbeat_task(
+        &self,
+        mut heartbeat_rx: tokio::sync::broadcast::Receiver<()>,
+    ) -> tokio::task::JoinHandle<()> {
         let tikv = self.tikv.clone();
         let pod_id = self.pod_id.clone();
         let metrics = self.metrics.clone();
         let heartbeat_interval = self.config.heartbeat_interval;
-        let mut heartbeat_rx = shutdown_tx.subscribe();
 
-        let heartbeat_handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             let mut interval = tokio::time::interval(heartbeat_interval);
             interval.tick().await; // Skip first tick
 
@@ -310,115 +339,134 @@ impl Coordinator {
                     }
                 }
             }
-        });
+        })
+    }
 
-        tracing::info!(
-            pod_id = %self.pod_id,
-            max_concurrent_jobs = self.config.max_concurrent_jobs,
-            poll_interval_secs = self.config.poll_interval.as_secs(),
-            "Starting coordinator"
-        );
-
-        // Main loop
+    /// Run the main processing loop.
+    async fn run_main_loop(
+        &mut self,
+        executor: &TaskExecutor,
+        shutdown_rx: &mut tokio::sync::broadcast::Receiver<()>,
+    ) -> Result<(), TikvError> {
         loop {
             let active_count = self.metrics.active_jobs.load(Ordering::Relaxed) as usize;
 
             if active_count < self.config.max_concurrent_jobs {
-                // Try to claim work
-                let claimed_unit = match self.claim_work().await {
-                    Ok(Some(unit)) => Some(unit),
-                    Ok(None) => None,
-                    Err(e) => {
-                        tracing::error!(pod_id = %self.pod_id, error = %e, "Failed to claim work");
-                        None
-                    }
-                };
-
-                if let Some(unit) = claimed_unit {
-                    let unit_id = unit.id.clone();
-                    let batch_id = unit.batch_id.clone();
-
-                    // Check for shutdown before processing
-                    if self.shutdown_handler.is_requested() {
-                        tracing::info!(pod_id = %self.pod_id, "Shutdown requested, releasing work");
-                        self.release_on_shutdown(&batch_id, &unit_id).await;
-                        break;
-                    }
-
-                    // Execute the work unit
-                    let result = executor.execute(&unit).await;
-
-                    // Handle result
-                    match result {
-                        ProcessingResult::Success => {
-                            if let Err(e) = self.complete_work(&batch_id, &unit_id).await {
-                                tracing::error!(
-                                    pod_id = %self.pod_id,
-                                    unit_id = %unit_id,
-                                    error = %e,
-                                    "Failed to complete work unit"
-                                );
-                                self.metrics.inc_processing_errors();
-                            }
-                        }
-                        ProcessingResult::Failed { error } => {
-                            if error.contains("interrupted by shutdown") {
-                                tracing::info!(pod_id = %self.pod_id, "Work interrupted by shutdown");
-                                self.release_on_shutdown(&batch_id, &unit_id).await;
-                                break;
-                            }
-
-                            if let Err(e) = self.fail_work(&batch_id, &unit_id, error).await {
-                                tracing::error!(
-                                    pod_id = %self.pod_id,
-                                    unit_id = %unit_id,
-                                    error = %e,
-                                    "Failed to mark work unit as failed"
-                                );
-                                self.metrics.inc_processing_errors();
-                            }
-                        }
-                        ProcessingResult::Cancelled => {
-                            tracing::info!(
-                                pod_id = %self.pod_id,
-                                unit_id = %unit_id,
-                                "Work unit cancelled"
-                            );
+                // Try to claim and process work
+                match self.claim_work().await? {
+                    Some(unit) => {
+                        let should_exit = self.process_work_unit(executor, &unit).await?;
+                        if should_exit {
+                            return Ok(());
                         }
                     }
-                } else {
-                    // No work available - wait with shutdown handling
-                    tokio::select! {
-                        _ = sleep(self.config.poll_interval) => {}
-                        _ = shutdown_rx.recv() => {
-                            tracing::info!(pod_id = %self.pod_id, "Shutdown requested while idle");
-                            break;
+                    None => {
+                        // No work available - wait with shutdown handling
+                        if self.wait_with_shutdown(shutdown_rx, self.config.poll_interval).await? {
+                            return Ok(());
                         }
                     }
                 }
             } else {
                 // At capacity - brief sleep with shutdown handling
-                tokio::select! {
-                    _ = sleep(Duration::from_millis(100)) => {}
-                    _ = shutdown_rx.recv() => {
-                        tracing::info!(pod_id = %self.pod_id, "Shutdown requested at capacity");
-                        break;
-                    }
+                if self.wait_with_shutdown(shutdown_rx, Duration::from_millis(100)).await? {
+                    return Ok(());
                 }
             }
         }
+    }
 
-        // Wait for heartbeat task
-        let _ = heartbeat_handle.await;
+    /// Process a single work unit.
+    ///
+    /// Returns Ok(true) if the loop should exit, Ok(false) to continue.
+    async fn process_work_unit(
+        &self,
+        executor: &TaskExecutor,
+        unit: &WorkUnit,
+    ) -> Result<bool, TikvError> {
+        let unit_id = unit.id.clone();
+        let batch_id = unit.batch_id.clone();
 
-        // Send final draining heartbeat
-        if let Err(e) = self.send_draining_heartbeat().await {
-            tracing::error!(pod_id = %self.pod_id, error = %e, "Failed to send draining heartbeat");
+        // Check for shutdown before processing
+        if self.shutdown_handler.is_requested() {
+            tracing::info!(pod_id = %self.pod_id, "Shutdown requested, releasing work");
+            self.release_on_shutdown(&batch_id, &unit_id).await;
+            return Ok(true);
         }
 
-        tracing::info!(pod_id = %self.pod_id, "Coordinator stopped gracefully");
+        // Execute the work unit
+        let result = executor.execute(unit).await;
 
-        Ok(())
+        // Handle result
+        self.handle_execution_result(&batch_id, &unit_id, result).await
+    }
+
+    /// Handle the result of work unit execution.
+    ///
+    /// Returns Ok(true) if the loop should exit, Ok(false) to continue.
+    async fn handle_execution_result(
+        &self,
+        batch_id: &str,
+        unit_id: &str,
+        result: ProcessingResult,
+    ) -> Result<bool, TikvError> {
+        match result {
+            ProcessingResult::Success => {
+                if let Err(e) = self.complete_work(batch_id, unit_id).await {
+                    tracing::error!(
+                        pod_id = %self.pod_id,
+                        unit_id = %unit_id,
+                        error = %e,
+                        "Failed to complete work unit"
+                    );
+                    self.metrics.inc_processing_errors();
+                }
+                Ok(false)
+            }
+            ProcessingResult::Failed { error } => {
+                if error.contains("interrupted by shutdown") {
+                    tracing::info!(pod_id = %self.pod_id, "Work interrupted by shutdown");
+                    self.release_on_shutdown(batch_id, unit_id).await;
+                    return Ok(true);
+                }
+
+                if let Err(e) = self.fail_work(batch_id, unit_id, error).await {
+                    tracing::error!(
+                        pod_id = %self.pod_id,
+                        unit_id = %unit_id,
+                        error = %e,
+                        "Failed to mark work unit as failed"
+                    );
+                    self.metrics.inc_processing_errors();
+                }
+                Ok(false)
+            }
+            ProcessingResult::Cancelled => {
+                tracing::info!(
+                    pod_id = %self.pod_id,
+                    unit_id = %unit_id,
+                    "Work unit cancelled"
+                );
+                Ok(false)
+            }
+        }
+    }
+
+    /// Wait for a duration or until shutdown is requested.
+    ///
+    /// Returns Ok(true) if shutdown was requested, Ok(false) if timeout elapsed.
+    async fn wait_with_shutdown(
+        &self,
+        shutdown_rx: &mut tokio::sync::broadcast::Receiver<()>,
+        duration: Duration,
+    ) -> Result<bool, TikvError> {
+        tokio::select! {
+            _ = sleep(duration) => Ok(false),
+            _ = shutdown_rx.recv() => {
+                tracing::info!(pod_id = %self.pod_id, "Shutdown requested while waiting");
+                Ok(true)
+            }
+        }
     }
 
     /// Release a work unit back to pending on shutdown.
