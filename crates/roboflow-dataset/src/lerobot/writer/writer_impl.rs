@@ -24,6 +24,7 @@ use crate::lerobot::video_profiles::ResolvedConfig;
 use roboflow_core::Result;
 
 use super::camera::{CameraExtrinsic, CameraIntrinsic};
+use super::camera_params::CameraParamsWriter;
 use super::cloud_upload::CloudUploader;
 use super::encoding::{EncodeStats, encode_videos};
 use super::frame::LerobotFrame;
@@ -514,7 +515,8 @@ impl LerobotWriter {
                     // Fallback: upload this episode synchronously so data still reaches cloud
                     if self.use_cloud_storage {
                         if parquet_path.exists() {
-                            if let Err(upload_e) = self.cloud_uploader.upload_parquet(&parquet_path) {
+                            if let Err(upload_e) = self.cloud_uploader.upload_parquet(&parquet_path)
+                            {
                                 tracing::error!(
                                     episode = self.episode_index,
                                     error = %upload_e,
@@ -529,7 +531,9 @@ impl LerobotWriter {
                         }
                         for (camera, path) in &video_paths_for_upload {
                             if path.exists() {
-                                if let Err(upload_e) = self.cloud_uploader.upload_video(path, camera) {
+                                if let Err(upload_e) =
+                                    self.cloud_uploader.upload_video(path, camera)
+                                {
                                     tracing::error!(
                                         episode = self.episode_index,
                                         camera = %camera,
@@ -974,65 +978,8 @@ impl LerobotWriter {
 
     /// Write camera parameters to the parameters directory.
     fn write_camera_parameters(&self) -> Result<()> {
-        if self.camera_intrinsics.is_empty() && self.camera_extrinsics.is_empty() {
-            return Ok(());
-        }
-
-        let params_dir = self.output_dir.join("parameters");
-
-        // Write intrinsics
-        for (camera, intrinsic) in &self.camera_intrinsics {
-            let filename = format!("{}_intrinsic.json", camera);
-            let filepath = params_dir.join(&filename);
-
-            let json = serde_json::to_string_pretty(intrinsic).map_err(|e| {
-                roboflow_core::RoboflowError::encode(
-                    "CameraParameters",
-                    format!("Failed to serialize intrinsic params for {}: {}", camera, e),
-                )
-            })?;
-
-            fs::write(&filepath, json).map_err(|e| {
-                roboflow_core::RoboflowError::encode(
-                    "CameraParameters",
-                    format!("Failed to write intrinsic params for {}: {}", filename, e),
-                )
-            })?;
-
-            tracing::debug!(
-                camera = %camera,
-                file = %filename,
-                "Wrote camera intrinsics"
-            );
-        }
-
-        // Write extrinsics
-        for (camera, extrinsic) in &self.camera_extrinsics {
-            let filename = format!("{}_extrinsic.json", camera);
-            let filepath = params_dir.join(&filename);
-
-            let json = serde_json::to_string_pretty(extrinsic).map_err(|e| {
-                roboflow_core::RoboflowError::encode(
-                    "CameraParameters",
-                    format!("Failed to serialize extrinsic params for {}: {}", camera, e),
-                )
-            })?;
-
-            fs::write(&filepath, json).map_err(|e| {
-                roboflow_core::RoboflowError::encode(
-                    "CameraParameters",
-                    format!("Failed to write extrinsic params for {}: {}", filename, e),
-                )
-            })?;
-
-            tracing::debug!(
-                camera = %camera,
-                file = %filename,
-                "Wrote camera extrinsics"
-            );
-        }
-
-        Ok(())
+        let writer = CameraParamsWriter::new(&self.camera_intrinsics, &self.camera_extrinsics);
+        writer.write(&self.output_dir)
     }
 
     // ========================================================================

@@ -43,6 +43,7 @@
 //! - [`CameraIntrinsic`], [`CameraExtrinsic`], [`ExtrinsicData`] - Camera calibration types
 
 mod camera;
+mod camera_params;
 mod cloud_upload;
 mod encoding;
 mod frame;
