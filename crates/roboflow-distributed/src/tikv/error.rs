@@ -172,4 +172,51 @@ mod tests {
         assert!(!TikvError::Timeout("test".to_string()).is_write_conflict());
         assert!(!TikvError::ConnectionFailed("test".to_string()).is_write_conflict());
     }
+
+    #[test]
+    fn test_retryable_constructor() {
+        let err = TikvError::retryable(1, 3, "test message");
+        assert!(matches!(err, TikvError::Retryable { attempt: 1, max: 3, .. }));
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_error_display() {
+        let err = TikvError::ConnectionFailed("localhost:2379".to_string());
+        assert!(err.to_string().contains("connection failed"));
+
+        let err = TikvError::CasFailed { expected: 1, got: 2 };
+        assert!(err.to_string().contains("CAS"));
+
+        let err = TikvError::CircuitOpen { failures: 5 };
+        assert!(err.to_string().contains("Circuit breaker"));
+    }
+
+    #[test]
+    fn test_other_error() {
+        let err = TikvError::Other("custom error".to_string());
+        assert!(!err.is_retryable());
+        assert!(!err.is_write_conflict());
+    }
+
+    #[test]
+    fn test_serialization_errors() {
+        let err = TikvError::Serialization("failed".to_string());
+        assert!(!err.is_retryable());
+
+        let err = TikvError::Deserialization("failed".to_string());
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn test_invalid_config_error() {
+        let err = TikvError::InvalidConfig("missing pd address".to_string());
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn test_pessimistic_lock_retryable() {
+        assert!(TikvError::ClientError("PessimisticLock".to_string()).is_retryable());
+        assert!(TikvError::ClientError("PessimisticRetry needed".to_string()).is_retryable());
+    }
 }

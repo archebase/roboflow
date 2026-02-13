@@ -827,6 +827,7 @@ impl TikvClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::circuit::{CircuitBreaker, CircuitState};
 
     #[test]
     fn test_config_validation() {
@@ -846,5 +847,60 @@ mod tests {
         let desc = config.describe();
         assert!(desc.contains("TiKV"));
         assert!(desc.contains("pd_endpoints"));
+    }
+
+    #[test]
+    fn test_client_clone() {
+        // TikvClient should be clonable since it derives Clone
+        fn assert_clone<T: Clone>() {}
+        assert_clone::<TikvClient>();
+    }
+
+    #[test]
+    fn test_client_not_connected_by_default() {
+        // A client created without calling new() has no connection
+        let client = TikvClient {
+            config: TikvConfig::default(),
+            inner: None,
+            circuit_breaker: Arc::new(CircuitBreaker::new()),
+        };
+        assert!(!client.is_connected());
+    }
+
+    #[test]
+    fn test_circuit_state_method() {
+        let client = TikvClient {
+            config: TikvConfig::default(),
+            inner: None,
+            circuit_breaker: Arc::new(CircuitBreaker::new()),
+        };
+        // Circuit should be closed initially
+        assert!(matches!(client.circuit_state(), CircuitState::Closed));
+    }
+
+    #[test]
+    fn test_circuit_failure_count_initial() {
+        let client = TikvClient {
+            config: TikvConfig::default(),
+            inner: None,
+            circuit_breaker: Arc::new(CircuitBreaker::new()),
+        };
+        assert_eq!(client.circuit_failure_count(), 0);
+    }
+
+    #[test]
+    fn test_config_accessor() {
+        let config = TikvConfig {
+            pd_endpoints: vec!["localhost:2379".to_string()],
+            max_retries: 5,
+            ..Default::default()
+        };
+        let client = TikvClient {
+            config: config.clone(),
+            inner: None,
+            circuit_breaker: Arc::new(CircuitBreaker::new()),
+        };
+        assert_eq!(client.config().pd_endpoints, vec!["localhost:2379"]);
+        assert_eq!(client.config().max_retries, 5);
     }
 }

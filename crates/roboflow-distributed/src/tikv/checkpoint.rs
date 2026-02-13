@@ -120,4 +120,56 @@ mod tests {
         // Should checkpoint when both thresholds reached
         assert!(config.should_checkpoint(100, Duration::from_secs(10)));
     }
+
+    #[test]
+    fn test_new_same_as_default() {
+        let new_config = CheckpointConfig::new();
+        let default_config = CheckpointConfig::default();
+        assert_eq!(
+            new_config.checkpoint_interval_frames,
+            default_config.checkpoint_interval_frames
+        );
+        assert_eq!(
+            new_config.checkpoint_interval_seconds,
+            default_config.checkpoint_interval_seconds
+        );
+        assert_eq!(new_config.checkpoint_async, default_config.checkpoint_async);
+    }
+
+    #[test]
+    fn test_should_checkpoint_zero_frames() {
+        let config = CheckpointConfig::default();
+        // Zero frames, but time threshold not reached
+        assert!(!config.should_checkpoint(0, Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn test_should_checkpoint_exact_threshold() {
+        let config = CheckpointConfig::new()
+            .with_frame_interval(50)
+            .with_time_interval(5);
+
+        // Exactly at frame threshold
+        assert!(config.should_checkpoint(50, Duration::from_secs(0)));
+
+        // Exactly at time threshold
+        assert!(config.should_checkpoint(0, Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn test_config_clone() {
+        let config = CheckpointConfig::new()
+            .with_frame_interval(150)
+            .with_time_interval(20);
+        let cloned = config.clone();
+        assert_eq!(config.checkpoint_interval_frames, cloned.checkpoint_interval_frames);
+        assert_eq!(config.checkpoint_interval_seconds, cloned.checkpoint_interval_seconds);
+    }
+
+    #[test]
+    fn test_config_debug() {
+        let config = CheckpointConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("CheckpointConfig"));
+    }
 }

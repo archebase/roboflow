@@ -732,4 +732,40 @@ mod tests {
         assert_eq!(DEFAULT_BACKOFF_BASE_DELAY_MS, 50);
         assert_eq!(DEFAULT_MAX_ACQUIRE_ATTEMPTS, 20);
     }
+
+    #[test]
+    fn test_config_clone() {
+        let config = LockManagerConfig::default()
+            .with_default_ttl(Duration::from_secs(200))
+            .with_max_acquire_attempts(30);
+        let cloned = config.clone();
+        assert_eq!(config.default_ttl, cloned.default_ttl);
+        assert_eq!(config.max_acquire_attempts, cloned.max_acquire_attempts);
+    }
+
+    #[test]
+    fn test_config_debug_impl() {
+        let config = LockManagerConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("LockManagerConfig"));
+        assert!(debug_str.contains("default_ttl"));
+        assert!(debug_str.contains("renewal_interval"));
+    }
+
+    #[test]
+    fn test_config_partial_builders() {
+        // Test that builder methods can be called independently
+        let config = LockManagerConfig::default()
+            .with_default_ttl(Duration::from_secs(600));
+        assert_eq!(config.default_ttl, Duration::from_secs(600));
+        // Other defaults should remain
+        assert_eq!(config.renewal_interval, Duration::from_secs(DEFAULT_RENEWAL_INTERVAL_SECS));
+    }
+
+    #[test]
+    fn test_backoff_delay_builder() {
+        let config = LockManagerConfig::default()
+            .with_backoff_delay(Duration::from_millis(200));
+        assert_eq!(config.backoff_base_delay, Duration::from_millis(200));
+    }
 }

@@ -262,4 +262,41 @@ mod tests {
         let config = TiKVConfig::with_pd_endpoints("127.0.0.1:2379");
         assert_eq!(config.pd_endpoints, vec!["127.0.0.1:2379"]);
     }
+
+    #[test]
+    fn test_episode_key_metadata() {
+        let key = EpisodeKey::metadata("test-episode-123");
+        assert!(key.starts_with(b"roboflow/ep/"));
+        assert!(String::from_utf8_lossy(&key).contains("test-episode-123"));
+    }
+
+    #[test]
+    fn test_segment_key_metadata() {
+        let key = SegmentKey::metadata("segment-456");
+        assert!(key.starts_with(b"roboflow/seg/"));
+        assert!(String::from_utf8_lossy(&key).contains("segment-456"));
+    }
+
+    #[test]
+    fn test_segment_key_config_index() {
+        let key = SegmentKey::config_index("abc123hash", "segment-789");
+        let key_str = String::from_utf8_lossy(&key);
+        assert!(key_str.starts_with("roboflow/idx/config/"));
+        assert!(key_str.contains("abc123hash"));
+        assert!(key_str.contains("segment-789"));
+    }
+
+    #[test]
+    fn test_upload_key_status() {
+        let key = UploadKey::status("episode-upload-001");
+        assert!(key.starts_with(b"roboflow/up/"));
+        assert!(String::from_utf8_lossy(&key).contains("episode-upload-001"));
+    }
+
+    #[test]
+    fn test_config_default() {
+        let config = TiKVConfig::default();
+        // Default should have localhost endpoint
+        assert!(!config.pd_endpoints.is_empty());
+    }
 }
