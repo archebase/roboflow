@@ -98,8 +98,11 @@ impl VideoFrame {
                 return Err(VideoEncoderError::InvalidFrameData);
             }
         } else {
-            // RGB data: check exact size
-            let expected = (self.width * self.height * 3) as usize;
+            // RGB data: check exact size with overflow protection
+            let expected = (self.width as usize)
+                .checked_mul(self.height as usize)
+                .and_then(|size| size.checked_mul(3))
+                .ok_or(VideoEncoderError::InvalidFrameData)?;
             if self.data.len() != expected {
                 return Err(VideoEncoderError::InvalidFrameData);
             }

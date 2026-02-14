@@ -4203,9 +4203,11 @@ dependencies = [
 name = "roboflow-video"
 version = "0.2.0"
 dependencies = [
+ "criterion",
  "crossbeam-channel",
  "image",
  "png 0.17.16",
+ "rand 0.8.5",
  "roboflow-core",
  "roboflow-storage",
  "rsmpeg",

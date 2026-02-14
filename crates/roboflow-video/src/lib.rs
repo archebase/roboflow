@@ -48,17 +48,31 @@
 //! let results = encoder.finalize()?;
 //! ```
 
+pub mod arena;
 pub mod concurrent;
 pub mod config;
+pub mod decode;
+pub mod encoder_pool;
 pub mod fragment;
 pub mod frame;
 pub mod hardware;
+pub mod pipeline;
+pub mod reorder;
 pub mod rsmpeg;
 pub mod simd;
 
 // Re-export main types
+pub use arena::{ArcSlot, AtomicFramePool, FramePool, FramePoolConfig, OwnedSlot, PoolStats};
 pub use concurrent::{ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder};
 pub use config::{DepthEncoderConfig, VideoEncoderConfig};
+pub use decode::{
+    DecodeCommand, DecodePool, DecodePoolConfig, DecodePoolStats, DecodeResult, DecodedFrame,
+    FifoCollector, FrameData,
+};
+pub use encoder_pool::{
+    EncodeCommand, EncodeResult, EncoderPool, EncoderPoolConfig, EncoderPoolStats, LoadBalancer,
+    PendingTracker,
+};
 pub use fragment::{FragmentEncoder, FragmentEncoderConfig, FragmentInfo};
 pub use frame::{DepthFrame, DepthFrameBuffer, VideoEncoderError, VideoFrame, VideoFrameBuffer};
 pub use hardware::{
@@ -66,6 +80,10 @@ pub use hardware::{
     available_encoders, check_nvenc_available, check_videotoolbox_available, is_encoder_available,
     print_encoder_diagnostics, select_best_encoder,
 };
+pub use pipeline::{
+    CameraEncodeResult, PipedEncoderConfig, PipedEncoderMetrics, PipedFrameEncoder,
+};
+pub use reorder::{CameraSequence, FrameReorderBuffer, SequencedItem};
 pub use rsmpeg::{
     EncodeFrame, RsmpegEncoder, RsmpegEncoderConfig, RsmpegMp4Encoder, default_codec_name,
     is_hardware_encoding_available, is_rsmpeg_available,
