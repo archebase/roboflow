@@ -204,16 +204,29 @@ impl AvioWriteState {
 
     /// Write data to buffer, flushing to channel when threshold reached.
     fn write(&mut self, data: &[u8]) {
+        tracing::trace!(
+            data_len = data.len(),
+            buffer_len = self.buffer.len(),
+            bytes_written = self.bytes_written,
+            "AvioWriteState::write called"
+        );
+
         self.buffer.extend_from_slice(data);
         self.bytes_written += data.len() as u64;
 
         // Flush when buffer exceeds threshold
         while self.buffer.len() >= self.chunk_size {
             let chunk_data: Vec<u8> = self.buffer.drain(..self.chunk_size).collect();
+            tracing::trace!(
+                chunk_len = chunk_data.len(),
+                "AvioWriteState::write: sending chunk to channel"
+            );
             if self.tx.send(EncodedChunk::new(chunk_data)).is_err() {
                 tracing::warn!("Channel disconnected, dropping encoded chunk");
             }
         }
+
+        tracing::trace!("AvioWriteState::write completed");
     }
 
     /// Flush remaining buffer to channel.
@@ -321,18 +334,30 @@ impl StreamingMp4Encoder {
 
     /// Create custom AVIO context with write callback.
     fn create_custom_avio(avio_state: Arc<Mutex<AvioWriteState>>) -> AVIOContextCustom {
+        tracing::debug!("create_custom_avio: allocating AVIO buffer");
+
         // Allocate buffer for AVIO operations (FFmpeg requires this)
         let buffer_size = 4096;
         let buffer = AVMem::new(buffer_size);
 
+        tracing::debug!("create_custom_avio: creating write callback");
+
         // Create write callback that writes to our shared state
         let write_callback: WritePacketCallback =
             Box::new(move |_data: &mut Vec<u8>, buf: &[u8]| {
+                tracing::trace!(
+                    buf_len = buf.len(),
+                    "AVIO write_callback: called"
+                );
                 if let Ok(mut state) = avio_state.lock() {
                     state.write(buf);
+                } else {
+                    tracing::warn!("AVIO write_callback: failed to lock state");
                 }
                 buf.len() as i32
             });
+
+        tracing::debug!("create_custom_avio: allocating AVIO context");
 
         // Create custom AVIO context for writing
         AVIOContextCustom::alloc_context(
@@ -529,6 +554,12 @@ impl StreamingMp4Encoder {
             ));
         }
 
+        tracing::trace!(
+            frame_count = self.frame_count,
+            rgb_data_len = rgb_data.len(),
+            "add_frame: starting"
+        );
+
         // Lazy initialization on first frame
         if self.codec_context.is_none() {
             // Infer dimensions from data size (assuming RGB24)
@@ -554,6 +585,8 @@ impl StreamingMp4Encoder {
         let width = self.width as i32;
         let height = self.height as i32;
 
+        tracing::trace!("add_frame: allocating input RGB frame");
+
         // =============================================================
         // STEP 1: Allocate and populate input RGB frame
         // =============================================================
@@ -570,6 +603,12 @@ impl StreamingMp4Encoder {
             )
         })?;
 
+        tracing::trace!(
+            input_frame_linesize = input_frame.linesize[0],
+            expected_size = width * height * 3,
+            "add_frame: copying RGB data to frame"
+        );
+
         // Copy RGB data to frame
         let frame_data_array = input_frame.data_mut();
         let frame_data = frame_data_array[0];
@@ -578,6 +617,8 @@ impl StreamingMp4Encoder {
         let frame_data_slice =
             unsafe { std::slice::from_raw_parts_mut(frame_data, rgb_data.len()) };
         frame_data_slice.copy_from_slice(rgb_data);
+
+        tracing::trace!("add_frame: allocating YUV frame");
 
         // =============================================================
         // STEP 2: Convert pixel format (RGB → YUV)
@@ -594,6 +635,12 @@ impl StreamingMp4Encoder {
                 format!("Failed to allocate YUV frame: {}", e),
             )
         })?;
+
+        tracing::trace!(
+            yuv_frame_linesize = yuv_frame.linesize[0],
+            pix_fmt = ?self.pix_fmt,
+            "add_frame: performing sws_scale"
+        );
 
         // Perform pixel format conversion using SWScale
         // SAFETY: sws_scale is safe to call with valid SwsContext and AVFrame pointers.
@@ -621,6 +668,8 @@ impl StreamingMp4Encoder {
             ));
         }
 
+        tracing::trace!("add_frame: sws_scale completed");
+
         // Set color range to full (JPEG) - maintains full range from RGB source
         // SAFETY: We have exclusive mutable access to yuv_frame via as_mut_ptr().
         // The AVFrame is properly initialized with a valid buffer and this field write is safe.
@@ -634,6 +683,8 @@ impl StreamingMp4Encoder {
 
         yuv_frame.set_pts(self.frame_count as i64);
         self.frame_count += 1;
+
+        tracing::trace!("add_frame: sending frame to encoder");
 
         // =============================================================
         // STEP 4: Encode frame
@@ -651,11 +702,15 @@ impl StreamingMp4Encoder {
             )
         })?;
 
+        tracing::trace!("add_frame: receiving and writing packets");
+
         // =============================================================
         // STEP 5: Receive and write encoded packets
         // =============================================================
 
         self.receive_and_write_packets()?;
+
+        tracing::trace!("add_frame: completed successfully");
 
         Ok(())
     }
@@ -671,9 +726,17 @@ impl StreamingMp4Encoder {
             RoboflowError::encode("StreamingMp4Encoder", "Format context not initialized")
         })?;
 
+        let mut packet_count = 0;
         loop {
             match codec_context.receive_packet() {
                 Ok(mut pkt) => {
+                    packet_count += 1;
+                    tracing::trace!(
+                        packet_count,
+                        pkt_size = pkt.size,
+                        "receive_and_write_packets: received packet"
+                    );
+
                     // Write packet to format context.
                     // The custom AVIO callback will automatically receive the data
                     // and write it to the channel via our AvioWriteState.
@@ -683,6 +746,11 @@ impl StreamingMp4Encoder {
                             format!("Failed to write packet: {}", e),
                         )
                     })?;
+
+                    tracing::trace!(
+                        packet_count,
+                        "receive_and_write_packets: wrote packet to format context"
+                    );
                 }
                 Err(RsmpegError::EncoderDrainError) | Err(RsmpegError::EncoderFlushedError) => {
                     break;
@@ -695,6 +763,11 @@ impl StreamingMp4Encoder {
                 }
             }
         }
+
+        tracing::trace!(
+            total_packets = packet_count,
+            "receive_and_write_packets: completed"
+        );
 
         Ok(())
     }
