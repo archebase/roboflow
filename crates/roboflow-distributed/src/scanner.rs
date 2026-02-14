@@ -311,7 +311,11 @@ impl Scanner {
         let scan_interval_secs = self.config.scan_interval.as_secs() as i64;
         let ttl = Duration::from_secs((scan_interval_secs * 3).max(60) as u64);
         // Use acquire_with_renewal to auto-renew the lock during long operations
-        match self.lock_manager.acquire_with_renewal("scanner_lock", ttl).await {
+        match self
+            .lock_manager
+            .acquire_with_renewal("scanner_lock", ttl)
+            .await
+        {
             Ok(guard) => {
                 tracing::info!(
                     pod_id = %self.pod_id,
