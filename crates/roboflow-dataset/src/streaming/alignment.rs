@@ -249,16 +249,22 @@ impl FrameAlignmentBuffer {
         let mut image_data: Option<Vec<u8>> = None;
         let mut is_encoded = false;
 
+        // Debug: log all message fields
+        let all_fields: Vec<&String> = msg.keys().collect();
+        eprintln!("[DEBUG] extract_image_data: feature={} fields={:?}", feature_name, all_fields);
+
         for (key, value) in msg.iter() {
             match key.as_str() {
                 "width" => {
                     if let CodecValue::UInt32(w) = value {
                         width = *w;
+                        eprintln!("[DEBUG] extract_image_data: found width={} from message", width);
                     }
                 }
                 "height" => {
                     if let CodecValue::UInt32(h) = value {
                         height = *h;
+                        eprintln!("[DEBUG] extract_image_data: found height={} from message", height);
                     }
                 }
                 "data" => {

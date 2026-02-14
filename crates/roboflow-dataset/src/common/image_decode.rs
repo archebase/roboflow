@@ -59,6 +59,15 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
 
     // Strategy 1: Try direct decode
     if let Some((w, h, rgb)) = try_decode_payload(&img.data) {
+        // For compressed images, header dimensions may be wrong/missing
+        // Always use the decoded dimensions for compressed data
+        if img.is_encoded {
+            eprintln!(
+                "[DEBUG] decode_image_to_rgb: compressed image - using decoded dims {}x{} (header was {}x{})",
+                w, h, img.width, img.height
+            );
+            return Some((w, h, rgb));
+        }
         if w != img.width || h != img.height {
             eprintln!(
                 "[DEBUG] decode_image_to_rgb: DIMENSION MISMATCH! header={}x{} decoded={}x{}",
@@ -72,6 +81,9 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
     if img.data.len() > 8
         && let Some((w, h, rgb)) = try_decode_payload(&img.data[8..])
     {
+        if img.is_encoded {
+            return Some((w, h, rgb));
+        }
         if w != img.width || h != img.height {
             eprintln!(
                 "[DEBUG] decode_image_to_rgb: DIMENSION MISMATCH! header={}x{} decoded={}x{}",
@@ -85,6 +97,9 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
     if img.data.len() > 4
         && let Some((w, h, rgb)) = try_decode_payload(&img.data[4..])
     {
+        if img.is_encoded {
+            return Some((w, h, rgb));
+        }
         if w != img.width || h != img.height {
             eprintln!(
                 "[DEBUG] decode_image_to_rgb: DIMENSION MISMATCH! header={}x{} decoded={}x{}",
@@ -103,6 +118,9 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
             .position(|w| w[0] == 0xFF && w[1] == 0xD8 && w[2] == 0xFF)
             && let Some((w, h, rgb)) = try_decode_payload(&data[pos..])
         {
+            if img.is_encoded {
+                return Some((w, h, rgb));
+            }
             if w != img.width || h != img.height {
                 eprintln!(
                     "[DEBUG] decode_image_to_rgb: DIMENSION MISMATCH! header={}x{} decoded={}x{}",
@@ -117,6 +135,9 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
             .position(|w| w[0] == 0x89 && &w[1..4] == b"PNG")
             && let Some((w, h, rgb)) = try_decode_payload(&data[pos..])
         {
+            if img.is_encoded {
+                return Some((w, h, rgb));
+            }
             if w != img.width || h != img.height {
                 eprintln!(
                     "[DEBUG] decode_image_to_rgb: DIMENSION MISMATCH! header={}x{} decoded={}x{}",
