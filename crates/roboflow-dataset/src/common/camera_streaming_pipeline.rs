@@ -196,6 +196,15 @@ impl CameraStreamingPipeline {
 
     /// Handle a single frame.
     fn handle_frame(&mut self, image: &ImageData) -> Result<()> {
+        tracing::trace!(
+            camera = %self.camera,
+            width = image.width,
+            height = image.height,
+            data_len = image.data.len(),
+            is_encoded = image.is_encoded,
+            "handle_frame: starting"
+        );
+
         // Skip images with zero dimensions
         if image.width == 0 || image.height == 0 {
             tracing::debug!(camera = %self.camera, "Skipping frame with zero dimensions");
@@ -222,6 +231,8 @@ impl CameraStreamingPipeline {
             return Ok(());
         }
 
+        tracing::trace!(camera = %self.camera, "handle_frame: decoding image to RGB");
+
         // Decode image to RGB
         let (w, h, rgb_data) = match decode_to_rgb(image) {
             Some(data) => data,
@@ -232,10 +243,19 @@ impl CameraStreamingPipeline {
             }
         };
 
+        tracing::trace!(
+            camera = %self.camera,
+            w = w,
+            h = h,
+            rgb_len = rgb_data.len(),
+            "handle_frame: decode complete, encoding frame"
+        );
+
         // Encode frame
         match self.encode_frame(&rgb_data, w, h) {
             Ok(_) => {
                 self.frames_encoded += 1;
+                tracing::trace!(camera = %self.camera, "handle_frame: encode complete");
             }
             Err(e) => {
                 // Error recovery: skip frame and continue
@@ -298,11 +318,25 @@ impl CameraStreamingPipeline {
 
     /// Encode a single frame.
     fn encode_frame(&mut self, rgb_data: &[u8], _width: u32, _height: u32) -> Result<()> {
+        tracing::trace!(
+            camera = %self.camera,
+            rgb_len = rgb_data.len(),
+            "encode_frame: starting"
+        );
+
         let encoder = self.encoder.as_mut().ok_or_else(|| {
             RoboflowError::encode("CameraStreamingPipeline", "Encoder not initialized")
         })?;
 
-        encoder.add_frame(rgb_data)
+        let result = encoder.add_frame(rgb_data);
+
+        tracing::trace!(
+            camera = %self.camera,
+            result = result.is_ok(),
+            "encode_frame: completed"
+        );
+
+        result
     }
 
     /// Finalize the encoder.
