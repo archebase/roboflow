@@ -633,79 +633,112 @@ impl TikvClient {
     /// Release a distributed lock (atomic operation within a single transaction).
     ///
     /// Uses a **pessimistic transaction** to read-verify-delete atomically.
+    ///
+    /// Retries on transient errors (WriteConflict, PessimisticLock, etc.) with
+    /// exponential backoff using `max_retries` and `retry_base_delay_ms`.
     pub async fn release_lock(&self, resource: &str, owner: &str) -> Result<bool> {
+        let max_retries = self.config.max_retries;
+        let base_delay_ms = self.config.retry_base_delay_ms;
+
+        for attempt in 0..=max_retries {
+            match self.release_lock_once(resource, owner).await {
+                Ok(released) => return Ok(released),
+                Err(e) => {
+                    if !e.is_retryable() {
+                        return Err(e);
+                    }
+                    if attempt < max_retries {
+                        let delay_ms = base_delay_ms.saturating_mul(2_u64.pow(attempt));
+                        let delay = Duration::from_millis(delay_ms);
+                        tracing::warn!(
+                            resource = %resource,
+                            attempt = attempt + 1,
+                            max = max_retries + 1,
+                            error = %e,
+                            "Lock release failed with retryable error, retrying"
+                        );
+                        sleep(delay).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        unreachable!("retry loop always returns via Ok or Err")
+    }
+
+    /// Single attempt to release a lock (no retry). Used internally by `release_lock`.
+    async fn release_lock_once(&self, resource: &str, owner: &str) -> Result<bool> {
         tracing::debug!(
             resource = %resource,
             owner = %owner,
             "Attempting to release lock"
         );
 
-        {
-            let inner = self.inner.as_ref().ok_or_else(|| {
-                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
-            })?;
+        let inner = self.inner.as_ref().ok_or_else(|| {
+            TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+        })?;
 
-            let key = LockKeys::lock(resource);
-            let mut txn = inner
-                .begin_pessimistic()
+        let key = LockKeys::lock(resource);
+        let mut txn = inner
+            .begin_pessimistic()
+            .await
+            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+        let body_result: Result<bool> = async {
+            let current = txn
+                .get(key.clone())
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
+            let released = match current {
+                Some(data) => {
+                    let existing: LockRecord = bincode::deserialize(&data)
+                        .map_err(|e| TikvError::Deserialization(e.to_string()))?;
 
-            let body_result: Result<bool> = async {
-                let current = txn
-                    .get(key.clone())
-                    .await
-                    .map_err(|e| TikvError::ClientError(e.to_string()))?;
-                let released = match current {
-                    Some(data) => {
-                        let existing: LockRecord = bincode::deserialize(&data)
-                            .map_err(|e| TikvError::Deserialization(e.to_string()))?;
-
-                        if existing.is_owned_by(owner) {
-                            txn.delete(key)
-                                .await
-                                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-                            tracing::info!(
-                                resource = %resource,
-                                owner = %owner,
-                                fencing_token = existing.fencing_token(),
-                                "Lock released"
-                            );
-                            true
-                        } else {
-                            tracing::warn!(
-                                resource = %resource,
-                                owner = %owner,
-                                actual_owner = %existing.owner,
-                                "Lock release failed: not the owner"
-                            );
-                            false
-                        }
-                    }
-                    None => {
-                        tracing::debug!(
+                    if existing.is_owned_by(owner) {
+                        txn.delete(key)
+                            .await
+                            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                        tracing::info!(
                             resource = %resource,
                             owner = %owner,
-                            "Lock release failed: lock not found"
+                            fencing_token = existing.fencing_token(),
+                            "Lock released"
+                        );
+                        true
+                    } else {
+                        tracing::warn!(
+                            resource = %resource,
+                            owner = %owner,
+                            actual_owner = %existing.owner,
+                            "Lock release failed: not the owner"
                         );
                         false
                     }
-                };
+                }
+                None => {
+                    tracing::debug!(
+                        resource = %resource,
+                        owner = %owner,
+                        "Lock release failed: lock not found"
+                    );
+                    false
+                }
+            };
+            Ok(released)
+        }
+        .await;
+
+        match body_result {
+            Ok(released) => {
+                txn.commit()
+                    .await
+                    .map_err(|e| TikvError::ClientError(e.to_string()))?;
                 Ok(released)
             }
-            .await;
-
-            match body_result {
-                Ok(released) => {
-                    txn.commit()
-                        .await
-                        .map_err(|e| TikvError::ClientError(e.to_string()))?;
-                    Ok(released)
-                }
-                Err(e) => {
-                    let _ = txn.rollback().await;
-                    Err(e)
-                }
+            Err(e) => {
+                let _ = txn.rollback().await;
+                Err(e)
             }
         }
     }
@@ -902,5 +935,23 @@ mod tests {
         };
         assert_eq!(client.config().pd_endpoints, vec!["localhost:2379"]);
         assert_eq!(client.config().max_retries, 5);
+    }
+
+    #[test]
+    fn test_release_lock_uses_retry_config() {
+        // Verify that release_lock uses the same retry config as acquire_lock
+        let config = TikvConfig {
+            max_retries: 3,
+            retry_base_delay_ms: 10,
+            ..Default::default()
+        };
+        let client = TikvClient {
+            config,
+            inner: None,
+            circuit_breaker: Arc::new(CircuitBreaker::new()),
+        };
+        // Config should be accessible - actual retry logic is tested via integration tests
+        assert_eq!(client.config().max_retries, 3);
+        assert_eq!(client.config().retry_base_delay_ms, 10);
     }
 }

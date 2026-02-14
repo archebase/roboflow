@@ -334,6 +334,58 @@ mod tests {
         assert_eq!(owner.as_deref(), Some("test-pod-steal-2"));
     }
 
+    #[tokio::test]
+    async fn test_lock_release_under_contention() {
+        // Test that release_lock retries on transient errors
+        // This simulates the WriteConflict scenario from the bug report
+        let Some(client) = get_tikv_or_skip().await else {
+            return;
+        };
+
+        let lock_manager = LockManager::new(client.clone(), "test-pod-contention");
+        let resource = format!("test_lock_contention_{}", uuid::Uuid::new_v4());
+
+        // Acquire the lock
+        let guard_opt = lock_manager
+            .try_acquire_default(&resource)
+            .await
+            .expect("Failed to acquire lock");
+
+        assert!(guard_opt.is_some());
+        let guard = guard_opt.unwrap();
+
+        // Simulate concurrent access by having multiple tasks try to read/modify
+        // the same key while we release. The release should retry and succeed.
+        let resource_clone = resource.clone();
+        let client_clone = client.clone();
+        let concurrent_task = tokio::spawn(async move {
+            // Repeatedly access the lock key to create contention
+            use roboflow_distributed::tikv::key::LockKeys;
+            for _ in 0..10 {
+                let key = LockKeys::lock(&resource_clone);
+                // Just read the key - pessimistic transactions will contend
+                let _ = client_clone.get(key).await;
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        });
+
+        // Small delay to let concurrent task start
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        // Release should succeed despite concurrent access (due to retry logic)
+        let released = guard.release().await.expect("Release should not error");
+
+        // Release should succeed (we are the owner)
+        assert!(released, "Lock release should succeed under contention");
+
+        // Cleanup
+        concurrent_task.await.ok();
+
+        // Verify lock is actually released
+        let is_locked = lock_manager.is_locked(&resource).await.unwrap();
+        assert!(!is_locked, "Lock should be released");
+    }
+
     // =============================================================================
     // Checkpoint Integration Tests
     // =============================================================================
