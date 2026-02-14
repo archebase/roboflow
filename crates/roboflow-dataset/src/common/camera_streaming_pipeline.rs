@@ -205,36 +205,17 @@ impl CameraStreamingPipeline {
             "handle_frame: starting"
         );
 
-        // Skip images with zero dimensions
+        // Skip images with zero dimensions in header
         if image.width == 0 || image.height == 0 {
             tracing::debug!(camera = %self.camera, "Skipping frame with zero dimensions");
             self.frames_skipped += 1;
             return Ok(());
         }
 
-        // Set dimensions from first frame
-        if self.width == 0 {
-            self.width = image.width;
-            self.height = image.height;
-            self.initialize_encoder()?;
-        }
-
-        // Validate dimensions
-        if image.width != self.width || image.height != self.height {
-            tracing::debug!(
-                camera = %self.camera,
-                expected = format!("{}x{}", self.width, self.height),
-                actual = format!("{}x{}", image.width, image.height),
-                "Skipping frame due to dimension mismatch"
-            );
-            self.frames_skipped += 1;
-            return Ok(());
-        }
-
         tracing::trace!(camera = %self.camera, "handle_frame: decoding image to RGB");
 
-        // Decode image to RGB
-        let (w, h, rgb_data) = match decode_to_rgb(image) {
+        // Decode image to RGB first - we need actual decoded dimensions
+        let (decoded_w, decoded_h, rgb_data) = match decode_to_rgb(image) {
             Some(data) => data,
             None => {
                 tracing::debug!(camera = %self.camera, "Failed to decode frame");
@@ -243,16 +224,43 @@ impl CameraStreamingPipeline {
             }
         };
 
+        // Set dimensions from first decoded frame
+        if self.width == 0 {
+            self.width = decoded_w;
+            self.height = decoded_h;
+            tracing::info!(
+                camera = %self.camera,
+                width = decoded_w,
+                height = decoded_h,
+                header_width = image.width,
+                header_height = image.height,
+                "Setting encoder dimensions from decoded frame"
+            );
+            self.initialize_encoder()?;
+        }
+
+        // Validate decoded dimensions match encoder dimensions
+        if decoded_w != self.width || decoded_h != self.height {
+            tracing::debug!(
+                camera = %self.camera,
+                expected = format!("{}x{}", self.width, self.height),
+                actual = format!("{}x{}", decoded_w, decoded_h),
+                "Skipping frame due to decoded dimension mismatch"
+            );
+            self.frames_skipped += 1;
+            return Ok(());
+        }
+
         tracing::trace!(
             camera = %self.camera,
-            w = w,
-            h = h,
+            w = decoded_w,
+            h = decoded_h,
             rgb_len = rgb_data.len(),
             "handle_frame: decode complete, encoding frame"
         );
 
         // Encode frame
-        match self.encode_frame(&rgb_data, w, h) {
+        match self.encode_frame(&rgb_data, decoded_w, decoded_h) {
             Ok(_) => {
                 self.frames_encoded += 1;
                 tracing::trace!(camera = %self.camera, "handle_frame: encode complete");

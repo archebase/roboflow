@@ -588,6 +588,21 @@ impl StreamingMp4Encoder {
         let width = self.width as i32;
         let height = self.height as i32;
 
+        // Validate data size matches expected dimensions
+        let expected_size = (self.width as usize) * (self.height as usize) * 3;
+        if rgb_data.len() != expected_size {
+            return Err(RoboflowError::encode(
+                "StreamingMp4Encoder",
+                format!(
+                    "RGB data size mismatch: got {} bytes, expected {} bytes for {}x{} RGB24",
+                    rgb_data.len(),
+                    expected_size,
+                    self.width,
+                    self.height
+                ),
+            ));
+        }
+
         eprintln!("[DEBUG] add_frame: allocating input RGB frame");
         tracing::trace!("add_frame: allocating input RGB frame");
 
