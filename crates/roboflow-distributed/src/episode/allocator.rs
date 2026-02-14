@@ -783,7 +783,10 @@ mod tests {
             alloc.video_path("cam"),
             "videos/chunk-000/cam/episode_000000.mp4"
         );
-        assert_eq!(alloc.parquet_path(), "data/chunk-000/episode_000000.parquet");
+        assert_eq!(
+            alloc.parquet_path(),
+            "data/chunk-000/episode_000000.parquet"
+        );
 
         // Episode at chunk boundary
         let alloc = EpisodeAllocation::new(50000, episodes_per_chunk);

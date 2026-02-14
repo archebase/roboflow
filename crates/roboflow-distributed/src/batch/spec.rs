@@ -550,7 +550,6 @@ mod tests {
         assert_eq!(decoded.spec.output, spec.spec.output);
     }
 
-
     #[test]
     fn test_batch_spec_episodes_per_chunk_default() {
         let spec = BatchSpec::new(
