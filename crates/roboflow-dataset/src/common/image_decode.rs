@@ -162,6 +162,19 @@ fn try_decode_payload(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
         return None;
     }
 
+    // Log first 16 bytes for debugging
+    let first_bytes: String = data
+        .iter()
+        .take(16)
+        .map(|b| format!("{:02X}", b))
+        .collect::<Vec<_>>()
+        .join(" ");
+    eprintln!(
+        "[DEBUG] try_decode_payload: data_len={} first_bytes={}",
+        data.len(),
+        first_bytes
+    );
+
     // Try JPEG
     if data.starts_with(JPEG_MAGIC)
         && let Ok(decoded) = decode_compressed_image(data, ImageFormat::Jpeg)
