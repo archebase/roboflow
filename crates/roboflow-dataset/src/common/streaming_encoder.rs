@@ -551,7 +551,11 @@ impl StreamingMp4Encoder {
             ));
         }
 
-        eprintln!("[DEBUG] add_frame: starting frame_count={} rgb_len={}", self.frame_count, rgb_data.len());
+        eprintln!(
+            "[DEBUG] add_frame: starting frame_count={} rgb_len={}",
+            self.frame_count,
+            rgb_data.len()
+        );
         tracing::trace!(
             frame_count = self.frame_count,
             rgb_data_len = rgb_data.len(),
@@ -603,7 +607,10 @@ impl StreamingMp4Encoder {
             )
         })?;
 
-        eprintln!("[DEBUG] add_frame: input frame allocated, linesize={}", input_frame.linesize[0]);
+        eprintln!(
+            "[DEBUG] add_frame: input frame allocated, linesize={}",
+            input_frame.linesize[0]
+        );
         tracing::trace!(
             input_frame_linesize = input_frame.linesize[0],
             expected_size = width * height * 3,
@@ -650,7 +657,10 @@ impl StreamingMp4Encoder {
             )
         })?;
 
-        eprintln!("[DEBUG] add_frame: YUV frame allocated, linesize={}", yuv_frame.linesize[0]);
+        eprintln!(
+            "[DEBUG] add_frame: YUV frame allocated, linesize={}",
+            yuv_frame.linesize[0]
+        );
         tracing::trace!(
             yuv_frame_linesize = yuv_frame.linesize[0],
             pix_fmt = ?self.pix_fmt,
@@ -753,7 +763,10 @@ impl StreamingMp4Encoder {
             match codec_context.receive_packet() {
                 Ok(mut pkt) => {
                     packet_count += 1;
-                    eprintln!("[DEBUG] receive_and_write_packets: received packet {} size={}", packet_count, pkt.size);
+                    eprintln!(
+                        "[DEBUG] receive_and_write_packets: received packet {} size={}",
+                        packet_count, pkt.size
+                    );
                     tracing::trace!(
                         packet_count,
                         pkt_size = pkt.size,
@@ -790,7 +803,10 @@ impl StreamingMp4Encoder {
             }
         }
 
-        eprintln!("[DEBUG] receive_and_write_packets: completed with {} packets", packet_count);
+        eprintln!(
+            "[DEBUG] receive_and_write_packets: completed with {} packets",
+            packet_count
+        );
         tracing::trace!(
             total_packets = packet_count,
             "receive_and_write_packets: completed"
@@ -811,15 +827,19 @@ impl StreamingMp4Encoder {
             return Ok(());
         }
 
+        eprintln!("[DEBUG] finalize: starting");
         self.finalized = true;
 
         if let Some(codec_context) = self.codec_context.as_mut() {
+            eprintln!("[DEBUG] finalize: flushing encoder");
             // Flush encoder
             let _ = codec_context.send_frame(None);
             self.receive_and_write_packets()?;
+            eprintln!("[DEBUG] finalize: encoder flushed");
         }
 
         if let Some(format_context) = self.format_context.as_mut() {
+            eprintln!("[DEBUG] finalize: writing trailer");
             // Write trailer
             format_context.write_trailer().map_err(|e| {
                 RoboflowError::encode(
@@ -827,12 +847,15 @@ impl StreamingMp4Encoder {
                     format!("Failed to write trailer: {}", e),
                 )
             })?;
+            eprintln!("[DEBUG] finalize: trailer written");
         }
 
+        eprintln!("[DEBUG] finalize: flushing avio buffer");
         // Flush remaining buffer to channel
         if let Ok(mut state) = self.avio_state.lock() {
             state.flush();
         }
+        eprintln!("[DEBUG] finalize: avio buffer flushed");
 
         tracing::info!(
             frames = self.frame_count,
@@ -841,6 +864,7 @@ impl StreamingMp4Encoder {
             "StreamingMp4Encoder finalized"
         );
 
+        eprintln!("[DEBUG] finalize: completed, about to drop encoder");
         Ok(())
     }
 
@@ -857,6 +881,22 @@ impl StreamingMp4Encoder {
     /// Get video dimensions.
     pub fn dimensions(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+}
+
+impl Drop for StreamingMp4Encoder {
+    fn drop(&mut self) {
+        eprintln!("[DEBUG] Drop: starting encoder drop");
+        eprintln!("[DEBUG] Drop: dropping format_context");
+        self.format_context = None;
+        eprintln!("[DEBUG] Drop: format_context dropped");
+        eprintln!("[DEBUG] Drop: dropping codec_context");
+        self.codec_context = None;
+        eprintln!("[DEBUG] Drop: codec_context dropped");
+        eprintln!("[DEBUG] Drop: dropping sws_context");
+        self.sws_context = None;
+        eprintln!("[DEBUG] Drop: sws_context dropped");
+        eprintln!("[DEBUG] Drop: encoder drop completed");
     }
 }
 
