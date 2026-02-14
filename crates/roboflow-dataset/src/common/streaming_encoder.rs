@@ -551,6 +551,7 @@ impl StreamingMp4Encoder {
             ));
         }
 
+        eprintln!("[DEBUG] add_frame: starting frame_count={} rgb_len={}", self.frame_count, rgb_data.len());
         tracing::trace!(
             frame_count = self.frame_count,
             rgb_data_len = rgb_data.len(),
@@ -559,6 +560,7 @@ impl StreamingMp4Encoder {
 
         // Lazy initialization on first frame
         if self.codec_context.is_none() {
+            eprintln!("[DEBUG] add_frame: codec_context is None, inferring dimensions");
             // Infer dimensions from data size (assuming RGB24)
             let pixel_count = rgb_data.len() / 3;
             let w = (pixel_count as f64).sqrt() as u32;
@@ -582,6 +584,7 @@ impl StreamingMp4Encoder {
         let width = self.width as i32;
         let height = self.height as i32;
 
+        eprintln!("[DEBUG] add_frame: allocating input RGB frame");
         tracing::trace!("add_frame: allocating input RGB frame");
 
         // =============================================================
@@ -600,6 +603,7 @@ impl StreamingMp4Encoder {
             )
         })?;
 
+        eprintln!("[DEBUG] add_frame: input frame allocated, linesize={}", input_frame.linesize[0]);
         tracing::trace!(
             input_frame_linesize = input_frame.linesize[0],
             expected_size = width * height * 3,
@@ -609,11 +613,24 @@ impl StreamingMp4Encoder {
         // Copy RGB data to frame
         let frame_data_array = input_frame.data_mut();
         let frame_data = frame_data_array[0];
+
+        eprintln!("[DEBUG] add_frame: frame_data ptr={:?}", frame_data);
+
+        if frame_data.is_null() {
+            return Err(RoboflowError::encode(
+                "StreamingMp4Encoder",
+                "Frame data pointer is null",
+            ));
+        }
+
         // SAFETY: frame_data is a valid pointer to the frame's data buffer allocated by FFmpeg.
         // The buffer size matches rgb_data.len() based on the frame dimensions and RGB24 format.
         let frame_data_slice =
             unsafe { std::slice::from_raw_parts_mut(frame_data, rgb_data.len()) };
+
+        eprintln!("[DEBUG] add_frame: copying RGB data to frame");
         frame_data_slice.copy_from_slice(rgb_data);
+        eprintln!("[DEBUG] add_frame: RGB data copied successfully");
 
         tracing::trace!("add_frame: allocating YUV frame");
 
@@ -633,12 +650,14 @@ impl StreamingMp4Encoder {
             )
         })?;
 
+        eprintln!("[DEBUG] add_frame: YUV frame allocated, linesize={}", yuv_frame.linesize[0]);
         tracing::trace!(
             yuv_frame_linesize = yuv_frame.linesize[0],
             pix_fmt = ?self.pix_fmt,
             "add_frame: performing sws_scale"
         );
 
+        eprintln!("[DEBUG] add_frame: calling sws_scale");
         // Perform pixel format conversion using SWScale
         // SAFETY: sws_scale is safe to call with valid SwsContext and AVFrame pointers.
         // - sws: Valid SwsContext created by SwsContext::get_context with matching dimensions
@@ -665,6 +684,7 @@ impl StreamingMp4Encoder {
             ));
         }
 
+        eprintln!("[DEBUG] add_frame: sws_scale completed");
         tracing::trace!("add_frame: sws_scale completed");
 
         // Set color range to full (JPEG) - maintains full range from RGB source
@@ -681,6 +701,7 @@ impl StreamingMp4Encoder {
         yuv_frame.set_pts(self.frame_count as i64);
         self.frame_count += 1;
 
+        eprintln!("[DEBUG] add_frame: sending frame to encoder");
         tracing::trace!("add_frame: sending frame to encoder");
 
         // =============================================================
@@ -699,6 +720,7 @@ impl StreamingMp4Encoder {
             )
         })?;
 
+        eprintln!("[DEBUG] add_frame: receiving and writing packets");
         tracing::trace!("add_frame: receiving and writing packets");
 
         // =============================================================
@@ -707,6 +729,7 @@ impl StreamingMp4Encoder {
 
         self.receive_and_write_packets()?;
 
+        eprintln!("[DEBUG] add_frame: completed successfully");
         tracing::trace!("add_frame: completed successfully");
 
         Ok(())
@@ -716,6 +739,7 @@ impl StreamingMp4Encoder {
     ///
     /// The custom AVIO callback handles writing data to the channel automatically.
     fn receive_and_write_packets(&mut self) -> Result<()> {
+        eprintln!("[DEBUG] receive_and_write_packets: starting");
         let codec_context = self.codec_context.as_mut().ok_or_else(|| {
             RoboflowError::encode("StreamingMp4Encoder", "Codec context not initialized")
         })?;
@@ -725,9 +749,11 @@ impl StreamingMp4Encoder {
 
         let mut packet_count = 0;
         loop {
+            eprintln!("[DEBUG] receive_and_write_packets: calling receive_packet");
             match codec_context.receive_packet() {
                 Ok(mut pkt) => {
                     packet_count += 1;
+                    eprintln!("[DEBUG] receive_and_write_packets: received packet {} size={}", packet_count, pkt.size);
                     tracing::trace!(
                         packet_count,
                         pkt_size = pkt.size,
@@ -737,6 +763,7 @@ impl StreamingMp4Encoder {
                     // Write packet to format context.
                     // The custom AVIO callback will automatically receive the data
                     // and write it to the channel via our AvioWriteState.
+                    eprintln!("[DEBUG] receive_and_write_packets: calling write_frame");
                     format_context.write_frame(&mut pkt).map_err(|e| {
                         RoboflowError::encode(
                             "StreamingMp4Encoder",
@@ -744,12 +771,14 @@ impl StreamingMp4Encoder {
                         )
                     })?;
 
+                    eprintln!("[DEBUG] receive_and_write_packets: write_frame completed");
                     tracing::trace!(
                         packet_count,
                         "receive_and_write_packets: wrote packet to format context"
                     );
                 }
                 Err(RsmpegError::EncoderDrainError) | Err(RsmpegError::EncoderFlushedError) => {
+                    eprintln!("[DEBUG] receive_and_write_packets: encoder drained/flushed");
                     break;
                 }
                 Err(e) => {
@@ -761,6 +790,7 @@ impl StreamingMp4Encoder {
             }
         }
 
+        eprintln!("[DEBUG] receive_and_write_packets: completed with {} packets", packet_count);
         tracing::trace!(
             total_packets = packet_count,
             "receive_and_write_packets: completed"
