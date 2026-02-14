@@ -119,14 +119,10 @@ fn shared_decoder() -> &'static dyn ImageDecoderBackend {
     static DECODER: OnceLock<Box<dyn ImageDecoderBackend>> = OnceLock::new();
     DECODER
         .get_or_init(|| {
-            eprintln!("[DEBUG] shared_decoder: initializing process-wide decoder");
             tracing::debug!("shared_decoder: initializing process-wide decoder");
             let config = ImageDecoderConfig::new();
-            eprintln!("[DEBUG] shared_decoder: config created");
             let mut factory = ImageDecoderFactory::new(&config);
-            eprintln!("[DEBUG] shared_decoder: factory created");
             let decoder = factory.create_decoder().unwrap_or_else(|e| {
-                eprintln!("[DEBUG] shared_decoder: create_decoder failed: {}", e);
                 tracing::warn!(
                     "shared_decoder: failed to create decoder: {}, using CPU fallback",
                     e
@@ -136,12 +132,10 @@ fn shared_decoder() -> &'static dyn ImageDecoderBackend {
                     1,
                 ))
             });
-            eprintln!("[DEBUG] shared_decoder: decoder created, type={:?}", decoder.decoder_type());
             tracing::debug!(
                 "shared_decoder: decoder created successfully, type={:?}",
                 decoder.decoder_type()
             );
-            eprintln!("[DEBUG] shared_decoder: returning decoder");
             decoder
         })
         .as_ref()

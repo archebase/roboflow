@@ -150,7 +150,6 @@ impl ImageDecoderFactory {
 
             DecoderBackendType::Auto => {
                 // Auto-detect: prioritize GPU, then CPU
-                eprintln!("[DEBUG] create_decoder: starting auto-detection");
                 tracing::trace!("create_decoder: starting auto-detection");
 
                 // Try Apple first on macOS
@@ -158,14 +157,11 @@ impl ImageDecoderFactory {
                 {
                     use super::apple::AppleImageDecoder;
 
-                    eprintln!("[DEBUG] create_decoder: trying Apple decoder");
                     tracing::trace!("create_decoder: trying Apple decoder");
                     if let Ok(decoder) = AppleImageDecoder::try_new(self.config.memory_strategy) {
-                        eprintln!("[DEBUG] create_decoder: Apple decoder created, about to box");
                         tracing::debug!("Auto-detected Apple hardware decoder");
                         tracing::trace!("create_decoder: about to box Apple decoder");
                         let boxed: Box<dyn ImageDecoderBackend> = Box::new(decoder);
-                        eprintln!("[DEBUG] create_decoder: Apple decoder boxed successfully");
                         tracing::trace!("create_decoder: Apple decoder boxed successfully");
                         return Ok(boxed);
                     }
@@ -186,17 +182,12 @@ impl ImageDecoderFactory {
                 }
 
                 // Fallback to CPU
-                eprintln!("[DEBUG] create_decoder: using CPU fallback");
                 tracing::debug!("Using CPU decoder (image crate)");
                 tracing::trace!("create_decoder: about to create CPU decoder");
-                let cpu_decoder = CpuImageDecoder::new(
-                    self.config.memory_strategy,
-                    self.config.cpu_threads,
-                );
-                eprintln!("[DEBUG] create_decoder: CPU decoder created, about to box");
+                let cpu_decoder =
+                    CpuImageDecoder::new(self.config.memory_strategy, self.config.cpu_threads);
                 tracing::trace!("create_decoder: about to box CPU decoder");
                 let boxed: Box<dyn ImageDecoderBackend> = Box::new(cpu_decoder);
-                eprintln!("[DEBUG] create_decoder: CPU decoder boxed successfully");
                 tracing::trace!("create_decoder: CPU decoder boxed successfully");
                 Ok(boxed)
             }

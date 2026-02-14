@@ -49,30 +49,12 @@ const PNG_MAGIC: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 /// }
 /// ```
 pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
-    eprintln!(
-        "[DEBUG] decode_image_to_rgb: header_dims={}x{} data_len={} is_encoded={}",
-        img.width,
-        img.height,
-        img.data.len(),
-        img.is_encoded
-    );
-
     // Strategy 1: Try direct decode
     if let Some((w, h, rgb)) = try_decode_payload(&img.data) {
         // For compressed images, header dimensions may be wrong/missing
         // Always use the decoded dimensions for compressed data
         if img.is_encoded {
-            eprintln!(
-                "[DEBUG] decode_image_to_rgb: compressed image - using decoded dims {}x{} (header was {}x{})",
-                w, h, img.width, img.height
-            );
             return Some((w, h, rgb));
-        }
-        if w != img.width || h != img.height {
-            eprintln!(
-                "[DEBUG] decode_image_to_rgb: DIMENSION MISMATCH! header={}x{} decoded={}x{}",
-                img.width, img.height, w, h
-            );
         }
         return Some((w, h, rgb));
     }
@@ -84,12 +66,6 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
         if img.is_encoded {
             return Some((w, h, rgb));
         }
-        if w != img.width || h != img.height {
-            eprintln!(
-                "[DEBUG] decode_image_to_rgb: DIMENSION MISMATCH! header={}x{} decoded={}x{}",
-                img.width, img.height, w, h
-            );
-        }
         return Some((w, h, rgb));
     }
 
@@ -99,12 +75,6 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
     {
         if img.is_encoded {
             return Some((w, h, rgb));
-        }
-        if w != img.width || h != img.height {
-            eprintln!(
-                "[DEBUG] decode_image_to_rgb: DIMENSION MISMATCH! header={}x{} decoded={}x{}",
-                img.width, img.height, w, h
-            );
         }
         return Some((w, h, rgb));
     }
@@ -121,12 +91,6 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
             if img.is_encoded {
                 return Some((w, h, rgb));
             }
-            if w != img.width || h != img.height {
-                eprintln!(
-                    "[DEBUG] decode_image_to_rgb: DIMENSION MISMATCH! header={}x{} decoded={}x{}",
-                    img.width, img.height, w, h
-                );
-            }
             return Some((w, h, rgb));
         }
         // Find PNG magic (89 50 4E 47)
@@ -137,12 +101,6 @@ pub fn decode_image_to_rgb(img: &ImageData) -> Option<(u32, u32, Vec<u8>)> {
         {
             if img.is_encoded {
                 return Some((w, h, rgb));
-            }
-            if w != img.width || h != img.height {
-                eprintln!(
-                    "[DEBUG] decode_image_to_rgb: DIMENSION MISMATCH! header={}x{} decoded={}x{}",
-                    img.width, img.height, w, h
-                );
             }
             return Some((w, h, rgb));
         }
@@ -183,29 +141,10 @@ fn try_decode_payload(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
         return None;
     }
 
-    // Log first 16 bytes for debugging
-    let first_bytes: String = data
-        .iter()
-        .take(16)
-        .map(|b| format!("{:02X}", b))
-        .collect::<Vec<_>>()
-        .join(" ");
-    eprintln!(
-        "[DEBUG] try_decode_payload: data_len={} first_bytes={}",
-        data.len(),
-        first_bytes
-    );
-
     // Try JPEG
     if data.starts_with(JPEG_MAGIC)
         && let Ok(decoded) = decode_compressed_image(data, ImageFormat::Jpeg)
     {
-        eprintln!(
-            "[DEBUG] try_decode_payload: JPEG decoded {}x{} bytes={}",
-            decoded.width,
-            decoded.height,
-            decoded.data.len()
-        );
         return Some((decoded.width, decoded.height, decoded.data));
     }
 
@@ -213,32 +152,14 @@ fn try_decode_payload(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     if data.starts_with(PNG_MAGIC)
         && let Ok(decoded) = decode_compressed_image(data, ImageFormat::Png)
     {
-        eprintln!(
-            "[DEBUG] try_decode_payload: PNG decoded {}x{} bytes={}",
-            decoded.width,
-            decoded.height,
-            decoded.data.len()
-        );
         return Some((decoded.width, decoded.height, decoded.data));
     }
 
     // Try both decoders when magic is missing (e.g. after skipping header)
     if let Ok(decoded) = decode_compressed_image(data, ImageFormat::Jpeg) {
-        eprintln!(
-            "[DEBUG] try_decode_payload: JPEG (no magic) decoded {}x{} bytes={}",
-            decoded.width,
-            decoded.height,
-            decoded.data.len()
-        );
         return Some((decoded.width, decoded.height, decoded.data));
     }
     if let Ok(decoded) = decode_compressed_image(data, ImageFormat::Png) {
-        eprintln!(
-            "[DEBUG] try_decode_payload: PNG (no magic) decoded {}x{} bytes={}",
-            decoded.width,
-            decoded.height,
-            decoded.data.len()
-        );
         return Some((decoded.width, decoded.height, decoded.data));
     }
     None
