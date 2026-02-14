@@ -68,12 +68,22 @@ impl AppleImageDecoder {
 impl ImageDecoderBackend for AppleImageDecoder {
     #[cfg(target_os = "macos")]
     fn decode(&self, data: &[u8], format: ImageFormat) -> Result<DecodedImage> {
+        tracing::trace!(
+            data_len = data.len(),
+            format = ?format,
+            "AppleImageDecoder::decode: starting"
+        );
         // Delegate to CPU decoder with optimized paths.
         // Hardware acceleration integration is a future enhancement.
         use crate::image::backend::CpuImageDecoder;
         let cpu_decoder =
             CpuImageDecoder::new(self.memory_strategy, rayon::current_num_threads().max(1));
-        cpu_decoder.decode(data, format)
+        let result = cpu_decoder.decode(data, format);
+        tracing::trace!(
+            result_ok = result.is_ok(),
+            "AppleImageDecoder::decode: completed"
+        );
+        result
     }
 
     #[cfg(not(target_os = "macos"))]

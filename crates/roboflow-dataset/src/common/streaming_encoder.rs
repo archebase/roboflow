@@ -345,10 +345,7 @@ impl StreamingMp4Encoder {
         // Create write callback that writes to our shared state
         let write_callback: WritePacketCallback =
             Box::new(move |_data: &mut Vec<u8>, buf: &[u8]| {
-                tracing::trace!(
-                    buf_len = buf.len(),
-                    "AVIO write_callback: called"
-                );
+                tracing::trace!(buf_len = buf.len(), "AVIO write_callback: called");
                 if let Ok(mut state) = avio_state.lock() {
                     state.write(buf);
                 } else {
