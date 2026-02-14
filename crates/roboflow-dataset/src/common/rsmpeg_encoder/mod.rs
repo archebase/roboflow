@@ -29,8 +29,10 @@ mod utils;
 // Re-export rsmpeg types selectively to avoid ambiguous glob re-exports
 pub use rsmpeg::{
     avcodec::{AVCodec, AVCodecContext, AVCodecID, AVPacket},
-    avformat::AVFormatContextOutput,
-    avutil::{AVFrame, AVRational},
+    avformat::{
+        AVFormatContextOutput, AVIOContextContainer, AVIOContextCustom, WritePacketCallback,
+    },
+    avutil::{AVDictionary, AVFrame, AVMem, AVRational},
     error::RsmpegError,
     swscale::SwsContext,
 };

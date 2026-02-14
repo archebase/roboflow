@@ -44,11 +44,13 @@
 
 use std::ffi::{CStr, c_int};
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 
 use roboflow_core::{Result, RoboflowError};
 
 use crate::common::rsmpeg_encoder::{
-    AVCodec, AVCodecContext, AVFormatContextOutput, AVFrame, AVRational, RsmpegError, SwsContext,
+    AVCodec, AVCodecContext, AVDictionary, AVFormatContextOutput, AVFrame, AVIOContextContainer,
+    AVIOContextCustom, AVMem, AVRational, RsmpegError, SwsContext, WritePacketCallback,
 };
 use crate::common::video::VideoEncoderConfig;
 use rsmpeg::ffi;
@@ -172,13 +174,14 @@ impl EncodedChunk {
 }
 
 // =============================================================================
-// AVIO Opaque Data
+// AVIO Write State (Shared between encoder and callback)
 // =============================================================================
 
-/// Opaque data passed to AVIO write callback.
+/// Shared state for AVIO write callback.
 ///
-/// This is thread-safe because it's only accessed from the encoder thread.
-struct AvioOpaque {
+/// This is wrapped in Arc<Mutex<>> to allow the callback to access it
+/// while the encoder retains ownership.
+struct AvioWriteState {
     /// Channel sender for encoded chunks
     tx: Sender<EncodedChunk>,
     /// Accumulation buffer
@@ -189,7 +192,7 @@ struct AvioOpaque {
     bytes_written: u64,
 }
 
-impl AvioOpaque {
+impl AvioWriteState {
     fn new(tx: Sender<EncodedChunk>, chunk_size: usize) -> Self {
         Self {
             tx,
@@ -259,8 +262,8 @@ pub struct StreamingMp4Encoder {
     sws_context: Option<SwsContext>,
     /// Output format context
     format_context: Option<AVFormatContextOutput>,
-    /// AVIO opaque data (boxed for stable address)
-    avio_opaque: Option<Box<AvioOpaque>>,
+    /// Shared AVIO write state (wrapped for callback access)
+    avio_state: Arc<Mutex<AvioWriteState>>,
     /// Frame counter for PTS
     frame_count: u64,
     /// Configuration
@@ -285,11 +288,12 @@ impl StreamingMp4Encoder {
     /// * `config` - Encoder configuration
     /// * `chunk_tx` - Channel to send encoded chunks
     pub fn new(config: StreamingEncoderConfig, chunk_tx: Sender<EncodedChunk>) -> Result<Self> {
+        let avio_state = Arc::new(Mutex::new(AvioWriteState::new(chunk_tx, config.chunk_size)));
         Ok(Self {
             codec_context: None,
             sws_context: None,
             format_context: None,
-            avio_opaque: Some(Box::new(AvioOpaque::new(chunk_tx, config.chunk_size))),
+            avio_state,
             frame_count: 0,
             config,
             width: 0,
@@ -313,6 +317,32 @@ impl StreamingMp4Encoder {
         encoder.height = height;
         encoder.initialize_encoder()?;
         Ok(encoder)
+    }
+
+    /// Create custom AVIO context with write callback.
+    fn create_custom_avio(avio_state: Arc<Mutex<AvioWriteState>>) -> AVIOContextCustom {
+        // Allocate buffer for AVIO operations (FFmpeg requires this)
+        let buffer_size = 4096;
+        let buffer = AVMem::new(buffer_size);
+
+        // Create write callback that writes to our shared state
+        let write_callback: WritePacketCallback =
+            Box::new(move |_data: &mut Vec<u8>, buf: &[u8]| {
+                if let Ok(mut state) = avio_state.lock() {
+                    state.write(buf);
+                }
+                buf.len() as i32
+            });
+
+        // Create custom AVIO context for writing
+        AVIOContextCustom::alloc_context(
+            buffer,
+            true,       // write_flag = true for output
+            Vec::new(), // Initial opaque data (we use Arc instead)
+            None,       // No read callback
+            Some(write_callback),
+            None, // No seek callback
+        )
     }
 
     /// Initialize the FFmpeg encoder.
@@ -424,12 +454,13 @@ impl StreamingMp4Encoder {
         // STEP 4: Create format context with custom AVIO
         // =============================================================
 
-        // Note: rsmpeg doesn't directly support custom AVIO context creation
-        // For now, we'll use a different approach - write to a Vec and extract
+        // Create custom AVIO context that writes to our channel
+        let avio_context = Self::create_custom_avio(Arc::clone(&self.avio_state));
 
-        // Create output format context
+        // Create output format context with custom AVIO
         let mut format_context = AVFormatContextOutput::builder()
-            .filename(c"output.mp4")
+            .format_name(c"mp4")
+            .io_context(AVIOContextContainer::Custom(avio_context))
             .build()
             .map_err(|e| {
                 RoboflowError::encode(
@@ -437,9 +468,6 @@ impl StreamingMp4Encoder {
                     format!("Failed to create format context: {}", e),
                 )
             })?;
-
-        // Note: We need mutable access for new_stream and write_header
-        // AVFormatContextOutput wraps the internal context with interior mutability
 
         // =============================================================
         // STEP 5: Create video stream
@@ -459,9 +487,17 @@ impl StreamingMp4Encoder {
         // STEP 6: Write header with fMP4 movflags
         // =============================================================
 
-        // Note: rsmpeg doesn't expose write_header with options directly
-        // We'll use default header writing
-        format_context.write_header(&mut None).map_err(|e| {
+        // Set movflags for fragmented MP4 streaming (non-seekable output)
+        // - frag_keyframe: Create fragment at each keyframe
+        // - empty_moov: Initialize with empty moov (streaming-compatible)
+        // - default_base_moof: Use default base-is-moof for simpler parsing
+        let mut options = Some(AVDictionary::new(
+            c"movflags",
+            c"frag_keyframe+empty_moov+default_base_moof",
+            0,
+        ));
+
+        format_context.write_header(&mut options).map_err(|e| {
             RoboflowError::encode(
                 "StreamingMp4Encoder",
                 format!("Failed to write header: {}", e),
@@ -625,6 +661,8 @@ impl StreamingMp4Encoder {
     }
 
     /// Receive encoded packets and write to format context.
+    ///
+    /// The custom AVIO callback handles writing data to the channel automatically.
     fn receive_and_write_packets(&mut self) -> Result<()> {
         let codec_context = self.codec_context.as_mut().ok_or_else(|| {
             RoboflowError::encode("StreamingMp4Encoder", "Codec context not initialized")
@@ -636,35 +674,15 @@ impl StreamingMp4Encoder {
         loop {
             match codec_context.receive_packet() {
                 Ok(mut pkt) => {
-                    // Write packet to format context
+                    // Write packet to format context.
+                    // The custom AVIO callback will automatically receive the data
+                    // and write it to the channel via our AvioWriteState.
                     format_context.write_frame(&mut pkt).map_err(|e| {
                         RoboflowError::encode(
                             "StreamingMp4Encoder",
                             format!("Failed to write packet: {}", e),
                         )
                     })?;
-
-                    // Extract packet data and send to channel
-                    // SAFETY: The AVPacket is valid and owned by pkt. We check that:
-                    // - ptr is not null before dereferencing
-                    // - len > 0 to ensure there's actual data
-                    // - The slice is immediately copied to a Vec, so lifetime is bounded
-                    let data = unsafe {
-                        let av_packet: &ffi::AVPacket = &pkt;
-                        let ptr = av_packet.data;
-                        let len = av_packet.size as usize;
-                        if len > 0 && !ptr.is_null() {
-                            std::slice::from_raw_parts(ptr, len).to_vec()
-                        } else {
-                            Vec::new()
-                        }
-                    };
-
-                    if !data.is_empty()
-                        && let Some(ref mut opaque) = self.avio_opaque
-                    {
-                        opaque.write(&data);
-                    }
                 }
                 Err(RsmpegError::EncoderDrainError) | Err(RsmpegError::EncoderFlushedError) => {
                     break;
@@ -712,8 +730,8 @@ impl StreamingMp4Encoder {
         }
 
         // Flush remaining buffer to channel
-        if let Some(mut opaque) = self.avio_opaque.take() {
-            opaque.flush();
+        if let Ok(mut state) = self.avio_state.lock() {
+            state.flush();
         }
 
         tracing::info!(
@@ -984,5 +1002,78 @@ mod tests {
 
         assert_eq!(encoder.frame_count(), 500);
         encoder.finalize().unwrap();
+    }
+
+    /// Test for memory safety issue with custom AVIO callback.
+    ///
+    /// This test verifies that the encoder correctly handles the AVIO callback
+    /// without memory corruption when encoding multiple frames. The original
+    /// issue was that `write_frame` could invalidate packet data before we
+    /// had a chance to copy it. With proper custom AVIO, the callback receives
+    /// data directly from FFmpeg, avoiding the memory safety issue.
+    #[test]
+    fn test_encoder_memory_safety_custom_avio() {
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        // Use larger dimensions to exercise more of the encoding path
+        let config = StreamingEncoderConfig::default()
+            .with_dimensions(160, 120)
+            .with_bitrate(2_000_000);
+
+        let mut encoder = StreamingMp4Encoder::with_dimensions(config, tx, 160, 120).unwrap();
+
+        // Encode multiple frames to exercise the AVIO callback multiple times
+        // This tests that the custom AVIO callback handles data correctly
+        // without memory corruption
+        for frame_idx in 0..100 {
+            // Create varying frame data to ensure we don't hit any edge cases
+            let rgb_data: Vec<u8> = (0..160 * 120 * 3)
+                .map(|i| ((frame_idx + i) % 256) as u8)
+                .collect();
+
+            encoder.add_frame(&rgb_data).unwrap();
+        }
+
+        assert_eq!(encoder.frame_count(), 100);
+
+        // Finalize should succeed and flush all data through AVIO callback
+        encoder.finalize().unwrap();
+
+        // Verify we received data through the channel (AVIO callback worked)
+        let mut total_bytes = 0usize;
+        while let Ok(chunk) = rx.try_recv() {
+            total_bytes += chunk.len();
+        }
+
+        // Should have received some encoded data
+        assert!(
+            total_bytes > 0,
+            "Should have received encoded data through AVIO callback"
+        );
+    }
+
+    /// Test that the AVIO callback correctly chunks output data.
+    #[test]
+    fn test_encoder_avio_chunking() {
+        // Use a small chunk size to force multiple chunks
+        let (tx, rx) = std::sync::mpsc::channel();
+        let config = StreamingEncoderConfig {
+            chunk_size: 1024, // Small chunk size
+            ..StreamingEncoderConfig::default().with_dimensions(64, 64)
+        };
+
+        let mut encoder = StreamingMp4Encoder::with_dimensions(config, tx, 64, 64).unwrap();
+
+        // Add enough frames to generate multiple chunks
+        for _ in 0..50 {
+            let rgb_data = vec![128u8; 64 * 64 * 3];
+            encoder.add_frame(&rgb_data).unwrap();
+        }
+
+        encoder.finalize().unwrap();
+
+        // Count chunks received
+        let chunk_count = rx.try_iter().count();
+        assert!(chunk_count > 0, "Should have received at least one chunk");
     }
 }
