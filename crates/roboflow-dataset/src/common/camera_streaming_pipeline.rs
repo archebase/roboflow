@@ -205,9 +205,11 @@ impl CameraStreamingPipeline {
             "handle_frame: starting"
         );
 
-        // Skip images with zero dimensions in header
-        if image.width == 0 || image.height == 0 {
-            tracing::debug!(camera = %self.camera, "Skipping frame with zero dimensions");
+        // For compressed images, header dimensions may be 0 (meaning unknown)
+        // We'll get actual dimensions from decoding
+        // Only skip if it's NOT encoded and has zero dimensions (invalid raw data)
+        if !image.is_encoded && (image.width == 0 || image.height == 0) {
+            tracing::debug!(camera = %self.camera, "Skipping raw frame with zero dimensions");
             self.frames_skipped += 1;
             return Ok(());
         }

@@ -575,11 +575,10 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
                     }),
                     extract_image_bytes(map),
                 ) {
-                    // Compressed image (JPEG/PNG) - decode to get dimensions
-                    // Use the encoded() constructor which will decode later during MP4 encoding
-                    // Default to a reasonable resolution if decode fails later
+                    // Compressed image (JPEG/PNG) - dimensions will be determined by decoder
+                    // Use 0x0 as placeholder - actual dimensions come from decoded image
                     let data_size = image_bytes.len();
-                    let image_data = ImageData::encoded(640, 480, image_bytes);
+                    let image_data = ImageData::encoded(0, 0, image_bytes);
                     frame.add_image(feature_name.clone(), image_data);
                     trace!(
                         topic = %msg.topic,
