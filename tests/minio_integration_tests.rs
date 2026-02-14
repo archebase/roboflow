@@ -602,6 +602,7 @@ fn test_large_file_upload_to_minio() {
 /// 2. Multiple cameras produce unique paths (no overwrites)
 /// 3. Files actually exist at the expected locations
 #[test]
+#[ignore = "requires MinIO service"]
 fn test_lerobot_v21_video_path_structure() {
     let config = MinioConfig::default();
 

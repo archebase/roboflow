@@ -718,4 +718,131 @@ mod tests {
         let json_decoded: EpisodeAllocation = serde_json::from_slice(&json_data).unwrap();
         assert_eq!(alloc, json_decoded);
     }
+
+    // =========================================================================
+    // Scale Tests for 100K Episode Support
+    // =========================================================================
+
+    #[test]
+    fn test_chunk_calculation_100k_episodes() {
+        // Verify chunk calculation for all episode indices in a 100K dataset
+        let episodes_per_chunk = 500u32;
+
+        // Test boundary cases
+        let test_cases = [
+            // (episode_index, expected_chunk, expected_offset)
+            (0u64, 0u32, 0u32),
+            (1u64, 0u32, 1u32),
+            (499u64, 0u32, 499u32), // Last episode in chunk 0
+            (500u64, 1u32, 0u32),   // First episode in chunk 1
+            (501u64, 1u32, 1u32),
+            (999u64, 1u32, 499u32), // Last episode in chunk 1
+            (1000u64, 2u32, 0u32),  // First episode in chunk 2
+            (5000u64, 10u32, 0u32),
+            (50000u64, 100u32, 0u32),
+            (99499u64, 198u32, 499u32), // Last episode in chunk 198
+            (99500u64, 199u32, 0u32),   // First episode in chunk 199
+            (99999u64, 199u32, 499u32), // Last episode in chunk 199
+        ];
+
+        for (episode_idx, expected_chunk, expected_offset) in test_cases {
+            let alloc = EpisodeAllocation::new(episode_idx, episodes_per_chunk);
+            assert_eq!(
+                alloc.chunk_index, expected_chunk,
+                "Episode {} should be in chunk {}",
+                episode_idx, expected_chunk
+            );
+            assert_eq!(
+                alloc.chunk_offset, expected_offset,
+                "Episode {} should have offset {}",
+                episode_idx, expected_offset
+            );
+        }
+    }
+
+    #[test]
+    fn test_chunk_count_for_100k_episodes() {
+        // With 500 episodes per chunk, 100K episodes should have 200 chunks (0-199)
+        let total_episodes = 100_000u64;
+        let episodes_per_chunk = 500u32;
+
+        let last_episode = total_episodes - 1;
+        let last_chunk = chunk_index_from_episode(last_episode, episodes_per_chunk);
+
+        assert_eq!(last_chunk, 199, "100K episodes should end at chunk 199");
+    }
+
+    #[test]
+    fn test_episode_paths_100k_scale() {
+        // Test video and parquet paths for episode indices at 100K scale
+        let episodes_per_chunk = 500u32;
+
+        // First episode
+        let alloc = EpisodeAllocation::new(0, episodes_per_chunk);
+        assert_eq!(
+            alloc.video_path("cam"),
+            "videos/chunk-000/cam/episode_000000.mp4"
+        );
+        assert_eq!(alloc.parquet_path(), "data/chunk-000/episode_000000.parquet");
+
+        // Episode at chunk boundary
+        let alloc = EpisodeAllocation::new(50000, episodes_per_chunk);
+        assert_eq!(
+            alloc.video_path("cam"),
+            "videos/chunk-100/cam/episode_050000.mp4"
+        );
+        assert_eq!(
+            alloc.parquet_path(),
+            "data/chunk-100/episode_050000.parquet"
+        );
+
+        // Last episode (99,999)
+        let alloc = EpisodeAllocation::new(99999, episodes_per_chunk);
+        assert_eq!(
+            alloc.video_path("cam"),
+            "videos/chunk-199/cam/episode_099999.mp4"
+        );
+        assert_eq!(
+            alloc.parquet_path(),
+            "data/chunk-199/episode_099999.parquet"
+        );
+    }
+
+    #[test]
+    fn test_different_episodes_per_chunk_configs() {
+        // Test various episodes_per_chunk configurations
+
+        // 250 episodes per chunk = 400 chunks for 100K episodes
+        let alloc = EpisodeAllocation::new(99999, 250);
+        assert_eq!(alloc.chunk_index, 399);
+        assert_eq!(alloc.chunk_offset, 249);
+
+        // 1000 episodes per chunk = 100 chunks for 100K episodes
+        let alloc = EpisodeAllocation::new(99999, 1000);
+        assert_eq!(alloc.chunk_index, 99);
+        assert_eq!(alloc.chunk_offset, 999);
+
+        // 100 episodes per chunk = 1000 chunks for 100K episodes
+        let alloc = EpisodeAllocation::new(99999, 100);
+        assert_eq!(alloc.chunk_index, 999);
+        assert_eq!(alloc.chunk_offset, 99);
+    }
+
+    #[test]
+    fn test_chunk_index_no_overflow() {
+        // Verify no overflow issues with large episode indices
+        let large_indices = [
+            99999u64,  // 100K - 1
+            199999u64, // 200K - 1
+            499999u64, // 500K - 1
+            999999u64, // 1M - 1
+        ];
+
+        for episode_idx in large_indices {
+            // Should not panic with overflow
+            let alloc = EpisodeAllocation::new(episode_idx, 500);
+            assert!(alloc.chunk_index < u32::MAX);
+            assert!(alloc.chunk_offset < 500);
+        }
+    }
 }
