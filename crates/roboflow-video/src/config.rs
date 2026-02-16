@@ -25,8 +25,10 @@ pub struct VideoEncoderConfig {
 
 impl Default for VideoEncoderConfig {
     fn default() -> Self {
+        // Use hardware encoder when available for 5-10x speedup
+        let best_encoder = crate::hardware::select_best_encoder();
         Self {
-            codec: "libx264".to_string(),
+            codec: best_encoder.name().to_string(),
             pixel_format: "yuv420p".to_string(),
             fps: 30,
             crf: 23,
@@ -89,7 +91,8 @@ mod tests {
     #[test]
     fn test_encoder_config_default() {
         let config = VideoEncoderConfig::default();
-        assert_eq!(config.codec, "libx264");
+        // Default codec should use best available encoder (hardware when available)
+        assert!(matches!(config.codec.as_str(), "h264_videotoolbox" | "nvenc" | "libx264"));
         assert_eq!(config.pixel_format, "yuv420p");
         assert_eq!(config.fps, 30);
         assert_eq!(config.crf, 23);

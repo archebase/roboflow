@@ -9,13 +9,13 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::time::Duration;
 
-use roboflow_video::{FragmentEncoderConfig, ImageData};
 use roboflow_video::decode::{DecodePool, DecodePoolConfig, DecodedFrame};
 use roboflow_video::encoder_pool::{EncodeCommand, EncoderPool, EncoderPoolConfig};
 use roboflow_video::test_utils::{
-    create_synthetic_jpeg, create_decoded_frame, optimal_worker_count, hardware_video_config,
-    BENCHMARK_CAMERAS,
+    BENCHMARK_CAMERAS, create_decoded_frame, create_synthetic_jpeg, hardware_video_config,
+    optimal_worker_count,
 };
+use roboflow_video::{FragmentEncoderConfig, ImageData};
 
 // ================================================================================================
 // Benchmark Configuration
@@ -118,12 +118,8 @@ fn bench_encoder_pool(c: &mut Criterion) {
                     let seq = fragment_counter;
                     fragment_counter += 1;
 
-                    let cmd = EncodeCommand::from_decoded(
-                        seq,
-                        "cam0".to_string(),
-                        frames,
-                        seq as u32,
-                    );
+                    let cmd =
+                        EncodeCommand::from_decoded(seq, "cam0".to_string(), frames, seq as u32);
                     pool.submit(cmd).expect("Submit failed");
 
                     while pool.try_recv().is_none() {
@@ -193,8 +189,7 @@ fn bench_e2e_pipeline(c: &mut Criterion) {
             }
 
             // Phase 2: Collect decoded frames and batch for encoding
-            let mut frame_buffer: Vec<DecodedFrame> =
-                Vec::with_capacity(frame_count as usize);
+            let mut frame_buffer: Vec<DecodedFrame> = Vec::with_capacity(frame_count as usize);
             let mut decoded = 0u64;
             let mut fragments_submitted = 0u64;
             let mut seq: u64 = 0;
@@ -226,12 +221,8 @@ fn bench_e2e_pipeline(c: &mut Criterion) {
 
             // Submit remaining frames as final fragment
             if !frame_buffer.is_empty() {
-                let cmd = EncodeCommand::from_decoded(
-                    seq,
-                    "cam0".to_string(),
-                    frame_buffer,
-                    seq as u32,
-                );
+                let cmd =
+                    EncodeCommand::from_decoded(seq, "cam0".to_string(), frame_buffer, seq as u32);
                 encode_pool.submit(cmd).expect("Encode submit failed");
                 fragments_submitted += 1;
             }
@@ -389,10 +380,8 @@ fn bench_stress_test(c: &mut Criterion) {
             }
 
             // Phase 2: Collect and encode per camera
-            let mut camera_buffers: std::collections::HashMap<
-                String,
-                Vec<DecodedFrame>,
-            > = std::collections::HashMap::new();
+            let mut camera_buffers: std::collections::HashMap<String, Vec<DecodedFrame>> =
+                std::collections::HashMap::new();
             for cam in cameras.iter() {
                 camera_buffers.insert(
                     cam.to_string(),

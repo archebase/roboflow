@@ -9,12 +9,10 @@
 
 use std::time::{Duration, Instant};
 
-use roboflow_video::{
-    FragmentEncoderConfig, ImageData, select_best_encoder,
-};
 use roboflow_video::decode::{DecodePool, DecodePoolConfig, DecodedFrame};
 use roboflow_video::encoder_pool::{EncodeCommand, EncoderPool, EncoderPoolConfig};
 use roboflow_video::test_utils::{BENCHMARK_CAMERAS, create_synthetic_jpeg, hardware_video_config};
+use roboflow_video::{FragmentEncoderConfig, ImageData, select_best_encoder};
 
 fn main() {
     // Initialize tracing for debug output
@@ -107,7 +105,7 @@ fn main() {
         // Phase 2: Collect and encode per camera
         let mut camera_buffers: std::collections::HashMap<
             String,
-            Vec<roboflow_video::DecodedFrame>,
+            Vec<DecodedFrame>,
         > = std::collections::HashMap::new();
         for cam in BENCHMARK_CAMERAS {
             camera_buffers.insert(

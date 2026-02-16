@@ -855,7 +855,8 @@ mod tests {
     fn test_mp4_encoder_new() {
         let encoder = Mp4Encoder::new();
         assert_eq!(encoder.config.fps, 30);
-        assert_eq!(encoder.config.codec, "libx264");
+        // Codec should use best available encoder
+        assert!(matches!(encoder.config.codec.as_str(), "h264_videotoolbox" | "nvenc" | "libx264"));
     }
 
     #[test]
