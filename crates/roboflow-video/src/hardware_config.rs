@@ -70,10 +70,8 @@ impl HardwareBackend {
 /// 1. NVENC (NVIDIA GPUs) - best performance on NVIDIA GPUs
 /// 2. QSV (Intel GPUs) - good performance on Intel hardware
 /// 3. VAAPI (Linux) - hardware acceleration on Linux
-/// 4. Software (libx264) - fallback
-///
-/// Note: VideoToolbox is not auto-detected by default due to compatibility issues.
-/// Users can explicitly enable it via `HardwareConfig::with_backend(HardwareBackend::VideoToolbox)`.
+/// 4. VideoToolbox (macOS) - hardware acceleration on Apple Silicon/Intel Macs
+/// 5. Software (libx264) - fallback
 pub fn detect_hardware_backend() -> HardwareBackend {
     // Check NVENC (NVIDIA GPUs - cross-platform) first
     // This is more reliable than VideoToolbox and works on multiple platforms
@@ -94,10 +92,11 @@ pub fn detect_hardware_backend() -> HardwareBackend {
         return HardwareBackend::Vaapi;
     }
 
-    // Note: We skip VideoToolbox auto-detection because:
-    // 1. It often fails with error -12903 in containerized/VM environments
-    // 2. It has compatibility issues with certain input formats
-    // Users can explicitly enable it if needed
+    // Check VideoToolbox (macOS)
+    if cfg!(target_os = "macos") && check_encoder_available("h264_videotoolbox") {
+        tracing::info!("Detected VideoToolbox hardware acceleration");
+        return HardwareBackend::VideoToolbox;
+    }
 
     tracing::info!("No hardware acceleration detected, using software encoding");
     HardwareBackend::None
@@ -249,5 +248,64 @@ mod tests {
         assert_eq!(config.backend, HardwareBackend::None);
         assert!(!config.is_hardware_accelerated());
         assert_eq!(config.codec(), "libx264");
+    }
+
+    // =========================================================================
+    // Unified detection tests
+    // =========================================================================
+
+    #[test]
+    fn test_detect_hardware_backend_returns_valid_variant() {
+        let backend = detect_hardware_backend();
+        // Must be one of the known variants
+        match backend {
+            HardwareBackend::None
+            | HardwareBackend::VideoToolbox
+            | HardwareBackend::Nvenc
+            | HardwareBackend::Qsv
+            | HardwareBackend::Vaapi => {}
+        }
+    }
+
+    #[test]
+    fn test_detect_hardware_backend_is_deterministic() {
+        let first = detect_hardware_backend();
+        let second = detect_hardware_backend();
+        assert_eq!(first, second, "consecutive calls must return the same backend");
+    }
+
+    #[test]
+    fn test_detect_videotoolbox_on_macos() {
+        let backend = detect_hardware_backend();
+        if cfg!(target_os = "macos") && check_encoder_available("h264_videotoolbox") {
+            // If NVENC or QSV is also present they take priority, so only assert
+            // VideoToolbox when those are absent.
+            if !check_encoder_available("h264_nvenc") && !check_encoder_available("h264_qsv") {
+                assert_eq!(
+                    backend,
+                    HardwareBackend::VideoToolbox,
+                    "on macOS without NVENC/QSV, VideoToolbox should be selected"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_hardware_config_default_matches_detect() {
+        let config = HardwareConfig::default();
+        let detected = detect_hardware_backend();
+        assert_eq!(
+            config.backend, detected,
+            "HardwareConfig::default() must use detect_hardware_backend()"
+        );
+    }
+
+    #[test]
+    fn test_backend_videotoolbox_properties() {
+        let vt = HardwareBackend::VideoToolbox;
+        assert_eq!(vt.codec_name(), "h264_videotoolbox");
+        assert_eq!(vt.pixel_format(), "yuv420p");
+        assert!(vt.is_hardware());
+        assert_eq!(vt.name(), "VideoToolbox (macOS)");
     }
 }

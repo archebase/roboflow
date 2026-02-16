@@ -159,7 +159,7 @@ impl ImageDecoderFactory {
 
                     tracing::trace!("create_decoder: trying Apple decoder");
                     if let Ok(decoder) = AppleImageDecoder::try_new(self.config.memory_strategy) {
-                        tracing::debug!("Auto-detected Apple hardware decoder");
+                        tracing::debug!("Auto-detected Apple image decoder (CPU-optimized)");
                         tracing::trace!("create_decoder: about to box Apple decoder");
                         let boxed: Box<dyn ImageDecoderBackend> = Box::new(decoder);
                         tracing::trace!("create_decoder: Apple decoder boxed successfully");

@@ -16,28 +16,25 @@ use crate::config::{DepthEncoderConfig, VideoEncoderConfig};
 use crate::frame::{DepthFrameBuffer, VideoEncoderError, VideoFrameBuffer};
 
 /// Check if NVENC encoder is available.
+///
+/// Delegates to [`crate::hardware_config::detect_hardware_backend()`] as the
+/// single source of truth for hardware detection.
 pub fn check_nvenc_available() -> bool {
-    std::process::Command::new("ffmpeg")
-        .args(["-hide_banner", "-encoders"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .map(|o| {
-            let output = String::from_utf8_lossy(&o.stdout);
-            output.contains("h264_nvenc") || output.contains("hevc_nvenc")
-        })
-        .unwrap_or(false)
+    matches!(
+        crate::hardware_config::detect_hardware_backend(),
+        crate::hardware_config::HardwareBackend::Nvenc
+    )
 }
 
 /// Check if VideoToolbox encoder is available (macOS).
-#[cfg(target_os = "macos")]
+///
+/// Delegates to [`crate::hardware_config::detect_hardware_backend()`] as the
+/// single source of truth for hardware detection.
 pub fn check_videotoolbox_available() -> bool {
-    true // VideoToolbox is always available on macOS
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn check_videotoolbox_available() -> bool {
-    false
+    matches!(
+        crate::hardware_config::detect_hardware_backend(),
+        crate::hardware_config::HardwareBackend::VideoToolbox
+    )
 }
 
 /// MP4 video encoder using ffmpeg.
@@ -672,28 +669,21 @@ impl EncoderChoice {
 }
 
 /// Select the best available encoder.
+///
+/// Delegates to [`crate::hardware_config::detect_hardware_backend()`] as the
+/// single source of truth for hardware detection.
 pub fn select_best_encoder() -> EncoderChoice {
-    // Priority 1: NVENC (NVIDIA GPU)
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    {
-        if check_nvenc_available() {
-            tracing::info!("Selected NVENC encoder (5-10x faster than CPU)");
-            return EncoderChoice::Nvenc;
+    use crate::hardware_config::{detect_hardware_backend, HardwareBackend};
+
+    match detect_hardware_backend() {
+        HardwareBackend::Nvenc => EncoderChoice::Nvenc,
+        HardwareBackend::VideoToolbox => EncoderChoice::VideoToolbox,
+        // QSV and VAAPI don't have EncoderChoice variants — fall through to software
+        _ => {
+            tracing::info!("Selected Rsmpeg native encoder (2-3x faster than FFmpeg CLI)");
+            EncoderChoice::RsmpegLibx264
         }
     }
-
-    // Priority 2: VideoToolbox (macOS)
-    #[cfg(target_os = "macos")]
-    {
-        if check_videotoolbox_available() {
-            tracing::info!("Selected VideoToolbox encoder (3-5x faster than CPU)");
-            return EncoderChoice::VideoToolbox;
-        }
-    }
-
-    // Priority 3: Rsmpeg native encoding
-    tracing::info!("Selected Rsmpeg native encoder (2-3x faster than FFmpeg CLI)");
-    EncoderChoice::RsmpegLibx264
 }
 
 /// Check if specific encoder type is available.
@@ -962,8 +952,109 @@ mod tests {
 
     #[test]
     fn test_check_videotoolbox_macos() {
-        // On macOS, videotoolbox should be true
+        // On macOS with ffmpeg, videotoolbox should be detected
         #[cfg(target_os = "macos")]
-        assert!(check_videotoolbox_available());
+        {
+            // check_videotoolbox_available now delegates to detect_hardware_backend,
+            // so it depends on ffmpeg actually listing h264_videotoolbox
+            let vt = check_videotoolbox_available();
+            let backend = crate::hardware_config::detect_hardware_backend();
+            let expected = matches!(
+                backend,
+                crate::hardware_config::HardwareBackend::VideoToolbox
+            );
+            assert_eq!(vt, expected, "check_videotoolbox_available must agree with detect_hardware_backend");
+        }
+    }
+
+    // =========================================================================
+    // Unified detection consistency tests
+    // =========================================================================
+
+    #[test]
+    fn test_select_best_encoder_consistent_with_detect_hardware_backend() {
+        use crate::hardware_config::{detect_hardware_backend, HardwareBackend};
+
+        let backend = detect_hardware_backend();
+        let encoder = select_best_encoder();
+
+        match backend {
+            HardwareBackend::Nvenc => assert_eq!(encoder, EncoderChoice::Nvenc),
+            HardwareBackend::VideoToolbox => assert_eq!(encoder, EncoderChoice::VideoToolbox),
+            // QSV / VAAPI / None all map to software
+            _ => assert_eq!(encoder, EncoderChoice::RsmpegLibx264),
+        }
+    }
+
+    #[test]
+    fn test_is_encoder_available_videotoolbox_consistent() {
+        let via_is_available = is_encoder_available(EncoderChoice::VideoToolbox);
+        let via_check = check_videotoolbox_available();
+        assert_eq!(
+            via_is_available, via_check,
+            "is_encoder_available and check_videotoolbox_available must agree"
+        );
+    }
+
+    #[test]
+    fn test_is_encoder_available_nvenc_consistent() {
+        let via_is_available = is_encoder_available(EncoderChoice::Nvenc);
+        let via_check = check_nvenc_available();
+        assert_eq!(
+            via_is_available, via_check,
+            "is_encoder_available and check_nvenc_available must agree"
+        );
+    }
+
+    #[test]
+    fn test_check_nvenc_delegates_to_detect_hardware_backend() {
+        use crate::hardware_config::{detect_hardware_backend, HardwareBackend};
+        let backend = detect_hardware_backend();
+        let nvenc = check_nvenc_available();
+        assert_eq!(
+            nvenc,
+            matches!(backend, HardwareBackend::Nvenc),
+            "check_nvenc_available must agree with detect_hardware_backend"
+        );
+    }
+
+    #[test]
+    fn test_check_videotoolbox_delegates_to_detect_hardware_backend() {
+        use crate::hardware_config::{detect_hardware_backend, HardwareBackend};
+        let backend = detect_hardware_backend();
+        let vt = check_videotoolbox_available();
+        assert_eq!(
+            vt,
+            matches!(backend, HardwareBackend::VideoToolbox),
+            "check_videotoolbox_available must agree with detect_hardware_backend"
+        );
+    }
+
+    #[test]
+    fn test_available_encoders_includes_videotoolbox_when_detected() {
+        let encoders = available_encoders();
+        let vt_detected = check_videotoolbox_available();
+        assert_eq!(
+            encoders.contains(&EncoderChoice::VideoToolbox),
+            vt_detected,
+            "available_encoders must include VideoToolbox iff it is detected"
+        );
+    }
+
+    #[test]
+    fn test_available_encoders_includes_best_encoder() {
+        let best = select_best_encoder();
+        let encoders = available_encoders();
+        assert!(
+            encoders.contains(&best),
+            "available_encoders must contain the best encoder"
+        );
+    }
+
+    #[test]
+    fn test_select_best_encoder_is_deterministic() {
+        let first = select_best_encoder();
+        let second = select_best_encoder();
+        assert_eq!(first, second, "consecutive calls must return the same encoder");
     }
 }
