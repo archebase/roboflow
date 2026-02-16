@@ -999,8 +999,16 @@ impl Scanner {
                         }
                     }
 
-                    // Lock is released here when guard is dropped
-                    drop(guard);
+                    // Explicitly release the lock before the next iteration to avoid
+                    // a write conflict between the fire-and-forget Drop release and
+                    // the next acquire_lock call on the same key.
+                    if let Err(e) = guard.release().await {
+                        tracing::warn!(
+                            pod_id = %self.pod_id,
+                            error = %e,
+                            "Failed to release scanner lock"
+                        );
+                    }
                 }
                 Ok(None) => {
                     // Not leader, wait and retry

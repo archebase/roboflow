@@ -398,14 +398,6 @@ impl LerobotWriter {
         self.output_dir.join("videos").join(self.chunk_dir_name())
     }
 
-    /// Get the parquet file path for the current episode.
-    ///
-    /// Returns path like: `{output_dir}/data/chunk-000/episode_000000.parquet`
-    fn parquet_path(&self) -> PathBuf {
-        self.data_chunk_dir()
-            .join(format!("episode_{:06}.parquet", self.episode_index))
-    }
-
     /// Ensure chunk directories exist (locally and remotely if using cloud storage).
     fn ensure_chunk_dirs(&self) -> Result<()> {
         // Create local directories
@@ -701,56 +693,6 @@ impl LerobotWriter {
         }
 
         total
-    }
-
-    /// Flush current chunk to disk (incremental flushing).
-    fn flush_chunk(&mut self) -> Result<()> {
-        if self.frame_data.is_empty() && self.image_buffers.is_empty() {
-            return Ok(());
-        }
-
-        let frame_count = self.frame_data.len();
-        let memory_bytes = self.estimate_memory_bytes();
-
-        tracing::info!(
-            frames = frame_count,
-            memory_mb = memory_bytes / (1024 * 1024),
-            cameras = self.image_buffers.len(),
-            "Flushing chunk for memory management"
-        );
-
-        // Write parquet for this chunk
-        let _parquet_path = self.write_episode_parquet()?;
-
-        // Encode videos for this chunk
-        let (video_files, encode_stats) = self.encode_videos()?;
-
-        // Update statistics (important: track encode stats from incremental flushes)
-        self.images_encoded += encode_stats.images_encoded;
-        self.skipped_frames += encode_stats.skipped_frames;
-        self.failed_encodings += encode_stats.failed_encodings;
-        self.output_bytes += encode_stats.output_bytes;
-        self.total_frames += frame_count;
-
-        // Queue uploads if coordinator available
-        if self.upload_coordinator.is_some() && !video_files.is_empty() {
-            let parquet_path = self.parquet_path();
-            let video_paths: Vec<(String, PathBuf)> = video_files
-                .into_iter()
-                .map(|(path, camera)| (camera, path))
-                .collect();
-            let _ = self.queue_episode_upload(&parquet_path, &video_paths);
-        }
-
-        // Clear buffers
-        self.frame_data.clear();
-        for buffer in self.image_buffers.values_mut() {
-            buffer.clear();
-        }
-
-        tracing::debug!("Chunk flushed, buffers cleared - ready for more frames");
-
-        Ok(())
     }
 
     /// Write current episode to Parquet file.
@@ -1256,18 +1198,28 @@ impl DatasetWriter for LerobotWriter {
             self.add_image_arc(camera.clone(), data.clone());
         }
 
-        // NOW check if we should flush (after all images for this frame are added)
+        // Check if we should flush for memory management.
+        // Instead of the broken flush_chunk (which overwrites parquet/video files),
+        // finish the current episode and start a new one. Each episode gets a unique
+        // index, so output paths never collide.
         let memory_bytes = self.estimate_memory_bytes();
         if self
             .config
             .flushing
             .should_flush(self.frame_data.len(), memory_bytes)
-            && let Err(e) = self.flush_chunk()
         {
-            tracing::error!(
-                error = %e,
-                "Failed to flush chunk, continuing (memory may increase)"
+            tracing::info!(
+                frames = self.frame_data.len(),
+                memory_mb = memory_bytes / (1024 * 1024),
+                episode_index = self.episode_index,
+                "Memory threshold reached, finishing episode"
             );
+            if let Err(e) = self.finish_episode(None) {
+                tracing::error!(
+                    error = %e,
+                    "Failed to finish episode for memory management, continuing (memory may increase)"
+                );
+            }
         }
 
         Ok(())
