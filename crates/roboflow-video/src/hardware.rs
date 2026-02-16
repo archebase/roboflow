@@ -673,7 +673,7 @@ impl EncoderChoice {
 /// Delegates to [`crate::hardware_config::detect_hardware_backend()`] as the
 /// single source of truth for hardware detection.
 pub fn select_best_encoder() -> EncoderChoice {
-    use crate::hardware_config::{detect_hardware_backend, HardwareBackend};
+    use crate::hardware_config::{HardwareBackend, detect_hardware_backend};
 
     match detect_hardware_backend() {
         HardwareBackend::Nvenc => EncoderChoice::Nvenc,
@@ -963,7 +963,10 @@ mod tests {
                 backend,
                 crate::hardware_config::HardwareBackend::VideoToolbox
             );
-            assert_eq!(vt, expected, "check_videotoolbox_available must agree with detect_hardware_backend");
+            assert_eq!(
+                vt, expected,
+                "check_videotoolbox_available must agree with detect_hardware_backend"
+            );
         }
     }
 
@@ -973,7 +976,7 @@ mod tests {
 
     #[test]
     fn test_select_best_encoder_consistent_with_detect_hardware_backend() {
-        use crate::hardware_config::{detect_hardware_backend, HardwareBackend};
+        use crate::hardware_config::{HardwareBackend, detect_hardware_backend};
 
         let backend = detect_hardware_backend();
         let encoder = select_best_encoder();
@@ -1008,7 +1011,7 @@ mod tests {
 
     #[test]
     fn test_check_nvenc_delegates_to_detect_hardware_backend() {
-        use crate::hardware_config::{detect_hardware_backend, HardwareBackend};
+        use crate::hardware_config::{HardwareBackend, detect_hardware_backend};
         let backend = detect_hardware_backend();
         let nvenc = check_nvenc_available();
         assert_eq!(
@@ -1020,7 +1023,7 @@ mod tests {
 
     #[test]
     fn test_check_videotoolbox_delegates_to_detect_hardware_backend() {
-        use crate::hardware_config::{detect_hardware_backend, HardwareBackend};
+        use crate::hardware_config::{HardwareBackend, detect_hardware_backend};
         let backend = detect_hardware_backend();
         let vt = check_videotoolbox_available();
         assert_eq!(
@@ -1055,6 +1058,9 @@ mod tests {
     fn test_select_best_encoder_is_deterministic() {
         let first = select_best_encoder();
         let second = select_best_encoder();
-        assert_eq!(first, second, "consecutive calls must return the same encoder");
+        assert_eq!(
+            first, second,
+            "consecutive calls must return the same encoder"
+        );
     }
 }

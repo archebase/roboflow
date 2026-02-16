@@ -271,7 +271,10 @@ mod tests {
     fn test_detect_hardware_backend_is_deterministic() {
         let first = detect_hardware_backend();
         let second = detect_hardware_backend();
-        assert_eq!(first, second, "consecutive calls must return the same backend");
+        assert_eq!(
+            first, second,
+            "consecutive calls must return the same backend"
+        );
     }
 
     #[test]
