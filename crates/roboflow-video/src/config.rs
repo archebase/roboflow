@@ -92,7 +92,10 @@ mod tests {
     fn test_encoder_config_default() {
         let config = VideoEncoderConfig::default();
         // Default codec should use best available encoder (hardware when available)
-        assert!(matches!(config.codec.as_str(), "h264_videotoolbox" | "nvenc" | "libx264"));
+        assert!(matches!(
+            config.codec.as_str(),
+            "h264_videotoolbox" | "nvenc" | "libx264"
+        ));
         assert_eq!(config.pixel_format, "yuv420p");
         assert_eq!(config.fps, 30);
         assert_eq!(config.crf, 23);

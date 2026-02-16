@@ -156,7 +156,7 @@ impl Default for EncoderPoolConfig {
 
         Self {
             worker_count: encode_workers,
-            pending_capacity: 256,    // Increased for better throughput
+            pending_capacity: 256,   // Increased for better throughput
             completed_capacity: 256, // Increased for better throughput
             fragment_config: FragmentEncoderConfig::default(),
             conversion_strategy: optimal_strategy(),

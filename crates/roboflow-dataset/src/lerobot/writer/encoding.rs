@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use crate::common::rsmpeg_encoder::RsmpegMp4Encoder;
+use roboflow_video::RsmpegMp4Encoder;
 use crate::common::video::VideoEncoderError;
 use crate::common::video::{VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
 use crate::common::{ImageData, decode_image_to_rgb};

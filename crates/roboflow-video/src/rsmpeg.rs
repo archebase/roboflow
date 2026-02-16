@@ -686,7 +686,7 @@ impl RsmpegMp4Encoder {
 
         let (width, height) = buffer
             .dimensions()
-            .ok_or(VideoEncoderError::InvalidFrameData)?;
+            .ok_or_else(|| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
 
         // Detect best codec (hardware or software)
         let (codec_name, pixel_format) = Self::detect_best_codec();
@@ -710,7 +710,7 @@ impl RsmpegMp4Encoder {
 
         let codec_name_with_nul = format!("{}\0", codec_name);
         let codec_name_cstr = CStr::from_bytes_with_nul(codec_name_with_nul.as_bytes())
-            .map_err(|_| VideoEncoderError::InvalidFrameData)?;
+            .map_err(|_| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
 
         let codec = AVCodec::find_encoder_by_name(codec_name_cstr)
             .or_else(|| {
@@ -1091,7 +1091,7 @@ impl PersistentEncoder {
 
         let (width, height) = buffer
             .dimensions()
-            .ok_or(VideoEncoderError::InvalidFrameData)?;
+            .ok_or_else(|| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
 
         // Ensure encoder is initialized with current config
         self.ensure_codec(width, height, config)?;
@@ -1273,7 +1273,7 @@ impl PersistentEncoder {
         // Find codec
         let codec_name_with_nul = format!("{}\0", config.codec);
         let codec_name_cstr = CStr::from_bytes_with_nul(codec_name_with_nul.as_bytes())
-            .map_err(|_| VideoEncoderError::InvalidFrameData)?;
+            .map_err(|_| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
 
         let codec = AVCodec::find_encoder_by_name(codec_name_cstr)
             .or_else(|| {

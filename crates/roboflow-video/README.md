@@ -2,13 +2,26 @@
 
 [![License: MulanPSL-2.0](https://img.shields.io/badge/License-MulanPSL--2.0-blue.svg)](http://license.coscl.org.cn/MulanPSL2)
 
-Video encoding and processing for robotics datasets.
+Low-level video encoding primitives for robotics datasets.
+
+## Crate Separation
+
+This crate provides **low-level video primitives**. For high-level dataset encoding
+with multi-camera support, see `roboflow-dataset`.
+
+| Crate | Responsibility |
+|-------|---------------|
+| `roboflow-video` (this crate) | Hardware encoders, SIMD color conversion, streaming MP4 |
+| `roboflow-dataset` | Multi-camera orchestration, dataset format writers (LeRobot) |
+
+**Dependency direction**: `roboflow-dataset` → `roboflow-video` (one-way only)
 
 ## Features
 
 - **FFmpeg Integration**: H.264/H.265 encoding via rsmpeg
-- **Concurrent Encoding**: Multi-camera parallel processing
+- **SIMD Color Conversion**: RGB→NV12/YUV420P (8-12x faster than FFmpeg)
 - **Fragment-Based**: Memory-efficient fragment encoding
+- **Streaming MP4**: Zero-temp-file encoding with chunked output
 - **Hardware Acceleration**: GPU encoding support (optional)
 
 ## Usage
@@ -49,28 +62,34 @@ for frame in frames {
 let mp4_data = encoder.finalize()?;
 ```
 
-### Concurrent Encoder
+### Streaming MP4 Encoder
+
+For cloud uploads with streaming output (used by `roboflow-dataset`):
 
 ```rust
-use roboflow_video::{ConcurrentVideoEncoder, ConcurrentEncoderConfig};
+use roboflow_video::{StreamingMp4Encoder, StreamingEncoderConfig};
+use std::sync::mpsc::channel;
 
-let encoder = ConcurrentVideoEncoder::new(ConcurrentEncoderConfig {
-    cameras: vec!["cam_left", "cam_right"],
-    video_config: VideoEncoderConfig {
-        codec: "h264".to_string(),
-        crf: 23,
-        ..Default::default()
-    },
-    ..Default::default()
-})?;
+let (chunk_tx, chunk_rx) = channel();
 
-// Encode frames for different cameras
-encoder.encode_frame("cam_left", &frame1).await?;
-encoder.encode_frame("cam_right", &frame2).await?;
+let mut encoder = StreamingMp4Encoder::with_dimensions(
+    StreamingEncoderConfig::default(),
+    chunk_tx,
+    1920, 1080
+)?;
 
-// Get encoded videos
-let videos = encoder.finalize().await?;
+// Add frames
+encoder.add_frame(&rgb_data)?;
+
+// Receive encoded chunks
+while let Ok(chunk) = chunk_rx.recv() {
+    // Upload chunk to S3, etc.
+}
+
+encoder.finalize()?;
 ```
+
+For multi-camera orchestration, see `roboflow-dataset::ConcurrentVideoEncoder`.
 
 ## Configuration
 

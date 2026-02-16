@@ -14,6 +14,17 @@
 //! - Per-camera pipeline threads with backpressure
 //! - Per-camera upload threads with isolated Tokio runtimes for S3 operations
 //! - Clean abort on errors
+//! - **Configurable pipeline selection**: 2-stage (single-threaded) or 3-stage (parallel SIMD)
+//!
+//! # Pipeline Selection
+//!
+//! - **2-stage (default)**: Single-threaded decode + encode per camera
+//!   - Lower memory usage, simpler flow
+//!   - Best for: single camera or low-throughput scenarios
+//! - **3-stage**: Parallel decode + convert + encode
+//!   - SIMD-accelerated color conversion (8-12x faster than FFmpeg)
+//!   - Higher throughput for multi-camera scenarios
+//!   - Enable via `ConcurrentEncoderConfig::use_parallel_pipeline = true`
 //!
 //! # Architecture
 //!
@@ -86,9 +97,10 @@ use roboflow_storage::S3Config;
 
 use crate::common::ImageData;
 use crate::common::camera_streaming_pipeline::{
-    StreamingPipelineConfig, StreamingPipelineHandle, StreamingUploadCommand,
-    spawn_streaming_pipeline,
+    StreamingPipelineConfig, StreamingUploadCommand,
+    spawn_streaming_pipeline, EitherPipeline, PipelineAdapter,
 };
+use roboflow_video::pipeline::{ThreeStageConfig};
 use crate::common::video::VideoEncoderConfig;
 
 /// Configuration for concurrent video encoder.
@@ -110,6 +122,10 @@ pub struct ConcurrentEncoderConfig {
     pub frame_channel_capacity: usize,
     /// S3 storage configuration for uploads.
     pub s3_config: S3Config,
+    /// Whether to use the 3-stage parallel pipeline (DecodePool + ConvertPool + EncoderPool).
+    /// When true, uses SIMD-accelerated parallel processing for higher throughput.
+    /// When false, uses the 2-stage single-threaded pipeline (StreamingMp4Encoder).
+    pub use_parallel_pipeline: bool,
 }
 
 impl ConcurrentEncoderConfig {
@@ -123,6 +139,7 @@ impl ConcurrentEncoderConfig {
             video_config: VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
             s3_config,
+            use_parallel_pipeline: false,
         }
     }
 }
@@ -146,8 +163,8 @@ pub struct ConcurrentEncoderResult {
 /// Each pipeline runs in a dedicated thread with single encoder initialization,
 /// while upload threads handle I/O-bound uploads to S3 with isolated runtimes.
 pub struct ConcurrentVideoEncoder {
-    /// Per-camera pipeline handles.
-    pipelines: HashMap<String, StreamingPipelineHandle>,
+    /// Per-camera pipeline handles (either legacy or adapter).
+    pipelines: HashMap<String, EitherPipeline>,
     /// Per-camera upload thread handles.
     upload_handles: HashMap<String, std::thread::JoinHandle<()>>,
     /// Configuration.
@@ -218,10 +235,32 @@ impl ConcurrentVideoEncoder {
             .map_err(|e| RoboflowError::other(format!("Failed to spawn upload thread: {}", e)))?;
 
         // Spawn streaming encoding pipeline
-        let handle = spawn_streaming_pipeline(pipeline_config, upload_tx)?;
+        // Choose pipeline type based on use_parallel_pipeline flag
+        let pipeline: EitherPipeline = if self.config.use_parallel_pipeline {
+            // Create 3-stage pipeline (parallel decode + convert + encode)
+            let three_stage_config = ThreeStageConfig {
+                camera: camera.to_string(),
+                video_config: self.config.video_config.clone(),
+                decode_workers: Some(num_cpus::get_physical()),
+                convert_workers: Some(num_cpus::get_physical()),
+                encode_workers: Some(1), // Hardware encoder only handles one at a time
+                pending_capacity: 512,
+                completed_capacity: 512,
+                frames_per_fragment: 30,
+                chunk_size: self.config.chunk_size,
+            };
+
+            EitherPipeline::Adapter(
+                PipelineAdapter::new(camera.to_string(), three_stage_config, upload_tx)?
+            )
+        } else {
+            // Create 2-stage pipeline (single-threaded decode + encode)
+            let handle = spawn_streaming_pipeline(pipeline_config, upload_tx)?;
+            EitherPipeline::Legacy(handle)
+        };
 
         let camera_string = camera.to_string();
-        self.pipelines.insert(camera_string.clone(), handle);
+        self.pipelines.insert(camera_string.clone(), pipeline);
         self.upload_handles.insert(camera_string, upload_handle);
 
         Ok(())
@@ -464,6 +503,7 @@ mod tests {
     #[test]
     fn test_config_fields() {
         let config = ConcurrentEncoderConfig {
+            use_parallel_pipeline: false,
             key_prefix: "test/prefix".to_string(),
             chunk_index: 5,
             episode_index: 42,
@@ -506,6 +546,7 @@ mod tests {
     #[test]
     fn test_build_dest_url_format() {
         let config = ConcurrentEncoderConfig {
+            use_parallel_pipeline: false,
             key_prefix: "dataset/episode_001".to_string(),
             chunk_index: 0,
             episode_index: 42,
@@ -526,6 +567,7 @@ mod tests {
     #[test]
     fn test_encoder_single_camera() {
         let config = ConcurrentEncoderConfig {
+            use_parallel_pipeline: false,
             key_prefix: "test_single".to_string(),
             chunk_index: 0,
             episode_index: 0,
@@ -558,6 +600,7 @@ mod tests {
     #[test]
     fn test_encoder_multi_camera() {
         let config = ConcurrentEncoderConfig {
+            use_parallel_pipeline: false,
             key_prefix: "test_multi".to_string(),
             chunk_index: 0,
             episode_index: 0,
@@ -596,6 +639,7 @@ mod tests {
     fn test_encoder_non_square_dimensions() {
         // Regression test for non-square image dimensions
         let config = ConcurrentEncoderConfig {
+            use_parallel_pipeline: false,
             key_prefix: "test_nonsquare".to_string(),
             chunk_index: 0,
             episode_index: 0,
@@ -626,6 +670,7 @@ mod tests {
     #[test]
     fn test_encoder_skip_invalid_frames() {
         let config = ConcurrentEncoderConfig {
+            use_parallel_pipeline: false,
             key_prefix: "test_skip".to_string(),
             chunk_index: 0,
             episode_index: 0,

@@ -10,7 +10,6 @@
 pub mod annotations;
 pub mod config;
 pub mod episode;
-pub mod hardware;
 pub mod metadata;
 pub mod trait_impl;
 pub mod upload;
@@ -26,7 +25,8 @@ pub use episode::{
     CalibrationWriter, EpisodeAction, EpisodeTracker, apply_camera_calibration,
     convert_camera_calibration, convert_camera_extrinsic, convert_camera_intrinsic,
 };
-pub use hardware::{HardwareBackend, HardwareConfig};
+// Re-export hardware types from roboflow-video
+pub use roboflow_video::{HardwareBackend, HardwareConfig};
 pub use trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 
 pub use upload::EpisodeUploadCoordinator;

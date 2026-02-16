@@ -303,7 +303,7 @@ impl NvencEncoder {
 
         let (width, height) = buffer
             .dimensions()
-            .ok_or(VideoEncoderError::InvalidFrameData)?;
+            .ok_or_else(|| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
 
         let ffmpeg_path = self.ffmpeg_path.as_deref().unwrap_or(Path::new("ffmpeg"));
 
@@ -414,7 +414,7 @@ impl VideoToolboxEncoder {
 
         let (width, height) = buffer
             .dimensions()
-            .ok_or(VideoEncoderError::InvalidFrameData)?;
+            .ok_or_else(|| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
 
         let ffmpeg_path = self.ffmpeg_path.as_deref().unwrap_or(Path::new("ffmpeg"));
 
@@ -533,7 +533,7 @@ impl DepthMkvEncoder {
 
         let (width, height) = buffer
             .dimensions()
-            .ok_or(VideoEncoderError::InvalidFrameData)?;
+            .ok_or_else(|| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
 
         let ffmpeg_path = self.ffmpeg_path.as_deref().unwrap_or(Path::new("ffmpeg"));
 
@@ -856,7 +856,10 @@ mod tests {
         let encoder = Mp4Encoder::new();
         assert_eq!(encoder.config.fps, 30);
         // Codec should use best available encoder
-        assert!(matches!(encoder.config.codec.as_str(), "h264_videotoolbox" | "nvenc" | "libx264"));
+        assert!(matches!(
+            encoder.config.codec.as_str(),
+            "h264_videotoolbox" | "nvenc" | "libx264"
+        ));
     }
 
     #[test]

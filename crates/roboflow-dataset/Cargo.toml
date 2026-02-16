@@ -9,9 +9,13 @@ description = "Dataset writers for roboflow - LeRobot v2.1, Parquet (always avai
 
 [dependencies]
 # Internal crates
+# Architecture: roboflow-dataset builds on top of roboflow-video primitives.
+# roboflow-video provides low-level video encoding/decoding (rsmpeg, hardware, SIMD).
+# roboflow-dataset provides high-level dataset format implementations (LeRobot, etc.).
+# Dependency direction: roboflow-dataset → roboflow-video (one-way only)
 roboflow-core = { workspace = true }
 roboflow-storage = { workspace = true }
-roboflow-video = { path = "../roboflow-video" }
+roboflow-video = { workspace = true }
 robocodec = { workspace = true }
 
 # Parquet (always available)

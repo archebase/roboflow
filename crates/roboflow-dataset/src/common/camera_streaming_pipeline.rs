@@ -18,7 +18,9 @@
 use crossbeam_channel::{Receiver, Sender};
 use roboflow_core::{Result, RoboflowError};
 
-use crate::common::streaming_encoder::{EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder};
+use roboflow_video::StreamingMp4Encoder;
+use roboflow_video::streaming::{EncodedChunk, StreamingEncoderConfig};
+use roboflow_video::pipeline::{PipelineConfig};
 use crate::common::video::VideoEncoderConfig;
 use crate::common::{ImageData, decode_to_rgb};
 
@@ -313,7 +315,8 @@ impl CameraStreamingPipeline {
             chunk_tx,
             self.width,
             self.height,
-        )?;
+        )
+        .map_err(|e| RoboflowError::encode("CameraStreamingPipeline", e.to_string()))?;
 
         tracing::info!(
             camera = %self.camera,
@@ -338,7 +341,9 @@ impl CameraStreamingPipeline {
             RoboflowError::encode("CameraStreamingPipeline", "Encoder not initialized")
         })?;
 
-        let result = encoder.add_frame(rgb_data);
+        let result = encoder
+            .add_frame(rgb_data)
+            .map_err(|e| RoboflowError::encode("CameraStreamingPipeline", e.to_string()));
 
         tracing::trace!(
             camera = %self.camera,
@@ -352,7 +357,9 @@ impl CameraStreamingPipeline {
     /// Finalize the encoder.
     fn finalize_encoder(&mut self) -> Result<()> {
         if let Some(encoder) = self.encoder.take() {
-            encoder.finalize()?;
+            encoder
+                .finalize()
+                .map_err(|e| RoboflowError::encode("CameraStreamingPipeline", e.to_string()))?;
         }
         Ok(())
     }
@@ -449,8 +456,244 @@ impl StreamingPipelineHandle {
 }
 
 // =============================================================================
+// roboflow-video Pipeline Adapter
+// =============================================================================
+
+/// Adapter that wraps roboflow-video's PipelineHandle and implements StreamingPipelineHandle.
+///
+/// This bridges the new pipeline abstraction from roboflow-video with the
+/// existing upload flow in roboflow-dataset.
+pub struct PipelineAdapter {
+    /// Camera name.
+    pub camera: String,
+    /// Command sender.
+    pub cmd_tx: Sender<StreamingCommand>,
+    /// Thread join handle.
+    pub thread_handle: Option<std::thread::JoinHandle<Result<StreamingPipelineResult>>>,
+}
+
+impl PipelineAdapter {
+    /// Create a new adapter from roboflow-video's ThreeStagePipeline.
+    ///
+    /// This spawns a thread that bridges between the two APIs:
+    /// - Receives StreamingCommand from ConcurrentVideoEncoder
+    /// - Forwards to ThreeStagePipeline as ImageData
+    /// - Receives EncodedChunk from ThreeStagePipeline
+    /// - Converts to StreamingUploadCommand for upload thread
+    pub fn new(
+        camera: String,
+        three_stage_config: roboflow_video::pipeline::ThreeStageConfig,
+        upload_tx: Sender<StreamingUploadCommand>,
+    ) -> Result<Self> {
+        let (cmd_tx, cmd_rx) = crossbeam_channel::bounded(64);
+
+        // Create channel for receiving encoded chunks from ThreeStagePipeline
+        let (chunk_tx, chunk_rx) = std::sync::mpsc::channel::<roboflow_video::EncodedChunk>();
+
+        // Create the ThreeStagePipeline with chunk_tx
+        let pipeline = three_stage_config.create_pipeline(chunk_tx)?;
+
+        let thread_name = format!("pipeline-adapter-{}", camera);
+        let camera_clone = camera.clone();
+        let handle = std::thread::Builder::new()
+            .name(thread_name)
+            .spawn(move || {
+                Self::adapter_thread(camera_clone, cmd_rx, upload_tx, chunk_rx, pipeline)
+            })
+            .map_err(|e| {
+                RoboflowError::other(format!("Failed to spawn pipeline adapter thread: {}", e))
+            })?;
+
+        Ok(Self {
+            camera,
+            cmd_tx,
+            thread_handle: Some(handle),
+        })
+    }
+
+    /// Adapter thread that bridges StreamingCommand to PipelineHandle and EncodedChunk to StreamingUploadCommand.
+    fn adapter_thread(
+        camera: String,
+        cmd_rx: Receiver<StreamingCommand>,
+        upload_tx: Sender<StreamingUploadCommand>,
+        chunk_rx: std::sync::mpsc::Receiver<roboflow_video::EncodedChunk>,
+        pipeline: Box<dyn roboflow_video::PipelineHandle>,
+    ) -> Result<StreamingPipelineResult> {
+        // Clone upload_tx and camera for the chunk upload thread
+        let upload_tx_clone = upload_tx.clone();
+        let camera_clone = camera.clone();
+
+        // Spawn a separate thread to receive encoded chunks and convert to upload commands
+        let _upload_thread = std::thread::Builder::new()
+            .name(format!("adapter-upload-{}", camera))
+            .spawn(move || {
+                while let Ok(chunk) = chunk_rx.recv() {
+                    let upload_cmd = StreamingUploadCommand::UploadChunk {
+                        chunk: EncodedChunk::new(chunk.data),
+                    };
+                    if let Err(e) = upload_tx_clone.send(upload_cmd) {
+                        tracing::error!(camera = %camera_clone, error = %e, "Failed to send chunk to upload thread");
+                        break;
+                    }
+                }
+            })
+            .map_err(|e| RoboflowError::other(format!("Failed to spawn upload thread: {}", e)))?;
+
+        while let Ok(cmd) = cmd_rx.recv() {
+            match cmd {
+                StreamingCommand::AddFrame { image } => {
+                    // Convert roboflow-dataset ImageData to roboflow-video ImageData
+                    let video_image = roboflow_video::ImageData {
+                        width: image.width,
+                        height: image.height,
+                        data: image.data,
+                        is_encoded: image.is_encoded,
+                    };
+
+                    if let Err(e) = pipeline.add_frame(video_image) {
+                        tracing::warn!(
+                            camera = %camera,
+                            error = %e,
+                            "Failed to add frame to pipeline, skipping"
+                        );
+                        // Continue processing other frames
+                    }
+                }
+                StreamingCommand::Flush => {
+                    break;
+                }
+                StreamingCommand::Shutdown => {
+                    let _ = pipeline.shutdown();
+                    return Err(RoboflowError::encode(
+                        "PipelineAdapter",
+                        format!("Camera {} shutdown requested", camera),
+                    ));
+                }
+            }
+        }
+
+        // Flush the pipeline and get results
+        let pipeline_result = pipeline.join()?;
+
+        // Send finish command to upload thread
+        upload_tx
+            .send(StreamingUploadCommand::Finish {
+                camera: camera.clone(),
+            })
+            .map_err(|e| {
+                RoboflowError::encode(
+                    "PipelineAdapter",
+                    format!("Failed to send finish command: {}", e),
+                )
+            })?;
+
+        Ok(StreamingPipelineResult {
+            camera: pipeline_result.camera,
+            frames_encoded: pipeline_result.frames_encoded,
+            frames_skipped: pipeline_result.frames_skipped,
+        })
+    }
+}
+
+/// Implement the same interface as StreamingPipelineHandle for compatibility.
+impl PipelineAdapter {
+    /// Send a frame to the pipeline.
+    pub fn add_frame(&self, image: ImageData) -> Result<()> {
+        self.cmd_tx
+            .send(StreamingCommand::AddFrame { image })
+            .map_err(|e| {
+                RoboflowError::encode(
+                    "PipelineAdapter",
+                    format!("Failed to send frame: {}", e),
+                )
+            })
+    }
+
+    /// Signal the pipeline to flush and finish.
+    pub fn flush(&self) -> Result<()> {
+        self.cmd_tx.send(StreamingCommand::Flush).map_err(|e| {
+            RoboflowError::encode(
+                "PipelineAdapter",
+                format!("Failed to send flush: {}", e),
+            )
+        })
+    }
+
+    /// Signal the pipeline to shutdown immediately.
+    pub fn shutdown(&self) -> Result<()> {
+        self.cmd_tx.send(StreamingCommand::Shutdown).map_err(|e| {
+            RoboflowError::encode(
+                "PipelineAdapter",
+                format!("Failed to send shutdown: {}", e),
+            )
+        })
+    }
+
+    /// Wait for the pipeline to finish and get the result.
+    pub fn join(mut self) -> Result<StreamingPipelineResult> {
+        let handle = self.thread_handle.take();
+        if let Some(handle) = handle {
+            handle.join().map_err(|e| {
+                RoboflowError::other(format!("Pipeline adapter thread panicked: {:?}", e))
+            })?
+        } else {
+            Err(RoboflowError::other("Pipeline thread already joined"))
+        }
+    }
+}
+
+// =============================================================================
 // Spawn Function
 // =============================================================================
+
+
+// =============================================================================
+// EitherPipeline Enum
+// =============================================================================
+
+/// Enum that can hold either a legacy StreamingPipelineHandle or a new PipelineAdapter.
+///
+/// This allows runtime selection between 2-stage and 3-stage pipelines.
+pub enum EitherPipeline {
+    /// Legacy 2-stage pipeline (single-threaded decode + encode)
+    Legacy(StreamingPipelineHandle),
+    /// New 3-stage pipeline (parallel decode + convert + encode via adapter)
+    Adapter(PipelineAdapter),
+}
+
+impl EitherPipeline {
+    /// Send a frame to the pipeline.
+    pub fn add_frame(&self, image: ImageData) -> Result<()> {
+        match self {
+            EitherPipeline::Legacy(p) => p.add_frame(image),
+            EitherPipeline::Adapter(p) => p.add_frame(image),
+        }
+    }
+
+    /// Signal the pipeline to flush and finish.
+    pub fn flush(&self) -> Result<()> {
+        match self {
+            EitherPipeline::Legacy(p) => p.flush(),
+            EitherPipeline::Adapter(p) => p.flush(),
+        }
+    }
+
+    /// Signal the pipeline to shutdown immediately.
+    pub fn shutdown(&self) -> Result<()> {
+        match self {
+            EitherPipeline::Legacy(p) => p.shutdown(),
+            EitherPipeline::Adapter(p) => p.shutdown(),
+        }
+    }
+
+    /// Wait for the pipeline to finish and get the result.
+    pub fn join(self) -> Result<StreamingPipelineResult> {
+        match self {
+            EitherPipeline::Legacy(p) => p.join(),
+            EitherPipeline::Adapter(p) => p.join(),
+        }
+    }
+}
 
 /// Spawn a streaming pipeline in a new thread.
 ///

@@ -23,8 +23,6 @@ pub mod image_decode;
 pub mod parquet_base;
 pub mod progress;
 pub mod ring_buffer;
-pub mod rsmpeg_encoder;
-pub mod streaming_encoder;
 pub mod streaming_uploader;
 pub mod upload_coordinator;
 pub mod video;
@@ -73,14 +71,8 @@ pub use streaming_uploader::{
     UploadProgress as StreamingUploadProgress, UploadStats,
 };
 
-// Re-export rsmpeg encoder
-pub use rsmpeg_encoder::{
-    EncodeFrame, RsmpegEncoder, RsmpegEncoderConfig, RsmpegMp4Encoder, default_codec_name,
-    is_hardware_encoding_available, is_rsmpeg_available,
-};
-
-// Re-export streaming encoder
-pub use streaming_encoder::{EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder};
+// Re-export streaming encoder from roboflow-video (canonical location)
+pub use roboflow_video::streaming::{EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder};
 
 // Re-export camera streaming pipeline
 pub use camera_streaming_pipeline::{

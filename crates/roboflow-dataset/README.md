@@ -4,6 +4,25 @@
 
 Dataset writers and converters for robotics training data formats.
 
+## Architecture
+
+This crate builds on top of `roboflow-video` (low-level video primitives):
+
+```
+roboflow-dataset (this crate)
+├── LerobotWriter (dataset format)
+├── ConcurrentVideoEncoder (multi-camera orchestration)
+└── CameraStreamingPipeline (encoding pipelines)
+
+roboflow-video (dependency)
+├── RsmpegMp4Encoder (FFmpeg encoding)
+├── StreamingMp4Encoder (streaming output)
+├── FragmentEncoder (fragment-based encoding)
+└── SIMD color conversion (RGB→NV12/YUV420P)
+```
+
+**Dependency**: `roboflow-dataset` → `roboflow-video` (one-way)
+
 ## Supported Formats
 
 | Format | Description |

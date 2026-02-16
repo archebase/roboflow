@@ -287,6 +287,7 @@ fn test_concurrent_encoder_with_minio() {
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 64,
         s3_config: config.s3_config(),
+        use_parallel_pipeline: false,
     };
 
     let mut encoder =
@@ -336,6 +337,7 @@ fn test_concurrent_encoder_multicam_with_minio() {
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 100,
         s3_config: config.s3_config(),
+        use_parallel_pipeline: false,
     };
 
     let mut encoder =
@@ -396,6 +398,7 @@ fn test_compressed_images_with_minio_upload() {
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 100,
         s3_config: config.s3_config(),
+        use_parallel_pipeline: false,
     };
 
     let mut encoder =
@@ -505,6 +508,7 @@ fn test_concurrent_minio_uploads() {
                     video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
                     frame_channel_capacity: 50,
                     s3_config: s3_config_clone,
+                    use_parallel_pipeline: false,
                 };
 
                 let mut encoder =
@@ -619,6 +623,7 @@ fn test_lerobot_v21_video_path_structure() {
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 64,
         s3_config: config.s3_config(),
+        use_parallel_pipeline: false,
     };
 
     let mut encoder =
@@ -730,6 +735,7 @@ fn test_multi_camera_unique_temp_files() {
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 64,
         s3_config: config.s3_config(),
+        use_parallel_pipeline: false,
     };
 
     let mut encoder =

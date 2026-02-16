@@ -4,28 +4,34 @@
 
 //! Video encoding for robotics data conversion.
 //!
-//! This crate provides video encoding functionality extracted from roboflow-dataset,
-//! making it a first-class component for video processing.
+//! This crate provides low-level video encoding primitives for the roboflow ecosystem.
+//! It is the foundational crate for video processing, providing hardware acceleration,
+//! SIMD color conversion, and streaming encoders.
+//!
+//! # Crate Separation
+//!
+//! - **`roboflow-video` (this crate)**: Low-level video primitives
+//!   - Hardware encoders (NVENC, VideoToolbox)
+//!   - SIMD color space conversion (RGB→NV12/YUV420P)
+//!   - Streaming MP4 encoding
+//!   - Fragment-based encoding
+//! - **`roboflow-dataset`**: High-level dataset writers built on top of this crate
+//!   - `ConcurrentVideoEncoder` (multi-camera orchestration)
+//!   - `CameraStreamingPipeline` (dataset-specific pipelines)
+//!   - LeRobot format encoding
+//!
+//! Dependency direction: `roboflow-dataset` → `roboflow-video` (one-way)
 //!
 //! # Features
 //!
-//! - **Multi-camera encoding**: `ConcurrentVideoEncoder` for parallel camera streams
 //! - **Hardware acceleration**: NVENC (NVIDIA), VideoToolbox (macOS)
+//! - **SIMD color conversion**: 8-12x faster than FFmpeg sws_scale
 //! - **Fragment-based encoding**: Stream video fragments during encoding
-//! - **Concurrent upload**: Upload while encoding
+//! - **Streaming MP4**: Zero-temp-file encoding with chunked output
 //!
-//! # Architecture
+//! # Three-Stage Pipeline (Available but not currently used)
 //!
-//! ```text
-//! ConcurrentVideoEncoder (orchestrator)
-//! └── CameraPipeline (per-camera thread)
-//!     └── FragmentEncoder (encodes frame batches)
-//!         └── RsmpegEncoder (actual FFmpeg encoding)
-//! ```
-//!
-//! # Three-Stage Pipeline
-//!
-//! For high-throughput scenarios, use the three-stage pipeline:
+//! For high-throughput scenarios, a three-stage pipeline is available:
 //!
 //! ```text
 //! ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
@@ -34,29 +40,26 @@
 //! └─────────────┘     └─────────────┘     └─────────────┘
 //! ```
 //!
+//! Note: The 3-stage pipeline is exported but not currently used by `roboflow-dataset`,
+//! which uses `StreamingMp4Encoder` and `RsmpegMp4Encoder` directly.
+//!
 //! # Example
 //!
 //! ```rust,ignore
-//! use roboflow_video::{ConcurrentVideoEncoder, ConcurrentEncoderConfig, ImageData};
-//! use roboflow_storage::S3Storage;
-//! use std::sync::Arc;
+//! use roboflow_video::{StreamingMp4Encoder, StreamingEncoderConfig, ImageData};
 //!
-//! let config = ConcurrentEncoderConfig {
-//!     key_prefix: "dataset/episode_001".to_string(),
-//!     ..Default::default()
-//! };
+//! let config = StreamingEncoderConfig::default();
+//! let (chunk_tx, chunk_rx) = std::sync::mpsc::channel();
 //!
-//! let storage = Arc::new(S3Storage::from_env("my-bucket")?);
-//! let runtime = tokio::runtime::Handle::current();
+//! let mut encoder = StreamingMp4Encoder::with_dimensions(
+//!     config, chunk_tx, 1920, 1080
+//! )?;
 //!
-//! let mut encoder = ConcurrentVideoEncoder::new(config, storage, runtime)?;
+//! // Add frames
+//! encoder.add_frame(&rgb_data)?;
 //!
-//! // Add frames for different cameras
-//! let image = ImageData::new(640, 480, rgb_data);
-//! encoder.add_frame("cam_0", image)?;
-//!
-//! // Finalize and get results
-//! let results = encoder.finalize()?;
+//! // Finalize
+//! encoder.finalize()?;
 //! ```
 
 pub mod arena;
@@ -67,10 +70,12 @@ pub mod encoder_pool;
 pub mod fragment;
 pub mod frame;
 pub mod hardware;
+pub mod hardware_config;
 pub mod pipeline;
 pub mod reorder;
 pub mod rsmpeg;
 pub mod simd;
+pub mod streaming;
 
 // Test utilities module (always compiled, used by benches/examples)
 pub mod test_utils;
@@ -78,6 +83,9 @@ pub mod test_utils;
 // Re-export main types
 pub use arena::{FramePool, FramePoolConfig};
 pub use config::{DepthEncoderConfig, VideoEncoderConfig};
+pub use convert::{ConvertPool, ConvertPoolConfig, TargetFormat};
+pub use decode::{DecodePool, DecodePoolConfig};
+pub use encoder_pool::{EncoderPool, EncoderPoolConfig};
 pub use fragment::{FragmentEncoder, FragmentEncoderConfig, FragmentInfo};
 pub use frame::{
     DepthFrame, DepthFrameBuffer, FrameBuffer, PixelFormat, VideoEncoderError, VideoFrame,
@@ -88,16 +96,19 @@ pub use hardware::{
     available_encoders, check_nvenc_available, check_videotoolbox_available, is_encoder_available,
     print_encoder_diagnostics, select_best_encoder,
 };
-pub use pipeline::{
-    CameraEncodeResult, PipedEncoderConfig, PipedEncoderMetrics, PipedFrameEncoder,
-};
+pub use hardware_config::{detect_hardware_backend, HardwareBackend, HardwareConfig};
 pub use rsmpeg::{
     EncodeFrame, RsmpegEncoder, RsmpegEncoderConfig, RsmpegMp4Encoder, default_codec_name,
     is_hardware_encoding_available, is_rsmpeg_available,
 };
 pub use simd::{
-    ConversionStrategy, optimal_strategy, rgb_to_nv12, rgb_to_nv12_in_place, rgb_to_yuv420p,
+    optimal_strategy, rgb_batch_to_nv12, rgb_batch_to_yuv420p, rgb_to_nv12, rgb_to_nv12_in_place,
+    rgb_to_yuv420p, ConversionStrategy,
 };
+pub use streaming::{EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder};
+
+// Pipeline abstraction (Clean Architecture for pipeline selection)
+pub use pipeline::{PipelineHandle, PipelineResult, PipelineConfig, TwoStageConfig, ThreeStageConfig, TwoStagePipeline, ThreeStagePipeline};
 
 /// Image data for video encoding.
 ///

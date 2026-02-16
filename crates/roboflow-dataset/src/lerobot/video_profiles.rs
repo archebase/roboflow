@@ -8,7 +8,7 @@
 //! for different use cases (speed vs quality vs size).
 
 use crate::lerobot::config::VideoConfig;
-use crate::lerobot::hardware::HardwareConfig;
+use roboflow_video::HardwareConfig;
 
 /// Video encoding preset - trades encoding speed for compression efficiency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -341,7 +341,7 @@ impl ResolvedConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lerobot::hardware::{HardwareBackend, HardwareConfig};
+    use roboflow_video::{HardwareBackend, HardwareConfig};
 
     #[test]
     fn test_preset_names() {

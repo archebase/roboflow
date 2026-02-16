@@ -34,12 +34,28 @@ pub enum VideoEncoderError {
     InconsistentFrameSizes,
 
     /// Frame data is invalid or corrupted.
-    #[error("Invalid frame data")]
-    InvalidFrameData,
+    #[error("Invalid frame data: {0}")]
+    InvalidFrameData(String),
 
     /// Generic encoding failure.
     #[error("Encoding error: {0}")]
     Encoding(String),
+
+    /// Frame processing error.
+    #[error("Frame error: {0}")]
+    FrameError(String),
+
+    /// Initialization error.
+    #[error("Initialization error: {0}")]
+    InitializationError(String),
+
+    /// Finalization error.
+    #[error("Finalization error: {0}")]
+    FinalizationError(String),
+
+    /// Error when encoder is already finalized.
+    #[error("Encoder is finalized: {0}")]
+    FinalizedError(String),
 }
 
 /// Frame data format.
@@ -262,11 +278,11 @@ impl VideoFrame {
             FrameFormat::Jpeg => {
                 // JPEG data: just check it's not empty and has valid header
                 if data.len() < 4 {
-                    return Err(VideoEncoderError::InvalidFrameData);
+                    return Err(VideoEncoderError::InvalidFrameData("Empty JPEG data".to_string()));
                 }
                 // Check JPEG magic bytes
                 if data[0] != 0xFF || data[1] != 0xD8 || data[2] != 0xFF {
-                    return Err(VideoEncoderError::InvalidFrameData);
+                    return Err(VideoEncoderError::InvalidFrameData("Invalid JPEG header".to_string()));
                 }
             }
             FrameFormat::Rgb24 => {
@@ -274,53 +290,53 @@ impl VideoFrame {
                 let expected = (self.width as usize)
                     .checked_mul(self.height as usize)
                     .and_then(|size| size.checked_mul(3))
-                    .ok_or(VideoEncoderError::InvalidFrameData)?;
+                    .ok_or_else(|| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
                 if data.len() != expected {
-                    return Err(VideoEncoderError::InvalidFrameData);
+                    return Err(VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()));
                 }
             }
             FrameFormat::Nv12 => {
                 // NV12 requires even dimensions
                 if !self.width.is_multiple_of(2) || !self.height.is_multiple_of(2) {
-                    return Err(VideoEncoderError::InvalidFrameData);
+                    return Err(VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()));
                 }
                 // NV12 data: check exact size with overflow protection
                 let y_size = (self.width as usize)
                     .checked_mul(self.height as usize)
-                    .ok_or(VideoEncoderError::InvalidFrameData)?;
+                    .ok_or_else(|| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
                 let uv_width = self.width as usize / 2;
                 let uv_height = self.height as usize / 2;
                 let uv_size = uv_width
                     .checked_mul(uv_height)
                     .and_then(|size| size.checked_mul(2))
-                    .ok_or(VideoEncoderError::InvalidFrameData)?;
+                    .ok_or_else(|| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
                 let expected = y_size
                     .checked_add(uv_size)
-                    .ok_or(VideoEncoderError::InvalidFrameData)?;
+                    .ok_or_else(|| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
                 if data.len() != expected {
-                    return Err(VideoEncoderError::InvalidFrameData);
+                    return Err(VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()));
                 }
             }
             FrameFormat::Yuv420p => {
                 // YUV420P requires even dimensions
                 if !self.width.is_multiple_of(2) || !self.height.is_multiple_of(2) {
-                    return Err(VideoEncoderError::InvalidFrameData);
+                    return Err(VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()));
                 }
                 // YUV420P data: check exact size with overflow protection
                 let y_size = (self.width as usize)
                     .checked_mul(self.height as usize)
-                    .ok_or(VideoEncoderError::InvalidFrameData)?;
+                    .ok_or_else(|| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
                 let uv_width = self.width as usize / 2;
                 let uv_height = self.height as usize / 2;
                 let uv_size = uv_width
                     .checked_mul(uv_height)
-                    .ok_or(VideoEncoderError::InvalidFrameData)?;
+                    .ok_or_else(|| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
                 let expected = y_size
                     .checked_add(uv_size)
                     .and_then(|size| size.checked_add(uv_size)) // Add U + V
-                    .ok_or(VideoEncoderError::InvalidFrameData)?;
+                    .ok_or_else(|| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
                 if data.len() != expected {
-                    return Err(VideoEncoderError::InvalidFrameData);
+                    return Err(VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()));
                 }
             }
         }
@@ -330,7 +346,7 @@ impl VideoFrame {
     /// Write frame in PPM format (only for RGB24 frames).
     pub fn write_ppm(&self, writer: &mut impl Write) -> Result<(), VideoEncoderError> {
         if self.format != FrameFormat::Rgb24 {
-            return Err(VideoEncoderError::InvalidFrameData);
+            return Err(VideoEncoderError::InvalidFrameData("Only RGB24 frames can be written as PPM".to_string()));
         }
         writeln!(writer, "P6")?;
         writeln!(writer, "{} {}", self.width, self.height)?;
@@ -641,17 +657,17 @@ impl FrameBuffer {
     pub fn validate(&self) -> Result<(), VideoEncoderError> {
         let expected = self.expected_size();
         if self.len != expected && self.format != PixelFormat::Jpeg {
-            return Err(VideoEncoderError::InvalidFrameData);
+            return Err(VideoEncoderError::InvalidFrameData("Invalid frame buffer size".to_string()));
         }
 
         // For JPEG, check magic bytes
         if self.format == PixelFormat::Jpeg {
             let data = self.data();
             if data.len() < 4 {
-                return Err(VideoEncoderError::InvalidFrameData);
+                return Err(VideoEncoderError::InvalidFrameData("Empty JPEG data".to_string()));
             }
             if data[0] != 0xFF || data[1] != 0xD8 || data[2] != 0xFF {
-                return Err(VideoEncoderError::InvalidFrameData);
+                return Err(VideoEncoderError::InvalidFrameData("Invalid JPEG header".to_string()));
             }
         }
 
@@ -701,7 +717,7 @@ impl DepthFrame {
     /// Validate the frame data.
     pub fn validate(&self) -> Result<(), VideoEncoderError> {
         if self.data.len() != self.expected_size() {
-            return Err(VideoEncoderError::InvalidFrameData);
+            return Err(VideoEncoderError::InvalidFrameData("Invalid depth frame size".to_string()));
         }
         Ok(())
     }

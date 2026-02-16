@@ -103,10 +103,8 @@ fn main() {
         println!("Submitted {} frames in {:?}", total_frames, submit_time);
 
         // Phase 2: Collect and encode per camera
-        let mut camera_buffers: std::collections::HashMap<
-            String,
-            Vec<DecodedFrame>,
-        > = std::collections::HashMap::new();
+        let mut camera_buffers: std::collections::HashMap<String, Vec<DecodedFrame>> =
+            std::collections::HashMap::new();
         for cam in BENCHMARK_CAMERAS {
             camera_buffers.insert(
                 cam.to_string(),
