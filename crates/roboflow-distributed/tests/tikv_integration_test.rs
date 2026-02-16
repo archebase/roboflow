@@ -1118,4 +1118,53 @@ mod tests {
     //         println!("TiKV integration tests require 'distributed' feature");
     //     }
     // }
+    // =============================================================================
+    // Scanner Lock Release-Then-Reacquire Tests
+    // =============================================================================
+
+    /// Verify that explicit `guard.release().await` followed by immediate re-acquire
+    /// works without WriteConflict errors. This tests the fix for the scanner loop
+    /// bug where `drop(guard)` caused fire-and-forget release racing with the next
+    /// `acquire_with_renewal`.
+    #[tokio::test]
+    async fn test_lock_release_then_reacquire_no_conflict() {
+        let Some(client) = get_tikv_or_skip().await else {
+            return;
+        };
+
+        let lock_manager = LockManager::new(client.clone(), "test-pod-reacquire");
+        let resource = format!("test_lock_reacquire_{}", uuid::Uuid::new_v4());
+
+        // Simulate the scanner loop pattern: acquire → release → immediately re-acquire
+        for iteration in 0..5 {
+            // Acquire lock (mirrors scanner's acquire_with_renewal)
+            let guard = lock_manager
+                .acquire_with_renewal_default(&resource)
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("Iteration {iteration}: acquire failed: {e}");
+                });
+
+            assert!(
+                guard.is_valid(),
+                "Iteration {iteration}: guard should be valid after acquire"
+            );
+
+            // Explicit release (the fix: replaces `drop(guard)` with `guard.release().await`)
+            let released = guard.release().await.unwrap_or_else(|e| {
+                panic!("Iteration {iteration}: release failed: {e}");
+            });
+            assert!(
+                released,
+                "Iteration {iteration}: release should return true"
+            );
+
+            // Verify the lock is actually released before re-acquiring
+            let is_locked = lock_manager.is_locked(&resource).await.unwrap();
+            assert!(
+                !is_locked,
+                "Iteration {iteration}: lock should be released before re-acquire"
+            );
+        }
+    }
 } // mod tests

@@ -1388,3 +1388,104 @@ impl FromAlignedFrame for LerobotFrame {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::{AlignedFrame, DatasetWriter, ImageData};
+    use crate::lerobot::config::{
+        DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig,
+    };
+
+    /// Build a minimal LerobotConfig with a custom FlushingConfig.
+    fn test_config(flushing: FlushingConfig) -> LerobotConfig {
+        use crate::common::config::DatasetBaseConfig;
+        LerobotConfig {
+            dataset: DatasetConfig {
+                base: DatasetBaseConfig {
+                    name: "test".to_string(),
+                    fps: 30,
+                    robot_type: None,
+                },
+                env_type: None,
+            },
+            mappings: Vec::new(),
+            video: VideoConfig::default(),
+            annotation_file: None,
+            flushing,
+            streaming: StreamingConfig::default(),
+        }
+    }
+
+    /// Create a small test frame with a tiny image.
+    fn make_frame(index: usize) -> AlignedFrame {
+        let mut frame = AlignedFrame::new(index, (index as u64) * 33_333_333); // ~30fps
+        frame.add_state("observation.state".to_string(), vec![index as f32; 6]);
+        frame.add_action("action".to_string(), vec![index as f32; 6]);
+        // 64x48 RGB image — small enough for fast encoding
+        let pixels = 64 * 48 * 3;
+        frame.add_image(
+            "observation.images.cam".to_string(),
+            ImageData::new(64, 48, vec![128u8; pixels]),
+        );
+        frame
+    }
+
+    #[test]
+    fn test_memory_flush_creates_multiple_episodes() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let flushing = FlushingConfig {
+            max_frames_per_chunk: 5,
+            max_memory_bytes: 0, // disable memory-based flushing
+            incremental_video_encoding: true,
+        };
+        let config = test_config(flushing);
+
+        let mut writer = LerobotWriter::new_local(tmp.path(), config).unwrap();
+
+        // Write 12 frames. With max_frames_per_chunk=5, the flush check fires
+        // after frames 0-4 (5 frames buffered) and again after frames 5-9.
+        // Remaining frames 10-11 are flushed by finalize().
+        for i in 0..12 {
+            writer.write_frame(&make_frame(i)).unwrap();
+        }
+
+        let stats = <LerobotWriter as DatasetWriter>::finalize(&mut writer).unwrap();
+
+        // ---- Verify total frame count across all episodes ----
+        assert_eq!(
+            stats.frames_written, 12,
+            "Expected 12 total frames written across episodes"
+        );
+
+        // ---- Verify that multiple parquet files exist (one per episode) ----
+        let parquet_dir = tmp.path().join("data/chunk-000");
+        let parquet_0 = parquet_dir.join("episode_000000.parquet");
+        let parquet_1 = parquet_dir.join("episode_000001.parquet");
+        let parquet_2 = parquet_dir.join("episode_000002.parquet");
+
+        assert!(
+            parquet_0.exists(),
+            "episode_000000.parquet should exist: {:?}",
+            parquet_0
+        );
+        assert!(
+            parquet_1.exists(),
+            "episode_000001.parquet should exist: {:?}",
+            parquet_1
+        );
+        assert!(
+            parquet_2.exists(),
+            "episode_000002.parquet should exist: {:?}",
+            parquet_2
+        );
+
+        // Verify no fourth episode (12 frames / 5 per chunk = 3 episodes)
+        let parquet_3 = parquet_dir.join("episode_000003.parquet");
+        assert!(
+            !parquet_3.exists(),
+            "episode_000003.parquet should NOT exist"
+        );
+    }
+}
