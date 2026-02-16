@@ -14,11 +14,13 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use tokio::sync::RwLock;
 use tokio::time::sleep;
 
 use super::config::WorkerConfig;
 use super::executor::TaskExecutor;
 use super::metrics::{ProcessingResult, WorkerMetrics};
+use super::registry::JobRegistry;
 use crate::batch::{BatchController, WorkUnit};
 use crate::shutdown::ShutdownHandler;
 use crate::tikv::{
@@ -47,6 +49,8 @@ pub struct Coordinator {
     shutdown_handler: ShutdownHandler,
     /// Batch controller for work unit operations.
     batch_controller: BatchController,
+    /// Job registry for canceling active jobs on shutdown.
+    job_registry: Arc<RwLock<JobRegistry>>,
 }
 
 impl Coordinator {
@@ -55,6 +59,7 @@ impl Coordinator {
         pod_id: impl Into<String>,
         tikv: Arc<TikvClient>,
         config: WorkerConfig,
+        job_registry: Arc<RwLock<JobRegistry>>,
     ) -> Result<Self, TikvError> {
         let batch_controller = BatchController::with_client(tikv.clone());
 
@@ -65,6 +70,7 @@ impl Coordinator {
             metrics: Arc::new(WorkerMetrics::new()),
             shutdown_handler: ShutdownHandler::new(),
             batch_controller,
+            job_registry,
         })
     }
 
@@ -284,6 +290,17 @@ impl Coordinator {
         // Start signal handler
         let mut shutdown_rx = self.shutdown_handler.start_signal_handler();
         let shutdown_tx = self.shutdown_handler.sender();
+
+        // Spawn background task to cancel all active jobs on shutdown
+        let registry_for_shutdown = self.job_registry.clone();
+        let mut cancel_rx = self.shutdown_handler.subscribe();
+        tokio::spawn(async move {
+            let _ = cancel_rx.recv().await;
+            let registry = registry_for_shutdown.read().await;
+            registry.cancel_all();
+            drop(registry);
+            tracing::info!("Cancelled all active jobs on shutdown");
+        });
 
         // Start heartbeat task
         let heartbeat_handle = self.spawn_heartbeat_task(shutdown_tx.subscribe());

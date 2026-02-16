@@ -72,7 +72,12 @@ impl Worker {
         let job_registry = Arc::new(RwLock::new(JobRegistry::default()));
 
         // Create coordinator
-        let coordinator = Coordinator::new(pod_id.clone(), tikv.clone(), config.clone())?;
+        let coordinator = Coordinator::new(
+            pod_id.clone(),
+            tikv.clone(),
+            config.clone(),
+            job_registry.clone(),
+        )?;
 
         // Create executor
         let executor = TaskExecutor::new(
@@ -144,7 +149,12 @@ impl Worker {
         let job_registry = Arc::new(RwLock::new(JobRegistry::default()));
 
         // Create coordinator
-        let coordinator = Coordinator::new(pod_id.clone(), tikv.clone(), config.clone())?;
+        let coordinator = Coordinator::new(
+            pod_id.clone(),
+            tikv.clone(),
+            config.clone(),
+            job_registry.clone(),
+        )?;
 
         // Create executor with episode allocator
         let executor = TaskExecutor::with_episode_allocator(
