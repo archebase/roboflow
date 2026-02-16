@@ -97,11 +97,11 @@ use roboflow_storage::S3Config;
 
 use crate::common::ImageData;
 use crate::common::camera_streaming_pipeline::{
-    StreamingPipelineConfig, StreamingUploadCommand,
-    spawn_streaming_pipeline, EitherPipeline, PipelineAdapter,
+    EitherPipeline, PipelineAdapter, StreamingPipelineConfig, StreamingUploadCommand,
+    spawn_streaming_pipeline,
 };
-use roboflow_video::pipeline::{ThreeStageConfig};
 use crate::common::video::VideoEncoderConfig;
+use roboflow_video::pipeline::ThreeStageConfig;
 
 /// Configuration for concurrent video encoder.
 #[derive(Debug, Clone)]
@@ -250,9 +250,11 @@ impl ConcurrentVideoEncoder {
                 chunk_size: self.config.chunk_size,
             };
 
-            EitherPipeline::Adapter(
-                PipelineAdapter::new(camera.to_string(), three_stage_config, upload_tx)?
-            )
+            EitherPipeline::Adapter(PipelineAdapter::new(
+                camera.to_string(),
+                three_stage_config,
+                upload_tx,
+            )?)
         } else {
             // Create 2-stage pipeline (single-threaded decode + encode)
             let handle = spawn_streaming_pipeline(pipeline_config, upload_tx)?;

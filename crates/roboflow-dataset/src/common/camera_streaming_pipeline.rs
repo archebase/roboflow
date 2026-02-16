@@ -18,11 +18,11 @@
 use crossbeam_channel::{Receiver, Sender};
 use roboflow_core::{Result, RoboflowError};
 
-use roboflow_video::StreamingMp4Encoder;
-use roboflow_video::streaming::{EncodedChunk, StreamingEncoderConfig};
-use roboflow_video::pipeline::{PipelineConfig};
 use crate::common::video::VideoEncoderConfig;
 use crate::common::{ImageData, decode_to_rgb};
+use roboflow_video::StreamingMp4Encoder;
+use roboflow_video::pipeline::PipelineConfig;
+use roboflow_video::streaming::{EncodedChunk, StreamingEncoderConfig};
 
 // =============================================================================
 // Commands
@@ -310,13 +310,9 @@ impl CameraStreamingPipeline {
             .with_dimensions(self.width, self.height)
             .with_codec(StreamingEncoderConfig::detect_best_codec());
 
-        let encoder = StreamingMp4Encoder::with_dimensions(
-            encoder_config,
-            chunk_tx,
-            self.width,
-            self.height,
-        )
-        .map_err(|e| RoboflowError::encode("CameraStreamingPipeline", e.to_string()))?;
+        let encoder =
+            StreamingMp4Encoder::with_dimensions(encoder_config, chunk_tx, self.width, self.height)
+                .map_err(|e| RoboflowError::encode("CameraStreamingPipeline", e.to_string()))?;
 
         tracing::info!(
             camera = %self.camera,
@@ -602,30 +598,21 @@ impl PipelineAdapter {
         self.cmd_tx
             .send(StreamingCommand::AddFrame { image })
             .map_err(|e| {
-                RoboflowError::encode(
-                    "PipelineAdapter",
-                    format!("Failed to send frame: {}", e),
-                )
+                RoboflowError::encode("PipelineAdapter", format!("Failed to send frame: {}", e))
             })
     }
 
     /// Signal the pipeline to flush and finish.
     pub fn flush(&self) -> Result<()> {
         self.cmd_tx.send(StreamingCommand::Flush).map_err(|e| {
-            RoboflowError::encode(
-                "PipelineAdapter",
-                format!("Failed to send flush: {}", e),
-            )
+            RoboflowError::encode("PipelineAdapter", format!("Failed to send flush: {}", e))
         })
     }
 
     /// Signal the pipeline to shutdown immediately.
     pub fn shutdown(&self) -> Result<()> {
         self.cmd_tx.send(StreamingCommand::Shutdown).map_err(|e| {
-            RoboflowError::encode(
-                "PipelineAdapter",
-                format!("Failed to send shutdown: {}", e),
-            )
+            RoboflowError::encode("PipelineAdapter", format!("Failed to send shutdown: {}", e))
         })
     }
 
@@ -645,7 +632,6 @@ impl PipelineAdapter {
 // =============================================================================
 // Spawn Function
 // =============================================================================
-
 
 // =============================================================================
 // EitherPipeline Enum

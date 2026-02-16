@@ -17,7 +17,9 @@ use tracing::{debug, trace, warn};
 
 use crate::decode::DecodedFrame;
 use crate::frame::{FrameBuffer, FrameFormat, PixelFormat, VideoFrame};
-use crate::simd::{rgb_batch_to_nv12, ConversionStrategy, rgb_to_nv12, rgb_to_nv12_in_place, rgb_to_yuv420p};
+use crate::simd::{
+    ConversionStrategy, rgb_batch_to_nv12, rgb_to_nv12, rgb_to_nv12_in_place, rgb_to_yuv420p,
+};
 
 /// Color space converter trait.
 ///
@@ -576,7 +578,10 @@ fn convert_worker_loop(
             let height = cmd.frames[0].height();
 
             // Validate all frames have same dimensions
-            let same_dimensions = cmd.frames.iter().all(|f| f.width() == width && f.height() == height);
+            let same_dimensions = cmd
+                .frames
+                .iter()
+                .all(|f| f.width() == width && f.height() == height);
 
             if same_dimensions {
                 // Collect RGB data slices for batch processing
@@ -585,7 +590,9 @@ fn convert_worker_loop(
                 match rgb_batch_to_nv12(&rgb_data, width as usize, height as usize) {
                     Ok(batch_result) => {
                         // Batch conversion succeeded - create zero-copy frames
-                        for ((y_plane, uv_plane), _frame) in batch_result.into_iter().zip(cmd.frames) {
+                        for ((y_plane, uv_plane), _frame) in
+                            batch_result.into_iter().zip(cmd.frames)
+                        {
                             // Calculate NV12 data size
                             let y_size = (width as usize) * (height as usize);
                             let uv_size = (width as usize / 2) * (height as usize / 2) * 2;
@@ -604,7 +611,8 @@ fn convert_worker_loop(
                                 height,
                             );
 
-                            converted_frames.push(ConvertedFrameZeroCopy::InPlace(Arc::new(frame_buffer)));
+                            converted_frames
+                                .push(ConvertedFrameZeroCopy::InPlace(Arc::new(frame_buffer)));
                             stats_converted.fetch_add(1, Ordering::Relaxed);
                         }
                     }

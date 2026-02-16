@@ -96,19 +96,22 @@ pub use hardware::{
     available_encoders, check_nvenc_available, check_videotoolbox_available, is_encoder_available,
     print_encoder_diagnostics, select_best_encoder,
 };
-pub use hardware_config::{detect_hardware_backend, HardwareBackend, HardwareConfig};
+pub use hardware_config::{HardwareBackend, HardwareConfig, detect_hardware_backend};
 pub use rsmpeg::{
     EncodeFrame, RsmpegEncoder, RsmpegEncoderConfig, RsmpegMp4Encoder, default_codec_name,
     is_hardware_encoding_available, is_rsmpeg_available,
 };
 pub use simd::{
-    optimal_strategy, rgb_batch_to_nv12, rgb_batch_to_yuv420p, rgb_to_nv12, rgb_to_nv12_in_place,
-    rgb_to_yuv420p, ConversionStrategy,
+    ConversionStrategy, optimal_strategy, rgb_batch_to_nv12, rgb_batch_to_yuv420p, rgb_to_nv12,
+    rgb_to_nv12_in_place, rgb_to_yuv420p,
 };
 pub use streaming::{EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder};
 
 // Pipeline abstraction (Clean Architecture for pipeline selection)
-pub use pipeline::{PipelineHandle, PipelineResult, PipelineConfig, TwoStageConfig, ThreeStageConfig, TwoStagePipeline, ThreeStagePipeline};
+pub use pipeline::{
+    PipelineConfig, PipelineHandle, PipelineResult, ThreeStageConfig, ThreeStagePipeline,
+    TwoStageConfig, TwoStagePipeline,
+};
 
 /// Image data for video encoding.
 ///

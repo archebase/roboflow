@@ -247,7 +247,10 @@ pub struct StreamingMp4Encoder {
 
 impl StreamingMp4Encoder {
     /// Create a new streaming encoder.
-    pub fn new(config: StreamingEncoderConfig, chunk_tx: Sender<EncodedChunk>) -> Result<Self, VideoEncoderError> {
+    pub fn new(
+        config: StreamingEncoderConfig,
+        chunk_tx: Sender<EncodedChunk>,
+    ) -> Result<Self, VideoEncoderError> {
         let avio_state = Arc::new(Mutex::new(AvioWriteState::new(chunk_tx, config.chunk_size)));
         Ok(Self {
             codec_context: None,
@@ -299,14 +302,7 @@ impl StreamingMp4Encoder {
 
         tracing::debug!("create_custom_avio: allocating AVIO context");
 
-        AVIOContextCustom::alloc_context(
-            buffer,
-            true,
-            Vec::new(),
-            None,
-            Some(write_callback),
-            None,
-        )
+        AVIOContextCustom::alloc_context(buffer, true, Vec::new(), None, Some(write_callback), None)
     }
 
     /// Initialize the FFmpeg encoder.
@@ -326,8 +322,10 @@ impl StreamingMp4Encoder {
 
         // Find codec
         let codec_name_with_nul = format!("{}\0", self.config.codec);
-        let codec_name = CStr::from_bytes_with_nul(codec_name_with_nul.as_bytes())
-            .map_err(|_| VideoEncoderError::InitializationError("Invalid codec name".to_string()))?;
+        let codec_name =
+            CStr::from_bytes_with_nul(codec_name_with_nul.as_bytes()).map_err(|_| {
+                VideoEncoderError::InitializationError("Invalid codec name".to_string())
+            })?;
 
         let codec = AVCodec::find_encoder_by_name(codec_name)
             .or_else(|| {
@@ -405,7 +403,10 @@ impl StreamingMp4Encoder {
             .io_context(AVIOContextContainer::Custom(avio_context))
             .build()
             .map_err(|e| {
-                VideoEncoderError::InitializationError(format!("Failed to create format context: {}", e))
+                VideoEncoderError::InitializationError(format!(
+                    "Failed to create format context: {}",
+                    e
+                ))
             })?;
 
         // Create video stream
@@ -499,8 +500,7 @@ impl StreamingMp4Encoder {
         }
 
         unsafe {
-            let frame_data_slice =
-                std::slice::from_raw_parts_mut(frame_data, rgb_data.len());
+            let frame_data_slice = std::slice::from_raw_parts_mut(frame_data, rgb_data.len());
             frame_data_slice.copy_from_slice(rgb_data);
         }
 
@@ -545,9 +545,9 @@ impl StreamingMp4Encoder {
             VideoEncoderError::FrameError("Codec context not initialized".to_string())
         })?;
 
-        codec_context.send_frame(Some(&yuv_frame)).map_err(|e| {
-            VideoEncoderError::Encoding(format!("Failed to send frame: {}", e))
-        })?;
+        codec_context
+            .send_frame(Some(&yuv_frame))
+            .map_err(|e| VideoEncoderError::Encoding(format!("Failed to send frame: {}", e)))?;
 
         self.receive_and_write_packets()?;
 

@@ -42,13 +42,13 @@
 //! let result = pipeline.join()?;
 //! ```
 
-pub mod two_stage;
 pub mod three_stage;
+pub mod two_stage;
 
 use std::sync::mpsc::Sender;
 
-pub use two_stage::{TwoStageConfig, TwoStagePipeline};
 pub use three_stage::{ThreeStageConfig, ThreeStagePipeline};
+pub use two_stage::{TwoStageConfig, TwoStagePipeline};
 
 use crate::ImageData;
 
@@ -115,7 +115,10 @@ pub trait PipelineConfig: Send + Sync {
     /// # Returns
     ///
     /// A boxed pipeline handle ready to receive frames.
-    fn create_pipeline(&self, upload_tx: Sender<super::streaming::EncodedChunk>) -> std::io::Result<Box<dyn PipelineHandle>>;
+    fn create_pipeline(
+        &self,
+        upload_tx: Sender<super::streaming::EncodedChunk>,
+    ) -> std::io::Result<Box<dyn PipelineHandle>>;
 }
 
 #[cfg(test)]

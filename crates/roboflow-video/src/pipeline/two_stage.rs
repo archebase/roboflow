@@ -22,13 +22,13 @@
 //! - Memory-constrained environments
 //! - When hardware encoding is not available
 
+use std::io;
 use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
-use std::io;
 
+use super::{PipelineConfig, PipelineHandle, PipelineResult};
 use crate::ImageData;
 use crate::streaming::{EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder};
-use super::{PipelineHandle, PipelineResult, PipelineConfig};
 
 /// Configuration for the two-stage pipeline.
 #[derive(Debug, Clone)]
@@ -52,7 +52,10 @@ impl Default for TwoStageConfig {
 }
 
 impl PipelineConfig for TwoStageConfig {
-    fn create_pipeline(&self, upload_tx: Sender<EncodedChunk>) -> io::Result<Box<dyn PipelineHandle>> {
+    fn create_pipeline(
+        &self,
+        upload_tx: Sender<EncodedChunk>,
+    ) -> io::Result<Box<dyn PipelineHandle>> {
         TwoStagePipeline::new(self.clone(), upload_tx)
             .map(|p| Box::new(p) as Box<dyn PipelineHandle>)
     }
@@ -62,6 +65,7 @@ impl PipelineConfig for TwoStageConfig {
 ///
 /// This pipeline wraps `StreamingMp4Encoder` and runs it in a dedicated thread.
 pub struct TwoStagePipeline {
+    #[allow(dead_code)] // Stored for debugging and potential future use
     camera: String,
     cmd_tx: Sender<PipelineCommand>,
     thread_handle: Option<JoinHandle<std::io::Result<PipelineResult>>>,
@@ -84,9 +88,7 @@ impl TwoStagePipeline {
 
         let handle = std::thread::Builder::new()
             .name(format!("two-stage-pipeline-{}", camera))
-            .spawn(move || {
-                Self::run_pipeline(camera, cmd_rx, upload_tx, video_config)
-            })
+            .spawn(move || Self::run_pipeline(camera, cmd_rx, upload_tx, video_config))
             .map_err(|e| io::Error::other(e.to_string()))?;
 
         Ok(Self {
@@ -103,27 +105,25 @@ impl TwoStagePipeline {
         upload_tx: Sender<EncodedChunk>,
         video_config: StreamingEncoderConfig,
     ) -> io::Result<PipelineResult> {
-        let mut encoder = StreamingMp4Encoder::new(video_config, upload_tx)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let mut encoder =
+            StreamingMp4Encoder::new(video_config, upload_tx).map_err(io::Error::other)?;
         let mut frames_encoded = 0usize;
         let mut frames_skipped = 0usize;
 
         // Process commands
         while let Ok(cmd) = cmd_rx.recv() {
             match cmd {
-                PipelineCommand::AddFrame(image) => {
-                    match handle_image(&mut encoder, &image) {
-                        Ok(_) => frames_encoded += 1,
-                        Err(e) => {
-                            tracing::warn!(
-                                camera = %camera,
-                                error = %e,
-                                "Failed to encode frame, skipping"
-                            );
-                            frames_skipped += 1;
-                        }
+                PipelineCommand::AddFrame(image) => match handle_image(&mut encoder, &image) {
+                    Ok(_) => frames_encoded += 1,
+                    Err(e) => {
+                        tracing::warn!(
+                            camera = %camera,
+                            error = %e,
+                            "Failed to encode frame, skipping"
+                        );
+                        frames_skipped += 1;
                     }
-                }
+                },
                 PipelineCommand::Flush => break,
                 PipelineCommand::Shutdown => {
                     return Err(io::Error::other("Pipeline shutdown requested"));
@@ -132,8 +132,7 @@ impl TwoStagePipeline {
         }
 
         // Finalize encoder
-        encoder.finalize()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        encoder.finalize().map_err(io::Error::other)?;
 
         Ok(PipelineResult {
             camera,
@@ -153,28 +152,25 @@ fn handle_image(encoder: &mut StreamingMp4Encoder, image: &ImageData) -> io::Res
         // Already RGB
         if image.width == 0 || image.height == 0 {
             return Err(io::Error::other(
-                "Cannot encode raw image with zero dimensions"
+                "Cannot encode raw image with zero dimensions",
             ));
         }
         image.data.clone()
     };
 
-    encoder.add_frame(&rgb_data)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    encoder.add_frame(&rgb_data).map_err(io::Error::other)
 }
 
 /// Decode an encoded image (JPEG/PNG) to RGB.
 fn decode_image(data: &[u8]) -> io::Result<Vec<u8>> {
     // Check for JPEG magic bytes
-    let is_jpeg = data.len() >= 3
-        && data[0] == 0xFF
-        && data[1] == 0xD8
-        && data[2] == 0xFF;
+    let is_jpeg = data.len() >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF;
 
     if is_jpeg {
         // Use zune-jpeg for fast decoding
         let mut decoder = zune_jpeg::JpegDecoder::new(data);
-        decoder.decode()
+        decoder
+            .decode()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
     } else {
         // Fall back to image crate for PNG and other formats
@@ -204,11 +200,13 @@ impl PipelineHandle for TwoStagePipeline {
     }
 
     fn join(mut self: Box<Self>) -> io::Result<PipelineResult> {
-        let handle = self.thread_handle
+        let handle = self
+            .thread_handle
             .take()
             .ok_or_else(|| io::Error::other("Pipeline already joined"))?;
 
-        handle.join()
+        handle
+            .join()
             .map_err(|e| io::Error::other(format!("Pipeline thread panicked: {:?}", e)))?
     }
 }
@@ -228,8 +226,9 @@ mod tests {
     fn test_decode_jpeg() {
         // Minimal JPEG header (1x1 red pixel)
         let jpeg = vec![
-            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01,
-            0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00,
+            0x00, 0x01, 0x00, 0x01, 0x00,
+            0x00,
             // This is not a valid JPEG, just testing the magic byte check
         ];
 

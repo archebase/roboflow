@@ -13,16 +13,16 @@ use std::time::Duration;
 
 use tracing::{debug, info, warn};
 
+use super::{PipelineConfig, PipelineHandle, PipelineResult};
 use crate::{
     ImageData,
-    decode::{DecodePool, DecodePoolConfig, DecodedFrame},
-    convert::{ConvertPool, ConvertPoolConfig, ConvertCommand, TargetFormat},
-    encoder_pool::{EncoderPool, EncoderPoolConfig, EncodeCommand},
     config::VideoEncoderConfig,
-    streaming::EncodedChunk,
+    convert::{ConvertCommand, ConvertPool, ConvertPoolConfig, TargetFormat},
+    decode::{DecodePool, DecodePoolConfig, DecodedFrame},
+    encoder_pool::{EncodeCommand, EncoderPool, EncoderPoolConfig},
     fragment::FragmentEncoderConfig,
+    streaming::EncodedChunk,
 };
-use super::{PipelineHandle, PipelineResult, PipelineConfig};
 
 /// Configuration for the three-stage pipeline.
 #[derive(Debug, Clone)]
@@ -52,9 +52,9 @@ impl Default for ThreeStageConfig {
         Self {
             camera: String::new(),
             video_config: VideoEncoderConfig::default(),
-            decode_workers: Some((cpu_count * 2 / 5).max(1)),   // 40% for decode
-            convert_workers: Some((cpu_count * 1 / 5).max(1)),  // 20% for convert
-            encode_workers: Some((cpu_count * 2 / 5).max(2)),   // 40% for encode
+            decode_workers: Some((cpu_count * 2 / 5).max(1)), // 40% for decode
+            convert_workers: Some((cpu_count / 5).max(1)),    // 20% for convert
+            encode_workers: Some((cpu_count * 2 / 5).max(2)), // 40% for encode
             pending_capacity: 512,
             completed_capacity: 512,
             frames_per_fragment: 30,
@@ -64,7 +64,10 @@ impl Default for ThreeStageConfig {
 }
 
 impl PipelineConfig for ThreeStageConfig {
-    fn create_pipeline(&self, upload_tx: Sender<EncodedChunk>) -> io::Result<Box<dyn PipelineHandle>> {
+    fn create_pipeline(
+        &self,
+        upload_tx: Sender<EncodedChunk>,
+    ) -> io::Result<Box<dyn PipelineHandle>> {
         ThreeStagePipeline::new(self.clone(), upload_tx)
             .map(|p| Box::new(p) as Box<dyn PipelineHandle>)
     }
@@ -72,6 +75,7 @@ impl PipelineConfig for ThreeStageConfig {
 
 /// Three-stage pipeline handle.
 pub struct ThreeStagePipeline {
+    #[allow(dead_code)] // Stored for debugging and potential future use
     camera: String,
     cmd_tx: Sender<PipelineCommand>,
     thread_handle: Option<JoinHandle<std::io::Result<PipelineResult>>>,
@@ -94,9 +98,7 @@ impl ThreeStagePipeline {
 
         let handle = std::thread::Builder::new()
             .name(format!("three-stage-pipeline-{}", camera))
-            .spawn(move || {
-                run_coordinator(camera, cmd_rx, upload_tx, config, chunk_size)
-            })
+            .spawn(move || run_coordinator(camera, cmd_rx, upload_tx, config, chunk_size))
             .map_err(|e| io::Error::other(e.to_string()))?;
 
         Ok(Self {
@@ -173,6 +175,7 @@ fn run_coordinator(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn coordinator_loop(
     camera: String,
     cmd_rx: std::sync::mpsc::Receiver<PipelineCommand>,
@@ -212,13 +215,7 @@ fn coordinator_loop(
             // Try to receive next command with timeout
             match cmd_rx.recv_timeout(Duration::from_millis(10)) {
                 Ok(PipelineCommand::AddFrame(image)) => {
-                    submit_decode(
-                        &decode_pool,
-                        &camera,
-                        image,
-                        sequence,
-                        &pending_decodes,
-                    )?;
+                    submit_decode(&decode_pool, &camera, image, sequence, &pending_decodes)?;
                     sequence += 1;
                     continue;
                 }
@@ -245,13 +242,7 @@ fn coordinator_loop(
             progress = true;
             match cmd {
                 PipelineCommand::AddFrame(image) => {
-                    submit_decode(
-                        &decode_pool,
-                        &camera,
-                        image,
-                        sequence,
-                        &pending_decodes,
-                    )?;
+                    submit_decode(&decode_pool, &camera, image, sequence, &pending_decodes)?;
                     sequence += 1;
                 }
                 PipelineCommand::Flush => {
@@ -385,7 +376,9 @@ fn coordinator_loop(
     }
 
     // Wait for all pending operations to complete
-    while pending_converts.load(Ordering::Relaxed) > 0 || pending_encodes.load(Ordering::Relaxed) > 0 {
+    while pending_converts.load(Ordering::Relaxed) > 0
+        || pending_encodes.load(Ordering::Relaxed) > 0
+    {
         while let Some(convert_result) = convert_pool.try_recv() {
             pending_converts.fetch_sub(1, Ordering::Relaxed);
             if let Ok(converted_frames) = convert_result.result {
@@ -393,7 +386,13 @@ fn coordinator_loop(
                     .into_iter()
                     .map(|f| f.to_video_frame())
                     .collect();
-                submit_encode(&encode_pool, &camera, video_frames, convert_result.sequence as u32, &pending_encodes)?;
+                submit_encode(
+                    &encode_pool,
+                    &camera,
+                    video_frames,
+                    convert_result.sequence as u32,
+                    &pending_encodes,
+                )?;
             }
         }
 
@@ -401,16 +400,13 @@ fn coordinator_loop(
             pending_encodes.fetch_sub(1, Ordering::Relaxed);
             if let Ok(fragment) = encode_result.result {
                 frames_encoded += fragment.frame_count;
-                match fragment.read_data() {
-                    Ok(data) => {
-                        for chunk_data in data.chunks(chunk_size) {
-                            let chunk = EncodedChunk::new(chunk_data.to_vec());
-                            if upload_tx.send(chunk).is_err() {
-                                break;
-                            }
+                if let Ok(data) = fragment.read_data() {
+                    for chunk_data in data.chunks(chunk_size) {
+                        let chunk = EncodedChunk::new(chunk_data.to_vec());
+                        if upload_tx.send(chunk).is_err() {
+                            break;
                         }
                     }
-                    Err(_) => {}
                 }
             }
         }
@@ -475,7 +471,12 @@ fn submit_encode(
     fragment_index: u32,
     pending: &Arc<AtomicUsize>,
 ) -> io::Result<()> {
-    let cmd = EncodeCommand::new(fragment_index as u64, camera.to_string(), frames, fragment_index);
+    let cmd = EncodeCommand::new(
+        fragment_index as u64,
+        camera.to_string(),
+        frames,
+        fragment_index,
+    );
     encode_pool.submit(cmd)?;
     pending.fetch_add(1, Ordering::Relaxed);
     Ok(())
@@ -501,11 +502,13 @@ impl PipelineHandle for ThreeStagePipeline {
     }
 
     fn join(mut self: Box<Self>) -> io::Result<PipelineResult> {
-        let handle = self.thread_handle
+        let handle = self
+            .thread_handle
             .take()
             .ok_or_else(|| io::Error::other("Pipeline already joined"))?;
 
-        handle.join()
+        handle
+            .join()
             .map_err(|e| io::Error::other(format!("Pipeline thread panicked: {:?}", e)))?
     }
 }
