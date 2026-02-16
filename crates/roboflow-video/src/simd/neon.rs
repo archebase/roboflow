@@ -199,6 +199,38 @@ pub fn rgb_to_nv12_neon(
     }
 }
 
+// =============================================================================
+// Batch Conversion Functions
+// =============================================================================
+
+/// Convert multiple RGB24 frames to NV12 using NEON batch processing.
+#[cfg(target_arch = "aarch64")]
+pub fn rgb_batch_to_nv12_neon(
+    rgb_frames: &[&[u8]],
+    width: usize,
+    height: usize,
+    results: &mut [(Vec<u8>, Vec<u8>)],
+) {
+    for (i, &rgb_data) in rgb_frames.iter().enumerate() {
+        let (y_plane, uv_plane) = results.get_mut(i).unwrap();
+        rgb_to_nv12_neon(rgb_data, width, height, y_plane, uv_plane);
+    }
+}
+
+/// Convert multiple RGB24 frames to YUV420P using NEON batch processing.
+#[cfg(target_arch = "aarch64")]
+pub fn rgb_batch_to_yuv420p_neon(
+    rgb_frames: &[&[u8]],
+    width: usize,
+    height: usize,
+    results: &mut [(Vec<u8>, Vec<u8>, Vec<u8>)],
+) {
+    for (i, &rgb_data) in rgb_frames.iter().enumerate() {
+        let (y_plane, u_plane, v_plane) = results.get_mut(i).unwrap();
+        rgb_to_yuv420p_neon(rgb_data, width, height, y_plane, u_plane, v_plane);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

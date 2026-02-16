@@ -7,6 +7,16 @@
 //! This module provides a pool of encoder workers that can encode
 //! video fragments in parallel, utilizing multiple CPU cores and
 //! potentially multiple GPU encoders.
+//!
+//! # Design
+//!
+//! The encoder pool accepts pre-converted `VideoFrame` objects which can be:
+//! - RGB24 (converted by encoder via sws_scale)
+//! - NV12 (pre-converted via SIMD, 8-12x faster)
+//! - YUV420P (pre-converted via SIMD)
+//!
+//! For best performance, use the three-stage pipeline with ConvertPool
+//! to pre-convert frames before encoding.
 
 use std::io;
 use std::sync::Arc;
@@ -17,6 +27,7 @@ use tracing::{debug, trace, warn};
 
 use crate::decode::DecodedFrame;
 use crate::fragment::{FragmentEncoder, FragmentEncoderConfig, FragmentInfo};
+use crate::frame::VideoFrame;
 use crate::simd::{ConversionStrategy, optimal_strategy};
 
 /// Command sent to encoder workers.
@@ -26,10 +37,85 @@ pub struct EncodeCommand {
     pub sequence: u64,
     /// Camera identifier.
     pub camera_id: String,
-    /// Frames to encode.
-    pub frames: Vec<DecodedFrame>,
+    /// Frames to encode (pre-converted VideoFrame).
+    pub frames: Vec<VideoFrame>,
     /// Fragment index.
     pub fragment_index: u32,
+}
+
+impl EncodeCommand {
+    /// Create a new encode command from pre-converted frames.
+    pub fn new(
+        sequence: u64,
+        camera_id: String,
+        frames: Vec<VideoFrame>,
+        fragment_index: u32,
+    ) -> Self {
+        Self {
+            sequence,
+            camera_id,
+            frames,
+            fragment_index,
+        }
+    }
+
+    /// Create an encode command from decoded RGB frames with inline SIMD conversion.
+    ///
+    /// This uses batch SIMD conversion for better cache utilization and reduced overhead.
+    /// For best performance, use the three-stage pipeline with ConvertPool.
+    pub fn from_decoded(
+        sequence: u64,
+        camera_id: String,
+        decoded_frames: Vec<DecodedFrame>,
+        fragment_index: u32,
+    ) -> Self {
+        if decoded_frames.is_empty() {
+            return Self {
+                sequence,
+                camera_id,
+                frames: Vec::new(),
+                fragment_index,
+            };
+        }
+
+        // All frames should have the same dimensions (validated by caller)
+        let width = decoded_frames[0].width();
+        let height = decoded_frames[0].height();
+        let width_usize = width as usize;
+        let height_usize = height as usize;
+
+        // Collect RGB data as slices for batch processing
+        let rgb_data: Vec<&[u8]> = decoded_frames.iter().map(|f| f.data()).collect();
+
+        // Use batch SIMD conversion - better cache locality, fewer allocations
+        let frames = match crate::simd::rgb_batch_to_nv12(&rgb_data, width_usize, height_usize) {
+            Ok(converted) => converted
+                .into_iter()
+                .map(|(y_plane, uv_plane)| VideoFrame::from_nv12(width, height, y_plane, uv_plane))
+                .collect(),
+            Err(_) => {
+                // Fallback to per-frame conversion if batch fails
+                decoded_frames
+                    .into_iter()
+                    .map(
+                        |f| match crate::simd::rgb_to_nv12(f.data(), width_usize, height_usize) {
+                            Ok((y_plane, uv_plane)) => {
+                                VideoFrame::from_nv12(width, height, y_plane, uv_plane)
+                            }
+                            Err(_) => VideoFrame::new(width, height, f.data().to_vec()),
+                        },
+                    )
+                    .collect()
+            }
+        };
+
+        Self {
+            sequence,
+            camera_id,
+            frames,
+            fragment_index,
+        }
+    }
 }
 
 /// Result from an encoder worker.
@@ -56,14 +142,20 @@ pub struct EncoderPoolConfig {
     pub completed_capacity: usize,
     /// Fragment encoder configuration template.
     pub fragment_config: FragmentEncoderConfig,
-    /// Colorspace conversion strategy.
+    /// Colorspace conversion strategy (for backward compat logging).
     pub conversion_strategy: ConversionStrategy,
 }
 
 impl Default for EncoderPoolConfig {
     fn default() -> Self {
+        let cpu_count = num_cpus::get();
+        // VideoToolbox encoding still needs CPU for frame feeding and format conversion
+        // Allocate more workers for better parallelism
+        // On 10 cores: 6 encode workers (60%) + 4 decode workers (40%)
+        let encode_workers = (cpu_count * 3).div_ceil(5).max(2); // ~60% of CPUs, min 2
+
         Self {
-            worker_count: 2,
+            worker_count: encode_workers,
             pending_capacity: 32,
             completed_capacity: 32,
             fragment_config: FragmentEncoderConfig::default(),
@@ -97,12 +189,14 @@ pub struct EncoderPool {
     result_rx: Receiver<EncodeResult>,
     /// Worker count.
     worker_count: usize,
-    /// Statistics.
-    stats_encoded: AtomicU64,
-    stats_failed: AtomicU64,
-    stats_frames: AtomicU64,
+    /// Statistics (shared with workers for updates).
+    stats_encoded: Arc<AtomicU64>,
+    stats_failed: Arc<AtomicU64>,
+    stats_frames: Arc<AtomicU64>,
     /// Active worker counter.
-    active_workers: AtomicUsize,
+    active_workers: Arc<AtomicUsize>,
+    /// In-flight commands being processed by workers.
+    in_flight: Arc<AtomicUsize>,
 }
 
 impl EncoderPool {
@@ -116,16 +210,37 @@ impl EncoderPool {
         let cmd_rx = Arc::new(cmd_rx);
         let result_tx = Arc::new(result_tx);
 
+        // Create shared stats counters
+        let stats_encoded = Arc::new(AtomicU64::new(0));
+        let stats_failed = Arc::new(AtomicU64::new(0));
+        let stats_frames = Arc::new(AtomicU64::new(0));
+        let active_workers = Arc::new(AtomicUsize::new(config.worker_count));
+        let in_flight = Arc::new(AtomicUsize::new(0));
+
         for worker_id in 0..config.worker_count {
             let cmd_rx = Arc::clone(&cmd_rx);
             let result_tx = Arc::clone(&result_tx);
             let fragment_config = config.fragment_config.clone();
-            let strategy = config.conversion_strategy;
+            let stats_encoded = Arc::clone(&stats_encoded);
+            let stats_failed = Arc::clone(&stats_failed);
+            let stats_frames = Arc::clone(&stats_frames);
+            let active_workers = Arc::clone(&active_workers);
+            let in_flight = Arc::clone(&in_flight);
 
             let handle = std::thread::Builder::new()
                 .name(format!("encoder-worker-{}", worker_id))
                 .spawn(move || {
-                    encoder_worker_loop(worker_id, cmd_rx, result_tx, fragment_config, strategy);
+                    encoder_worker_loop(
+                        worker_id,
+                        cmd_rx,
+                        result_tx,
+                        fragment_config,
+                        &stats_encoded,
+                        &stats_failed,
+                        &stats_frames,
+                        &active_workers,
+                        &in_flight,
+                    );
                 })
                 .map_err(|e| io::Error::other(e.to_string()))?;
 
@@ -141,10 +256,11 @@ impl EncoderPool {
             cmd_tx,
             result_rx,
             worker_count: config.worker_count,
-            stats_encoded: AtomicU64::new(0),
-            stats_failed: AtomicU64::new(0),
-            stats_frames: AtomicU64::new(0),
-            active_workers: AtomicUsize::new(config.worker_count),
+            stats_encoded,
+            stats_failed,
+            stats_frames,
+            active_workers,
+            in_flight,
         })
     }
 
@@ -173,9 +289,14 @@ impl EncoderPool {
             fragments_encoded: self.stats_encoded.load(Ordering::Relaxed),
             fragments_failed: self.stats_failed.load(Ordering::Relaxed),
             frames_encoded: self.stats_frames.load(Ordering::Relaxed),
-            pending_count: self.cmd_tx.len(),
+            pending_count: self.cmd_tx.len() + self.in_flight.load(Ordering::Relaxed),
             active_workers: self.active_workers.load(Ordering::Relaxed),
         }
+    }
+
+    /// Get the number of results waiting to be received.
+    pub fn result_count(&self) -> usize {
+        self.result_rx.len()
     }
 
     /// Shutdown the pool.
@@ -193,52 +314,50 @@ impl EncoderPool {
 }
 
 /// Encoder worker loop.
+#[allow(clippy::too_many_arguments)]
 fn encoder_worker_loop(
     worker_id: usize,
     cmd_rx: Arc<Receiver<EncodeCommand>>,
     result_tx: Arc<Sender<EncodeResult>>,
     fragment_config: FragmentEncoderConfig,
-    strategy: ConversionStrategy,
+    stats_encoded: &Arc<AtomicU64>,
+    stats_failed: &Arc<AtomicU64>,
+    stats_frames: &Arc<AtomicU64>,
+    active_workers: &Arc<AtomicUsize>,
+    in_flight: &Arc<AtomicUsize>,
 ) {
-    debug!(worker_id, strategy = ?strategy, "Encoder worker started");
+    debug!(worker_id, "Encoder worker started");
 
     // Create a persistent encoder for this worker
     let mut encoder = match FragmentEncoder::new(fragment_config.clone()) {
         Ok(e) => e,
         Err(e) => {
             warn!(worker_id, error = %e, "Failed to create encoder");
+            active_workers.fetch_sub(1, Ordering::Relaxed);
             return;
         }
     };
 
     while let Ok(cmd) = cmd_rx.recv() {
+        in_flight.fetch_add(1, Ordering::Relaxed);
+        let frame_count = cmd.frames.len();
         trace!(
             worker_id,
             sequence = cmd.sequence,
             camera = %cmd.camera_id,
-            frames = cmd.frames.len(),
+            frames = frame_count,
             "Processing encode command"
         );
 
-        // Convert frames to VideoFrame format
-        let video_frames: Vec<crate::VideoFrame> = cmd
-            .frames
-            .iter()
-            .map(|f| {
-                // For now, pass RGB directly to encoder (the encoder handles YUV conversion internally)
-                // In a future optimization, we could pre-convert to NV12/YUV420p here
-                crate::VideoFrame::new(f.width, f.height, f.data.as_slice().to_vec())
-            })
-            .collect();
-
-        if video_frames.is_empty() {
+        if cmd.frames.is_empty() {
+            stats_failed.fetch_add(1, Ordering::Relaxed);
             let result = EncodeResult {
                 sequence: cmd.sequence,
                 camera_id: cmd.camera_id,
                 fragment_index: cmd.fragment_index,
                 result: Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "No valid frames to encode",
+                    "No frames to encode",
                 )),
             };
             if result_tx.send(result).is_err() {
@@ -247,11 +366,13 @@ fn encoder_worker_loop(
             continue;
         }
 
-        // Encode the fragment
-        let encode_result = encoder.encode(video_frames);
+        // Encode the fragment - frames are already converted
+        let encode_result = encoder.encode(cmd.frames);
 
         let result = match encode_result {
             Ok(fragment) => {
+                stats_encoded.fetch_add(1, Ordering::Relaxed);
+                stats_frames.fetch_add(frame_count as u64, Ordering::Relaxed);
                 trace!(
                     worker_id,
                     sequence = cmd.sequence,
@@ -267,6 +388,7 @@ fn encoder_worker_loop(
                 }
             }
             Err(e) => {
+                stats_failed.fetch_add(1, Ordering::Relaxed);
                 warn!(
                     worker_id,
                     sequence = cmd.sequence,
@@ -283,82 +405,14 @@ fn encoder_worker_loop(
             }
         };
 
+        in_flight.fetch_sub(1, Ordering::Relaxed);
         if result_tx.send(result).is_err() {
             break;
         }
     }
 
+    active_workers.fetch_sub(1, Ordering::Relaxed);
     debug!(worker_id, "Encoder worker exiting");
-}
-
-/// Load balancer for distributing encode jobs across workers.
-#[derive(Debug)]
-pub struct LoadBalancer {
-    /// Round-robin counter.
-    next_worker: AtomicUsize,
-    /// Number of workers.
-    worker_count: usize,
-}
-
-impl LoadBalancer {
-    /// Create a new load balancer.
-    pub fn new(worker_count: usize) -> Self {
-        Self {
-            next_worker: AtomicUsize::new(0),
-            worker_count,
-        }
-    }
-
-    /// Get the next worker index (round-robin).
-    pub fn next(&self) -> usize {
-        let current = self.next_worker.fetch_add(1, Ordering::Relaxed);
-        current % self.worker_count
-    }
-}
-
-/// Pending job tracker for load balancing.
-#[derive(Debug, Default)]
-pub struct PendingTracker {
-    /// Pending jobs per worker.
-    pending: Vec<AtomicUsize>,
-}
-
-impl PendingTracker {
-    /// Create a new pending tracker.
-    pub fn new(worker_count: usize) -> Self {
-        Self {
-            pending: (0..worker_count).map(|_| AtomicUsize::new(0)).collect(),
-        }
-    }
-
-    /// Increment pending count for a worker.
-    pub fn increment(&self, worker_id: usize) {
-        self.pending[worker_id].fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Decrement pending count for a worker.
-    pub fn decrement(&self, worker_id: usize) {
-        self.pending[worker_id].fetch_sub(1, Ordering::Relaxed);
-    }
-
-    /// Get pending count for a worker.
-    pub fn get(&self, worker_id: usize) -> usize {
-        self.pending[worker_id].load(Ordering::Relaxed)
-    }
-
-    /// Get the least loaded worker.
-    pub fn least_loaded(&self) -> usize {
-        let mut min_idx = 0;
-        let mut min_val = usize::MAX;
-        for (i, counter) in self.pending.iter().enumerate() {
-            let val = counter.load(Ordering::Relaxed);
-            if val < min_val {
-                min_val = val;
-                min_idx = i;
-            }
-        }
-        min_idx
-    }
 }
 
 #[cfg(test)]
@@ -366,44 +420,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_load_balancer_round_robin() {
-        let lb = LoadBalancer::new(3);
-        assert_eq!(lb.next(), 0);
-        assert_eq!(lb.next(), 1);
-        assert_eq!(lb.next(), 2);
-        assert_eq!(lb.next(), 0);
-        assert_eq!(lb.next(), 1);
-    }
-
-    #[test]
-    fn test_pending_tracker() {
-        let tracker = PendingTracker::new(3);
-
-        // Initially all zero
-        assert_eq!(tracker.get(0), 0);
-        assert_eq!(tracker.get(1), 0);
-        assert_eq!(tracker.get(2), 0);
-
-        // Increment
-        tracker.increment(0);
-        tracker.increment(0);
-        tracker.increment(1);
-        assert_eq!(tracker.get(0), 2);
-        assert_eq!(tracker.get(1), 1);
-        assert_eq!(tracker.get(2), 0);
-
-        // Least loaded
-        assert_eq!(tracker.least_loaded(), 2);
-
-        // Decrement
-        tracker.decrement(0);
-        assert_eq!(tracker.get(0), 1);
-    }
-
-    #[test]
     fn test_encoder_pool_config_default() {
         let config = EncoderPoolConfig::default();
-        assert_eq!(config.worker_count, 2);
+        // Worker count is CPU-dependent, just check it's at least 2
+        assert!(config.worker_count >= 2);
         assert!(config.pending_capacity > 0);
         assert!(config.completed_capacity > 0);
     }

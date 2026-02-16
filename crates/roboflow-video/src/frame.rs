@@ -8,6 +8,8 @@
 
 use std::io::Write;
 
+use crate::arena::ArcSlot;
+
 /// Errors that can occur during video encoding.
 #[derive(Debug, thiserror::Error)]
 pub enum VideoEncoderError {
@@ -40,8 +42,36 @@ pub enum VideoEncoderError {
     Encoding(String),
 }
 
+/// Frame data format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FrameFormat {
+    /// RGB24 format (3 bytes per pixel).
+    #[default]
+    Rgb24,
+    /// NV12 format (Y plane + interleaved UV).
+    /// Y: width × height bytes
+    /// UV: width/2 × height/2 × 2 bytes
+    Nv12,
+    /// YUV420P format (planar).
+    /// Y: width × height bytes
+    /// U: width/2 × height/2 bytes
+    /// V: width/2 × height/2 bytes
+    Yuv420p,
+    /// JPEG-encoded data (passthrough mode).
+    Jpeg,
+}
+
+/// Internal storage for VideoFrame.
+#[derive(Debug)]
+enum VideoFrameInner {
+    /// Owned data (traditional path).
+    Owned(Vec<u8>),
+    /// Shared arena buffer (zero-copy path).
+    Shared(std::sync::Arc<FrameBuffer>),
+}
+
 /// A single video frame.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct VideoFrame {
     /// Width in pixels.
     pub width: u32,
@@ -49,21 +79,80 @@ pub struct VideoFrame {
     /// Height in pixels.
     pub height: u32,
 
-    /// Raw image data (RGB8 format).
-    pub data: Vec<u8>,
+    /// Frame data storage.
+    inner: VideoFrameInner,
 
-    /// Whether this frame is already JPEG-encoded (for passthrough).
-    pub is_jpeg: bool,
+    /// Frame data format.
+    pub format: FrameFormat,
 }
 
 impl VideoFrame {
-    /// Create a new video frame.
+    /// Create a new RGB24 video frame.
     pub fn new(width: u32, height: u32, data: Vec<u8>) -> Self {
         Self {
             width,
             height,
-            data,
-            is_jpeg: false,
+            inner: VideoFrameInner::Owned(data),
+            format: FrameFormat::Rgb24,
+        }
+    }
+
+    /// Create a new NV12 video frame (pre-converted for hardware encoders).
+    ///
+    /// This method combines Y and UV planes into a single contiguous buffer
+    /// with optimal memory copying.
+    pub fn from_nv12(width: u32, height: u32, y_plane: Vec<u8>, uv_plane: Vec<u8>) -> Self {
+        // Combine Y and UV planes into a single buffer
+        // Layout: Y plane (width × height) followed by UV plane (width/2 × height/2 × 2)
+        let total_len = y_plane.len() + uv_plane.len();
+        let mut data = vec![0; total_len];
+
+        // Copy Y plane first
+        data[..y_plane.len()].copy_from_slice(&y_plane);
+        // Then copy UV plane
+        data[y_plane.len()..].copy_from_slice(&uv_plane);
+
+        Self {
+            width,
+            height,
+            inner: VideoFrameInner::Owned(data),
+            format: FrameFormat::Nv12,
+        }
+    }
+
+    /// Create a new YUV420P video frame (pre-converted for software encoders).
+    ///
+    /// This method combines Y, U, V planes into a single contiguous buffer
+    /// with optimal memory copying.
+    pub fn from_yuv420p(
+        width: u32,
+        height: u32,
+        y_plane: Vec<u8>,
+        u_plane: Vec<u8>,
+        v_plane: Vec<u8>,
+    ) -> Self {
+        // Combine Y, U, V planes into a single buffer
+        // Layout: Y plane (width × height) + U plane (width/2 × height/2) + V plane (width/2 × height/2)
+        let y_len = y_plane.len();
+        let u_len = u_plane.len();
+        let v_len = v_plane.len();
+        let total_len = y_len + u_len + v_len;
+
+        let mut data = vec![0; total_len];
+
+        // Copy planes in order: Y, then U, then V
+        let mut offset = 0;
+        data[offset..offset + y_len].copy_from_slice(&y_plane);
+        offset += y_len;
+        data[offset..offset + u_len].copy_from_slice(&u_plane);
+        offset += u_len;
+        data[offset..].copy_from_slice(&v_plane);
+
+        Self {
+            width,
+            height,
+            inner: VideoFrameInner::Owned(data),
+            format: FrameFormat::Yuv420p,
         }
     }
 
@@ -72,51 +161,202 @@ impl VideoFrame {
         Self {
             width,
             height,
-            data: jpeg_data,
-            is_jpeg: true,
+            inner: VideoFrameInner::Owned(jpeg_data),
+            format: FrameFormat::Jpeg,
         }
+    }
+
+    /// Create a VideoFrame from an Arc<FrameBuffer> (zero-copy).
+    ///
+    /// This is the preferred path for the three-stage pipeline.
+    pub fn from_arc_frame_buffer(buffer: std::sync::Arc<FrameBuffer>) -> Self {
+        let width = buffer.width();
+        let height = buffer.height();
+        let format = match buffer.format() {
+            PixelFormat::Rgb24 => FrameFormat::Rgb24,
+            PixelFormat::Nv12 => FrameFormat::Nv12,
+            PixelFormat::Yuv420p => FrameFormat::Yuv420p,
+            PixelFormat::Jpeg => FrameFormat::Jpeg,
+        };
+        Self {
+            width,
+            height,
+            inner: VideoFrameInner::Shared(buffer),
+            format,
+        }
+    }
+
+    /// Get the raw frame data as a byte slice.
+    pub fn data(&self) -> &[u8] {
+        match &self.inner {
+            VideoFrameInner::Owned(data) => data,
+            VideoFrameInner::Shared(buffer) => buffer.data(),
+        }
+    }
+
+    /// Check if this frame uses shared (zero-copy) storage.
+    pub fn is_shared(&self) -> bool {
+        matches!(self.inner, VideoFrameInner::Shared(_))
+    }
+
+    /// Check if this frame is in JPEG format.
+    pub fn is_jpeg(&self) -> bool {
+        self.format == FrameFormat::Jpeg
+    }
+
+    /// Check if this frame is pre-converted to NV12.
+    pub fn is_nv12(&self) -> bool {
+        self.format == FrameFormat::Nv12
+    }
+
+    /// Check if this frame is pre-converted to YUV420P.
+    pub fn is_yuv420p(&self) -> bool {
+        self.format == FrameFormat::Yuv420p
+    }
+
+    /// Check if this frame is RGB24.
+    pub fn is_rgb24(&self) -> bool {
+        self.format == FrameFormat::Rgb24
+    }
+
+    /// Get the Y plane for NV12 frames.
+    pub fn y_plane(&self) -> Option<&[u8]> {
+        if self.format != FrameFormat::Nv12 {
+            return None;
+        }
+        let y_size = (self.width as usize) * (self.height as usize);
+        self.data().get(..y_size)
+    }
+
+    /// Get the UV plane for NV12 frames.
+    pub fn uv_plane(&self) -> Option<&[u8]> {
+        if self.format != FrameFormat::Nv12 {
+            return None;
+        }
+        let y_size = (self.width as usize) * (self.height as usize);
+        self.data().get(y_size..)
     }
 
     /// Get the expected data size for this frame.
     pub fn expected_size(&self) -> usize {
-        if self.is_jpeg {
-            self.data.len() // JPEG data size is variable
-        } else {
-            (self.width * self.height * 3) as usize
+        match self.format {
+            FrameFormat::Rgb24 => (self.width * self.height * 3) as usize,
+            FrameFormat::Nv12 => {
+                let y_size = (self.width as usize) * (self.height as usize);
+                let uv_size = (self.width as usize / 2) * (self.height as usize / 2) * 2;
+                y_size + uv_size
+            }
+            FrameFormat::Yuv420p => {
+                let y_size = (self.width as usize) * (self.height as usize);
+                let uv_size = (self.width as usize / 2) * (self.height as usize / 2);
+                y_size + uv_size * 2 // U + V planes
+            }
+            FrameFormat::Jpeg => self.data().len(), // JPEG data size is variable
         }
     }
 
     /// Validate the frame data.
     pub fn validate(&self) -> Result<(), VideoEncoderError> {
-        if self.is_jpeg {
-            // JPEG data: just check it's not empty and has valid header
-            if self.data.len() < 4 {
-                return Err(VideoEncoderError::InvalidFrameData);
+        let data = self.data();
+        match self.format {
+            FrameFormat::Jpeg => {
+                // JPEG data: just check it's not empty and has valid header
+                if data.len() < 4 {
+                    return Err(VideoEncoderError::InvalidFrameData);
+                }
+                // Check JPEG magic bytes
+                if data[0] != 0xFF || data[1] != 0xD8 || data[2] != 0xFF {
+                    return Err(VideoEncoderError::InvalidFrameData);
+                }
             }
-            // Check JPEG magic bytes
-            if self.data[0] != 0xFF || self.data[1] != 0xD8 || self.data[2] != 0xFF {
-                return Err(VideoEncoderError::InvalidFrameData);
+            FrameFormat::Rgb24 => {
+                // RGB data: check exact size with overflow protection
+                let expected = (self.width as usize)
+                    .checked_mul(self.height as usize)
+                    .and_then(|size| size.checked_mul(3))
+                    .ok_or(VideoEncoderError::InvalidFrameData)?;
+                if data.len() != expected {
+                    return Err(VideoEncoderError::InvalidFrameData);
+                }
             }
-        } else {
-            // RGB data: check exact size with overflow protection
-            let expected = (self.width as usize)
-                .checked_mul(self.height as usize)
-                .and_then(|size| size.checked_mul(3))
-                .ok_or(VideoEncoderError::InvalidFrameData)?;
-            if self.data.len() != expected {
-                return Err(VideoEncoderError::InvalidFrameData);
+            FrameFormat::Nv12 => {
+                // NV12 requires even dimensions
+                if !self.width.is_multiple_of(2) || !self.height.is_multiple_of(2) {
+                    return Err(VideoEncoderError::InvalidFrameData);
+                }
+                // NV12 data: check exact size with overflow protection
+                let y_size = (self.width as usize)
+                    .checked_mul(self.height as usize)
+                    .ok_or(VideoEncoderError::InvalidFrameData)?;
+                let uv_width = self.width as usize / 2;
+                let uv_height = self.height as usize / 2;
+                let uv_size = uv_width
+                    .checked_mul(uv_height)
+                    .and_then(|size| size.checked_mul(2))
+                    .ok_or(VideoEncoderError::InvalidFrameData)?;
+                let expected = y_size
+                    .checked_add(uv_size)
+                    .ok_or(VideoEncoderError::InvalidFrameData)?;
+                if data.len() != expected {
+                    return Err(VideoEncoderError::InvalidFrameData);
+                }
+            }
+            FrameFormat::Yuv420p => {
+                // YUV420P requires even dimensions
+                if !self.width.is_multiple_of(2) || !self.height.is_multiple_of(2) {
+                    return Err(VideoEncoderError::InvalidFrameData);
+                }
+                // YUV420P data: check exact size with overflow protection
+                let y_size = (self.width as usize)
+                    .checked_mul(self.height as usize)
+                    .ok_or(VideoEncoderError::InvalidFrameData)?;
+                let uv_width = self.width as usize / 2;
+                let uv_height = self.height as usize / 2;
+                let uv_size = uv_width
+                    .checked_mul(uv_height)
+                    .ok_or(VideoEncoderError::InvalidFrameData)?;
+                let expected = y_size
+                    .checked_add(uv_size)
+                    .and_then(|size| size.checked_add(uv_size)) // Add U + V
+                    .ok_or(VideoEncoderError::InvalidFrameData)?;
+                if data.len() != expected {
+                    return Err(VideoEncoderError::InvalidFrameData);
+                }
             }
         }
         Ok(())
     }
 
-    /// Write frame in PPM format.
+    /// Write frame in PPM format (only for RGB24 frames).
     pub fn write_ppm(&self, writer: &mut impl Write) -> Result<(), VideoEncoderError> {
+        if self.format != FrameFormat::Rgb24 {
+            return Err(VideoEncoderError::InvalidFrameData);
+        }
         writeln!(writer, "P6")?;
         writeln!(writer, "{} {}", self.width, self.height)?;
         writeln!(writer, "255")?;
-        writer.write_all(&self.data)?;
+        writer.write_all(self.data())?;
         Ok(())
+    }
+}
+
+impl Clone for VideoFrame {
+    fn clone(&self) -> Self {
+        // Cloning shares the buffer if it's shared, otherwise copies owned data
+        match &self.inner {
+            VideoFrameInner::Shared(buffer) => Self {
+                width: self.width,
+                height: self.height,
+                inner: VideoFrameInner::Shared(std::sync::Arc::clone(buffer)),
+                format: self.format,
+            },
+            VideoFrameInner::Owned(data) => Self {
+                width: self.width,
+                height: self.height,
+                inner: VideoFrameInner::Owned(data.clone()),
+                format: self.format,
+            },
+        }
     }
 }
 
@@ -184,6 +424,253 @@ impl VideoFrameBuffer {
         }
     }
 }
+
+// =============================================================================
+// Unified FrameBuffer for Zero-Copy Pipeline
+// =============================================================================
+
+/// Pixel format for frame data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PixelFormat {
+    /// RGB24 format (3 bytes per pixel).
+    #[default]
+    Rgb24,
+    /// NV12 format (Y plane + interleaved UV).
+    Nv12,
+    /// YUV420P format (planar Y, U, V).
+    Yuv420p,
+    /// JPEG-encoded data (passthrough mode).
+    Jpeg,
+}
+
+/// Internal storage for FrameBuffer.
+#[derive(Debug)]
+enum FrameBufferInner {
+    /// Arena-allocated slot for zero-copy.
+    Arena(ArcSlot),
+    /// Owned vector (fallback when arena exhausted).
+    Owned(Vec<u8>),
+}
+
+/// Unified frame buffer supporting both arena and owned allocation.
+///
+/// This type is used throughout the video pipeline to enable zero-copy
+/// processing from decode through encode.
+#[derive(Debug)]
+pub struct FrameBuffer {
+    /// Internal storage (arena or owned).
+    inner: FrameBufferInner,
+    /// Pixel format of the data.
+    format: PixelFormat,
+    /// Frame width in pixels.
+    width: u32,
+    /// Frame height in pixels.
+    height: u32,
+    /// Actual data length (may be less than buffer size for in-place conversion).
+    len: usize,
+}
+
+impl FrameBuffer {
+    /// Create a new FrameBuffer from an arena slot.
+    pub fn from_arena(
+        slot: ArcSlot,
+        format: PixelFormat,
+        width: u32,
+        height: u32,
+        len: usize,
+    ) -> Self {
+        Self {
+            inner: FrameBufferInner::Arena(slot),
+            format,
+            width,
+            height,
+            len,
+        }
+    }
+
+    /// Create a new FrameBuffer from owned data.
+    pub fn from_owned(data: Vec<u8>, format: PixelFormat, width: u32, height: u32) -> Self {
+        let len = data.len();
+        Self {
+            inner: FrameBufferInner::Owned(data),
+            format,
+            width,
+            height,
+            len,
+        }
+    }
+
+    /// Create a new RGB24 FrameBuffer from owned data.
+    pub fn rgb24(width: u32, height: u32, data: Vec<u8>) -> Self {
+        Self::from_owned(data, PixelFormat::Rgb24, width, height)
+    }
+
+    /// Create a new NV12 FrameBuffer from owned data.
+    pub fn nv12(width: u32, height: u32, data: Vec<u8>) -> Self {
+        Self::from_owned(data, PixelFormat::Nv12, width, height)
+    }
+
+    /// Get the pixel format.
+    #[inline]
+    pub fn format(&self) -> PixelFormat {
+        self.format
+    }
+
+    /// Get the frame width.
+    #[inline]
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Get the frame height.
+    #[inline]
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Get the data as a byte slice.
+    #[inline]
+    pub fn data(&self) -> &[u8] {
+        match &self.inner {
+            FrameBufferInner::Arena(slot) => {
+                let slot_data = slot.data();
+                let len = self.len.min(slot_data.len());
+                &slot_data[..len]
+            }
+            FrameBufferInner::Owned(data) => {
+                let len = self.len.min(data.len());
+                &data[..len]
+            }
+        }
+    }
+
+    /// Get the data as a mutable byte slice.
+    ///
+    /// # Safety
+    /// This is safe for arena slots because ArcSlot provides exclusive access.
+    #[inline]
+    pub fn data_mut(&mut self) -> &mut [u8] {
+        let len = self.len;
+        match &mut self.inner {
+            FrameBufferInner::Arena(slot) => {
+                let slot_data = slot.data_mut();
+                let actual_len = len.min(slot_data.len());
+                &mut slot_data[..actual_len]
+            }
+            FrameBufferInner::Owned(data) => {
+                let actual_len = len.min(data.len());
+                &mut data[..actual_len]
+            }
+        }
+    }
+
+    /// Get the total buffer capacity (may be larger than actual data).
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        match &self.inner {
+            FrameBufferInner::Arena(slot) => slot.expected_size(),
+            FrameBufferInner::Owned(data) => data.len(),
+        }
+    }
+
+    /// Get the actual data length.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Check if the buffer is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Set the pixel format (for in-place conversion).
+    pub fn set_format(&mut self, format: PixelFormat) {
+        self.format = format;
+    }
+
+    /// Set the data length (for in-place conversion where output is smaller).
+    pub fn set_len(&mut self, len: usize) {
+        self.len = len.min(self.capacity());
+    }
+
+    /// Check if this buffer uses arena allocation.
+    pub fn is_arena(&self) -> bool {
+        matches!(self.inner, FrameBufferInner::Arena(_))
+    }
+
+    /// Convert to a VideoFrame for encoding.
+    ///
+    /// This clones the data, so it should only be used when necessary.
+    pub fn to_video_frame(&self) -> VideoFrame {
+        let data = self.data().to_vec();
+        let frame_format = match self.format {
+            PixelFormat::Rgb24 => FrameFormat::Rgb24,
+            PixelFormat::Nv12 => FrameFormat::Nv12,
+            PixelFormat::Yuv420p => FrameFormat::Yuv420p,
+            PixelFormat::Jpeg => FrameFormat::Jpeg,
+        };
+        VideoFrame {
+            width: self.width,
+            height: self.height,
+            inner: VideoFrameInner::Owned(data),
+            format: frame_format,
+        }
+    }
+
+    /// Get the expected data size for this format and dimensions.
+    pub fn expected_size(&self) -> usize {
+        match self.format {
+            PixelFormat::Rgb24 => (self.width as usize) * (self.height as usize) * 3,
+            PixelFormat::Nv12 => {
+                let y_size = (self.width as usize) * (self.height as usize);
+                let uv_size = (self.width as usize / 2) * (self.height as usize / 2) * 2;
+                y_size + uv_size
+            }
+            PixelFormat::Yuv420p => {
+                let y_size = (self.width as usize) * (self.height as usize);
+                let uv_size = (self.width as usize / 2) * (self.height as usize / 2);
+                y_size + uv_size * 2
+            }
+            PixelFormat::Jpeg => self.len,
+        }
+    }
+
+    /// Validate the frame data.
+    pub fn validate(&self) -> Result<(), VideoEncoderError> {
+        let expected = self.expected_size();
+        if self.len != expected && self.format != PixelFormat::Jpeg {
+            return Err(VideoEncoderError::InvalidFrameData);
+        }
+
+        // For JPEG, check magic bytes
+        if self.format == PixelFormat::Jpeg {
+            let data = self.data();
+            if data.len() < 4 {
+                return Err(VideoEncoderError::InvalidFrameData);
+            }
+            if data[0] != 0xFF || data[1] != 0xD8 || data[2] != 0xFF {
+                return Err(VideoEncoderError::InvalidFrameData);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Clone for FrameBuffer {
+    fn clone(&self) -> Self {
+        // Cloning always creates an owned copy
+        Self::from_owned(self.data().to_vec(), self.format, self.width, self.height)
+    }
+}
+
+// SAFETY: FrameBuffer's data access is thread-safe:
+// - Arena slots (ArcSlot) are designed for concurrent access with proper synchronization
+// - Owned data (Vec<u8>) is only accessed through immutable borrows when shared
+unsafe impl Send for FrameBuffer {}
+unsafe impl Sync for FrameBuffer {}
 
 /// 16-bit depth video frame.
 #[derive(Debug, Clone)]
@@ -302,8 +789,8 @@ mod tests {
         let jpeg_data = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
         let frame = VideoFrame::from_jpeg(640, 480, jpeg_data.clone());
         assert!(frame.validate().is_ok());
-        assert!(frame.is_jpeg);
-        assert_eq!(frame.data, jpeg_data);
+        assert!(frame.is_jpeg());
+        assert_eq!(frame.data(), jpeg_data);
         assert_eq!(frame.expected_size(), jpeg_data.len());
     }
 

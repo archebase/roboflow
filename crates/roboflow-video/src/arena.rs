@@ -24,7 +24,7 @@ impl Default for FramePoolConfig {
             width: 640,
             height: 480,
             bytes_per_pixel: 3,
-            slot_count: 16,
+            slot_count: 64, // Increased from 16 for high-throughput pipelines
         }
     }
 }
@@ -109,7 +109,12 @@ impl FramePool {
         let in_use: Vec<AtomicBool> = (0..config.slot_count)
             .map(|_| AtomicBool::new(false))
             .collect();
-        let free_mask = (1u64 << config.slot_count) - 1;
+        // Handle edge case: 1u64 << 64 would overflow
+        let free_mask = if config.slot_count == 64 {
+            u64::MAX
+        } else {
+            (1u64 << config.slot_count) - 1
+        };
 
         Ok(Self {
             base_ptr,

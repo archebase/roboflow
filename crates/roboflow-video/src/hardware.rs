@@ -92,7 +92,7 @@ impl Mp4Encoder {
         output_path: &Path,
     ) -> Result<(), VideoEncoderError> {
         // Check if all frames are JPEG for passthrough optimization
-        let all_jpeg = buffer.frames.iter().all(|f| f.is_jpeg);
+        let all_jpeg = buffer.frames.iter().all(|f| f.is_jpeg());
         if all_jpeg && buffer.frames.len() > 1 {
             return self.encode_jpeg_passthrough(buffer, output_path);
         }
@@ -143,7 +143,7 @@ impl Mp4Encoder {
         let write_result = if let Some(mut stdin) = child.stdin.take() {
             let mut result = Ok(());
             for frame in &buffer.frames {
-                if let Err(e) = stdin.write_all(&frame.data) {
+                if let Err(e) = stdin.write_all(frame.data()) {
                     result = Err(e);
                     break;
                 }
@@ -340,7 +340,7 @@ impl NvencEncoder {
         let write_result = if let Some(mut stdin) = child.stdin.take() {
             let mut result = Ok(());
             for frame in &buffer.frames {
-                if let Err(e) = stdin.write_all(&frame.data) {
+                if let Err(e) = stdin.write_all(frame.data()) {
                     result = Err(e);
                     break;
                 }
@@ -444,7 +444,7 @@ impl VideoToolboxEncoder {
         let write_result = if let Some(mut stdin) = child.stdin.take() {
             let mut result = Ok(());
             for frame in &buffer.frames {
-                if let Err(e) = stdin.write_all(&frame.data) {
+                if let Err(e) = stdin.write_all(frame.data()) {
                     result = Err(e);
                     break;
                 }
@@ -836,7 +836,7 @@ mod tests {
     #[test]
     fn test_encoder_choice_clone() {
         let encoder = EncoderChoice::Nvenc;
-        let cloned = encoder.clone();
+        let cloned = encoder; // Copy types don't need clone
         assert_eq!(encoder, cloned);
     }
 

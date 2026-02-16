@@ -312,6 +312,43 @@ pub fn is_avx2_available() -> bool {
     false
 }
 
+// =============================================================================
+// Batch Conversion Functions
+// =============================================================================
+
+/// Convert multiple RGB24 frames to NV12 using AVX2 batch processing.
+///
+/// This function processes multiple frames in sequence, with optimized cache
+/// utilization by processing each frame completely before moving to the next.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+pub unsafe fn rgb_batch_to_nv12_avx2(
+    rgb_frames: &[&[u8]],
+    width: usize,
+    height: usize,
+    results: &mut [(Vec<u8>, Vec<u8>)],
+) {
+    for (i, &rgb_data) in rgb_frames.iter().enumerate() {
+        let (y_plane, uv_plane) = results.get_mut(i).unwrap();
+        rgb_to_nv12_avx2(rgb_data, width, height, y_plane, uv_plane);
+    }
+}
+
+/// Convert multiple RGB24 frames to YUV420P using AVX2 batch processing.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+pub unsafe fn rgb_batch_to_yuv420p_avx2(
+    rgb_frames: &[&[u8]],
+    width: usize,
+    height: usize,
+    results: &mut [(Vec<u8>, Vec<u8>, Vec<u8>)],
+) {
+    for (i, &rgb_data) in rgb_frames.iter().enumerate() {
+        let (y_plane, u_plane, v_plane) = results.get_mut(i).unwrap();
+        rgb_to_yuv420p_avx2(rgb_data, width, height, y_plane, u_plane, v_plane);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

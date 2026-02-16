@@ -698,8 +698,8 @@ mod tests {
         let popped = buffer.try_pop().unwrap();
 
         // Verify data integrity
-        assert_eq!(popped.data.len(), original_data.len());
-        assert!(popped.data.iter().all(|&b| b == 42));
+        assert_eq!(popped.data().len(), original_data.len());
+        assert!(popped.data().iter().all(|&b| b == 42));
     }
 
     #[test]

@@ -21,9 +21,8 @@ use crate::ImageData;
 use crate::convert::{ConvertCommand, ConvertPool, ConvertPoolConfig, ConvertResult, TargetFormat};
 use crate::decode::{DecodePool, DecodePoolConfig, FifoCollector};
 use crate::encoder_pool::{EncoderPool, EncoderPoolConfig};
-use crate::frame::VideoFrame;
 use crate::fragment::FragmentInfo;
-use crate::reorder::FrameReorderBuffer;
+use crate::frame::VideoFrame;
 
 /// Configuration for the piped frame encoder.
 #[derive(Debug, Clone)]
@@ -53,9 +52,9 @@ impl Default for PipedEncoderConfig {
         // - Decode: 50% (5 workers) - JPEG decode is CPU-intensive
         // - Convert: 10% (1 worker) - SIMD is fast, single worker sufficient
         // - Encode: 40% (4 workers) - VideoToolbox is hardware-accelerated
-        let decode_workers = ((cpu_count + 1) / 2).max(2);
+        let decode_workers = cpu_count.div_ceil(2).max(2);
         let convert_workers = 1;
-        let encode_workers = ((cpu_count * 2 + 4) / 5).max(1);
+        let encode_workers = (cpu_count * 2).div_ceil(5).max(1);
 
         Self {
             decode_config: DecodePoolConfig {
@@ -340,10 +339,6 @@ fn run_pipeline<S: AsyncStorage + Send + Sync + 'static>(
     let mut convert_collectors: std::collections::HashMap<String, ConvertFifo> =
         std::collections::HashMap::new();
 
-    // Fragment reorder buffer (for future upload ordering)
-    let _fragment_buffer: FrameReorderBuffer<FragmentInfo> =
-        FrameReorderBuffer::with_max_buffer(256);
-
     // Pending uploads
     let mut pending_uploads: std::collections::HashMap<String, Vec<FragmentInfo>> =
         std::collections::HashMap::new();
@@ -545,6 +540,7 @@ impl CameraState {
 }
 
 /// Finalize encoding and collect results.
+#[allow(clippy::too_many_arguments)]
 fn finalize_encoding(
     decode_pool: &DecodePool,
     convert_pool: &ConvertPool,
@@ -610,7 +606,10 @@ fn finalize_encoding(
 
                 // Submit full batches
                 while state.video_frame_buffer.len() >= config.frames_per_fragment {
-                    let frames: Vec<_> = state.video_frame_buffer.drain(..config.frames_per_fragment).collect();
+                    let frames: Vec<_> = state
+                        .video_frame_buffer
+                        .drain(..config.frames_per_fragment)
+                        .collect();
                     let cmd = crate::encoder_pool::EncodeCommand::new(
                         state.next_fragment_seq,
                         camera_id.clone(),

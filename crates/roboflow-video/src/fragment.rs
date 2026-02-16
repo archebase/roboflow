@@ -28,7 +28,7 @@ use roboflow_core::{Result, RoboflowError};
 
 use crate::config::VideoEncoderConfig;
 use crate::frame::{VideoFrame, VideoFrameBuffer};
-use crate::rsmpeg::RsmpegMp4Encoder;
+use crate::rsmpeg::PersistentEncoder as InnerEncoder;
 
 /// Metadata about an encoded fragment.
 #[derive(Debug)]
@@ -102,6 +102,8 @@ pub struct FragmentEncoder {
     fragment_counter: u64,
     /// Process ID for unique temp file names.
     pid: u32,
+    /// Inner encoder for reusing codec context across fragments.
+    inner: Option<InnerEncoder>,
 }
 
 impl FragmentEncoder {
@@ -119,6 +121,7 @@ impl FragmentEncoder {
             config,
             fragment_counter: 0,
             pid: std::process::id(),
+            inner: None,
         })
     }
 
@@ -181,15 +184,23 @@ impl FragmentEncoder {
             })?;
         }
 
-        // Encode using RsmpegMp4Encoder
-        let encoder = RsmpegMp4Encoder::with_config(self.config.video.clone());
-        encoder.encode_buffer(&buffer, &temp_path).map_err(|e| {
-            let _ = std::fs::remove_file(&temp_path);
-            RoboflowError::encode(
-                "FragmentEncoder",
-                format!("Failed to encode fragment: {:?}", e),
-            )
-        })?;
+        // Encode using inner persistent encoder for codec context reuse
+        // Initialize lazily on first encode call
+        if self.inner.is_none() {
+            self.inner = Some(InnerEncoder::new());
+            tracing::debug!("Initialized fragment encoder");
+        }
+
+        let encoder = self.inner.as_mut().unwrap();
+        encoder
+            .encode_fragment_to_path(&buffer, &self.config.video, &temp_path)
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&temp_path);
+                RoboflowError::encode(
+                    "FragmentEncoder",
+                    format!("Failed to encode fragment: {:?}", e),
+                )
+            })?;
 
         // Get file size
         let metadata = std::fs::metadata(&temp_path).map_err(|e| {

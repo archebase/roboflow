@@ -11,13 +11,14 @@
 use std::collections::BTreeMap;
 use std::io;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 use tracing::{debug, trace};
 
 use crate::ImageData;
 use crate::arena::{ArcSlot, AtomicFramePool, FramePoolConfig, PoolStats};
+use crate::frame::{FrameBuffer, PixelFormat};
 
 /// Command sent to decode workers.
 #[derive(Debug)]
@@ -42,17 +43,63 @@ pub struct DecodeResult {
 }
 
 /// A decoded frame ready for encoding.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DecodedFrame {
-    /// Frame width.
-    pub width: u32,
-    /// Frame height.
-    pub height: u32,
-    /// RGB pixel data (owned or arena slot).
-    pub data: FrameData,
+    /// Frame buffer (shared for zero-copy pipeline).
+    buffer: std::sync::Arc<FrameBuffer>,
 }
 
-/// Frame data storage.
+impl DecodedFrame {
+    /// Create a new DecodedFrame from a FrameBuffer.
+    pub fn new(buffer: FrameBuffer) -> Self {
+        Self {
+            buffer: std::sync::Arc::new(buffer),
+        }
+    }
+
+    /// Create a DecodedFrame from an existing Arc<FrameBuffer>.
+    pub fn from_arc(buffer: std::sync::Arc<FrameBuffer>) -> Self {
+        Self { buffer }
+    }
+
+    /// Get the frame width.
+    #[inline]
+    pub fn width(&self) -> u32 {
+        self.buffer.width()
+    }
+
+    /// Get the frame height.
+    #[inline]
+    pub fn height(&self) -> u32 {
+        self.buffer.height()
+    }
+
+    /// Get the pixel data as a byte slice.
+    #[inline]
+    pub fn data(&self) -> &[u8] {
+        self.buffer.data()
+    }
+
+    /// Get the underlying Arc<FrameBuffer> for zero-copy passing.
+    #[inline]
+    pub fn into_buffer(self) -> std::sync::Arc<FrameBuffer> {
+        self.buffer
+    }
+
+    /// Get a reference to the underlying FrameBuffer.
+    #[inline]
+    pub fn buffer(&self) -> &FrameBuffer {
+        &self.buffer
+    }
+
+    /// Clone the Arc<FrameBuffer> for zero-copy sharing.
+    #[inline]
+    pub fn clone_buffer(&self) -> std::sync::Arc<FrameBuffer> {
+        std::sync::Arc::clone(&self.buffer)
+    }
+}
+
+/// Frame data storage (legacy, for backward compatibility).
 #[derive(Debug)]
 pub enum FrameData {
     /// Owned vector (for when arena is not used).
@@ -96,7 +143,8 @@ impl Default for DecodePoolConfig {
             worker_count: 4,
             pending_capacity: 64,
             completed_capacity: 64,
-            arena_config: None,
+            // Arena is now enabled by default for zero-copy processing
+            arena_config: Some(FramePoolConfig::default()),
             // Default: 8K resolution max
             max_image_width: 7680,
             max_image_height: 4320,
@@ -111,12 +159,16 @@ impl Default for DecodePoolConfig {
 pub struct DecodePoolStats {
     /// Total frames decoded.
     pub frames_decoded: u64,
+    /// Total frames that fell back to owned allocation (arena exhausted).
+    pub arena_fallbacks: u64,
     /// Total frames failed.
     pub frames_failed: u64,
+    /// Arena stats (if enabled).
+    pub arena_stats: Option<PoolStats>,
     /// Current pending queue size.
     pub pending_count: usize,
-    /// Arena pool stats (if using arena).
-    pub arena_stats: Option<PoolStats>,
+    /// Active workers.
+    pub active_workers: usize,
 }
 
 /// Parallel decode pool with FIFO ordering.
@@ -134,6 +186,9 @@ pub struct DecodePool {
     /// Statistics (shared with workers).
     stats_decode: Arc<AtomicU64>,
     stats_failed: Arc<AtomicU64>,
+    stats_arena_fallbacks: Arc<AtomicU64>,
+    /// In-flight commands being processed by workers.
+    in_flight: Arc<AtomicUsize>,
 }
 
 impl DecodePool {
@@ -159,6 +214,8 @@ impl DecodePool {
         // Create shared stats counters for workers
         let stats_decode = Arc::new(AtomicU64::new(0));
         let stats_failed = Arc::new(AtomicU64::new(0));
+        let stats_arena_fallbacks = Arc::new(AtomicU64::new(0));
+        let in_flight = Arc::new(AtomicUsize::new(0));
 
         for worker_id in 0..config.worker_count {
             let cmd_rx = Arc::clone(&cmd_rx);
@@ -166,6 +223,8 @@ impl DecodePool {
             let arena = arena.clone();
             let stats_decode = Arc::clone(&stats_decode);
             let stats_failed = Arc::clone(&stats_failed);
+            let stats_arena_fallbacks = Arc::clone(&stats_arena_fallbacks);
+            let in_flight = Arc::clone(&in_flight);
             let max_width = config.max_image_width;
             let max_height = config.max_image_height;
             let max_bytes = config.max_image_bytes;
@@ -180,6 +239,8 @@ impl DecodePool {
                         arena.as_ref(),
                         &stats_decode,
                         &stats_failed,
+                        &stats_arena_fallbacks,
+                        &in_flight,
                         max_width,
                         max_height,
                         max_bytes,
@@ -202,6 +263,8 @@ impl DecodePool {
             arena,
             stats_decode,
             stats_failed,
+            stats_arena_fallbacks,
+            in_flight,
         })
     }
 
@@ -271,9 +334,11 @@ impl DecodePool {
     pub fn stats(&self) -> DecodePoolStats {
         DecodePoolStats {
             frames_decoded: self.stats_decode.load(Ordering::Relaxed),
+            arena_fallbacks: self.stats_arena_fallbacks.load(Ordering::Relaxed),
             frames_failed: self.stats_failed.load(Ordering::Relaxed),
-            pending_count: self.cmd_tx.len(),
             arena_stats: self.arena.as_ref().map(|a| a.stats()),
+            pending_count: self.cmd_tx.len() + self.in_flight.load(Ordering::Relaxed),
+            active_workers: self.workers.len(), // Simplified: total workers
         }
     }
 
@@ -295,6 +360,8 @@ fn worker_loop(
     arena: Option<&Arc<AtomicFramePool>>,
     stats_decode: &Arc<AtomicU64>,
     stats_failed: &Arc<AtomicU64>,
+    stats_arena_fallbacks: &Arc<AtomicU64>,
+    in_flight: &Arc<AtomicUsize>,
     max_width: u32,
     max_height: u32,
     max_bytes: usize,
@@ -305,6 +372,8 @@ fn worker_loop(
     );
 
     while let Ok(cmd) = cmd_rx.recv() {
+        in_flight.fetch_add(1, Ordering::Relaxed);
+
         trace!(
             worker_id,
             sequence = cmd.sequence,
@@ -312,7 +381,14 @@ fn worker_loop(
             "Processing decode command"
         );
 
-        let result = decode_image(&cmd, arena, max_width, max_height, max_bytes);
+        let result = decode_image(
+            &cmd,
+            arena,
+            max_width,
+            max_height,
+            max_bytes,
+            stats_arena_fallbacks,
+        );
         let decoded = match result {
             Ok(frame) => {
                 stats_decode.fetch_add(1, Ordering::Relaxed);
@@ -325,6 +401,7 @@ fn worker_loop(
                     camera_id: cmd.camera_id,
                     result: Err(e),
                 };
+                in_flight.fetch_sub(1, Ordering::Relaxed);
                 if result_tx.send(res).is_err() {
                     break;
                 }
@@ -338,6 +415,7 @@ fn worker_loop(
             result: Ok(decoded),
         };
 
+        in_flight.fetch_sub(1, Ordering::Relaxed);
         if result_tx.send(res).is_err() {
             break;
         }
@@ -353,6 +431,7 @@ fn decode_image(
     max_width: u32,
     max_height: u32,
     max_bytes: usize,
+    stats_arena_fallbacks: &Arc<AtomicU64>,
 ) -> io::Result<Option<DecodedFrame>> {
     if cmd.image.width == 0 || cmd.image.height == 0 {
         return Ok(None);
@@ -393,77 +472,132 @@ fn decode_image(
     }
 
     let (width, height, data) = if cmd.image.is_encoded {
-        // Decode JPEG/PNG to RGB
-        let img = image::load_from_memory(&cmd.image.data)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+        // Check if this is a JPEG by looking at magic bytes (FFD8FF)
+        let is_jpeg = cmd.image.data.len() >= 3
+            && cmd.image.data[0] == 0xFF
+            && cmd.image.data[1] == 0xD8
+            && cmd.image.data[2] == 0xFF;
 
-        let decoded_width = img.width();
-        let decoded_height = img.height();
+        if is_jpeg {
+            // Use zune-jpeg for fast SIMD-accelerated JPEG decoding (2-4x faster)
+            use zune_jpeg::JpegDecoder;
 
-        // Post-decode size validation
-        if max_width > 0 && decoded_width > max_width {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Decoded image width {} exceeds maximum {}",
-                    decoded_width, max_width
-                ),
-            ));
+            let mut decoder = JpegDecoder::new(&cmd.image.data);
+            let rgb_data = decoder
+                .decode()
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+
+            let info = decoder
+                .info()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "No JPEG info"))?;
+
+            let decoded_width = u32::from(info.width);
+            let decoded_height = u32::from(info.height);
+
+            // Post-decode size validation
+            if max_width > 0 && decoded_width > max_width {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Decoded image width {} exceeds maximum {}",
+                        decoded_width, max_width
+                    ),
+                ));
+            }
+            if max_height > 0 && decoded_height > max_height {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Decoded image height {} exceeds maximum {}",
+                        decoded_height, max_height
+                    ),
+                ));
+            }
+
+            if max_bytes > 0 && rgb_data.len() > max_bytes {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Decoded image size {} exceeds maximum {} bytes",
+                        rgb_data.len(),
+                        max_bytes
+                    ),
+                ));
+            }
+
+            (decoded_width, decoded_height, rgb_data)
+        } else {
+            // Fall back to image crate for PNG and other formats
+            let img = image::load_from_memory(&cmd.image.data)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+
+            let decoded_width = img.width();
+            let decoded_height = img.height();
+
+            // Post-decode size validation
+            if max_width > 0 && decoded_width > max_width {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Decoded image width {} exceeds maximum {}",
+                        decoded_width, max_width
+                    ),
+                ));
+            }
+            if max_height > 0 && decoded_height > max_height {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Decoded image height {} exceeds maximum {}",
+                        decoded_height, max_height
+                    ),
+                ));
+            }
+
+            let rgb_data = img.to_rgb8().into_raw();
+
+            if max_bytes > 0 && rgb_data.len() > max_bytes {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Decoded image size {} exceeds maximum {} bytes",
+                        rgb_data.len(),
+                        max_bytes
+                    ),
+                ));
+            }
+
+            (decoded_width, decoded_height, rgb_data)
         }
-        if max_height > 0 && decoded_height > max_height {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Decoded image height {} exceeds maximum {}",
-                    decoded_height, max_height
-                ),
-            ));
-        }
-
-        let rgb = img.to_rgb8();
-        let rgb_data = rgb.clone().into_raw();
-
-        if max_bytes > 0 && rgb_data.len() > max_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Decoded image size {} exceeds maximum {} bytes",
-                    rgb_data.len(),
-                    max_bytes
-                ),
-            ));
-        }
-
-        (decoded_width, decoded_height, rgb_data)
     } else {
         // Already RGB
         (cmd.image.width, cmd.image.height, cmd.image.data.clone())
     };
 
     // Store in arena if available, otherwise use owned vector
-    let frame_data = if let Some(pool) = arena {
+    let buffer = if let Some(pool) = arena {
         if let Some(mut slot) = pool.acquire() {
             let slot_data = slot.data_mut();
             if slot_data.len() >= data.len() {
                 slot_data[..data.len()].copy_from_slice(&data);
-                FrameData::Arena(slot)
+                FrameBuffer::from_arena(slot, PixelFormat::Rgb24, width, height, data.len())
             } else {
                 // Slot too small, fall back to owned
-                FrameData::Owned(data)
+                stats_arena_fallbacks.fetch_add(1, Ordering::Relaxed);
+                FrameBuffer::rgb24(width, height, data)
             }
         } else {
             // Pool exhausted, fall back to owned
-            FrameData::Owned(data)
+            stats_arena_fallbacks.fetch_add(1, Ordering::Relaxed);
+            FrameBuffer::rgb24(width, height, data)
         }
     } else {
-        FrameData::Owned(data)
+        // Arena not configured, use owned
+        stats_arena_fallbacks.fetch_add(1, Ordering::Relaxed);
+        FrameBuffer::rgb24(width, height, data)
     };
 
-    Ok(Some(DecodedFrame {
-        width,
-        height,
-        data: frame_data,
-    }))
+    Ok(Some(DecodedFrame::new(buffer)))
 }
 
 /// FIFO-ordered result collector.
@@ -709,10 +843,10 @@ mod tests {
         // Should have decoded frame
         if let Ok(Some(frame)) = result.result {
             // Data should be from arena (64x64x3 = 12288 bytes)
-            assert_eq!(frame.width, 64);
-            assert_eq!(frame.height, 64);
+            assert_eq!(frame.width(), 64);
+            assert_eq!(frame.height(), 64);
             // Data might be arena or owned depending on availability
-            assert!(!frame.data.as_slice().is_empty());
+            assert!(!frame.data().is_empty());
         }
 
         pool.shutdown();

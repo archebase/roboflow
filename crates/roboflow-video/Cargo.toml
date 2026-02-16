@@ -18,6 +18,9 @@ rsmpeg = { version = "0.18", features = ["link_system_ffmpeg"] }
 # Image decoding (for converting encoded images to RGB)
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
+# Fast SIMD-accelerated JPEG decoder (2-4x faster than image crate)
+zune-jpeg = "0.4"
+
 # PNG for depth image fallback
 png = "0.17"
 
@@ -29,9 +32,13 @@ tracing = "0.1"
 
 # Concurrency
 crossbeam-channel = "0.5"
+num_cpus = "1.16"
 
 # Async runtime
 tokio = { workspace = true }
+
+# Bytes for zero-copy data transfer
+bytes = "1"
 
 [features]
 default = []
@@ -40,7 +47,14 @@ default = []
 tempfile = "3.10"
 criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"
+num_cpus = "1.16"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [[bench]]
 name = "simd_benchmark"
+harness = false
+
+[[bench]]
+name = "pipeline_benchmark"
 harness = false

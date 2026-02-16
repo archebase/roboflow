@@ -258,6 +258,13 @@ dataset/episode_001/videos/chunk-000/observation.images.cam_left/episode_000000.
 - Compiler warnings about unused functions/imports indicate code that should be removed
 - Keep the codebase lean - only add `#[allow(dead_code)]` when explicitly requested
 
+### Unused Variables
+- When encountering unused variable warnings, **think critically** about whether:
+  1. The variable should be **removed** entirely (if truly not needed)
+  2. The variable should be **used** (if it serves a purpose that was overlooked)
+- Prefixing with `_` (e.g., `_fragment_index`) suppresses the warning but may hide bugs
+- Example: `_fragment_index` in an upload function likely indicates the URL should include the fragment index to prevent overwrites
+
 ## External Dependencies
 
 - `robocodec`: https://github.com/archebase/robocodec (I/O, codecs, arena)

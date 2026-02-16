@@ -32,3 +32,4 @@ profiles/
 *.bag
 *.mcap
 output.mp4
+*.json.*
