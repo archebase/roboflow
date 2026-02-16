@@ -23,6 +23,17 @@
 //!         └── RsmpegEncoder (actual FFmpeg encoding)
 //! ```
 //!
+//! # Three-Stage Pipeline
+//!
+//! For high-throughput scenarios, use the three-stage pipeline:
+//!
+//! ```text
+//! ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+//! │ DecodePool  │ ──► │ ConvertPool │ ──► │ EncoderPool │
+//! │ (JPEG→RGB)  │     │ (RGB→NV12)  │     │ (H.264)     │
+//! └─────────────┘     └─────────────┘     └─────────────┘
+//! ```
+//!
 //! # Example
 //!
 //! ```rust,ignore
@@ -51,6 +62,7 @@
 pub mod arena;
 pub mod concurrent;
 pub mod config;
+pub mod convert;
 pub mod decode;
 pub mod encoder_pool;
 pub mod fragment;
@@ -61,34 +73,42 @@ pub mod reorder;
 pub mod rsmpeg;
 pub mod simd;
 
+// Test utilities module (always compiled, used by benches/examples)
+pub mod test_utils;
+
+// Re-export test utilities for convenience
+pub use test_utils::*;
+
 // Re-export main types
 pub use arena::{ArcSlot, AtomicFramePool, FramePool, FramePoolConfig, OwnedSlot, PoolStats};
 pub use concurrent::{ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder};
 pub use config::{DepthEncoderConfig, VideoEncoderConfig};
+pub use convert::{
+    ColorSpaceConverter, ConvertCommand, ConvertPool, ConvertPoolConfig, ConvertPoolStats,
+    ConvertResult, ConvertedFrame, ConvertedFrameZeroCopy, FrameData as ConvertFrameData,
+    SimdNv12Converter, SimdYuv420pConverter, TargetFormat,
+};
 pub use decode::{
     DecodeCommand, DecodePool, DecodePoolConfig, DecodePoolStats, DecodeResult, DecodedFrame,
     FifoCollector, FrameData,
 };
 pub use encoder_pool::{
-    EncodeCommand, EncodeResult, EncoderPool, EncoderPoolConfig, EncoderPoolStats, LoadBalancer,
-    PendingTracker,
+    EncodeCommand, EncodeResult, EncoderPool, EncoderPoolConfig, EncoderPoolStats,
 };
 pub use fragment::{FragmentEncoder, FragmentEncoderConfig, FragmentInfo};
-pub use frame::{DepthFrame, DepthFrameBuffer, VideoEncoderError, VideoFrame, VideoFrameBuffer};
+pub use frame::{DepthFrame, DepthFrameBuffer, FrameBuffer, PixelFormat, VideoEncoderError, VideoFrame, VideoFrameBuffer};
 pub use hardware::{
     DepthMkvEncoder, EncoderChoice, Mp4Encoder, NvencEncoder, VideoToolboxEncoder,
     available_encoders, check_nvenc_available, check_videotoolbox_available, is_encoder_available,
     print_encoder_diagnostics, select_best_encoder,
 };
-pub use pipeline::{
-    CameraEncodeResult, PipedEncoderConfig, PipedEncoderMetrics, PipedFrameEncoder,
-};
+pub use pipeline::{CameraEncodeResult, PipedEncoderConfig, PipedEncoderMetrics, PipedFrameEncoder};
 pub use reorder::{CameraSequence, FrameReorderBuffer, SequencedItem};
 pub use rsmpeg::{
-    EncodeFrame, RsmpegEncoder, RsmpegEncoderConfig, RsmpegMp4Encoder, default_codec_name,
-    is_hardware_encoding_available, is_rsmpeg_available,
+    EncodeFrame, RsmpegEncoder, RsmpegEncoderConfig, RsmpegMp4Encoder,
+    default_codec_name, is_hardware_encoding_available, is_rsmpeg_available,
 };
-pub use simd::{ConversionStrategy, optimal_strategy, rgb_to_nv12, rgb_to_yuv420p};
+pub use simd::{ConversionStrategy, optimal_strategy, rgb_to_nv12, rgb_to_nv12_in_place, rgb_to_yuv420p};
 
 /// Image data for video encoding.
 ///

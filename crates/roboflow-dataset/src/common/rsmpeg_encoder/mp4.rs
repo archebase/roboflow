@@ -226,10 +226,10 @@ impl RsmpegMp4Encoder {
             let frame_data_array = input_frame.data_mut();
             let frame_data_ptr = frame_data_array[0];
             // SAFETY: frame_data_ptr is a valid pointer to the frame's data buffer allocated by FFmpeg.
-            // The buffer size matches frame.data.len() based on the frame dimensions and RGB24 format.
+            // The buffer size matches frame.data().len() based on the frame dimensions and RGB24 format.
             let frame_data_slice =
-                unsafe { std::slice::from_raw_parts_mut(frame_data_ptr, frame.data.len()) };
-            frame_data_slice.copy_from_slice(&frame.data);
+                unsafe { std::slice::from_raw_parts_mut(frame_data_ptr, frame.data().len()) };
+            frame_data_slice.copy_from_slice(frame.data());
 
             // Convert to YUV
             let mut yuv_frame = AVFrame::new();
