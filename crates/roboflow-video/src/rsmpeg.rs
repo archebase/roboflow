@@ -932,7 +932,9 @@ impl RsmpegMp4Encoder {
 
             // Receive and write packets
             while let Ok(mut pkt) = codec_context.receive_packet() {
-                // Write packet to output using write_frame
+                if pkt.duration == 0 {
+                    pkt.set_duration(1);
+                }
                 format_context.write_frame(&mut pkt).map_err(|e| {
                     VideoEncoderError::FfmpegFailed(-1, format!("Failed to write packet: {}", e))
                 })?;
@@ -947,6 +949,9 @@ impl RsmpegMp4Encoder {
 
         codec_context.send_frame(None).ok();
         while let Ok(mut pkt) = codec_context.receive_packet() {
+            if pkt.duration == 0 {
+                pkt.set_duration(1);
+            }
             format_context.write_frame(&mut pkt).map_err(|e| {
                 VideoEncoderError::FfmpegFailed(-1, format!("Failed to write flush packet: {}", e))
             })?;
@@ -1195,6 +1200,9 @@ impl PersistentEncoder {
 
             // Step 6: Receive and write packets
             while let Ok(mut pkt) = codec_ctx.receive_packet() {
+                if pkt.duration == 0 {
+                    pkt.set_duration(1);
+                }
                 format_context.write_frame(&mut pkt).map_err(|e| {
                     VideoEncoderError::FfmpegFailed(-1, format!("Failed to write packet: {}", e))
                 })?;
@@ -1207,6 +1215,9 @@ impl PersistentEncoder {
         let codec_ctx = self.codec_ctx.as_mut().unwrap();
         codec_ctx.send_frame(None).ok();
         while let Ok(mut pkt) = codec_ctx.receive_packet() {
+            if pkt.duration == 0 {
+                pkt.set_duration(1);
+            }
             format_context.write_frame(&mut pkt).map_err(|e| {
                 VideoEncoderError::FfmpegFailed(-1, format!("Failed to write flush packet: {}", e))
             })?;

@@ -566,6 +566,11 @@ impl StreamingMp4Encoder {
         loop {
             match codec_context.receive_packet() {
                 Ok(mut pkt) => {
+                    // Set duration so the mp4 muxer doesn't have to estimate
+                    // the last packet's duration in each fragment.
+                    if pkt.duration == 0 {
+                        pkt.set_duration(1);
+                    }
                     format_context.write_frame(&mut pkt).map_err(|e| {
                         VideoEncoderError::Encoding(format!("Failed to write packet: {}", e))
                     })?;
