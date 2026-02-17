@@ -25,6 +25,7 @@ use roboflow_core::{Result, RoboflowError, TimestampedMessage};
 use tracing::{debug, info, instrument, trace, warn};
 
 use crate::common::base::{AlignedFrame, DatasetWriter, ImageData};
+use crate::image::ImageFormat;
 use crate::streaming::config::StreamingConfig;
 
 /// Configuration for the pipeline executor.
@@ -573,18 +574,36 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
                     }),
                     extract_image_bytes(map),
                 ) {
-                    // Compressed image (JPEG/PNG) - dimensions will be determined by decoder
-                    // Use 0x0 as placeholder - actual dimensions come from decoded image
+                    // Compressed image (JPEG/PNG) - extract dimensions from header
                     let data_size = image_bytes.len();
-                    let image_data = ImageData::encoded(0, 0, image_bytes);
+                    let detected_format = ImageFormat::from_magic_bytes(&image_bytes);
+                    let (width, height) = detected_format
+                        .extract_dimensions(&image_bytes)
+                        .unwrap_or((0, 0));
+
+                    let image_data = ImageData::encoded(width, height, image_bytes);
                     frame.add_image(feature_name.clone(), image_data);
-                    trace!(
-                        topic = %msg.topic,
-                        feature = %feature_name,
-                        format,
-                        size = data_size,
-                        "Processing CompressedImage (format, size bytes)"
-                    );
+
+                    if width == 0 || height == 0 {
+                        debug!(
+                            topic = %msg.topic,
+                            feature = %feature_name,
+                            format,
+                            size = data_size,
+                            detected_format = ?detected_format,
+                            "CompressedImage with unknown dimensions (will need decode)"
+                        );
+                    } else {
+                        trace!(
+                            topic = %msg.topic,
+                            feature = %feature_name,
+                            format,
+                            size = data_size,
+                            width,
+                            height,
+                            "Processing CompressedImage"
+                        );
+                    }
                     return Ok(());
                 }
 
@@ -726,28 +745,39 @@ fn is_camera_info_topic(data: &robocodec::CodecValue) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::base::{DatasetWriter, UploadState, WriterStats};
+    use crate::common::base::{DatasetWriter, ImageData, UploadState, WriterStats};
     use std::any::Any;
 
     /// Mock writer for testing pipeline executor.
     struct MockWriter {
         frame_count: usize,
+        /// Track images added to the writer for test assertions
+        images: Vec<ImageData>,
     }
 
     impl MockWriter {
         fn new() -> Self {
-            Self { frame_count: 0 }
+            Self {
+                frame_count: 0,
+                images: Vec::new(),
+            }
         }
     }
 
     impl DatasetWriter for MockWriter {
-        fn write_frame(&mut self, _frame: &AlignedFrame) -> Result<()> {
+        fn write_frame(&mut self, frame: &AlignedFrame) -> Result<()> {
             self.frame_count += 1;
+            // Capture images from the frame for test assertions
+            for img in frame.images.values() {
+                self.images.push(ImageData::encoded(img.width, img.height, img.data.clone()));
+            }
             Ok(())
         }
 
         fn write_batch(&mut self, frames: &[AlignedFrame]) -> Result<()> {
-            self.frame_count += frames.len();
+            for frame in frames {
+                self.write_frame(frame)?;
+            }
             Ok(())
         }
 
@@ -1167,5 +1197,147 @@ mod tests {
 
         // All messages should be processed
         assert_eq!(executor.stats.messages_processed, 3);
+    }
+
+    /// Test that ROS CompressedImage messages (format + data, no width/height)
+    /// have dimensions extracted from the JPEG/PNG header.
+    #[test]
+    fn test_compressed_image_dimension_extraction_from_header() {
+        use robocodec::CodecValue;
+
+        let writer = MockWriter::new();
+        let streaming = StreamingConfig::with_fps(30);
+        let config = PipelineConfig::new(streaming);
+        let mut executor = PipelineExecutor::new(writer, config);
+
+        // Construct a minimal valid JPEG with SOF0 marker containing dimensions
+        // This simulates a real sensor_msgs/CompressedImage which has NO width/height fields
+        // FF D8 - SOI (Start of Image)
+        // FF E0 + length + "JFIF\0" - APP0 marker
+        // FF C0 + length + precision + height + width - SOF0 marker with dimensions
+        // Expected: 200x100 pixels (width x height)
+        let jpeg_with_sof: Vec<u8> = vec![
+            0xFF, 0xD8, // SOI (Start of Image)
+            0xFF, 0xE0, 0x00, 0x10, // APP0 marker + length (16 bytes)
+            0x4A, 0x46, 0x49, 0x46, 0x00, // "JFIF\0"
+            0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, // JFIF version and density
+            0xFF, 0xC0, // SOF0 marker (Start of Frame, baseline DCT)
+            0x00, 0x0B, // Length (11 bytes)
+            0x08, // Precision (8 bits)
+            0x00, 0x64, // Height: 100 (0x0064)
+            0x00, 0xC8, // Width: 200 (0x00C8)
+            0x01, 0x01, 0x11, 0x00, // Number of components + component data
+        ];
+
+        // Create a sensor_msgs/CompressedImage message (has format + data, no width/height)
+        let mut compressed_msg = HashMap::new();
+        compressed_msg.insert("format".to_string(), CodecValue::String("jpeg".to_string()));
+        compressed_msg.insert("data".to_string(), CodecValue::Bytes(jpeg_with_sof.clone()));
+        // NOTE: No width/height fields - this is the key difference from sensor_msgs/Image
+
+        let msg = TimestampedMessage {
+            topic: "/camera/compressed".to_string(),
+            log_time: 0,
+            data: CodecValue::Struct(compressed_msg),
+        };
+
+        executor.process_message(msg).unwrap();
+
+        // Verify message was processed
+        assert_eq!(executor.stats.messages_processed, 1);
+
+        // Verify the image was added to the writer with correct dimensions
+        let writer = &executor.writer;
+        assert_eq!(writer.images.len(), 1);
+        let img = &writer.images[0];
+        assert_eq!(img.width, 200, "Width should be extracted from JPEG SOF marker");
+        assert_eq!(img.height, 100, "Height should be extracted from JPEG SOF marker");
+        assert!(img.is_encoded, "Image should be marked as encoded");
+    }
+
+    /// Test that ROS CompressedImage with PNG format has dimensions extracted from header.
+    #[test]
+    fn test_compressed_image_png_dimension_extraction_from_header() {
+        use robocodec::CodecValue;
+
+        let writer = MockWriter::new();
+        let streaming = StreamingConfig::with_fps(30);
+        let config = PipelineConfig::new(streaming);
+        let mut executor = PipelineExecutor::new(writer, config);
+
+        // Construct a minimal valid PNG with IHDR chunk containing dimensions
+        // Expected: 128x64 pixels (width x height)
+        let png_data: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+            0x00, 0x00, 0x00, 0x0D, // IHDR chunk length (13 bytes)
+            0x49, 0x48, 0x44, 0x52, // "IHDR"
+            0x00, 0x00, 0x00, 0x80, // Width: 128 (0x80)
+            0x00, 0x00, 0x00, 0x40, // Height: 64 (0x40)
+            0x08, 0x02, 0x00, 0x00, 0x00, // Bit depth, color type, etc.
+            0x00, 0x00, 0x00, 0x00, // CRC placeholder
+        ];
+
+        let mut compressed_msg = HashMap::new();
+        compressed_msg.insert("format".to_string(), CodecValue::String("png".to_string()));
+        compressed_msg.insert("data".to_string(), CodecValue::Bytes(png_data.clone()));
+        // NOTE: No width/height fields
+
+        let msg = TimestampedMessage {
+            topic: "/camera/compressed".to_string(),
+            log_time: 0,
+            data: CodecValue::Struct(compressed_msg),
+        };
+
+        executor.process_message(msg).unwrap();
+
+        // Verify message was processed
+        assert_eq!(executor.stats.messages_processed, 1);
+
+        // Verify dimensions extracted from PNG IHDR
+        let writer = &executor.writer;
+        assert_eq!(writer.images.len(), 1);
+        let img = &writer.images[0];
+        assert_eq!(img.width, 128, "Width should be extracted from PNG IHDR");
+        assert_eq!(img.height, 64, "Height should be extracted from PNG IHDR");
+        assert!(img.is_encoded, "Image should be marked as encoded");
+    }
+
+    /// Test that CompressedImage with unparseable header gets dimensions (0, 0)
+    /// and is still processed without error.
+    #[test]
+    fn test_compressed_image_unknown_dimensions_handled_gracefully() {
+        use robocodec::CodecValue;
+
+        let writer = MockWriter::new();
+        let streaming = StreamingConfig::with_fps(30);
+        let config = PipelineConfig::new(streaming);
+        let mut executor = PipelineExecutor::new(writer, config);
+
+        // Create a CompressedImage with invalid/truncated JPEG data
+        // (no SOF marker, so dimensions can't be extracted)
+        let invalid_jpeg = vec![0xFF, 0xD8, 0xFF]; // Just JPEG magic, no SOF
+
+        let mut compressed_msg = HashMap::new();
+        compressed_msg.insert("format".to_string(), CodecValue::String("jpeg".to_string()));
+        compressed_msg.insert("data".to_string(), CodecValue::Bytes(invalid_jpeg));
+
+        let msg = TimestampedMessage {
+            topic: "/camera/compressed".to_string(),
+            log_time: 0,
+            data: CodecValue::Struct(compressed_msg),
+        };
+
+        // Should NOT error - handles gracefully with (0, 0) dimensions
+        executor.process_message(msg).unwrap();
+
+        assert_eq!(executor.stats.messages_processed, 1);
+
+        // Image should still be added but with 0x0 dimensions
+        let writer = &executor.writer;
+        assert_eq!(writer.images.len(), 1);
+        let img = &writer.images[0];
+        assert_eq!(img.width, 0, "Width should be 0 for unparseable header");
+        assert_eq!(img.height, 0, "Height should be 0 for unparseable header");
+        assert!(img.is_encoded, "Image should still be marked as encoded");
     }
 }
