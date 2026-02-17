@@ -217,6 +217,68 @@ pub trait Storage: Send + Sync {
     fn as_any(&self) -> &dyn std::any::Any {
         &()
     }
+
+    /// Compose multiple objects into a single destination object.
+    ///
+    /// For cloud backends (S3/OSS), this uses server-side copy operations
+    /// (e.g., S3 UploadPartCopy) to combine objects without data transfer.
+    /// For local storage, this performs a file merge operation.
+    ///
+    /// This is useful for combining multiple video segments (created during
+    /// memory-bounded processing) into a single episode file.
+    ///
+    /// # Arguments
+    ///
+    /// * `sources` - Slice of source object paths to compose (in order)
+    /// * `dest` - Destination path for the composed object
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - `sources` is empty
+    /// - Any source object doesn't exist
+    /// - The destination already exists (use `delete` first if overwrite needed)
+    /// - The compose operation fails
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let segments = [
+    ///     Path::new("temp/session123/segment_0.mp4"),
+    ///     Path::new("temp/session123/segment_1.mp4"),
+    /// ];
+    /// let dest = Path::new("videos/episode_000000.mp4");
+    /// storage.compose_objects(&segments, dest)?;
+    /// ```
+    fn compose_objects(&self, sources: &[&Path], dest: &Path) -> StorageResult<()> {
+        let _ = (sources, dest);
+        Err(StorageError::Other(
+            "compose_objects not implemented for this storage type".to_string(),
+        ))
+    }
+
+    /// Delete all objects with a given prefix.
+    ///
+    /// This is useful for cleaning up temporary directories after
+    /// composing segments into final files.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Path prefix to delete (e.g., "temp/session123/")
+    ///
+    /// # Returns
+    ///
+    /// The number of objects deleted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the delete operation fails.
+    fn delete_prefix(&self, prefix: &Path) -> StorageResult<usize> {
+        let _ = prefix;
+        Err(StorageError::Other(
+            "delete_prefix not implemented for this storage type".to_string(),
+        ))
+    }
 }
 
 // =============================================================================

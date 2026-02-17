@@ -51,8 +51,18 @@ pub struct LerobotWriter {
     /// Configuration
     config: LerobotConfig,
 
-    /// Current episode index
+    /// Current episode index (logical episode, one per bag file)
     episode_index: usize,
+
+    /// Current segment index within the episode (increments on memory flush)
+    segment_index: u32,
+
+    /// Unique session ID for temp segment paths
+    session_id: String,
+
+    /// Pending segment paths per camera, to be merged on finalize
+    /// Maps camera_name -> list of segment paths in temp storage
+    pending_segments: HashMap<String, Vec<PathBuf>>,
 
     /// Number of episodes per chunk for LeRobot v2.1 format.
     /// Episodes 0 to episodes_per_chunk-1 go to chunk-000,
@@ -181,6 +191,9 @@ impl LerobotWriter {
             output_dir: output_dir.to_path_buf(),
             config,
             episode_index: 0,
+            segment_index: 0,
+            session_id: uuid::Uuid::new_v4().to_string(),
+            pending_segments: HashMap::new(),
             episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
             image_buffers: HashMap::new(),
@@ -341,6 +354,9 @@ impl LerobotWriter {
             output_dir: local_buffer.to_path_buf(),
             config,
             episode_index: 0,
+            segment_index: 0,
+            session_id: uuid::Uuid::new_v4().to_string(),
+            pending_segments: HashMap::new(),
             episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
             image_buffers: HashMap::new(),
@@ -667,13 +683,108 @@ impl LerobotWriter {
         // Update counters
         self.total_frames += self.frame_data.len();
 
-        // Clear for next episode
+        // Clear for next segment/episode
         self.frame_data.clear();
         for buffer in self.image_buffers.values_mut() {
             buffer.clear();
         }
 
-        self.episode_index += 1;
+        // Increment segment index for next flush
+        // episode_index is NOT incremented here - it only changes when
+        // a new source file (bag/mcap) is started, which is handled
+        // by start_episode() method
+        self.segment_index += 1;
+
+        Ok(())
+    }
+
+    /// Flush video buffers to temp segment files.
+    ///
+    /// This method is called when memory threshold is hit during processing.
+    /// It encodes the current video buffers to temporary segment files in cloud
+    /// storage, without writing parquet or clearing frame data.
+    ///
+    /// The parquet file is written once on finalize with all accumulated frame data.
+    fn flush_video_segment(&mut self) -> Result<()> {
+        if self.image_buffers.is_empty() {
+            return Ok(());
+        }
+
+        let total_images: usize = self.image_buffers.values().map(|v| v.len()).sum();
+        tracing::info!(
+            episode_index = self.episode_index,
+            segment_index = self.segment_index,
+            cameras = self.image_buffers.len(),
+            total_frames = total_images,
+            "Flushing video segment to temporary storage"
+        );
+
+        // Encode videos to temp segment paths
+        let (video_files, encode_stats) = if self.upload_coordinator.is_some() {
+            self.encode_videos_with_coordinator()?
+        } else {
+            self.encode_videos()?
+        };
+
+        // Update statistics
+        self.images_encoded += encode_stats.images_encoded;
+        self.skipped_frames += encode_stats.skipped_frames;
+        self.failed_encodings += encode_stats.failed_encodings;
+        self.output_bytes += encode_stats.output_bytes;
+
+        // For non-cloud storage, move encoded videos to temp paths too
+        // This ensures consistent behavior across storage backends
+        if !video_files.is_empty() && !self.use_cloud_storage {
+            // Videos were encoded locally - move them to temp segment paths
+            let temp_prefix = format!("temp/{}/episode_{:06}", self.session_id, self.episode_index);
+
+            for (local_path, camera) in video_files {
+                // Build temp segment path
+                let temp_path = PathBuf::from(format!(
+                    "{}/{}/segment_{:04}.mp4",
+                    temp_prefix, camera, self.segment_index
+                ));
+
+                // Track for later merging
+                self.pending_segments
+                    .entry(camera.clone())
+                    .or_default()
+                    .push(temp_path.clone());
+
+                // Move file to temp location (or copy if cross-device)
+                if let Some(parent) = temp_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::rename(&local_path, &temp_path).or_else(|_| {
+                    // Fallback to copy + remove if rename fails (cross-device)
+                    fs::copy(&local_path, &temp_path)?;
+                    fs::remove_file(&local_path)?;
+                    Ok::<_, std::io::Error>(())
+                })?;
+
+                tracing::debug!(
+                    camera = %camera,
+                    segment_index = self.segment_index,
+                    temp_path = %temp_path.display(),
+                    "Moved local video to temp segment path"
+                );
+            }
+        }
+
+        // Clear only image buffers - keep frame_data for parquet write on finalize
+        for buffer in self.image_buffers.values_mut() {
+            buffer.clear();
+        }
+
+        // Increment segment index for next flush
+        self.segment_index += 1;
+
+        tracing::info!(
+            episode_index = self.episode_index,
+            segment_index = self.segment_index - 1,
+            images_encoded = encode_stats.images_encoded,
+            "Video segment flushed to temporary storage"
+        );
 
         Ok(())
     }
@@ -793,6 +904,8 @@ impl LerobotWriter {
     /// This method provides better performance for multi-camera setups by using
     /// dedicated encoder threads for each camera with concurrent S3/OSS upload.
     ///
+    /// Videos are uploaded to temp segment paths and tracked for later merging.
+    ///
     /// # Returns
     ///
     /// A tuple of (video_files, encode_stats) where video_files contains
@@ -801,6 +914,7 @@ impl LerobotWriter {
         if self.image_buffers.is_empty() {
             tracing::debug!(
                 episode_index = self.episode_index,
+                segment_index = self.segment_index,
                 "Video skip: image_buffers empty"
             );
             return Ok((Vec::new(), EncodeStats::default()));
@@ -809,6 +923,7 @@ impl LerobotWriter {
         let total_images: usize = self.image_buffers.values().map(|v| v.len()).sum();
         tracing::info!(
             episode_index = self.episode_index,
+            segment_index = self.segment_index,
             cameras = self.image_buffers.len(),
             total_frames = total_images,
             "Encoding videos with concurrent encoder"
@@ -832,15 +947,17 @@ impl LerobotWriter {
         // Resolve video configuration
         let resolved = ResolvedConfig::from_video_config(&self.config.video);
 
-        // Use relative path prefix (not full S3 URL) - the storage backend already knows the bucket
-        let key_prefix = self.output_prefix.trim_end_matches('/').to_string();
+        // Use temp path for segment uploads
+        // Format: temp/{session_id}/episode_{episode:06}/{camera}/segment_{segment:04}.mp4
+        let key_prefix = format!("temp/{}/episode_{:06}", self.session_id, self.episode_index);
 
-        // Create concurrent encoder configuration with dynamic chunk index
+        // Create concurrent encoder configuration
+        // Note: We use segment_index in place of episode_index for the filename
         let encoder_config = ConcurrentEncoderConfig {
             key_prefix,
             chunk_index: self.chunk_index(),
-            episode_index: self.episode_index as u32,
-            chunk_size: 256 * 1024, // 256KB chunks for streaming
+            episode_index: self.segment_index, // Use segment_index for filename
+            chunk_size: 256 * 1024,            // 256KB chunks for streaming
             video_config: resolved.to_encoder_config(self.config.dataset.fps),
             frame_channel_capacity: self.config.streaming.ring_buffer_size,
             s3_config,
@@ -871,6 +988,15 @@ impl LerobotWriter {
         let camera_count = results.len();
         let images_encoded: usize = results.iter().map(|r| r.frames_encoded).sum();
 
+        // Track uploaded segment paths for later merging
+        for result in &results {
+            let segment_path = PathBuf::from(&result.url);
+            self.pending_segments
+                .entry(result.camera.clone())
+                .or_default()
+                .push(segment_path);
+        }
+
         // When using ConcurrentVideoEncoder, videos are already uploaded to S3 directly.
         // Return empty video_files so the upload coordinator won't try to upload non-existent local files.
         let video_files: Vec<(PathBuf, String)> = Vec::new();
@@ -885,9 +1011,10 @@ impl LerobotWriter {
 
         tracing::info!(
             episode_index = self.episode_index,
+            segment_index = self.segment_index,
             cameras = camera_count,
             images_encoded = encode_stats.images_encoded,
-            "Completed encoding with concurrent encoder (videos already uploaded to S3)"
+            "Completed encoding with concurrent encoder (videos uploaded to temp segment path)"
         );
 
         Ok((video_files, encode_stats))
@@ -1004,6 +1131,9 @@ impl LerobotWriter {
             self.finish_episode(None)?;
         }
 
+        // Merge all pending segments into final episode files
+        self.merge_pending_segments()?;
+
         // Write metadata files
         if self.use_cloud_storage {
             self.metadata
@@ -1036,6 +1166,122 @@ impl LerobotWriter {
         }
 
         Ok(self.total_frames)
+    }
+
+    /// Merge all pending video segments into final episode files.
+    ///
+    /// This method is called during finalization to compose all temporary
+    /// segment files (created during memory-bounded processing) into the
+    /// final episode MP4 files in the LeRobot v2.1 directory structure.
+    fn merge_pending_segments(&mut self) -> Result<()> {
+        if self.pending_segments.is_empty() {
+            tracing::debug!("No pending segments to merge");
+            return Ok(());
+        }
+
+        let chunk_index = self.chunk_index();
+        let episode_index = self.episode_index;
+
+        tracing::info!(
+            session_id = %self.session_id,
+            episode_index,
+            chunk_index,
+            cameras = self.pending_segments.len(),
+            "Merging video segments into final episode files"
+        );
+
+        // Track total merged files for logging
+        let mut total_merged = 0;
+        let mut total_segments = 0;
+
+        // For each camera, compose all segments into the final episode file
+        for (camera, segments) in &self.pending_segments {
+            if segments.is_empty() {
+                continue;
+            }
+
+            total_segments += segments.len();
+
+            // Construct final path following LeRobot v2.1 format:
+            // {output_prefix}/videos/chunk-{chunk:03}/{camera}/episode_{episode:06}.mp4
+            let final_path = if self.output_prefix.is_empty() {
+                PathBuf::from(format!(
+                    "videos/chunk-{:03}/{}/episode_{:06}.mp4",
+                    chunk_index, camera, episode_index
+                ))
+            } else {
+                PathBuf::from(format!(
+                    "{}/videos/chunk-{:03}/{}/episode_{:06}.mp4",
+                    self.output_prefix, chunk_index, camera, episode_index
+                ))
+            };
+
+            // Log the merge operation
+            tracing::debug!(
+                camera = %camera,
+                segment_count = segments.len(),
+                final_path = %final_path.display(),
+                "Composing segments into final video"
+            );
+
+            // Prepare source paths as slice of references
+            let source_refs: Vec<&Path> = segments.iter().map(|p| p.as_path()).collect();
+
+            // Compose all segments into the final file
+            self.storage
+                .compose_objects(&source_refs, &final_path)
+                .map_err(|e| {
+                    roboflow_core::RoboflowError::encode(
+                        "LerobotWriter",
+                        format!(
+                            "Failed to compose {} segments for camera {}: {}",
+                            segments.len(),
+                            camera,
+                            e
+                        ),
+                    )
+                })?;
+
+            total_merged += 1;
+
+            tracing::info!(
+                camera = %camera,
+                segments_merged = segments.len(),
+                final_path = %final_path.display(),
+                "Merged video segments into final episode file"
+            );
+        }
+
+        // Clean up temp directory for this session
+        let temp_prefix = PathBuf::from(format!("temp/{}", self.session_id));
+        match self.storage.delete_prefix(&temp_prefix) {
+            Ok(deleted_count) => {
+                tracing::debug!(
+                    temp_prefix = %temp_prefix.display(),
+                    deleted_count,
+                    "Cleaned up temporary segment files"
+                );
+            }
+            Err(e) => {
+                // Log warning but don't fail - temp files can be cleaned up later
+                tracing::warn!(
+                    temp_prefix = %temp_prefix.display(),
+                    error = %e,
+                    "Failed to clean up temporary segment files (non-critical)"
+                );
+            }
+        }
+
+        tracing::info!(
+            total_merged,
+            total_segments,
+            "Completed merging all video segments"
+        );
+
+        // Clear pending segments since they're now merged
+        self.pending_segments.clear();
+
+        Ok(())
     }
 
     /// Get total frames written so far.
@@ -1152,6 +1398,9 @@ impl LerobotWriter {
             output_dir: local_buffer,
             config,
             episode_index: 0,
+            segment_index: 0,
+            session_id: uuid::Uuid::new_v4().to_string(),
+            pending_segments: HashMap::new(),
             episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
             image_buffers: HashMap::new(),
@@ -1199,9 +1448,8 @@ impl DatasetWriter for LerobotWriter {
         }
 
         // Check if we should flush for memory management.
-        // Instead of the broken flush_chunk (which overwrites parquet/video files),
-        // finish the current episode and start a new one. Each episode gets a unique
-        // index, so output paths never collide.
+        // We flush video segments (not full episodes) to temporary storage.
+        // The parquet file is written once on finalize with all accumulated frame data.
         let memory_bytes = self.estimate_memory_bytes();
         if self
             .config
@@ -1212,12 +1460,13 @@ impl DatasetWriter for LerobotWriter {
                 frames = self.frame_data.len(),
                 memory_mb = memory_bytes / (1024 * 1024),
                 episode_index = self.episode_index,
-                "Memory threshold reached, finishing episode"
+                segment_index = self.segment_index,
+                "Memory threshold reached, flushing video segment"
             );
-            if let Err(e) = self.finish_episode(None) {
+            if let Err(e) = self.flush_video_segment() {
                 tracing::error!(
                     error = %e,
-                    "Failed to finish episode for memory management, continuing (memory may increase)"
+                    "Failed to flush video segment for memory management, continuing (memory may increase)"
                 );
             }
         }
@@ -1226,10 +1475,22 @@ impl DatasetWriter for LerobotWriter {
     }
 
     fn finalize(&mut self) -> Result<WriterStats> {
-        // Finish any remaining episode
-        if !self.frame_data.is_empty() {
-            self.finish_episode(None)?;
+        // Flush any remaining video buffers
+        if !self.image_buffers.values().all(|v| v.is_empty()) {
+            self.flush_video_segment()?;
         }
+
+        // Write parquet file with ALL accumulated frame data
+        if !self.frame_data.is_empty() {
+            self.write_episode_parquet()?;
+            // Update metadata with episode info
+            self.metadata
+                .add_episode(self.episode_index, self.frame_data.len(), vec![]);
+            self.total_frames += self.frame_data.len();
+        }
+
+        // Merge all video segments into final episode files
+        self.merge_pending_segments()?;
 
         // Write camera parameters
         self.write_camera_parameters()?;
@@ -1432,7 +1693,11 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_flush_creates_multiple_episodes() {
+    fn test_memory_flush_creates_single_episode() {
+        // This test verifies the new segment-based approach:
+        // - Memory flushes create video segments (not new episodes)
+        // - All frames from a single source end up in a single parquet file
+        // - Video segments are merged on finalize
         let tmp = tempfile::tempdir().unwrap();
 
         let flushing = FlushingConfig {
@@ -1444,22 +1709,20 @@ mod tests {
 
         let mut writer = LerobotWriter::new_local(tmp.path(), config).unwrap();
 
-        // Write 12 frames. With max_frames_per_chunk=5, the flush check fires
-        // after frames 0-4 (5 frames buffered) and again after frames 5-9.
-        // Remaining frames 10-11 are flushed by finalize().
+        // Write 12 frames. With the new segment-based approach:
+        // - Memory flush (based on max_frames_per_chunk) creates video segments
+        // - All frame data is accumulated until finalize
+        // - Finalize writes a single parquet file with all frames
         for i in 0..12 {
             writer.write_frame(&make_frame(i)).unwrap();
         }
 
         let stats = <LerobotWriter as DatasetWriter>::finalize(&mut writer).unwrap();
 
-        // ---- Verify total frame count across all episodes ----
-        assert_eq!(
-            stats.frames_written, 12,
-            "Expected 12 total frames written across episodes"
-        );
+        // ---- Verify total frame count ----
+        assert_eq!(stats.frames_written, 12, "Expected 12 total frames written");
 
-        // ---- Verify that multiple parquet files exist (one per episode) ----
+        // ---- Verify that only ONE parquet file exists (single episode) ----
         let parquet_dir = tmp.path().join("data/chunk-000");
         let parquet_0 = parquet_dir.join("episode_000000.parquet");
         let parquet_1 = parquet_dir.join("episode_000001.parquet");
@@ -1470,22 +1733,83 @@ mod tests {
             "episode_000000.parquet should exist: {:?}",
             parquet_0
         );
+        // With segment-based approach, only ONE parquet file should exist
         assert!(
-            parquet_1.exists(),
-            "episode_000001.parquet should exist: {:?}",
+            !parquet_1.exists(),
+            "episode_000001.parquet should NOT exist (all frames are in episode_000000): {:?}",
             parquet_1
         );
         assert!(
-            parquet_2.exists(),
-            "episode_000002.parquet should exist: {:?}",
+            !parquet_2.exists(),
+            "episode_000002.parquet should NOT exist (all frames are in episode_000000): {:?}",
             parquet_2
         );
+    }
 
-        // Verify no fourth episode (12 frames / 5 per chunk = 3 episodes)
-        let parquet_3 = parquet_dir.join("episode_000003.parquet");
+    #[test]
+    fn test_video_segment_merge_on_finalize() {
+        // This test verifies that video segments are properly merged on finalize:
+        // - Memory flushes create temporary video segments
+        // - Finalize merges all segments into a single video file
+        // - Temporary files are cleaned up
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Use small memory limit to trigger flushes
+        let flushing = FlushingConfig {
+            max_frames_per_chunk: 3, // Flush every 3 frames
+            max_memory_bytes: 0,     // disable memory-based flushing
+            incremental_video_encoding: true,
+        };
+        let config = test_config(flushing);
+
+        let mut writer = LerobotWriter::new_local(tmp.path(), config).unwrap();
+
+        // Write 9 frames - should trigger 3 flushes (frames 0-2, 3-5, 6-8)
+        for i in 0..9 {
+            writer.write_frame(&make_frame(i)).unwrap();
+        }
+
+        let stats = <LerobotWriter as DatasetWriter>::finalize(&mut writer).unwrap();
+
+        // Verify all frames were written
+        assert_eq!(stats.frames_written, 9, "Expected 9 total frames written");
+
+        // Verify a single parquet file exists
+        let parquet_dir = tmp.path().join("data/chunk-000");
+        let parquet_0 = parquet_dir.join("episode_000000.parquet");
         assert!(
-            !parquet_3.exists(),
-            "episode_000003.parquet should NOT exist"
+            parquet_0.exists(),
+            "episode_000000.parquet should exist: {:?}",
+            parquet_0
+        );
+
+        // Verify no second episode
+        let parquet_1 = parquet_dir.join("episode_000001.parquet");
+        assert!(
+            !parquet_1.exists(),
+            "episode_000001.parquet should NOT exist: {:?}",
+            parquet_1
+        );
+
+        // Verify the merged video file exists
+        let video_dir = tmp.path().join("videos/chunk-000/observation.images.cam");
+        let video_0 = video_dir.join("episode_000000.mp4");
+        assert!(
+            video_0.exists(),
+            "Merged video file should exist: {:?}",
+            video_0
+        );
+
+        // Verify temp directory is cleaned up
+        let temp_dir = tmp.path().join("temp");
+        assert!(
+            !temp_dir.exists()
+                || temp_dir
+                    .read_dir()
+                    .map(|mut d| d.next().is_none())
+                    .unwrap_or(true),
+            "Temp directory should be cleaned up after merge: {:?}",
+            temp_dir
         );
     }
 }

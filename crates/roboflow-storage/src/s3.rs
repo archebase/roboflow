@@ -802,6 +802,117 @@ impl Storage for S3Storage {
 
         Ok(stats.total_bytes)
     }
+
+    fn compose_objects(&self, sources: &[&Path], dest: &Path) -> Result<()> {
+        if sources.is_empty() {
+            return Err(StorageError::Other(
+                "compose_objects requires at least one source".to_string(),
+            ));
+        }
+
+        // For a single source, just do a copy
+        if sources.len() == 1 {
+            return self.copy(sources[0], dest);
+        }
+
+        // TODO: Optimize using S3 UploadPartCopy API for server-side compose.
+        // This would require adding aws-sdk-s3 as a direct dependency.
+        // Current implementation: download → concat → upload
+
+        let temp_dir = tempfile::tempdir().map_err(StorageError::Io)?;
+
+        tracing::info!(
+            sources = sources.len(),
+            dest = %dest.display(),
+            "Composing objects (download → concat → upload)"
+        );
+
+        // Download all sources to temp files
+        let mut temp_files: Vec<std::path::PathBuf> = Vec::new();
+        let mut total_bytes = 0u64;
+
+        for (i, &src) in sources.iter().enumerate() {
+            let temp_path = temp_dir.path().join(format!("segment_{}.mp4", i));
+            let bytes = self.download_file(src, &temp_path)?;
+            total_bytes += bytes;
+            temp_files.push(temp_path);
+        }
+
+        // Concatenate all temp files into a single temp file
+        let merged_path = temp_dir.path().join("merged.mp4");
+        let merged_file = std::fs::File::create(&merged_path).map_err(StorageError::Io)?;
+        let mut merged_writer = std::io::BufWriter::new(merged_file);
+
+        for temp_file in &temp_files {
+            let mut reader = std::fs::File::open(temp_file).map_err(StorageError::Io)?;
+            std::io::copy(&mut reader, &mut merged_writer).map_err(StorageError::Io)?;
+        }
+        merged_writer.flush().map_err(StorageError::Io)?;
+
+        // Upload the merged file
+        self.upload_file(&merged_path, dest)?;
+
+        tracing::info!(sources = sources.len(), total_bytes, "Compose complete");
+
+        // Temp files are automatically cleaned up when temp_dir is dropped
+        Ok(())
+    }
+
+    fn delete_prefix(&self, prefix: &Path) -> Result<usize> {
+        use futures::StreamExt;
+
+        let key_prefix = self.async_storage.path_to_key(prefix);
+        let store = self.async_storage.object_store();
+
+        // List all objects with the prefix
+        let objects: Vec<_> = self.block_on(async {
+            let mut stream = store.list(Some(&key_prefix));
+            let mut objs = Vec::new();
+            while let Some(obj) = stream.next().await {
+                match obj {
+                    Ok(meta) => objs.push(meta),
+                    Err(e) => {
+                        tracing::warn!("Error listing object: {}", e);
+                    }
+                }
+            }
+            objs
+        });
+
+        let count = objects.len();
+        if count == 0 {
+            return Ok(0);
+        }
+
+        tracing::info!(
+            prefix = %key_prefix.as_ref(),
+            count,
+            "Deleting objects with prefix"
+        );
+
+        // Delete all objects
+        // object_store has a delete_stream method for batch deletion
+        self.block_on(async {
+            let keys: Vec<_> = objects.iter().map(|m| m.location.clone()).collect();
+            let mut delete_stream =
+                store.delete_stream(futures::stream::iter(keys.into_iter().map(Ok)).boxed());
+
+            let mut deleted = 0usize;
+            while let Some(result) = delete_stream.next().await {
+                match result {
+                    Ok(_) => deleted += 1,
+                    Err(e) => {
+                        tracing::warn!("Failed to delete object: {}", e);
+                    }
+                }
+            }
+            Ok::<usize, StorageError>(deleted)
+        })?;
+
+        tracing::info!(count, "Deleted objects");
+
+        Ok(count)
+    }
 }
 
 // =============================================================================

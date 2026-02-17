@@ -4187,6 +4187,7 @@ dependencies = [
  "bytes",
  "chrono",
  "crossbeam-channel",
+ "futures",
  "object_store",
  "pretty_assertions",
  "roboflow-core",
