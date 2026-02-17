@@ -706,7 +706,8 @@ impl LerobotWriter {
     ///
     /// The parquet file is written once on finalize with all accumulated frame data.
     fn flush_video_segment(&mut self) -> Result<()> {
-        if self.image_buffers.is_empty() {
+        // Skip if no cameras have any frames
+        if self.image_buffers.values().all(|v| v.is_empty()) {
             return Ok(());
         }
 
@@ -911,11 +912,12 @@ impl LerobotWriter {
     /// A tuple of (video_files, encode_stats) where video_files contains
     /// (path, camera) tuples and encode_stats contains encoding statistics.
     fn encode_videos_with_coordinator(&mut self) -> Result<(Vec<(PathBuf, String)>, EncodeStats)> {
-        if self.image_buffers.is_empty() {
+        // Skip if no cameras have any frames
+        if self.image_buffers.values().all(|v| v.is_empty()) {
             tracing::debug!(
                 episode_index = self.episode_index,
                 segment_index = self.segment_index,
-                "Video skip: image_buffers empty"
+                "Video skip: no frames in image_buffers"
             );
             return Ok((Vec::new(), EncodeStats::default()));
         }
