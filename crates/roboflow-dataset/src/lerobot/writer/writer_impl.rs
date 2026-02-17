@@ -113,6 +113,9 @@ pub struct LerobotWriter {
 
     /// Helper for cloud uploads
     cloud_uploader: CloudUploader,
+
+    /// Images added since last flush (for correct flush triggering)
+    images_since_flush: usize,
 }
 
 impl LerobotWriter {
@@ -210,6 +213,7 @@ impl LerobotWriter {
             use_cloud_storage: false,
             upload_coordinator: None,
             cloud_uploader,
+            images_since_flush: 0,
         })
     }
 
@@ -373,6 +377,7 @@ impl LerobotWriter {
             use_cloud_storage,
             upload_coordinator: upload_coordinator.clone(),
             cloud_uploader,
+            images_since_flush: 0,
         })
     }
 
@@ -479,6 +484,7 @@ impl LerobotWriter {
 
         // Buffer for video encoding
         self.image_buffers.entry(camera).or_default().push(data);
+        self.images_since_flush += 1;
     }
 
     /// Add image data from Arc (zero-copy if already Arc-wrapped).
@@ -496,6 +502,7 @@ impl LerobotWriter {
             .entry(camera)
             .or_default()
             .push(Arc::try_unwrap(data).unwrap_or_else(|arc| (*arc).clone()));
+        self.images_since_flush += 1;
     }
 
     /// Start a new episode.
@@ -776,6 +783,7 @@ impl LerobotWriter {
         for buffer in self.image_buffers.values_mut() {
             buffer.clear();
         }
+        self.images_since_flush = 0;
 
         // Increment segment index for next flush
         self.segment_index += 1;
@@ -1419,6 +1427,7 @@ impl LerobotWriter {
             use_cloud_storage,
             upload_coordinator,
             cloud_uploader,
+            images_since_flush: 0,
         })
     }
 }
@@ -1452,14 +1461,18 @@ impl DatasetWriter for LerobotWriter {
         // Check if we should flush for memory management.
         // We flush video segments (not full episodes) to temporary storage.
         // The parquet file is written once on finalize with all accumulated frame data.
+        // IMPORTANT: Use images_since_flush (not frame_data.len()) to avoid triggering
+        // flush on every frame after the threshold is reached. frame_data is cumulative
+        // and never cleared, while images_since_flush is reset after each flush.
         let memory_bytes = self.estimate_memory_bytes();
         if self
             .config
             .flushing
-            .should_flush(self.frame_data.len(), memory_bytes)
+            .should_flush(self.images_since_flush, memory_bytes)
         {
             tracing::info!(
-                frames = self.frame_data.len(),
+                images_since_flush = self.images_since_flush,
+                total_frames = self.frame_data.len(),
                 memory_mb = memory_bytes / (1024 * 1024),
                 episode_index = self.episode_index,
                 segment_index = self.segment_index,
