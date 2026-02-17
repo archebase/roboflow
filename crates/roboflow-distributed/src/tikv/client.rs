@@ -137,42 +137,42 @@ impl TikvClient {
         }
     }
 
-    /// Put a key-value pair.
+    /// Put a key-value pair with automatic retry on write conflicts.
+    ///
+    /// Retries on transient errors (WriteConflict, etc.) with exponential backoff
+    /// using `max_retries` and `retry_base_delay_ms` from config.
     pub async fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
-        // Check circuit breaker state before attempting operation
-        if !self.circuit_breaker.is_call_permitted() {
-            return Err(TikvError::CircuitOpen {
-                failures: self.circuit_breaker.failure_count() as u32,
-            });
+        let max_retries = self.config.max_retries;
+        let base_delay_ms = self.config.retry_base_delay_ms;
+
+        for attempt in 0..=max_retries {
+            match self.put_once(key.clone(), value.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if !e.is_write_conflict() {
+                        return Err(e);
+                    }
+                    if attempt < max_retries {
+                        let delay_ms = base_delay_ms.saturating_mul(2_u64.pow(attempt));
+                        let delay = Duration::from_millis(delay_ms);
+                        tracing::debug!(
+                            attempt = attempt + 1,
+                            max = max_retries + 1,
+                            delay_ms = delay_ms,
+                            "Write conflict, retrying put"
+                        );
+                        sleep(delay).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
         }
-
-        {
-            let inner = self.inner.as_ref().ok_or_else(|| {
-                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
-            })?;
-
-            let mut txn = inner.begin_optimistic().await.map_err(|e| {
-                self.circuit_breaker.record_failure();
-                TikvError::ClientError(e.to_string())
-            })?;
-
-            txn.put(key, value).await.map_err(|e| {
-                self.circuit_breaker.record_failure();
-                TikvError::ClientError(e.to_string())
-            })?;
-
-            txn.commit().await.map_err(|e| {
-                self.circuit_breaker.record_failure();
-                TikvError::ClientError(e.to_string())
-            })?;
-
-            self.circuit_breaker.record_success();
-            Ok(())
-        }
+        unreachable!("retry loop always returns via Ok or Err")
     }
 
-    /// Delete a key.
-    pub async fn delete(&self, key: Vec<u8>) -> Result<()> {
+    /// Single attempt to put a key-value pair (no retry).
+    async fn put_once(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         // Check circuit breaker state before attempting operation
         if !self.circuit_breaker.is_call_permitted() {
             return Err(TikvError::CircuitOpen {
@@ -180,29 +180,89 @@ impl TikvClient {
             });
         }
 
-        {
-            let inner = self.inner.as_ref().ok_or_else(|| {
-                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
-            })?;
+        let inner = self.inner.as_ref().ok_or_else(|| {
+            TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+        })?;
 
-            let mut txn = inner.begin_optimistic().await.map_err(|e| {
-                self.circuit_breaker.record_failure();
-                TikvError::ClientError(e.to_string())
-            })?;
+        let mut txn = inner.begin_optimistic().await.map_err(|e| {
+            self.circuit_breaker.record_failure();
+            TikvError::ClientError(e.to_string())
+        })?;
 
-            txn.delete(key).await.map_err(|e| {
-                self.circuit_breaker.record_failure();
-                TikvError::ClientError(e.to_string())
-            })?;
+        txn.put(key, value).await.map_err(|e| {
+            self.circuit_breaker.record_failure();
+            TikvError::ClientError(e.to_string())
+        })?;
 
-            txn.commit().await.map_err(|e| {
-                self.circuit_breaker.record_failure();
-                TikvError::ClientError(e.to_string())
-            })?;
+        txn.commit().await.map_err(|e| {
+            self.circuit_breaker.record_failure();
+            TikvError::ClientError(e.to_string())
+        })?;
 
-            self.circuit_breaker.record_success();
-            Ok(())
+        self.circuit_breaker.record_success();
+        Ok(())
+    }
+
+    /// Delete a key with automatic retry on write conflicts.
+    pub async fn delete(&self, key: Vec<u8>) -> Result<()> {
+        let max_retries = self.config.max_retries;
+        let base_delay_ms = self.config.retry_base_delay_ms;
+
+        for attempt in 0..=max_retries {
+            match self.delete_once(key.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if !e.is_write_conflict() {
+                        return Err(e);
+                    }
+                    if attempt < max_retries {
+                        let delay_ms = base_delay_ms.saturating_mul(2_u64.pow(attempt));
+                        let delay = Duration::from_millis(delay_ms);
+                        tracing::debug!(
+                            attempt = attempt + 1,
+                            max = max_retries + 1,
+                            delay_ms = delay_ms,
+                            "Write conflict, retrying delete"
+                        );
+                        sleep(delay).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
         }
+        unreachable!("retry loop always returns via Ok or Err")
+    }
+
+    /// Single attempt to delete a key (no retry).
+    async fn delete_once(&self, key: Vec<u8>) -> Result<()> {
+        if !self.circuit_breaker.is_call_permitted() {
+            return Err(TikvError::CircuitOpen {
+                failures: self.circuit_breaker.failure_count() as u32,
+            });
+        }
+
+        let inner = self.inner.as_ref().ok_or_else(|| {
+            TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+        })?;
+
+        let mut txn = inner.begin_optimistic().await.map_err(|e| {
+            self.circuit_breaker.record_failure();
+            TikvError::ClientError(e.to_string())
+        })?;
+
+        txn.delete(key).await.map_err(|e| {
+            self.circuit_breaker.record_failure();
+            TikvError::ClientError(e.to_string())
+        })?;
+
+        txn.commit().await.map_err(|e| {
+            self.circuit_breaker.record_failure();
+            TikvError::ClientError(e.to_string())
+        })?;
+
+        self.circuit_breaker.record_success();
+        Ok(())
     }
 
     /// Scan keys with a prefix.
@@ -297,30 +357,60 @@ impl TikvClient {
         }
     }
 
-    /// Batch put multiple key-value pairs.
+    /// Batch put multiple key-value pairs with automatic retry on write conflicts.
     pub async fn batch_put(&self, pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<()> {
-        {
-            let inner = self.inner.as_ref().ok_or_else(|| {
-                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
-            })?;
+        let max_retries = self.config.max_retries;
+        let base_delay_ms = self.config.retry_base_delay_ms;
 
-            let mut txn = inner
-                .begin_optimistic()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            for (key, value) in pairs {
-                txn.put(key, value)
-                    .await
-                    .map_err(|e| TikvError::ClientError(e.to_string()))?;
+        for attempt in 0..=max_retries {
+            match self.batch_put_once(pairs.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if !e.is_write_conflict() {
+                        return Err(e);
+                    }
+                    if attempt < max_retries {
+                        let delay_ms = base_delay_ms.saturating_mul(2_u64.pow(attempt));
+                        let delay = Duration::from_millis(delay_ms);
+                        tracing::debug!(
+                            attempt = attempt + 1,
+                            max = max_retries + 1,
+                            delay_ms = delay_ms,
+                            pair_count = pairs.len(),
+                            "Write conflict, retrying batch_put"
+                        );
+                        sleep(delay).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
             }
+        }
+        unreachable!("retry loop always returns via Ok or Err")
+    }
 
-            txn.commit()
+    /// Single attempt to batch put (no retry).
+    async fn batch_put_once(&self, pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<()> {
+        let inner = self.inner.as_ref().ok_or_else(|| {
+            TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+        })?;
+
+        let mut txn = inner
+            .begin_optimistic()
+            .await
+            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+        for (key, value) in pairs {
+            txn.put(key, value)
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            Ok(())
         }
+
+        txn.commit()
+            .await
+            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+        Ok(())
     }
 
     /// Compare-And-Swap (CAS) operation for atomic updates.
