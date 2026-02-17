@@ -27,6 +27,7 @@ pub mod reaper;
 pub mod scanner;
 pub mod shutdown;
 pub mod state;
+pub mod stats;
 pub mod tikv;
 pub mod worker;
 
@@ -100,6 +101,11 @@ pub use episode::{
 pub use converter::{
     ConverterConfig, ConverterError,
     DEFAULT_EPISODES_PER_CHUNK as CONVERTER_DEFAULT_EPISODES_PER_CHUNK, LeRobotConverter,
+};
+
+// Re-export public types from stats (episode statistics collection)
+pub use stats::{
+    BatchStatsSummary, EpisodeStats, FeatureStats, StatsCollector, StatsKeys, TiKVStatsCollector,
 };
 
 // =============================================================================
