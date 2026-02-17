@@ -9,7 +9,7 @@
 //!
 //! # Architecture
 //!
-//! Similar to `roboflow-pipeline/gpu/backend.rs`, this module defines:
+//! This module defines:
 //! - `ImageDecoderBackend` trait for pluggable decoders
 //! - `CpuImageDecoder` for CPU-based decoding (always available)
 //! - GPU and Apple decoders (platform-specific, feature-gated)
@@ -36,8 +36,7 @@ pub enum DecoderType {
 ///
 /// This trait provides a unified interface for both CPU and GPU
 /// decoding implementations, enabling seamless fallback and
-/// platform-agnostic code. Similar to `CompressorBackend` in
-/// `roboflow-pipeline/gpu/backend.rs`.
+/// platform-agnostic code.
 pub trait ImageDecoderBackend: Send + Sync + std::fmt::Debug {
     /// Decode a single image to RGB.
     ///

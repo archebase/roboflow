@@ -4,8 +4,7 @@
 
 //! Factory for creating image decoder backends with automatic fallback.
 //!
-//! Provides automatic backend selection and GPU initialization with fallback,
-//! similar to `GpuCompressorFactory` in `roboflow-pipeline/gpu/factory.rs`.
+//! Provides automatic backend selection and GPU initialization with fallback.
 //!
 use super::{
     ImageError, Result,
@@ -15,8 +14,6 @@ use super::{
 };
 
 /// Information about an available GPU device.
-///
-/// Similar to `GpuDeviceInfo` in `roboflow-pipeline/gpu/factory.rs`.
 #[derive(Debug, Clone)]
 pub struct GpuDeviceInfo {
     /// Device ID
@@ -259,8 +256,6 @@ impl ImageDecoderFactory {
 }
 
 /// Decode statistics for monitoring.
-///
-/// Similar to `CompressionStats` in `roboflow-pipeline/gpu/factory.rs`.
 #[derive(Debug, Clone, Default)]
 pub struct DecodeStats {
     /// Number of images decoded

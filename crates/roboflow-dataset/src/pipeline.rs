@@ -6,9 +6,7 @@
 //!
 //! This module provides a streamlined pipeline orchestration that works
 //! directly with `TimestampedMessage` from sources and `DatasetWriter`
-//! for output. It replaces the multi-layer abstraction of
-//! `roboflow-pipeline/framework.rs` + `roboflow-sinks` with a single,
-//! focused executor.
+//! for output.
 //!
 //! # Architecture
 //!

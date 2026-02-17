@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the **Clean Architecture** for JPEG/PNG image decoding in the roboflow distributed system. The design follows established patterns from `roboflow-pipeline/gpu/` and integrates with the distributed worker infrastructure.
+This document describes the **Clean Architecture** for JPEG/PNG image decoding in the roboflow distributed system.
 
 ## Design Principles
 
@@ -641,6 +641,5 @@ ROS Bag (CompressedImage JPEG)
 
 ## References
 
-- `roboflow-pipeline/src/gpu/mod.rs` - Similar backend abstraction
 - `roboflow-distributed/src/worker.rs` - Worker integration patterns
 - FFmpeg nvdecode/nvenc documentation - GPU video processing

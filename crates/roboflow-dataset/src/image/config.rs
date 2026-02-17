@@ -5,7 +5,7 @@
 //! Image decoder configuration.
 //!
 //! Provides configuration for image decoding with auto-detection
-//! and fallback behavior. Similar to `roboflow-pipeline/gpu/config.rs`.
+//! and fallback behavior.
 
 use super::memory::MemoryStrategy;
 
@@ -25,8 +25,7 @@ pub enum DecoderBackendType {
 
 /// Configuration for image decoding.
 ///
-/// This configuration follows the builder pattern for easy construction
-/// and validation, similar to `GpuCompressionConfig` in `roboflow-pipeline/gpu`.
+/// This configuration follows the builder pattern for easy construction.
 #[derive(Debug, Clone)]
 pub struct ImageDecoderConfig {
     /// Which decoder backend to use
