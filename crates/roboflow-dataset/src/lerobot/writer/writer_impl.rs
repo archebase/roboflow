@@ -1487,6 +1487,9 @@ impl DatasetWriter for LerobotWriter {
             self.metadata
                 .add_episode(self.episode_index, self.frame_data.len(), vec![]);
             self.total_frames += self.frame_data.len();
+
+            // Calculate episode statistics for episodes_stats.jsonl
+            self.calculate_episode_stats()?;
         }
 
         // Merge all video segments into final episode files
