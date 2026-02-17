@@ -29,7 +29,6 @@ Roboflow is a distributed data transformation pipeline that converts robotics ba
 | `roboflow-storage` | Storage abstraction layer | `Storage`, `LocalStorage`, `S3Storage`, `StorageFactory` |
 | `roboflow-dataset` | Dataset format writers | `LerobotWriter`, `DatasetWriter`, `ImageData` |
 | `roboflow-distributed` | Distributed coordination via TiKV | `TiKVClient`, `BatchController`, `Worker`, `Catalog` |
-| `roboflow-pipeline` | Processing pipeline framework | `Pipeline`, `Source`, `Sink`, compression stages |
 | `roboflow-sources` | Data source implementations | `BagSource`, `McapSource`, `RrdSource` |
 | `roboflow-sinks` | Data sink implementations | `LerobotSink`, `ZarrSink`, `DatasetFrame` |
 

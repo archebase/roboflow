@@ -76,7 +76,6 @@ Roboflow 采用**受 Kubernetes 启发的分布式控制平面**，实现容错�
 | `roboflow-dataset` | KPS、LeRobot、流式转换器 |
 | `roboflow-distributed` | TiKV 客户端、目录、控制器 |
 | `roboflow-hdf5` | 可选的 HDF5 格式支持 |
-| `roboflow-pipeline` | Hyper 流水线、压缩阶段 |
 
 ## 快速开始
 
