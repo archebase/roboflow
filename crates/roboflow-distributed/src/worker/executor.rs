@@ -31,6 +31,7 @@ use super::metrics::ProcessingResult;
 use super::registry::JobRegistry;
 use crate::batch::WorkUnit;
 use crate::episode::EpisodeAllocator;
+use crate::stats::EpisodeStats;
 use crate::tikv::{TikvClient, TikvError};
 
 /// Default episodes per chunk (LeRobot v2.1 spec).
@@ -425,15 +426,23 @@ impl TaskExecutor {
                 }
             }
 
-            executor.finalize()
+            // Extract episode stats before finalizing (finalize consumes the executor)
+            let episode_stats = Self::extract_episode_stats(&executor, episode_index);
+
+            let writer_stats = executor.finalize()?;
+            Ok((writer_stats, episode_stats))
         });
 
         // Wait with timeout
         let result = match tokio::time::timeout(timeout, pipeline_task).await {
-            Ok(Ok(Ok(_stats))) => {
+            Ok(Ok(Ok((writer_stats, episode_stats)))) => {
                 let mut registry = job_registry_for_cleanup.write().await;
                 registry.unregister(&unit_id_clone);
-                ProcessingResult::Success
+                ProcessingResult::Success {
+                    episode_index: episode_index.unwrap_or(0),
+                    frame_count: writer_stats.frames_written as u64,
+                    episode_stats,
+                }
             }
             Ok(Ok(Err(e))) => {
                 let mut registry = job_registry_for_cleanup.write().await;
@@ -465,6 +474,49 @@ impl TaskExecutor {
 
         tracing::info!(unit_id = %unit_id, "Pipeline execution complete");
         result
+    }
+
+    /// Extract episode statistics from the pipeline executor.
+    ///
+    /// Converts the writer's metadata episode stats to the distributed stats format.
+    fn extract_episode_stats(
+        executor: &PipelineExecutor<LerobotWriter>,
+        episode_index: Option<u64>,
+    ) -> Option<EpisodeStats> {
+        let ep_idx = episode_index? as usize;
+        let metadata = executor.writer().metadata();
+
+        // Find the episode stats for this episode
+        let episode_info = metadata
+            .episodes
+            .iter()
+            .find(|e| e.episode_index == ep_idx)?;
+        let frame_count = episode_info.length;
+
+        // Get feature stats from episode_stats if available
+        let mut feature_stats = std::collections::HashMap::new();
+
+        if let Some(ep_stats) = metadata
+            .episode_stats
+            .iter()
+            .find(|s| s.episode_index == ep_idx)
+        {
+            // Try to parse the stats JSON into our FeatureStats format
+            if let Ok(stats_map) = serde_json::from_value::<
+                std::collections::HashMap<String, crate::stats::FeatureStats>,
+            >(ep_stats.stats.clone())
+            {
+                feature_stats = stats_map;
+            }
+        }
+
+        Some(EpisodeStats {
+            episode_index: ep_idx,
+            frame_count,
+            feature_stats,
+            task_indices: episode_info.tasks.clone(),
+            recorded_at: Some(chrono::Utc::now().timestamp()),
+        })
     }
 }
 

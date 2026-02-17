@@ -23,6 +23,7 @@ use super::metrics::{ProcessingResult, WorkerMetrics};
 use super::registry::JobRegistry;
 use crate::batch::{BatchController, WorkUnit};
 use crate::shutdown::ShutdownHandler;
+use crate::stats::StatsCollector;
 use crate::tikv::{
     TikvError,
     client::TikvClient,
@@ -36,6 +37,7 @@ use crate::tikv::{
 /// - Delegating execution to the TaskExecutor
 /// - Reporting results back to TiKV
 /// - Managing heartbeats and shutdown
+/// - Recording episode statistics via StatsCollector
 pub struct Coordinator {
     /// Unique identifier for this worker instance.
     pod_id: String,
@@ -51,6 +53,8 @@ pub struct Coordinator {
     batch_controller: BatchController,
     /// Job registry for canceling active jobs on shutdown.
     job_registry: Arc<RwLock<JobRegistry>>,
+    /// Optional stats collector for episode statistics.
+    stats_collector: Option<Arc<dyn StatsCollector>>,
 }
 
 impl Coordinator {
@@ -71,6 +75,29 @@ impl Coordinator {
             shutdown_handler: ShutdownHandler::new(),
             batch_controller,
             job_registry,
+            stats_collector: None,
+        })
+    }
+
+    /// Create a coordinator with stats collection enabled.
+    pub fn with_stats_collector(
+        pod_id: impl Into<String>,
+        tikv: Arc<TikvClient>,
+        config: WorkerConfig,
+        job_registry: Arc<RwLock<JobRegistry>>,
+        stats_collector: Arc<dyn StatsCollector>,
+    ) -> Result<Self, TikvError> {
+        let batch_controller = BatchController::with_client(tikv.clone());
+
+        Ok(Self {
+            pod_id: pod_id.into(),
+            tikv,
+            config,
+            metrics: Arc::new(WorkerMetrics::new()),
+            shutdown_handler: ShutdownHandler::new(),
+            batch_controller,
+            job_registry,
+            stats_collector: Some(stats_collector),
         })
     }
 
@@ -435,7 +462,25 @@ impl Coordinator {
         result: ProcessingResult,
     ) -> Result<bool, TikvError> {
         match result {
-            ProcessingResult::Success => {
+            ProcessingResult::Success {
+                episode_index,
+                frame_count,
+                episode_stats,
+            } => {
+                // Record episode stats if collector is configured
+                if let (Some(collector), Some(stats)) = (&self.stats_collector, episode_stats)
+                    && let Err(e) = collector.record_episode_stats(batch_id, stats).await
+                {
+                    tracing::error!(
+                        pod_id = %self.pod_id,
+                        batch_id = %batch_id,
+                        episode_index = episode_index,
+                        error = %e,
+                        "Failed to record episode stats"
+                    );
+                    // Continue processing - stats recording failure shouldn't fail the job
+                }
+
                 if let Err(e) = self.complete_work(batch_id, unit_id).await {
                     tracing::error!(
                         pod_id = %self.pod_id,
@@ -445,6 +490,15 @@ impl Coordinator {
                     );
                     self.metrics.inc_processing_errors();
                 }
+
+                tracing::info!(
+                    pod_id = %self.pod_id,
+                    unit_id = %unit_id,
+                    episode_index = episode_index,
+                    frame_count = frame_count,
+                    "Work unit completed successfully"
+                );
+
                 Ok(false)
             }
             ProcessingResult::Failed { error } => {

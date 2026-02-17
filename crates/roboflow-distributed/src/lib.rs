@@ -97,15 +97,15 @@ pub use episode::{
     TiKVEpisodeAllocator, chunk_index_from_episode,
 };
 
+// Re-export public types from stats (episode statistics collection)
+pub use stats::{
+    BatchStatsSummary, EpisodeStats, FeatureStats, StatsCollector, StatsKeys, TiKVStatsCollector,
+};
+
 // Re-export public types from converter (LeRobot converter orchestrator)
 pub use converter::{
     ConverterConfig, ConverterError,
     DEFAULT_EPISODES_PER_CHUNK as CONVERTER_DEFAULT_EPISODES_PER_CHUNK, LeRobotConverter,
-};
-
-// Re-export public types from stats (episode statistics collection)
-pub use stats::{
-    BatchStatsSummary, EpisodeStats, FeatureStats, StatsCollector, StatsKeys, TiKVStatsCollector,
 };
 
 // =============================================================================

@@ -6,10 +6,19 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::stats::EpisodeStats;
+
 /// Processing result for a job.
 pub enum ProcessingResult {
-    /// Job completed successfully.
-    Success,
+    /// Job completed successfully with episode statistics.
+    Success {
+        /// Episode index that was processed.
+        episode_index: u64,
+        /// Number of frames processed.
+        frame_count: u64,
+        /// Episode statistics (if available).
+        episode_stats: Option<EpisodeStats>,
+    },
     /// Job failed with retryable error.
     Failed {
         /// Error message describing the failure.

@@ -110,9 +110,21 @@ fn test_worker_config_builder() {
 fn test_processing_result_success() {
     use roboflow_distributed::worker::ProcessingResult;
 
-    let result = ProcessingResult::Success;
+    let result = ProcessingResult::Success {
+        episode_index: 0,
+        frame_count: 100,
+        episode_stats: None,
+    };
     match result {
-        ProcessingResult::Success => {}
+        ProcessingResult::Success {
+            episode_index,
+            frame_count,
+            episode_stats,
+        } => {
+            assert_eq!(episode_index, 0);
+            assert_eq!(frame_count, 100);
+            assert!(episode_stats.is_none());
+        }
         ProcessingResult::Failed { error } => {
             panic!("Unexpected failed result: {}", error);
         }
@@ -130,7 +142,7 @@ fn test_processing_result_failed() {
         error: "Test error".to_string(),
     };
     match result {
-        ProcessingResult::Success => {
+        ProcessingResult::Success { .. } => {
             panic!("Unexpected success result");
         }
         ProcessingResult::Failed { error } => {
@@ -585,7 +597,11 @@ fn test_worker_constants() {
 fn test_processing_result_all_variants() {
     use roboflow_distributed::worker::ProcessingResult;
 
-    let success = ProcessingResult::Success;
+    let success = ProcessingResult::Success {
+        episode_index: 42,
+        frame_count: 1000,
+        episode_stats: None,
+    };
     let failed = ProcessingResult::Failed {
         error: "test error".to_string(),
     };
@@ -593,7 +609,14 @@ fn test_processing_result_all_variants() {
 
     // Test matching
     match success {
-        ProcessingResult::Success => {}
+        ProcessingResult::Success {
+            episode_index,
+            frame_count,
+            ..
+        } => {
+            assert_eq!(episode_index, 42);
+            assert_eq!(frame_count, 1000);
+        }
         _ => panic!("Expected Success"),
     }
 
