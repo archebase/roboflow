@@ -4133,6 +4133,7 @@ dependencies = [
  "pretty_assertions",
  "roboflow-core",
  "roboflow-dataset",
+ "roboflow-executor",
  "roboflow-sinks",
  "roboflow-sources",
  "roboflow-storage",

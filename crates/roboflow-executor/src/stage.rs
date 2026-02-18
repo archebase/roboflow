@@ -5,7 +5,6 @@
 //! Stage trait for execution boundaries.
 
 use std::fmt;
-use std::sync::Arc;
 
 /// Unique identifier for a stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

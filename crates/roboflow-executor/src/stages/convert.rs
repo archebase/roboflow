@@ -4,8 +4,6 @@
 
 //! Convert stage for processing bag files to LeRobot format.
 
-use std::sync::Arc;
-
 use roboflow_core::Result;
 
 use crate::stage::{PartitionId, Stage, StageId};
@@ -29,10 +27,7 @@ impl ConvertStage {
     ///
     /// * `output_prefix` - Output path prefix.
     /// * `config_hash` - Configuration hash for caching.
-    pub fn new(
-        output_prefix: impl Into<String>,
-        config_hash: impl Into<String>,
-    ) -> Self {
+    pub fn new(output_prefix: impl Into<String>, config_hash: impl Into<String>) -> Self {
         Self {
             output_prefix: output_prefix.into(),
             config_hash: config_hash.into(),
@@ -69,6 +64,7 @@ impl Stage for ConvertStage {
 /// Task for converting a single bag file.
 struct ConvertTask {
     output_prefix: String,
+    #[allow(dead_code)]
     config_hash: String,
     partition_id: PartitionId,
 }
@@ -86,8 +82,10 @@ impl Task for ConvertTask {
         // Simulate conversion work
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-        let output_path = format!("{}/episode_{:06}.parquet", 
-            self.output_prefix, self.partition_id.0);
+        let output_path = format!(
+            "{}/episode_{:06}.parquet",
+            self.output_prefix, self.partition_id.0
+        );
 
         Ok(TaskResult {
             outputs: vec![TaskOutput {
@@ -106,7 +104,7 @@ mod tests {
     #[test]
     fn test_convert_stage() {
         let stage = ConvertStage::new("s3://bucket/output/", "config_hash_123");
-        
+
         assert_eq!(stage.id(), StageId(1));
         assert_eq!(stage.name(), "convert");
         assert_eq!(stage.dependencies(), vec![StageId(0)]);

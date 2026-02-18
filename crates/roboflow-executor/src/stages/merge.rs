@@ -4,8 +4,6 @@
 
 //! Merge stage for combining converted files.
 
-use std::sync::Arc;
-
 use roboflow_core::Result;
 
 use crate::stage::{PartitionId, Stage, StageId};
@@ -90,7 +88,7 @@ mod tests {
     #[test]
     fn test_merge_stage() {
         let stage = MergeStage::new("s3://bucket/output/dataset");
-        
+
         assert_eq!(stage.id(), StageId(2));
         assert_eq!(stage.name(), "merge");
         assert_eq!(stage.dependencies(), vec![StageId(1)]);

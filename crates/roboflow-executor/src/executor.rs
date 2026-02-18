@@ -4,15 +4,15 @@
 
 //! Stage-based task executor.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use roboflow_core::Result;
 
 use crate::pipeline::Pipeline;
-use crate::stage::{PartitionId, Stage, StageId};
-use crate::task::{TaskContext, TaskId, TaskResult};
+use crate::stage::{PartitionId, Stage};
+use crate::task::{TaskContext, TaskId};
 
 /// Unique identifier for an execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

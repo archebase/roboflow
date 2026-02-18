@@ -37,7 +37,7 @@ pub use executor::{ExecuteResult, StageExecutor};
 pub use pipeline::{Pipeline, PipelineBuilder};
 pub use stage::{PartitionId, Stage, StageId};
 pub use stages::{ConvertStage, DiscoverStage, MergeStage};
-pub use task::{Task, TaskContext, TaskId, TaskResult, TaskOutput, TaskMetrics};
+pub use task::{Task, TaskContext, TaskId, TaskMetrics, TaskOutput, TaskResult};
 
 /// Re-export core types
 pub use roboflow_core::Result;

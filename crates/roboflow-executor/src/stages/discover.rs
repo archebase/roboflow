@@ -4,8 +4,6 @@
 
 //! Discover stage for finding input files.
 
-use std::sync::Arc;
-
 use roboflow_core::Result;
 
 use crate::stage::{PartitionId, Stage, StageId};
@@ -72,8 +70,10 @@ impl Task for DiscoverTask {
 
         // For now, return the source prefix as a single file
         // In a real implementation, this would scan the storage backend
-        let file_list = format!("{}/file1.bag\n{}/file2.bag", 
-            self.source_prefix, self.source_prefix);
+        let file_list = format!(
+            "{}/file1.bag\n{}/file2.bag",
+            self.source_prefix, self.source_prefix
+        );
 
         let output_size = file_list.len() as u64;
 
@@ -94,7 +94,7 @@ mod tests {
     #[test]
     fn test_discover_stage() {
         let stage = DiscoverStage::new("s3://bucket/input/");
-        
+
         assert_eq!(stage.id(), StageId(0));
         assert_eq!(stage.name(), "discover");
         assert_eq!(stage.partition_count(), 1);
