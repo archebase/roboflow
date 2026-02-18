@@ -152,6 +152,12 @@ impl Source for BagSource {
     }
 }
 
+/// Batched ROS bag source that decodes messages in background thread.
+///
+/// This source uses a dedicated decoder thread to read and parse bag files,
+/// delivering messages in batches for efficient processing. It's particularly
+/// useful for high-throughput scenarios where decoding overhead would otherwise
+/// block the async runtime.
 pub struct BagSourceBatched {
     path: String,
     metadata: Option<SourceMetadata>,
@@ -163,6 +169,7 @@ pub struct BagSourceBatched {
 }
 
 impl BagSourceBatched {
+    /// Create a new batched bag source with the given path and batch size.
     pub fn new(path: impl Into<String>, batch_size: usize) -> SourceResult<Self> {
         let path = path.into();
         Ok(Self {
@@ -176,6 +183,7 @@ impl BagSourceBatched {
         })
     }
 
+    /// Create a batched bag source from a source configuration.
     pub fn from_config(config: &SourceConfig, batch_size: usize) -> SourceResult<Self> {
         match &config.source_type {
             crate::SourceType::Bag { path } => Self::new(path, batch_size),
@@ -216,7 +224,7 @@ impl Source for BagSourceBatched {
 
         let is_cloud = self.is_cloud_url();
         let batch_size = self.batch_size;
-        
+
         if is_cloud {
             return Err(SourceError::InvalidConfig(
                 "Batched mode not supported for cloud URLs yet".to_string(),
@@ -310,6 +318,10 @@ impl Source for BagSourceBatched {
     }
 }
 
+/// Blocking ROS bag source for synchronous decoding.
+///
+/// Similar to `BagSourceBatched` but uses blocking channels instead of async.
+/// Suitable for synchronous contexts where async runtime is not available.
 pub struct BagSourceBlocking {
     path: String,
     metadata: Option<SourceMetadata>,
@@ -321,6 +333,7 @@ pub struct BagSourceBlocking {
 }
 
 impl BagSourceBlocking {
+    /// Create a new blocking bag source with the given path and batch size.
     pub fn new(path: impl Into<String>, batch_size: usize) -> SourceResult<Self> {
         let path = path.into();
         Ok(Self {
@@ -334,6 +347,7 @@ impl BagSourceBlocking {
         })
     }
 
+    /// Create a blocking bag source from a source configuration.
     pub fn from_config(config: &SourceConfig, batch_size: usize) -> SourceResult<Self> {
         match &config.source_type {
             crate::SourceType::Bag { path } => Self::new(path, batch_size),
@@ -381,14 +395,19 @@ impl Source for BagSourceBlocking {
             ));
         }
 
-        let (metadata, rx, handle): (SourceMetadata, crossbeam_channel::Receiver<Vec<TimestampedMessage>>, _) = decode::initialize_threaded_source_blocking(
+        let (metadata, rx, handle): (
+            SourceMetadata,
+            crossbeam_channel::Receiver<Vec<TimestampedMessage>>,
+            _,
+        ) = decode::initialize_threaded_source_blocking(
             &self.path,
             is_cloud,
             "bag-decoder-blocking",
             move |path, meta_tx, batch_tx| {
                 decode::decode_local_blocking(&path, "bag", meta_tx, batch_tx, batch_size)
             },
-        ).await?;
+        )
+        .await?;
 
         self.metadata = Some(metadata.clone());
         self.receiver = Some(rx);

@@ -38,10 +38,7 @@ pub const DEFAULT_EPISODES_PER_CHUNK: u32 = 500;
 #[async_trait]
 pub trait JobRegistry: Send + Sync + 'static {
     /// Register a job for cancellation monitoring.
-    async fn register(&self,
-        job_id: String,
-        token: Arc<CancellationToken>,
-    );
+    async fn register(&self, job_id: String, token: Arc<CancellationToken>);
 
     /// Unregister a job from cancellation monitoring.
     async fn unregister(&self, job_id: &str);
@@ -115,10 +112,7 @@ where
     }
 
     /// Add episode allocation for distributed processing.
-    pub fn with_episode_allocator(
-        mut self,
-        allocator: Arc<dyn EpisodeAllocator>,
-    ) -> Self {
+    pub fn with_episode_allocator(mut self, allocator: Arc<dyn EpisodeAllocator>) -> Self {
         self.episode_allocator = Some(allocator);
         self
     }
@@ -130,9 +124,7 @@ where
     }
 
     /// Execute a work unit.
-    pub async fn execute(&self,
-        unit: &WorkUnit,
-    ) -> ProcessingResult {
+    pub async fn execute(&self, unit: &WorkUnit) -> ProcessingResult {
         tracing::info!(
             unit_id = %unit.id,
             batch_id = %unit.batch_id,
@@ -243,9 +235,7 @@ where
     }
 
     /// Resolve the output path for a work unit.
-    fn resolve_output_path(&self,
-        unit: &WorkUnit,
-    ) -> PathBuf {
+    fn resolve_output_path(&self, unit: &WorkUnit) -> PathBuf {
         if !unit.output_path.is_empty() {
             PathBuf::from(&unit.output_path)
         } else {
@@ -258,10 +248,7 @@ where
     }
 
     /// Load configuration for a work unit.
-    async fn load_config(
-&self,
-        unit: &WorkUnit,
-    ) -> Result<LerobotConfig> {
+    async fn load_config(&self, unit: &WorkUnit) -> Result<LerobotConfig> {
         let config_hash = &unit.config_hash;
 
         if config_hash.is_empty() || config_hash == "default" {
@@ -334,7 +321,12 @@ where
             let _guard = cancel_token.clone().drop_guard();
 
             runner
-                .run(&mut *source, executor, &source_config, Some(cancel_token.clone()))
+                .run(
+                    &mut *source,
+                    executor,
+                    &source_config,
+                    Some(cancel_token.clone()),
+                )
                 .await
         });
 
@@ -396,11 +388,7 @@ impl Default for NoOpJobRegistry {
 
 #[async_trait]
 impl JobRegistry for NoOpJobRegistry {
-    async fn register(
-        &self,
-        _job_id: String,
-        _token: Arc<CancellationToken>,
-    ) {
+    async fn register(&self, _job_id: String, _token: Arc<CancellationToken>) {
         // No-op
     }
 
@@ -427,11 +415,7 @@ impl JobRegistryAdapter {
 
 #[async_trait]
 impl JobRegistry for JobRegistryAdapter {
-    async fn register(
-        &self,
-        job_id: String,
-        token: Arc<CancellationToken>,
-    ) {
+    async fn register(&self, job_id: String, token: Arc<CancellationToken>) {
         let mut registry = self.inner.write().await;
         registry.register(job_id, token);
     }
@@ -450,8 +434,8 @@ impl JobRegistry for JobRegistryAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::mock::MockSourceProvider;
     use crate::providers::InMemoryConfigProvider;
+    use crate::providers::mock::MockSourceProvider;
     use roboflow_core::{CodecValue, TimestampedMessage};
 
     fn create_test_messages(count: usize) -> Vec<TimestampedMessage> {
@@ -516,8 +500,7 @@ mod tests {
         let source_provider = MockSourceProvider::new()
             .with_messages(messages)
             .with_metadata(metadata);
-        let config_provider =
-            InMemoryConfigProvider::new().with_config("test_hash", config);
+        let config_provider = InMemoryConfigProvider::new().with_config("test_hash", config);
         let job_registry = NoOpJobRegistry::new();
 
         let temp_dir = tempfile::tempdir().unwrap();

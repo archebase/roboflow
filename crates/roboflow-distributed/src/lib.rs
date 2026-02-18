@@ -23,6 +23,7 @@ pub mod episode;
 pub mod finalizer;
 pub mod heartbeat;
 pub mod merge;
+pub mod providers;
 pub mod reaper;
 pub mod scanner;
 pub mod shutdown;
@@ -30,7 +31,6 @@ pub mod state;
 pub mod stats;
 pub mod tikv;
 pub mod worker;
-pub mod providers;
 
 pub use providers::{
     ConfigProvider, InMemoryConfigProvider, ProductionSourceProvider, ProviderFactory,

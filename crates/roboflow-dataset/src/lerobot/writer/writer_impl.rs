@@ -1632,6 +1632,28 @@ impl LerobotWriterTrait for LerobotWriter {
     }
 }
 
+impl super::EpisodeWriter for LerobotWriter {
+    fn set_episode_index(&mut self, index: usize) {
+        self.episode_index = index;
+    }
+
+    fn get_episode_index(&self) -> usize {
+        self.episode_index
+    }
+
+    fn set_episodes_per_chunk(&mut self, count: u32) {
+        self.episodes_per_chunk = count;
+    }
+
+    fn get_chunk_index(&self) -> u32 {
+        (self.episode_index / self.episodes_per_chunk as usize) as u32
+    }
+
+    fn get_episodes_per_chunk(&self) -> u32 {
+        self.episodes_per_chunk
+    }
+}
+
 /// Implement conversion from AlignedFrame to LerobotFrame.
 impl FromAlignedFrame for LerobotFrame {
     fn from_aligned_frame(frame: &AlignedFrame, episode_index: usize) -> Self {

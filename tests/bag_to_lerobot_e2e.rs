@@ -1,15 +1,15 @@
 use std::fs;
 use std::path::Path;
 
-use roboflow::{
-    DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig,
-};
+use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig};
 use roboflow_dataset::common::DatasetWriter;
 use roboflow_dataset::lerobot::{FlushingConfig, Mapping, MappingType, StreamingConfig};
 use roboflow_sources::SourceConfig;
 
-const TEST_BAG_PATH: &str = "tests/fixtures/A02-A01-37-45-77-factory_07-P4_210-leju_claw-20260104174020-v001.bag";
-const TEST_BAG_PATH_2: &str = "tests/fixtures/A02-A01-37-45-77-factory_07-P4_210-leju_claw-20260105142915-v001.bag";
+const TEST_BAG_PATH: &str =
+    "tests/fixtures/A02-A01-37-45-77-factory_07-P4_210-leju_claw-20260104174020-v001.bag";
+const TEST_BAG_PATH_2: &str =
+    "tests/fixtures/A02-A01-37-45-77-factory_07-P4_210-leju_claw-20260105142915-v001.bag";
 
 fn create_test_lerobot_config() -> LerobotConfig {
     LerobotConfig {
@@ -82,8 +82,8 @@ fn test_bag_to_lerobot_e2e() {
         .expect("Failed to create LeRobot writer");
 
     let source_config = SourceConfig::bag(TEST_BAG_PATH);
-    let mut source = roboflow_sources::create_source(&source_config)
-        .expect("Failed to create bag source");
+    let mut source =
+        roboflow_sources::create_source(&source_config).expect("Failed to create bag source");
 
     let metadata = tokio::runtime::Runtime::new()
         .unwrap()
@@ -92,7 +92,9 @@ fn test_bag_to_lerobot_e2e() {
 
     println!("Source metadata: {:?}", metadata);
 
-    writer.start_episode(Some(0)).expect("Failed to start episode");
+    writer
+        .start_episode(Some(0))
+        .expect("Failed to start episode");
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let frame_count = rt.block_on(async {
@@ -122,7 +124,9 @@ fn test_bag_to_lerobot_e2e() {
 
     println!("Total frames processed: {}", frame_count);
 
-    writer.finish_episode(Some(0)).expect("Failed to finish episode");
+    writer
+        .finish_episode(Some(0))
+        .expect("Failed to finish episode");
 
     let stats = DatasetWriter::finalize(&mut writer).expect("Failed to finalize writer");
     println!("Writer stats: {:?}", stats);
@@ -151,7 +155,7 @@ fn test_bag_to_lerobot_s3_upload() {
     }
 
     let rt = tokio::runtime::Runtime::new().unwrap();
-    
+
     rt.block_on(async {
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let local_path = temp_dir.path();
@@ -226,32 +230,66 @@ fn verify_lerobot_structure(output_path: &Path, config: &LerobotConfig) {
 
     let info_content = fs::read_to_string(&info_path).expect("Failed to read info.json");
     let info: Value = serde_json::from_str(&info_content).expect("Failed to parse info.json");
-    
-    assert_eq!(info["name"].as_str(), Some("rubbish_sorting"), "info.json should contain correct dataset name");
-    assert_eq!(info["fps"].as_u64(), Some(30), "info.json should contain correct fps");
-    assert_eq!(info["robot_type"].as_str(), Some("kuavo_p4"), "info.json should contain correct robot_type");
-    assert!(info["codebase_version"].as_str().is_some(), "info.json should contain codebase_version");
-    assert!(info["total_episodes"].as_u64().is_some(), "info.json should contain total_episodes");
-    assert!(info["total_frames"].as_u64().is_some(), "info.json should contain total_frames");
-    assert!(info["features"].is_object(), "info.json should contain features dictionary");
-    
+
+    assert_eq!(
+        info["name"].as_str(),
+        Some("rubbish_sorting"),
+        "info.json should contain correct dataset name"
+    );
+    assert_eq!(
+        info["fps"].as_u64(),
+        Some(30),
+        "info.json should contain correct fps"
+    );
+    assert_eq!(
+        info["robot_type"].as_str(),
+        Some("kuavo_p4"),
+        "info.json should contain correct robot_type"
+    );
+    assert!(
+        info["codebase_version"].as_str().is_some(),
+        "info.json should contain codebase_version"
+    );
+    assert!(
+        info["total_episodes"].as_u64().is_some(),
+        "info.json should contain total_episodes"
+    );
+    assert!(
+        info["total_frames"].as_u64().is_some(),
+        "info.json should contain total_frames"
+    );
+    assert!(
+        info["features"].is_object(),
+        "info.json should contain features dictionary"
+    );
+
     println!("  ✓ info.json verified (LeRobot v2.1)");
 
     // 2. Verify episodes.jsonl (LeRobot v2.1)
     let episodes_path = meta_dir.join("episodes.jsonl");
     assert!(episodes_path.exists(), "episodes.jsonl should exist");
 
-    let episodes_content = fs::read_to_string(&episodes_path).expect("Failed to read episodes.jsonl");
+    let episodes_content =
+        fs::read_to_string(&episodes_path).expect("Failed to read episodes.jsonl");
     let episodes: Vec<Value> = episodes_content
         .lines()
         .filter(|line| !line.is_empty())
         .map(|line| serde_json::from_str(line).expect("Failed to parse episode line"))
         .collect();
-    
-    assert!(!episodes.is_empty(), "episodes.jsonl should contain at least one episode");
-    assert!(episodes[0]["episode_index"].is_number(), "episodes.jsonl entries should have episode_index");
-    assert!(episodes[0]["length"].is_number(), "episodes.jsonl entries should have length");
-    
+
+    assert!(
+        !episodes.is_empty(),
+        "episodes.jsonl should contain at least one episode"
+    );
+    assert!(
+        episodes[0]["episode_index"].is_number(),
+        "episodes.jsonl entries should have episode_index"
+    );
+    assert!(
+        episodes[0]["length"].is_number(),
+        "episodes.jsonl entries should have length"
+    );
+
     println!("  ✓ episodes.jsonl verified ({} episodes)", episodes.len());
 
     // 3. Verify tasks.jsonl (LeRobot v2.1)
@@ -264,55 +302,93 @@ fn verify_lerobot_structure(output_path: &Path, config: &LerobotConfig) {
         .filter(|line| !line.is_empty())
         .map(|line| serde_json::from_str(line).expect("Failed to parse task line"))
         .collect();
-    
-    assert!(!tasks.is_empty(), "tasks.jsonl should contain at least one task");
-    assert!(tasks[0]["task_index"].is_number(), "tasks.jsonl entries should have task_index");
-    assert!(tasks[0]["task"].is_string(), "tasks.jsonl entries should have task description");
-    
+
+    assert!(
+        !tasks.is_empty(),
+        "tasks.jsonl should contain at least one task"
+    );
+    assert!(
+        tasks[0]["task_index"].is_number(),
+        "tasks.jsonl entries should have task_index"
+    );
+    assert!(
+        tasks[0]["task"].is_string(),
+        "tasks.jsonl entries should have task description"
+    );
+
     println!("  ✓ tasks.jsonl verified ({} tasks)", tasks.len());
 
     // 4. Verify episodes_stats.jsonl (LeRobot v2.1)
     let stats_path = meta_dir.join("episodes_stats.jsonl");
     assert!(stats_path.exists(), "episodes_stats.jsonl should exist");
 
-    let stats_content = fs::read_to_string(&stats_path).expect("Failed to read episodes_stats.jsonl");
+    let stats_content =
+        fs::read_to_string(&stats_path).expect("Failed to read episodes_stats.jsonl");
     let stats: Vec<Value> = stats_content
         .lines()
         .filter(|line| !line.is_empty())
         .map(|line| serde_json::from_str(line).expect("Failed to parse stats line"))
         .collect();
-    
-    assert!(!stats.is_empty(), "episodes_stats.jsonl should contain at least one episode stats");
-    assert!(stats[0]["episode_index"].is_number(), "episodes_stats.jsonl entries should have episode_index");
-    assert!(stats[0]["stats"].is_object(), "episodes_stats.jsonl entries should have stats object");
-    
-    println!("  ✓ episodes_stats.jsonl verified ({} episode stats)", stats.len());
+
+    assert!(
+        !stats.is_empty(),
+        "episodes_stats.jsonl should contain at least one episode stats"
+    );
+    assert!(
+        stats[0]["episode_index"].is_number(),
+        "episodes_stats.jsonl entries should have episode_index"
+    );
+    assert!(
+        stats[0]["stats"].is_object(),
+        "episodes_stats.jsonl entries should have stats object"
+    );
+
+    println!(
+        "  ✓ episodes_stats.jsonl verified ({} episode stats)",
+        stats.len()
+    );
 
     // 5. Verify Parquet data file
     let parquet_path = data_dir.join("chunk-000").join("episode_000000.parquet");
-    assert!(parquet_path.exists(),
-        "Episode parquet file should exist at {}", parquet_path.display());
-    
+    assert!(
+        parquet_path.exists(),
+        "Episode parquet file should exist at {}",
+        parquet_path.display()
+    );
+
     let parquet_metadata = fs::metadata(&parquet_path).expect("Failed to read parquet metadata");
-    assert!(parquet_metadata.len() > 0, "Parquet file should not be empty");
-    
-    println!("  ✓ Episode parquet verified ({} bytes)", parquet_metadata.len());
+    assert!(
+        parquet_metadata.len() > 0,
+        "Parquet file should not be empty"
+    );
+
+    println!(
+        "  ✓ Episode parquet verified ({} bytes)",
+        parquet_metadata.len()
+    );
 
     // 6. Verify video files for all cameras
     for mapping in &config.mappings {
         if mapping.mapping_type == MappingType::Image {
-            let camera_key = mapping.camera_key.as_ref()
-                .unwrap_or(&mapping.feature);
-            let video_path = videos_dir.join("chunk-000")
+            let camera_key = mapping.camera_key.as_ref().unwrap_or(&mapping.feature);
+            let video_path = videos_dir
+                .join("chunk-000")
                 .join(camera_key)
                 .join("episode_000000.mp4");
-            assert!(video_path.exists(),
-                "Video file should exist at {}", video_path.display());
-            
+            assert!(
+                video_path.exists(),
+                "Video file should exist at {}",
+                video_path.display()
+            );
+
             let video_metadata = fs::metadata(&video_path).expect("Failed to read video metadata");
             assert!(video_metadata.len() > 0, "Video file should not be empty");
-            
-            println!("  ✓ Video MP4 for '{}' verified ({} bytes)", camera_key, video_metadata.len());
+
+            println!(
+                "  ✓ Video MP4 for '{}' verified ({} bytes)",
+                camera_key,
+                video_metadata.len()
+            );
         }
     }
 
@@ -320,12 +396,19 @@ fn verify_lerobot_structure(output_path: &Path, config: &LerobotConfig) {
     println!("  - info.json: ✓ (codebase_version, robot_type, fps, features)");
     println!("  - episodes.jsonl: ✓ ({} episodes)", episodes.len());
     println!("  - tasks.jsonl: ✓ ({} tasks)", tasks.len());
-    println!("  - episodes_stats.jsonl: ✓ ({} episode stats)", stats.len());
+    println!(
+        "  - episodes_stats.jsonl: ✓ ({} episode stats)",
+        stats.len()
+    );
     println!("  - data/chunk-000/episode_000000.parquet: ✓");
     println!("  - videos/chunk-000/*/episode_000000.mp4: ✓");
 }
 
-fn verify_lerobot_structure_multi_episode(output_path: &Path, config: &LerobotConfig, expected_episodes: usize) {
+fn verify_lerobot_structure_multi_episode(
+    output_path: &Path,
+    config: &LerobotConfig,
+    expected_episodes: usize,
+) {
     use serde_json::Value;
 
     let data_dir = output_path.join("data");
@@ -336,7 +419,10 @@ fn verify_lerobot_structure_multi_episode(output_path: &Path, config: &LerobotCo
     assert!(meta_dir.exists(), "meta directory should exist");
     assert!(videos_dir.exists(), "videos directory should exist");
 
-    println!("Verifying LeRobot v2.1 metadata files for {} episodes...", expected_episodes);
+    println!(
+        "Verifying LeRobot v2.1 metadata files for {} episodes...",
+        expected_episodes
+    );
 
     // 1. Verify info.json
     let info_path = meta_dir.join("info.json");
@@ -344,87 +430,147 @@ fn verify_lerobot_structure_multi_episode(output_path: &Path, config: &LerobotCo
 
     let info_content = fs::read_to_string(&info_path).expect("Failed to read info.json");
     let info: Value = serde_json::from_str(&info_content).expect("Failed to parse info.json");
-    
-    assert_eq!(info["name"].as_str(), Some("rubbish_sorting"), "info.json should contain correct dataset name");
-    assert_eq!(info["total_episodes"].as_u64(), Some(expected_episodes as u64), 
-        "info.json should show {} episodes", expected_episodes);
-    
-    println!("  ✓ info.json verified ({} total_episodes)", expected_episodes);
+
+    assert_eq!(
+        info["name"].as_str(),
+        Some("rubbish_sorting"),
+        "info.json should contain correct dataset name"
+    );
+    assert_eq!(
+        info["total_episodes"].as_u64(),
+        Some(expected_episodes as u64),
+        "info.json should show {} episodes",
+        expected_episodes
+    );
+
+    println!(
+        "  ✓ info.json verified ({} total_episodes)",
+        expected_episodes
+    );
 
     // 2. Verify episodes.jsonl has correct number of episodes
     let episodes_path = meta_dir.join("episodes.jsonl");
     assert!(episodes_path.exists(), "episodes.jsonl should exist");
 
-    let episodes_content = fs::read_to_string(&episodes_path).expect("Failed to read episodes.jsonl");
+    let episodes_content =
+        fs::read_to_string(&episodes_path).expect("Failed to read episodes.jsonl");
     let episodes: Vec<Value> = episodes_content
         .lines()
         .filter(|line| !line.is_empty())
         .map(|line| serde_json::from_str(line).expect("Failed to parse episode line"))
         .collect();
-    
-    assert_eq!(episodes.len(), expected_episodes, 
-        "episodes.jsonl should contain {} episodes", expected_episodes);
-    
+
+    assert_eq!(
+        episodes.len(),
+        expected_episodes,
+        "episodes.jsonl should contain {} episodes",
+        expected_episodes
+    );
+
     // Verify episode indices are sequential
     for (i, episode) in episodes.iter().enumerate() {
-        assert_eq!(episode["episode_index"].as_u64(), Some(i as u64),
-            "Episode {} should have episode_index {}", i, i);
+        assert_eq!(
+            episode["episode_index"].as_u64(),
+            Some(i as u64),
+            "Episode {} should have episode_index {}",
+            i,
+            i
+        );
     }
-    
-    println!("  ✓ episodes.jsonl verified ({} episodes with correct indices)", episodes.len());
+
+    println!(
+        "  ✓ episodes.jsonl verified ({} episodes with correct indices)",
+        episodes.len()
+    );
 
     // 3. Verify episodes_stats.jsonl has stats for each episode
     let stats_path = meta_dir.join("episodes_stats.jsonl");
     assert!(stats_path.exists(), "episodes_stats.jsonl should exist");
 
-    let stats_content = fs::read_to_string(&stats_path).expect("Failed to read episodes_stats.jsonl");
+    let stats_content =
+        fs::read_to_string(&stats_path).expect("Failed to read episodes_stats.jsonl");
     let stats: Vec<Value> = stats_content
         .lines()
         .filter(|line| !line.is_empty())
         .map(|line| serde_json::from_str(line).expect("Failed to parse stats line"))
         .collect();
-    
-    assert_eq!(stats.len(), expected_episodes,
-        "episodes_stats.jsonl should contain {} episode stats", expected_episodes);
-    
-    println!("  ✓ episodes_stats.jsonl verified ({} episode stats)", stats.len());
+
+    assert_eq!(
+        stats.len(),
+        expected_episodes,
+        "episodes_stats.jsonl should contain {} episode stats",
+        expected_episodes
+    );
+
+    println!(
+        "  ✓ episodes_stats.jsonl verified ({} episode stats)",
+        stats.len()
+    );
 
     // 4. Verify Parquet files for all episodes
     for episode_idx in 0..expected_episodes {
-        let parquet_path = data_dir.join("chunk-000").join(format!("episode_{:06}.parquet", episode_idx));
-        assert!(parquet_path.exists(),
-            "Episode {} parquet file should exist at {}", episode_idx, parquet_path.display());
-        
-        let parquet_metadata = fs::metadata(&parquet_path).expect("Failed to read parquet metadata");
-        assert!(parquet_metadata.len() > 0, "Parquet file for episode {} should not be empty", episode_idx);
+        let parquet_path = data_dir
+            .join("chunk-000")
+            .join(format!("episode_{:06}.parquet", episode_idx));
+        assert!(
+            parquet_path.exists(),
+            "Episode {} parquet file should exist at {}",
+            episode_idx,
+            parquet_path.display()
+        );
+
+        let parquet_metadata =
+            fs::metadata(&parquet_path).expect("Failed to read parquet metadata");
+        assert!(
+            parquet_metadata.len() > 0,
+            "Parquet file for episode {} should not be empty",
+            episode_idx
+        );
     }
-    
-    println!("  ✓ All {} episode parquet files verified", expected_episodes);
+
+    println!(
+        "  ✓ All {} episode parquet files verified",
+        expected_episodes
+    );
 
     // 5. Verify video files for all episodes and cameras
     for episode_idx in 0..expected_episodes {
         for mapping in &config.mappings {
             if mapping.mapping_type == MappingType::Image {
-                let camera_key = mapping.camera_key.as_ref()
-                    .unwrap_or(&mapping.feature);
-                let video_path = videos_dir.join("chunk-000")
+                let camera_key = mapping.camera_key.as_ref().unwrap_or(&mapping.feature);
+                let video_path = videos_dir
+                    .join("chunk-000")
                     .join(camera_key)
                     .join(format!("episode_{:06}.mp4", episode_idx));
-                assert!(video_path.exists(),
-                    "Video file for episode {} camera '{}' should exist at {}", 
-                    episode_idx, camera_key, video_path.display());
+                assert!(
+                    video_path.exists(),
+                    "Video file for episode {} camera '{}' should exist at {}",
+                    episode_idx,
+                    camera_key,
+                    video_path.display()
+                );
             }
         }
     }
-    
-    println!("  ✓ All video files for {} episodes verified", expected_episodes);
+
+    println!(
+        "  ✓ All video files for {} episodes verified",
+        expected_episodes
+    );
 
     println!("\nMulti-episode LeRobot v2.1 structure verification complete!");
     println!("  - Total episodes: {}", expected_episodes);
     println!("  - Episode indices: 0 to {}", expected_episodes - 1);
     println!("  - Parquet files: {} episodes", expected_episodes);
-    println!("  - Video files: {} episodes x {} cameras", expected_episodes, 
-        config.mappings.iter().filter(|m| m.mapping_type == MappingType::Image).count());
+    println!(
+        "  - Video files: {} episodes x {} cameras",
+        expected_episodes,
+        config
+            .mappings
+            .iter()
+            .filter(|m| m.mapping_type == MappingType::Image)
+            .count()
+    );
 }
 
 #[test]
@@ -432,7 +578,7 @@ fn verify_lerobot_structure_multi_episode(output_path: &Path, config: &LerobotCo
 fn test_two_bags_to_lerobot_two_episodes() {
     // Test that two bag files = two work units = two episodes
     let bag_files = vec![TEST_BAG_PATH, TEST_BAG_PATH_2];
-    
+
     for (i, bag_path) in bag_files.iter().enumerate() {
         if !Path::new(bag_path).exists() {
             eprintln!("Skipping test: bag file {} not found at {}", i, bag_path);
@@ -449,20 +595,28 @@ fn test_two_bags_to_lerobot_two_episodes() {
         .expect("Failed to create LeRobot writer");
 
     let rt = tokio::runtime::Runtime::new().unwrap();
-    
+
     // Process each bag file as a separate episode
     for (episode_idx, bag_path) in bag_files.iter().enumerate() {
-        println!("\n=== Processing bag file {} as episode {} ===", bag_path, episode_idx);
-        
+        println!(
+            "\n=== Processing bag file {} as episode {} ===",
+            bag_path, episode_idx
+        );
+
         let source_config = SourceConfig::bag(*bag_path);
-        let mut source = roboflow_sources::create_source(&source_config)
-            .expect("Failed to create bag source");
+        let mut source =
+            roboflow_sources::create_source(&source_config).expect("Failed to create bag source");
 
-        let metadata = rt.block_on(source.initialize(&source_config))
+        let metadata = rt
+            .block_on(source.initialize(&source_config))
             .expect("Failed to initialize source");
-        println!("Source metadata for episode {}: {:?}", episode_idx, metadata);
+        println!(
+            "Source metadata for episode {}: {:?}",
+            episode_idx, metadata
+        );
 
-        writer.start_episode(Some(episode_idx))
+        writer
+            .start_episode(Some(episode_idx))
             .expect(&format!("Failed to start episode {}", episode_idx));
 
         let frame_count = rt.block_on(async {
@@ -478,7 +632,10 @@ fn test_two_bags_to_lerobot_two_episodes() {
                         }
                     }
                     Ok(None) => {
-                        println!("Episode {}: End of stream after {} frames", episode_idx, count);
+                        println!(
+                            "Episode {}: End of stream after {} frames",
+                            episode_idx, count
+                        );
                         break;
                     }
                     Err(e) => {
@@ -490,9 +647,13 @@ fn test_two_bags_to_lerobot_two_episodes() {
             count
         });
 
-        println!("Episode {}: Total frames processed: {}", episode_idx, frame_count);
+        println!(
+            "Episode {}: Total frames processed: {}",
+            episode_idx, frame_count
+        );
 
-        writer.finish_episode(Some(episode_idx))
+        writer
+            .finish_episode(Some(episode_idx))
             .expect(&format!("Failed to finish episode {}", episode_idx));
     }
 

@@ -28,9 +28,11 @@ pub use config::{
 };
 pub use coordinator::{Coordinator, send_heartbeat_inner};
 pub use executor::{DEFAULT_EPISODES_PER_CHUNK, ExecutionResult, TaskExecutor};
-pub use injectable::{JobRegistry as InjectableJobRegistry, NoOpJobRegistry, TaskExecutor as InjectableTaskExecutor};
+pub use injectable::{
+    JobRegistry as InjectableJobRegistry, NoOpJobRegistry, TaskExecutor as InjectableTaskExecutor,
+};
 pub use metrics::{ProcessingResult, WorkerMetrics, WorkerMetricsSnapshot};
-pub use pipeline_runner::{PipelineRunner, PipelineRunStats};
+pub use pipeline_runner::{PipelineRunStats, PipelineRunner};
 pub use registry::JobRegistry;
 
 use std::sync::Arc;

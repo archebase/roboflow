@@ -115,6 +115,9 @@ impl ProviderFactory {
     }
 
     pub fn test() -> (mock::MockSourceProvider, InMemoryConfigProvider) {
-        (mock::MockSourceProvider::new(), InMemoryConfigProvider::new())
+        (
+            mock::MockSourceProvider::new(),
+            InMemoryConfigProvider::new(),
+        )
     }
 }

@@ -170,7 +170,10 @@ pub(crate) fn decode_local_batched(
         let _ = batch_tx.blocking_send(batch);
     }
 
-    tracing::debug!(messages = count, "Local {format_name} batched decode complete");
+    tracing::debug!(
+        messages = count,
+        "Local {format_name} batched decode complete"
+    );
     Ok(count)
 }
 
@@ -253,7 +256,10 @@ pub(crate) fn decode_local_blocking(
         let _ = batch_tx.send(batch);
     }
 
-    tracing::debug!(messages = count, "Local {format_name} blocking decode complete");
+    tracing::debug!(
+        messages = count,
+        "Local {format_name} blocking decode complete"
+    );
     Ok(count)
 }
 
@@ -805,8 +811,7 @@ pub(crate) async fn initialize_threaded_source_blocking(
     SourceMetadata,
     crossbeam_channel::Receiver<Vec<TimestampedMessage>>,
     std::thread::JoinHandle<Result<usize, String>>,
-)>
-{
+)> {
     let (tx, rx) = crossbeam_channel::bounded(16);
     let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
 

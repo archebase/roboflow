@@ -12,15 +12,14 @@ use std::path::Path;
 use std::time::Duration;
 
 use chrono::Utc;
-use roboflow::{
-    DatasetBaseConfig, LerobotConfig, VideoConfig,
-};
+use roboflow::{DatasetBaseConfig, LerobotConfig, VideoConfig};
 use roboflow_dataset::lerobot::{FlushingConfig, Mapping, MappingType, StreamingConfig};
 use roboflow_distributed::batch::{WorkFile, WorkUnit, WorkUnitStatus};
 use roboflow_distributed::providers::{InMemoryConfigProvider, ProductionSourceProvider};
 use roboflow_distributed::worker::{InjectableTaskExecutor, NoOpJobRegistry, ProcessingResult};
 
-const TEST_BAG_PATH: &str = "tests/fixtures/A02-A01-37-45-77-factory_07-P4_210-leju_claw-20260104174020-v001.bag";
+const TEST_BAG_PATH: &str =
+    "tests/fixtures/A02-A01-37-45-77-factory_07-P4_210-leju_claw-20260104174020-v001.bag";
 const CONFIG_HASH: &str = "test_config_v1";
 
 fn create_lerobot_config() -> LerobotConfig {
@@ -87,7 +86,7 @@ fn create_work_unit(bag_path: &str, output_path: &str) -> WorkUnit {
         id: "test-unit-001".to_string(),
         batch_id: "test-batch".to_string(),
         files: vec![WorkFile {
-            url: absolute_path,  // Just use the path directly, not file:// URL
+            url: absolute_path, // Just use the path directly, not file:// URL
             size: metadata.len(),
             modified_at: None,
             checksum: None,
@@ -129,13 +128,12 @@ fn test_injectable_executor_correctness() {
 
         // Create executor with injectable dependencies
         let config = create_lerobot_config();
-        let config_provider = InMemoryConfigProvider::new()
-            .with_config(CONFIG_HASH, config);
+        let config_provider = InMemoryConfigProvider::new().with_config(CONFIG_HASH, config);
 
         let executor = InjectableTaskExecutor::new(
-            ProductionSourceProvider::new(),  // Real source provider
-            config_provider,                   // In-memory config
-            NoOpJobRegistry::new(),            // No-op job registry
+            ProductionSourceProvider::new(), // Real source provider
+            config_provider,                 // In-memory config
+            NoOpJobRegistry::new(),          // No-op job registry
             output_path.clone(),
             Duration::from_secs(3600),
         );
@@ -147,7 +145,11 @@ fn test_injectable_executor_correctness() {
 
         // Verify result
         match result {
-            ProcessingResult::Success { episode_index, frame_count, .. } => {
+            ProcessingResult::Success {
+                episode_index,
+                frame_count,
+                ..
+            } => {
                 println!("✅ SUCCESS");
                 println!("   Episode index: {}", episode_index);
                 println!("   Frames processed: {}", frame_count);
@@ -174,7 +176,11 @@ fn test_injectable_executor_correctness() {
                     }
                 }
 
-                scan_dir(Path::new(&output_path), &mut video_count, &mut parquet_count);
+                scan_dir(
+                    Path::new(&output_path),
+                    &mut video_count,
+                    &mut parquet_count,
+                );
 
                 // Assertions
                 assert!(frame_count > 0, "Should have processed some frames");

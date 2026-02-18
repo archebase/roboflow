@@ -769,7 +769,8 @@ mod tests {
             self.frame_count += 1;
             // Capture images from the frame for test assertions
             for img in frame.images.values() {
-                self.images.push(ImageData::encoded(img.width, img.height, img.data.clone()));
+                self.images
+                    .push(ImageData::encoded(img.width, img.height, img.data.clone()));
             }
             Ok(())
         }
@@ -1250,8 +1251,14 @@ mod tests {
         let writer = &executor.writer;
         assert_eq!(writer.images.len(), 1);
         let img = &writer.images[0];
-        assert_eq!(img.width, 200, "Width should be extracted from JPEG SOF marker");
-        assert_eq!(img.height, 100, "Height should be extracted from JPEG SOF marker");
+        assert_eq!(
+            img.width, 200,
+            "Width should be extracted from JPEG SOF marker"
+        );
+        assert_eq!(
+            img.height, 100,
+            "Height should be extracted from JPEG SOF marker"
+        );
         assert!(img.is_encoded, "Image should be marked as encoded");
     }
 

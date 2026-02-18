@@ -130,17 +130,16 @@ impl PipelineRunner {
         let mut process_time = Duration::ZERO;
 
         // Initialize source
-        source.initialize(source_config).await.map_err(|e| {
-            RoboflowError::other(format!("Source initialization failed: {}", e))
-        })?;
+        source
+            .initialize(source_config)
+            .await
+            .map_err(|e| RoboflowError::other(format!("Source initialization failed: {}", e)))?;
 
         // Process messages
         loop {
             // Check cancellation
-            if let Some(ref token) = cancel_token {
-                if token.is_cancelled() {
-                    return Err(RoboflowError::other("Cancelled".to_string()));
-                }
+            if let Some(ref token) = cancel_token && token.is_cancelled() {
+                return Err(RoboflowError::other("Cancelled".to_string()));
             }
 
             // Read batch
@@ -208,10 +207,8 @@ impl PipelineRunner {
         // Process all messages
         for chunk in messages.chunks(self.batch_size) {
             // Check cancellation
-            if let Some(ref token) = cancel_token {
-                if token.is_cancelled() {
-                    return Err(RoboflowError::other("Cancelled".to_string()));
-                }
+            if let Some(ref token) = cancel_token && token.is_cancelled() {
+                return Err(RoboflowError::other("Cancelled".to_string()));
             }
 
             // Process batch

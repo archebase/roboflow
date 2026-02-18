@@ -47,6 +47,7 @@ mod camera;
 mod camera_params;
 mod cloud_upload;
 mod encoding;
+mod episode_writer;
 mod frame;
 mod parquet;
 mod stats;
@@ -55,5 +56,6 @@ mod writer_impl;
 // Re-export public API
 pub use builder::LerobotWriterBuilder;
 pub use camera::{CameraExtrinsic, CameraIntrinsic, ExtrinsicData};
+pub use episode_writer::EpisodeWriter;
 pub use frame::LerobotFrame;
 pub use writer_impl::LerobotWriter;

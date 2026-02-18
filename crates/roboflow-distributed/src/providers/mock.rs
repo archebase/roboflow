@@ -40,9 +40,7 @@ impl Default for MockSourceProvider {
 
 #[async_trait]
 impl SourceProvider for MockSourceProvider {
-    async fn create_source(&self,
-        _config: &SourceConfig,
-    ) -> SourceResult<Box<dyn Source>> {
+    async fn create_source(&self, _config: &SourceConfig) -> SourceResult<Box<dyn Source>> {
         Ok(Box::new(MockSource {
             messages: self.messages.clone(),
             metadata: self.metadata.clone(),
@@ -59,36 +57,31 @@ pub struct MockSource {
 
 #[async_trait]
 impl Source for MockSource {
-    async fn initialize(
-        &mut self,
-        _config: &SourceConfig,
-    ) -> SourceResult<SourceMetadata> {
+    async fn initialize(&mut self, _config: &SourceConfig) -> SourceResult<SourceMetadata> {
         self.initialized = true;
-        self.metadata.clone().ok_or_else(|| {
-            SourceError::InvalidConfig("No metadata configured".to_string())
-        })
+        self.metadata
+            .clone()
+            .ok_or_else(|| SourceError::InvalidConfig("No metadata configured".to_string()))
     }
 
-    async fn read_batch(
-        &mut self,
-        size: usize,
-    ) -> SourceResult<Option<Vec<TimestampedMessage>>> {
+    async fn read_batch(&mut self, size: usize) -> SourceResult<Option<Vec<TimestampedMessage>>> {
         let mut messages = self.messages.lock().unwrap();
         if messages.is_empty() {
             return Ok(None);
         }
 
         let batch_size = size.min(messages.len());
-        let batch: Vec<TimestampedMessage> =
-            (0..batch_size).filter_map(|_| messages.pop_front()).collect();
+        let batch: Vec<TimestampedMessage> = (0..batch_size)
+            .filter_map(|_| messages.pop_front())
+            .collect();
 
         Ok(Some(batch))
     }
 
     async fn metadata(&self) -> SourceResult<SourceMetadata> {
-        self.metadata.clone().ok_or_else(|| {
-            SourceError::InvalidConfig("No metadata configured".to_string())
-        })
+        self.metadata
+            .clone()
+            .ok_or_else(|| SourceError::InvalidConfig("No metadata configured".to_string()))
     }
 }
 
@@ -120,7 +113,10 @@ impl MockLerobotWriter {
     }
 
     pub fn add_frame(&self, topic: String, timestamp: u64) {
-        self.frames.lock().unwrap().push(MockFrame { topic, timestamp });
+        self.frames
+            .lock()
+            .unwrap()
+            .push(MockFrame { topic, timestamp });
     }
 }
 

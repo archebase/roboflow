@@ -155,11 +155,8 @@ impl TaskExecutor {
     /// 5. Running the pipeline
     /// 6. Returning the result
     pub async fn execute(&self, unit: &WorkUnit) -> ProcessingResult {
-        self.execute_with_providers(
-            unit,
-            &crate::providers::ProductionSourceProvider::new(),
-        )
-        .await
+        self.execute_with_providers(unit, &crate::providers::ProductionSourceProvider::new())
+            .await
     }
 
     pub async fn execute_with_providers<SP: SourceProvider>(
@@ -408,12 +405,14 @@ impl TaskExecutor {
             let _guard = cancel_token.clone().drop_guard();
 
             // Run pipeline using PipelineRunner for better timing and testability
-            let run_result = runner.run(
-                &mut *source,
-                executor,
-                &source_config,
-                Some(cancel_token.clone()),
-            ).await;
+            let run_result = runner
+                .run(
+                    &mut *source,
+                    executor,
+                    &source_config,
+                    Some(cancel_token.clone()),
+                )
+                .await;
 
             match run_result {
                 Ok(stats) => {
@@ -478,6 +477,7 @@ impl TaskExecutor {
     /// Extract episode statistics from the pipeline executor.
     ///
     /// Converts the writer's metadata episode stats to the distributed stats format.
+    #[allow(dead_code)]
     fn extract_episode_stats(
         executor: &PipelineExecutor<LerobotWriter>,
         episode_index: Option<u64>,
@@ -558,18 +558,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_mock_source() {
-        use roboflow_core::{TimestampedMessage, CodecValue};
+        use roboflow_core::{CodecValue, TimestampedMessage};
 
-        let messages = vec![
-            TimestampedMessage {
-                topic: "/test/topic".to_string(),
-                log_time: 1000,
-                data: CodecValue::String("test".to_string()),
-            },
-        ];
+        let messages = vec![TimestampedMessage {
+            topic: "/test/topic".to_string(),
+            log_time: 1000,
+            data: CodecValue::String("test".to_string()),
+        }];
 
-        let mock_provider = MockSourceProvider::new()
-            .with_messages(messages);
+        let mock_provider = MockSourceProvider::new().with_messages(messages);
 
         let source_config = SourceConfig::from_url("/test/path.bag");
         let mut source = mock_provider.create_source(&source_config).await.unwrap();
