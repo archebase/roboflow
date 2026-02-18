@@ -1,0 +1,23 @@
+[package]
+name = "roboflow-executor"
+version = "0.2.0"
+edition = "2024"
+authors = ["Strata Contributors"]
+license = "MulanPSL-2.0"
+repository = "https://github.com/archebase/roboflow"
+description = "Stage-based task executor for distributed data pipelines"
+
+[dependencies]
+roboflow-core = { workspace = true }
+
+async-trait = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+futures = "0.3"
+num_cpus = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

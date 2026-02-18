@@ -8,6 +8,7 @@ members = [
     "crates/roboflow-dataset",
     "crates/roboflow-sources",
     "crates/roboflow-sinks",
+    "crates/roboflow-executor",
 ]
 resolver = "2"
 
@@ -20,6 +21,7 @@ roboflow-distributed = { path = "crates/roboflow-distributed", version = "0.2.0"
 roboflow-dataset = { path = "crates/roboflow-dataset", version = "0.2.0" }
 roboflow-sources = { path = "crates/roboflow-sources", version = "0.2.0" }
 roboflow-sinks = { path = "crates/roboflow-sinks", version = "0.2.0" }
+roboflow-executor = { path = "crates/roboflow-executor", version = "0.2.0" }
 
 # External dependencies
 # Pinned to specific commit for reproducible builds
@@ -27,6 +29,10 @@ robocodec = { git = "https://github.com/archebase/robocodec", rev = "019baae541f
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 tokio = { version = "1.40", features = ["rt-multi-thread", "sync"] }
+num_cpus = "1.16"
+serde = { version = "1.0", features = ["derive"] }
+tracing = "0.1"
+thiserror = "1.0"
 
 [package]
 name = "roboflow"

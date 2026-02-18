@@ -532,7 +532,6 @@ mod tests {
             updated_at: chrono::Utc::now(),
             error: None,
             priority: 0,
-            episodes_per_chunk: 0,
         };
 
         // Execute the work unit
