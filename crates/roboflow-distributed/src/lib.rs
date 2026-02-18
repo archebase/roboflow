@@ -27,6 +27,7 @@ pub mod providers;
 pub mod reaper;
 pub mod scanner;
 pub mod shutdown;
+pub mod slot_pool;
 pub mod state;
 pub mod stats;
 pub mod tikv;
@@ -105,6 +106,9 @@ pub use episode::{
     EpisodeAllocation, EpisodeAllocator, EpisodeAllocatorError, LocalEpisodeAllocator,
     TiKVEpisodeAllocator, chunk_index_from_episode,
 };
+
+// Re-export public types from slot_pool (resource management)
+pub use slot_pool::{SlotGuard, SlotPool, SlotPoolError};
 
 // Re-export public types from stats (episode statistics collection)
 pub use stats::{
