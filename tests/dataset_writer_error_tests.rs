@@ -18,7 +18,7 @@ use roboflow::{
     LerobotWriter, LerobotWriterTrait, VideoConfig,
 };
 
-use roboflow_dataset::{AlignedFrame, ImageData};
+use roboflow_pipeline::{AlignedFrame, ImageData};
 
 /// Create a test output directory.
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {

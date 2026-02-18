@@ -21,7 +21,7 @@ use roboflow::{
     DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig, LerobotWriter,
     LerobotWriterTrait, VideoConfig,
 };
-use roboflow_dataset::{AlignedFrame, ImageData};
+use roboflow_pipeline::{AlignedFrame, ImageData};
 use roboflow_storage::{LocalStorage, StorageFactory, StorageUrl};
 
 /// Create a test output directory.
@@ -505,7 +505,7 @@ fn test_multi_camera_mid_frame_flush_prevention() {
     // Use write_frame() to ensure flush happens AFTER all cameras are added
     for frame_idx in 0..10 {
         let mut frame =
-            roboflow_dataset::AlignedFrame::new(frame_idx, (frame_idx as u64) * 33_333_333);
+            roboflow_pipeline::AlignedFrame::new(frame_idx, (frame_idx as u64) * 33_333_333);
 
         for camera_idx in 0..3 {
             let camera_name = format!("observation.images.camera_{}", camera_idx);

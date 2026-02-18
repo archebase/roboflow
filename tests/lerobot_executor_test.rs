@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use roboflow::{DatasetBaseConfig, LerobotConfig, VideoConfig};
-use roboflow_dataset::lerobot::{FlushingConfig, Mapping, MappingType, StreamingConfig};
+use roboflow_pipeline::lerobot::{FlushingConfig, Mapping, MappingType, StreamingConfig};
 use roboflow_distributed::Executor;
 use roboflow_distributed::batch::{WorkFile, WorkUnit, WorkUnitStatus};
 use roboflow_distributed::lerobot_executor::LeRobotExecutor;

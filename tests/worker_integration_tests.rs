@@ -12,7 +12,7 @@
 use std::fs;
 
 use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig};
-use roboflow_dataset::ImageData;
+use roboflow_pipeline::ImageData;
 
 /// Create a test output directory using system temp.
 /// Using tempfile::tempdir() directly avoids:
@@ -62,7 +62,7 @@ fn test_lerobot_writer_basic_flow() {
     writer.finish_episode(Some(0)).unwrap();
 
     // Finalize and get stats - use DatasetWriter trait method
-    use roboflow_dataset::common::DatasetWriter;
+    use roboflow_pipeline::common::DatasetWriter;
     let _stats = DatasetWriter::finalize(&mut writer).unwrap();
 
     // Verify output directory structure exists

@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use roboflow_dataset::{
+use roboflow_pipeline::{
     AlignedFrame, ImageData,
     common::{ConcurrentEncoderConfig, ConcurrentVideoEncoder},
 };
@@ -284,7 +284,7 @@ fn test_concurrent_encoder_with_minio() {
         chunk_index: 0,
         episode_index: 0,
         chunk_size: 256 * 1024,
-        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
+        video_config: roboflow_pipeline::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 64,
         s3_config: config.s3_config(),
         use_parallel_pipeline: false,
@@ -334,7 +334,7 @@ fn test_concurrent_encoder_multicam_with_minio() {
         chunk_index: 0,
         episode_index: 0,
         chunk_size: 256 * 1024,
-        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
+        video_config: roboflow_pipeline::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 100,
         s3_config: config.s3_config(),
         use_parallel_pipeline: false,
@@ -395,7 +395,7 @@ fn test_compressed_images_with_minio_upload() {
         chunk_index: 0,
         episode_index: 0,
         chunk_size: 256 * 1024,
-        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
+        video_config: roboflow_pipeline::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 100,
         s3_config: config.s3_config(),
         use_parallel_pipeline: false,
@@ -505,7 +505,7 @@ fn test_concurrent_minio_uploads() {
                     chunk_index: 0,
                     episode_index: worker_id as u32,
                     chunk_size: 256 * 1024,
-                    video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
+                    video_config: roboflow_pipeline::common::video::VideoEncoderConfig::default(),
                     frame_channel_capacity: 50,
                     s3_config: s3_config_clone,
                     use_parallel_pipeline: false,
@@ -528,7 +528,7 @@ fn test_concurrent_minio_uploads() {
         .collect();
 
     // Wait for all workers and collect results
-    let mut results: Vec<Result<Vec<roboflow_dataset::common::ConcurrentEncoderResult>, _>> =
+    let mut results: Vec<Result<Vec<roboflow_pipeline::common::ConcurrentEncoderResult>, _>> =
         vec![];
     for handle in handles {
         let result = handle.join().expect("Thread panicked");
@@ -620,7 +620,7 @@ fn test_lerobot_v21_video_path_structure() {
         chunk_index,
         episode_index,
         chunk_size: 256 * 1024,
-        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
+        video_config: roboflow_pipeline::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 64,
         s3_config: config.s3_config(),
         use_parallel_pipeline: false,
@@ -732,7 +732,7 @@ fn test_multi_camera_unique_temp_files() {
         chunk_index: 0,
         episode_index: 0,
         chunk_size: 256 * 1024,
-        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
+        video_config: roboflow_pipeline::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 64,
         s3_config: config.s3_config(),
         use_parallel_pipeline: false,
