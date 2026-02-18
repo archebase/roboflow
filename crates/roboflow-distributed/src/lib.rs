@@ -20,7 +20,8 @@ pub mod batch;
 pub mod catalog;
 pub mod converter;
 pub mod episode;
-pub mod work_unit_executor;
+pub mod executor;
+pub mod lerobot_executor;
 pub mod finalizer;
 pub mod heartbeat;
 pub mod merge;
@@ -122,8 +123,11 @@ pub use converter::{
     DEFAULT_EPISODES_PER_CHUNK as CONVERTER_DEFAULT_EPISODES_PER_CHUNK, LeRobotConverter,
 };
 
-// Re-export public types from work_unit_executor (stage-based executor integration)
-pub use work_unit_executor::WorkUnitExecutor;
+// Re-export public types from executor (executor trait)
+pub use executor::Executor;
+
+// Re-export public types from lerobot_executor (stage-based executor integration)
+pub use lerobot_executor::LeRobotExecutor;
 
 // =============================================================================
 // Coordinator Traits

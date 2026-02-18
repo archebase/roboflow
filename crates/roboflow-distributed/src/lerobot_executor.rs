@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! WorkUnit executor using the stage-based executor framework.
+//! LeRobot executor using the stage-based executor framework.
 
 use std::sync::Arc;
 
@@ -16,18 +16,18 @@ use crate::episode::EpisodeAllocator;
 use crate::worker::metrics::ProcessingResult;
 use crate::worker::registry::JobRegistry;
 
-/// Executes WorkUnits using the stage-based executor framework.
+/// Executes bag/mcap files to LeRobot format using the stage-based executor framework.
 ///
-/// This executor processes WorkUnits from the distributed batch system
-/// by creating a Discover → Convert → Merge pipeline for each unit.
-pub struct WorkUnitExecutor {
+/// This executor processes source files and converts them to LeRobot v2.1 format
+/// by creating a Discover → Convert → Merge pipeline for each work unit.
+pub struct LeRobotExecutor {
     stage_executor: StageExecutor,
     output_prefix: String,
     episode_allocator: Option<Arc<dyn EpisodeAllocator>>,
 }
 
-impl WorkUnitExecutor {
-    /// Create a new WorkUnit executor.
+impl LeRobotExecutor {
+    /// Create a new LeRobot executor.
     pub fn new(max_concurrent: usize, output_prefix: impl Into<String>) -> Self {
         Self {
             stage_executor: StageExecutor::new(max_concurrent),
@@ -109,7 +109,7 @@ mod tests {
     async fn test_bridge_execution() {
         let _ = tracing_subscriber::fmt::try_init();
 
-        let executor = WorkUnitExecutor::new(2, "/tmp/output");
+        let executor = LeRobotExecutor::new(2, "/tmp/output");
         let registry = Arc::new(tokio::sync::RwLock::new(JobRegistry::default()));
 
         let work_unit = WorkUnit::new(

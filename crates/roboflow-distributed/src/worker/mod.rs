@@ -9,7 +9,7 @@
 //! The worker is now composed of two main components:
 //!
 //! - **Coordinator**: Handles coordination logic (claiming work, heartbeats, shutdown)
-//! - **WorkUnitExecutor**: Handles execution logic using the stage-based executor framework
+//! - **LeRobotExecutor**: Handles execution logic using the stage-based executor framework
 //!
 //! This separation improves testability and maintainability.
 
@@ -24,7 +24,8 @@ pub use config::{
     DEFAULT_MAX_CONCURRENT_JOBS, DEFAULT_POLL_INTERVAL_SECS, WorkerConfig,
 };
 pub use coordinator::{Coordinator, send_heartbeat_inner};
-pub use crate::work_unit_executor::WorkUnitExecutor;
+pub use crate::executor::Executor;
+pub use crate::lerobot_executor::LeRobotExecutor;
 pub use metrics::{ProcessingResult, WorkerMetrics, WorkerMetricsSnapshot};
 pub use registry::JobRegistry;
 
@@ -42,8 +43,8 @@ pub const DEFAULT_CANCELLATION_CHECK_INTERVAL_SECS: u64 = 5;
 pub struct Worker {
     /// Coordinator for work unit management.
     coordinator: Coordinator,
-    /// Executor for processing work units using stage-based framework.
-    executor: WorkUnitExecutor,
+    /// Executor for processing work units.
+    executor: Box<dyn Executor>,
     /// Cancellation token for graceful shutdown.
     cancellation_token: Arc<tokio_util::sync::CancellationToken>,
 }
@@ -68,10 +69,10 @@ impl Worker {
         )?;
 
         // Create executor using stage-based framework
-        let executor = WorkUnitExecutor::new(
+        let executor: Box<dyn Executor> = Box::new(LeRobotExecutor::new(
             config.max_concurrent_jobs as usize,
             config.output_prefix.clone(),
-        );
+        ));
 
         Ok(Self {
             coordinator,
@@ -137,11 +138,13 @@ impl Worker {
         )?;
 
         // Create executor with episode allocator using stage-based framework
-        let executor = WorkUnitExecutor::new(
-            config.max_concurrent_jobs as usize,
-            config.output_prefix.clone(),
-        )
-        .with_episode_allocator(episode_allocator);
+        let executor: Box<dyn Executor> = Box::new(
+            LeRobotExecutor::new(
+                config.max_concurrent_jobs as usize,
+                config.output_prefix.clone(),
+            )
+            .with_episode_allocator(episode_allocator),
+        );
 
         Ok(Self {
             coordinator,

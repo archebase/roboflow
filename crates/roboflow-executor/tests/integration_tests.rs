@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use roboflow_distributed::{
-    WorkUnitExecutor, WorkFile, WorkUnit,
+    LeRobotExecutor, WorkFile, WorkUnit,
     worker::{JobRegistry, ProcessingResult},
 };
 use roboflow_executor::{PipelineBuilder, StageExecutor, StageId};
@@ -23,7 +23,7 @@ use roboflow_executor::{PipelineBuilder, StageExecutor, StageId};
 async fn test_work_unit_executor_multiple_work_units() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let executor = WorkUnitExecutor::new(4, "/tmp/output");
+    let executor = LeRobotExecutor::new(4, "/tmp/output");
     let registry = Arc::new(tokio::sync::RwLock::new(JobRegistry::default()));
 
     // Process multiple work units (simulating 100 episodes)
@@ -157,7 +157,7 @@ async fn test_pipeline_dependency_ordering() {
 async fn test_100k_episode_scale() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let executor = WorkUnitExecutor::new(16, "/tmp/output");
+    let executor = LeRobotExecutor::new(16, "/tmp/output");
     let registry = Arc::new(tokio::sync::RwLock::new(JobRegistry::default()));
 
     let num_episodes = 100_000usize;
