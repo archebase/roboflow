@@ -10,9 +10,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::sync::Arc;
 
 use crate::task::TaskId;
+
+type ObjectEntry = (Vec<u8>, TaskId, std::sync::atomic::AtomicUsize);
 
 /// Unique identifier for an object (content-addressed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -113,11 +114,7 @@ pub trait ObjectStore: Send + Sync {
     async fn get(&self, obj: &ObjectRef) -> ObjectStoreResult<Vec<u8>>;
 
     /// Put object into store, returns reference.
-    async fn put(
-        &self,
-        data: Vec<u8>,
-        owner: TaskId,
-    ) -> ObjectStoreResult<ObjectRef>;
+    async fn put(&self, data: Vec<u8>, owner: TaskId) -> ObjectStoreResult<ObjectRef>;
 
     /// Check if object exists.
     async fn contains(&self, obj: &ObjectRef) -> bool;
@@ -134,7 +131,7 @@ pub trait ObjectStore: Send + Sync {
 
 /// In-memory object store implementation.
 pub struct MemoryObjectStore {
-    inner: tokio::sync::RwLock<std::collections::HashMap<ObjectId, (Vec<u8>, TaskId, std::sync::atomic::AtomicUsize)>>,
+    inner: tokio::sync::RwLock<std::collections::HashMap<ObjectId, ObjectEntry>>,
 }
 
 impl MemoryObjectStore {
@@ -162,25 +159,14 @@ impl ObjectStore for MemoryObjectStore {
         }
     }
 
-    async fn put(
-        &self,
-        data: Vec<u8>,
-        owner: TaskId,
-    ) -> ObjectStoreResult<ObjectRef> {
+    async fn put(&self, data: Vec<u8>, owner: TaskId) -> ObjectStoreResult<ObjectRef> {
         let id = ObjectRef::compute_id(&data);
         let size = data.len() as u64;
 
         let mut inner = self.inner.write().await;
-        if !inner.contains_key(&id) {
-            inner.insert(
-                id,
-                (
-                    data,
-                    owner,
-                    std::sync::atomic::AtomicUsize::new(1),
-                ),
-            );
-        }
+        inner.entry(id).or_insert_with(|| {
+            (data, owner, std::sync::atomic::AtomicUsize::new(1))
+        });
 
         Ok(ObjectRef::new(id, size, owner, vec![]))
     }
@@ -251,8 +237,7 @@ impl ObjectStore for LocalObjectStore {
         }
     }
 
-    async fn put(
-        &self, data: Vec<u8>, owner: TaskId) -> ObjectStoreResult<ObjectRef> {
+    async fn put(&self, data: Vec<u8>, owner: TaskId) -> ObjectStoreResult<ObjectRef> {
         let id = ObjectRef::compute_id(&data);
         let size = data.len() as u64;
         let path = self.object_path(id);

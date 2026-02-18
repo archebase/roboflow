@@ -18,14 +18,14 @@ pub mod coordinator;
 pub mod metrics;
 pub mod registry;
 
+pub use crate::executor::Executor;
+pub use crate::lerobot_executor::LeRobotExecutor;
 pub use config::{
     DEFAULT_CHECKPOINT_INTERVAL_FRAMES, DEFAULT_CHECKPOINT_INTERVAL_SECS,
     DEFAULT_HEARTBEAT_INTERVAL_SECS, DEFAULT_JOB_TIMEOUT_SECS, DEFAULT_MAX_ATTEMPTS,
     DEFAULT_MAX_CONCURRENT_JOBS, DEFAULT_POLL_INTERVAL_SECS, WorkerConfig,
 };
 pub use coordinator::{Coordinator, send_heartbeat_inner};
-pub use crate::executor::Executor;
-pub use crate::lerobot_executor::LeRobotExecutor;
 pub use metrics::{ProcessingResult, WorkerMetrics, WorkerMetricsSnapshot};
 pub use registry::JobRegistry;
 

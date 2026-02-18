@@ -10,15 +10,15 @@
 
 use std::collections::BTreeMap;
 use std::io;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use tracing::{debug, trace};
 
+use crate::ImageData;
 use crate::video::arena::{ArcSlot, AtomicFramePool, FramePoolConfig, PoolStats};
 use crate::video::frame::{FrameBuffer, PixelFormat};
-use crate::ImageData;
 
 /// Command sent to decode workers.
 #[derive(Debug)]

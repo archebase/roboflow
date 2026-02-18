@@ -10,7 +10,9 @@
 //! **Status**: Scaffold only — full decoding requires the `re_sdk` / `re_log_types`
 //! crates which are not yet integrated.
 
-use crate::sources::{Source, SourceConfig, SourceError, SourceMetadata, SourceResult, TimestampedMessage};
+use crate::sources::{
+    Source, SourceConfig, SourceError, SourceMetadata, SourceResult, TimestampedMessage,
+};
 
 /// Rerun Data (.rrd) source reader.
 ///

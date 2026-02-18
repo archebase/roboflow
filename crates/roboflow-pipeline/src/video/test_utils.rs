@@ -6,12 +6,12 @@
 
 use std::io::Cursor;
 
+use crate::video::ImageData;
 use crate::video::config::VideoEncoderConfig;
 use crate::video::decode::DecodedFrame;
 use crate::video::frame::FrameBuffer;
-use crate::video::hardware::select_best_encoder;
 use crate::video::hardware::EncoderChoice;
-use crate::video::ImageData;
+use crate::video::hardware::select_best_encoder;
 
 // ================================================================================================
 // Helper Functions

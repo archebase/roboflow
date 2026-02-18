@@ -29,7 +29,8 @@ pub mod video;
 
 // Re-export core types (shared across all formats)
 pub use base::{
-    AlignedFrame, AudioData, CameraInfo, DatasetFrame, DatasetWriter, DatasetWriterError, ImageData, WriterStats,
+    AlignedFrame, AudioData, CameraInfo, DatasetFrame, DatasetWriter, DatasetWriterError,
+    ImageData, WriterStats,
 };
 
 // Re-export shared config types

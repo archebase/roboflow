@@ -539,7 +539,9 @@ impl PipelineAdapter {
             match cmd {
                 StreamingCommand::AddFrame { image } => {
                     // Convert roboflow-dataset ImageData to roboflow-video ImageData
-                    let video_image = crate::formats::common::ImageData { is_depth: false, original_timestamp: 0,
+                    let video_image = crate::formats::common::ImageData {
+                        is_depth: false,
+                        original_timestamp: 0,
                         width: image.width,
                         height: image.height,
                         data: image.data,

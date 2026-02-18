@@ -60,11 +60,10 @@ impl LeRobotExecutor {
         );
 
         // Get the input file from the work unit
-        let input_file = unit
-            .files
-            .first()
-            .map(|f| f.url.clone())
-            .ok_or_else(|| roboflow_core::RoboflowError::other("No input files in work unit"))?;
+        let input_file =
+            unit.files.first().map(|f| f.url.clone()).ok_or_else(|| {
+                roboflow_core::RoboflowError::other("No input files in work unit")
+            })?;
 
         // Create output path
         let output_path = format!("{}/{}", self.output_prefix, unit.id);
@@ -72,7 +71,11 @@ impl LeRobotExecutor {
         // Build the pipeline: Convert → Merge
         // (DiscoverStage runs at batch level, not per-work-unit)
         let pipeline = PipelineBuilder::new()
-            .stage(Arc::new(ConvertStage::new(&input_file, &output_path, &unit.config_hash)))
+            .stage(Arc::new(ConvertStage::new(
+                &input_file,
+                &output_path,
+                &unit.config_hash,
+            )))
             .stage(Arc::new(MergeStage::new(format!(
                 "{}/dataset",
                 output_path
@@ -123,7 +126,7 @@ mod tests {
         );
 
         let result = executor.execute(&work_unit, registry).await;
-        
+
         if let Err(ref e) = result {
             eprintln!("Executor failed: {}", e);
         }

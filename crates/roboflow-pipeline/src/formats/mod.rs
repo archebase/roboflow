@@ -1,18 +1,18 @@
 pub mod common;
 pub mod config;
 pub mod hardware;
-pub mod lerobot;
 pub mod image;
-pub mod streaming;
+pub mod lerobot;
 pub mod pipeline;
+pub mod streaming;
 
 pub use common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats};
 pub use config::{OutputConfig, OutputFormat};
-pub use pipeline::{PipelineConfig, PipelineExecutor, PipelineStats};
 pub use image::{
     DecodedImage, ImageDecoderBackend, ImageDecoderConfig, ImageDecoderFactory, ImageError,
     ImageFormat, decode_compressed_image,
 };
+pub use pipeline::{PipelineConfig, PipelineExecutor, PipelineStats};
 
 use roboflow_core::Result;
 use std::path::Path;

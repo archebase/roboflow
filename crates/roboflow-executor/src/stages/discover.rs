@@ -6,7 +6,7 @@
 
 use roboflow_core::Result;
 
-use crate::object_store::{ObjectRef, ObjectId};
+use crate::object_store::{ObjectId, ObjectRef};
 use crate::stage::{PartitionId, Stage, StageId};
 use crate::task::{Task, TaskContext, TaskResult, TaskStatus};
 

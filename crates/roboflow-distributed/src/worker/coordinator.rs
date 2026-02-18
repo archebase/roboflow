@@ -19,9 +19,9 @@ use tokio::time::sleep;
 
 use super::config::WorkerConfig;
 use super::metrics::{ProcessingResult, WorkerMetrics};
-use crate::executor::Executor;
 use super::registry::JobRegistry;
 use crate::batch::{BatchController, WorkUnit};
+use crate::executor::Executor;
 use crate::shutdown::ShutdownHandler;
 use crate::stats::StatsCollector;
 use crate::tikv::{

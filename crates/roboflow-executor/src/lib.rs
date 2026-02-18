@@ -42,12 +42,10 @@ pub mod task;
 pub use executor::{ExecuteResult, StageExecutor};
 pub use format::{
     ConfigError, DatasetFormat, DatasetMetadata, EpisodeMetadata, EpisodeWriter, Feature,
-    FormatConfig, Frame, LeRobotV21, MetadataError, MetadataGenerator, Observation,
-    RLDS, WriterError,
+    FormatConfig, Frame, LeRobotV21, MetadataError, MetadataGenerator, Observation, RLDS,
+    WriterError,
 };
-pub use lineage::{
-    Lineage, LineageError, MemoryLineage, RecomputePlan, TaskLineage,
-};
+pub use lineage::{Lineage, LineageError, MemoryLineage, RecomputePlan, TaskLineage};
 pub use object_store::{
     LocalObjectStore, MemoryObjectStore, ObjectId, ObjectRef, ObjectStore, ObjectStoreError,
     WorkerId,
@@ -58,12 +56,8 @@ pub use resource::{
 };
 pub use scheduler::StageScheduler;
 pub use stage::{FormatStage, PartitionId, Stage, StageId};
-pub use stages::{
-    ConvertStage, DiscoverStage, MergeStage, TransformStage,
-};
-pub use task::{
-    Task, TaskContext, TaskId, TaskMetrics, TaskResult, TaskStatus,
-};
+pub use stages::{ConvertStage, DiscoverStage, MergeStage, TransformStage};
+pub use task::{Task, TaskContext, TaskId, TaskMetrics, TaskResult, TaskStatus};
 
 /// Re-export core types
 pub use roboflow_core::Result;

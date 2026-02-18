@@ -435,7 +435,9 @@ fn submit_decode(
     _sequence: u64,
     pending: &Arc<AtomicUsize>,
 ) -> io::Result<()> {
-    let video_image = crate::ImageData { is_depth: false, original_timestamp: 0,
+    let video_image = crate::ImageData {
+        is_depth: false,
+        original_timestamp: 0,
         width: image.width,
         height: image.height,
         data: image.data,

@@ -72,12 +72,7 @@ impl Task for MergeTask {
         // Simulate merge work
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-        let obj_ref = ObjectRef::new(
-            ObjectId::new([4u8; 32]),
-            2048,
-            ctx.task_id,
-            vec![],
-        );
+        let obj_ref = ObjectRef::new(ObjectId::new([4u8; 32]), 2048, ctx.task_id, vec![]);
 
         Ok(TaskResult {
             outputs: vec![obj_ref],

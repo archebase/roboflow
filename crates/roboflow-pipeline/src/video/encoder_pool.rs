@@ -88,26 +88,33 @@ impl EncodeCommand {
         let rgb_data: Vec<&[u8]> = decoded_frames.iter().map(|f| f.data()).collect();
 
         // Use batch SIMD conversion - better cache locality, fewer allocations
-        let frames = match crate::video::simd::rgb_batch_to_nv12(&rgb_data, width_usize, height_usize) {
-            Ok(converted) => converted
-                .into_iter()
-                .map(|(y_plane, uv_plane)| VideoFrame::from_nv12(width, height, y_plane, uv_plane))
-                .collect(),
-            Err(_) => {
-                // Fallback to per-frame conversion if batch fails
-                decoded_frames
+        let frames =
+            match crate::video::simd::rgb_batch_to_nv12(&rgb_data, width_usize, height_usize) {
+                Ok(converted) => converted
                     .into_iter()
-                    .map(
-                        |f| match crate::video::simd::rgb_to_nv12(f.data(), width_usize, height_usize) {
-                            Ok((y_plane, uv_plane)) => {
-                                VideoFrame::from_nv12(width, height, y_plane, uv_plane)
+                    .map(|(y_plane, uv_plane)| {
+                        VideoFrame::from_nv12(width, height, y_plane, uv_plane)
+                    })
+                    .collect(),
+                Err(_) => {
+                    // Fallback to per-frame conversion if batch fails
+                    decoded_frames
+                        .into_iter()
+                        .map(|f| {
+                            match crate::video::simd::rgb_to_nv12(
+                                f.data(),
+                                width_usize,
+                                height_usize,
+                            ) {
+                                Ok((y_plane, uv_plane)) => {
+                                    VideoFrame::from_nv12(width, height, y_plane, uv_plane)
+                                }
+                                Err(_) => VideoFrame::new(width, height, f.data().to_vec()),
                             }
-                            Err(_) => VideoFrame::new(width, height, f.data().to_vec()),
-                        },
-                    )
-                    .collect()
-            }
-        };
+                        })
+                        .collect()
+                }
+            };
 
         Self {
             sequence,

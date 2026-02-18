@@ -2,10 +2,10 @@ use std::fs;
 use std::path::Path;
 use std::time::Instant;
 
+use roboflow::sources::SourceConfig;
 use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig};
 use roboflow_dataset::common::DatasetWriter;
 use roboflow_dataset::lerobot::{FlushingConfig, Mapping, MappingType, StreamingConfig};
-use roboflow::sources::SourceConfig;
 
 const TEST_BAG_PATH: &str =
     "tests/fixtures/A02-A01-37-45-77-factory_07-P4_210-leju_claw-20260104174020-v001.bag";

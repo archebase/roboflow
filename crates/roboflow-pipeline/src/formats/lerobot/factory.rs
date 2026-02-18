@@ -4,8 +4,8 @@
 
 //! Factory for creating LeRobot writers.
 
-use crate::formats::lerobot::writer::LerobotWriter;
 use crate::formats::lerobot::LerobotConfig;
+use crate::formats::lerobot::writer::LerobotWriter;
 use roboflow_storage::StorageUrl;
 use std::path::PathBuf;
 use std::str::FromStr;

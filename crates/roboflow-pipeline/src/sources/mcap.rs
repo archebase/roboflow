@@ -8,7 +8,9 @@
 //! Uses a background decoder thread with a bounded channel for backpressure.
 
 use crate::sources::decode;
-use crate::sources::{Source, SourceConfig, SourceError, SourceMetadata, SourceResult, TimestampedMessage};
+use crate::sources::{
+    Source, SourceConfig, SourceError, SourceMetadata, SourceResult, TimestampedMessage,
+};
 use std::thread;
 
 /// MCAP source reader.

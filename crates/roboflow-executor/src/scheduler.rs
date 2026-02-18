@@ -22,10 +22,11 @@ use crate::stage::{PartitionId, Stage, StageId};
 use crate::task::{Task, TaskContext, TaskId, TaskResult};
 
 /// Stage scheduler orchestrates stage execution.
+#[allow(dead_code)]
 pub struct StageScheduler {
-    /// Object store for intermediate data.
+    /// Object store for intermediate data (WIP: not yet used).
     object_store: Arc<dyn crate::object_store::ObjectStore>,
-    /// Lineage tracker for fault tolerance.
+    /// Lineage tracker for fault tolerance (WIP: not yet used).
     lineage: Arc<dyn Lineage>,
     /// Slot pool for resource management.
     slot_pool: Arc<SlotPool>,
@@ -46,10 +47,7 @@ impl StageScheduler {
     }
 
     /// Execute a pipeline to completion.
-    pub async fn execute_pipeline(
-        &self,
-        pipeline: &Pipeline,
-    ) -> Result<PipelineResult> {
+    pub async fn execute_pipeline(&self, pipeline: &Pipeline) -> Result<PipelineResult> {
         let mut completed_stages = HashSet::new();
         let mut stage_outputs: HashMap<StageId, Vec<ObjectRef>> = HashMap::new();
 
@@ -93,7 +91,7 @@ impl StageScheduler {
     async fn execute_stage(
         &self,
         stage: &Arc<dyn Stage>,
-        previous_outputs: &HashMap<StageId, Vec<ObjectRef>>,
+        _previous_outputs: &HashMap<StageId, Vec<ObjectRef>>,
     ) -> Result<Vec<ObjectRef>> {
         let partition_count = stage.partition_count();
         let mut tasks: Vec<Box<dyn Task>> = Vec::with_capacity(partition_count);

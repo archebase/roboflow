@@ -9,7 +9,7 @@ use std::path::Path;
 use roboflow_core::Result;
 use roboflow_executor::object_store::{ObjectId, ObjectRef};
 use roboflow_executor::stage::{PartitionId, Stage, StageId};
-use roboflow_executor::task::{Task, TaskContext, TaskResult, TaskMetrics, TaskStatus};
+use roboflow_executor::task::{Task, TaskContext, TaskMetrics, TaskResult, TaskStatus};
 
 /// Stage for merging converted files.
 ///
@@ -89,13 +89,11 @@ impl Task for MergeTask {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
-                    let name = path.file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("");
-                    
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
                     if name.starts_with("episode_") {
                         episode_count += 1;
-                        
+
                         if let Ok(episode_entries) = std::fs::read_dir(&path) {
                             for ep_entry in episode_entries.flatten() {
                                 let ep_path = ep_entry.path();
@@ -143,17 +141,17 @@ impl Task for MergeTask {
         });
 
         let info_path = format!("{}/info.json", self.output_path);
-        std::fs::write(&info_path, serde_json::to_string_pretty(&info_json).unwrap())
-            .map_err(|e| roboflow_core::RoboflowError::other(format!("Failed to write info.json: {}", e)))?;
+        std::fs::write(
+            &info_path,
+            serde_json::to_string_pretty(&info_json).unwrap(),
+        )
+        .map_err(|e| {
+            roboflow_core::RoboflowError::other(format!("Failed to write info.json: {}", e))
+        })?;
 
         tracing::info!(episode_count = episode_count, "Merge complete");
 
-        let obj_ref = ObjectRef::new(
-            ObjectId::new([3u8; 32]),
-            2048,
-            ctx.task_id,
-            vec![],
-        );
+        let obj_ref = ObjectRef::new(ObjectId::new([3u8; 32]), 2048, ctx.task_id, vec![]);
 
         Ok(TaskResult {
             outputs: vec![obj_ref],

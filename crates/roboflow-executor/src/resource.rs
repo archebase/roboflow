@@ -234,11 +234,7 @@ impl SlotPool {
     /// Acquire a slot for a task.
     ///
     /// Returns None if no slot is available that can satisfy the request.
-    pub async fn acquire(
-        &self,
-        request: &ResourceRequest,
-        task_id: TaskId,
-    ) -> Option<SlotGuard> {
+    pub async fn acquire(&self, request: &ResourceRequest, task_id: TaskId) -> Option<SlotGuard> {
         // Acquire permit first
         let _permit = self.inner.semaphore.acquire().await.ok()?;
 
@@ -275,9 +271,16 @@ impl SlotPool {
     /// Get the total number of slots.
     pub fn total(&self) -> usize {
         self.inner.semaphore.available_permits()
-            + self.inner.slots.try_lock().map(|s| {
-                s.iter().filter(|slot| slot.state != SlotState::Free).count()
-            }).unwrap_or(0)
+            + self
+                .inner
+                .slots
+                .try_lock()
+                .map(|s| {
+                    s.iter()
+                        .filter(|slot| slot.state != SlotState::Free)
+                        .count()
+                })
+                .unwrap_or(0)
     }
 
     /// Get current utilization (0.0 to 1.0).

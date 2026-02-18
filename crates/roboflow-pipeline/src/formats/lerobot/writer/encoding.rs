@@ -6,12 +6,12 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use crate::formats::common::video::VideoEncoderError;
 use crate::formats::common::video::{VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
-use crate::formats::common::{decode_image_to_rgb, ImageData};
+use crate::formats::common::{ImageData, decode_image_to_rgb};
 use crate::formats::lerobot::video_profiles::ResolvedConfig;
 use crate::video::RsmpegMp4Encoder;
 use roboflow_core::Result;

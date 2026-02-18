@@ -84,12 +84,7 @@ impl Task for ConvertTask {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
         // Create object ref for output
-        let obj_ref = ObjectRef::new(
-            ObjectId::new([2u8; 32]),
-            1024,
-            ctx.task_id,
-            vec![],
-        );
+        let obj_ref = ObjectRef::new(ObjectId::new([2u8; 32]), 1024, ctx.task_id, vec![]);
 
         Ok(TaskResult {
             outputs: vec![obj_ref],

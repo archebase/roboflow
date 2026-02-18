@@ -30,7 +30,7 @@ pub use episode::{
 pub use crate::video::{HardwareBackend, HardwareConfig};
 pub use trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 
-pub use factory::{create_lerobot_writer, LerobotWriterConfig, LerobotWriterResult};
+pub use factory::{LerobotWriterConfig, LerobotWriterResult, create_lerobot_writer};
 pub use upload::EpisodeUploadCoordinator;
 pub use upload::{EpisodeFiles, UploadConfig, UploadProgress, UploadStats};
 pub use video_profiles::{Profile, QualityTier, ResolvedConfig, SpeedPreset, VideoEncodingProfile};

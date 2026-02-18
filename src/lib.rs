@@ -75,13 +75,11 @@ pub use roboflow_pipeline::sources::{
 };
 
 #[cfg(feature = "sinks")]
+pub use roboflow_pipeline::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
+#[cfg(feature = "sinks")]
 pub use roboflow_pipeline::formats::{
     OutputConfig, OutputFormat,
     common::{DatasetFrame, ImageData, ImageFormat},
-};
-#[cfg(feature = "sinks")]
-pub use roboflow_pipeline::formats::lerobot::{
-    create_lerobot_writer, LerobotWriterConfig,
 };
 
 // =============================================================================

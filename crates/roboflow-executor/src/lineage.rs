@@ -9,8 +9,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fmt;
-use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::object_store::{ObjectRef, WorkerId};
@@ -32,14 +30,10 @@ pub trait Lineage: Send + Sync {
     async fn can_recompute(&self, task_id: TaskId) -> bool;
 
     /// Get recompute plan for failed tasks.
-    async fn recompute_plan(&self, failed: &[TaskId],
-    ) -> Result<RecomputePlan, LineageError>;
+    async fn recompute_plan(&self, failed: &[TaskId]) -> Result<RecomputePlan, LineageError>;
 
     /// Recompute a lost object from lineage.
-    async fn recompute_object(
-        &self,
-        obj: &ObjectRef,
-    ) -> Result<Vec<u8>, LineageError>;
+    async fn recompute_object(&self, obj: &ObjectRef) -> Result<Vec<u8>, LineageError>;
 }
 
 /// Task lineage information.
@@ -171,9 +165,7 @@ impl Lineage for MemoryLineage {
         }
     }
 
-    async fn ancestors(&self,
-        task_id: TaskId,
-    ) -> Vec<TaskId> {
+    async fn ancestors(&self, task_id: TaskId) -> Vec<TaskId> {
         let tasks = self.tasks.read().await;
         let mut ancestors = Vec::new();
         let mut to_visit = vec![task_id];
@@ -187,7 +179,9 @@ impl Lineage for MemoryLineage {
 
             if let Some(task) = tasks.get(&current_id) {
                 for input in &task.inputs {
-                    if let Some(owner) = self.object_owners.read().await.get(&input.id.to_string()) {
+                    #[allow(clippy::collapsible_if)]
+                    if let Some(owner) = self.object_owners.read().await.get(&input.id.to_string())
+                    {
                         if *owner != current_id {
                             ancestors.push(*owner);
                             to_visit.push(*owner);
@@ -200,9 +194,7 @@ impl Lineage for MemoryLineage {
         ancestors
     }
 
-    async fn can_recompute(&self,
-        task_id: TaskId,
-    ) -> bool {
+    async fn can_recompute(&self, task_id: TaskId) -> bool {
         let tasks = self.tasks.read().await;
 
         if let Some(task) = tasks.get(&task_id) {
@@ -212,7 +204,12 @@ impl Lineage for MemoryLineage {
 
             // Check all inputs are available (have owners)
             for input in &task.inputs {
-                if !self.object_owners.read().await.contains_key(&input.id.to_string()) {
+                if !self
+                    .object_owners
+                    .read()
+                    .await
+                    .contains_key(&input.id.to_string())
+                {
                     return false;
                 }
             }
@@ -223,10 +220,7 @@ impl Lineage for MemoryLineage {
         }
     }
 
-    async fn recompute_plan(
-        &self,
-        failed: &[TaskId],
-    ) -> Result<RecomputePlan, LineageError> {
+    async fn recompute_plan(&self, failed: &[TaskId]) -> Result<RecomputePlan, LineageError> {
         let mut plan = Vec::new();
         let mut to_process: Vec<TaskId> = failed.to_vec();
         let mut processed = std::collections::HashSet::new();
@@ -262,10 +256,7 @@ impl Lineage for MemoryLineage {
         })
     }
 
-    async fn recompute_object(
-        &self,
-        obj: &ObjectRef,
-    ) -> Result<Vec<u8>, LineageError> {
+    async fn recompute_object(&self, obj: &ObjectRef) -> Result<Vec<u8>, LineageError> {
         let owners = self.object_owners.read().await;
 
         let task_id = owners.get(&obj.id.to_string()).copied();
@@ -277,7 +268,7 @@ impl Lineage for MemoryLineage {
             }
 
             Err(LineageError::Storage(
-                "Object recomputation not implemented".to_string()
+                "Object recomputation not implemented".to_string(),
             ))
         } else {
             Err(LineageError::ObjectNotFound(obj.id.to_string()))
@@ -294,12 +285,7 @@ mod tests {
     async fn test_lineage_record_and_retrieve() {
         let lineage = MemoryLineage::new();
 
-        let task = TaskLineage::new(
-            TaskId(1),
-            "test_task",
-            StageId(0),
-            WorkerId(1),
-        );
+        let task = TaskLineage::new(TaskId(1), "test_task", StageId(0), WorkerId(1));
 
         lineage.record(&task).await;
 
@@ -314,20 +300,12 @@ mod tests {
 
         // Task 1 produces obj1
         let obj1 = ObjectRef::new(ObjectId::new([1u8; 32]), 100, TaskId(1), vec![]);
-        let task1 = TaskLineage::new(
-            TaskId(1),
-            "task1",
-            StageId(0),
-            WorkerId(1),
-        ).with_outputs(vec![obj1.clone()]);
+        let task1 = TaskLineage::new(TaskId(1), "task1", StageId(0), WorkerId(1))
+            .with_outputs(vec![obj1.clone()]);
 
         // Task 2 consumes obj1
-        let task2 = TaskLineage::new(
-            TaskId(2),
-            "task2",
-            StageId(1),
-            WorkerId(1),
-        ).with_inputs(vec![obj1]);
+        let task2 =
+            TaskLineage::new(TaskId(2), "task2", StageId(1), WorkerId(1)).with_inputs(vec![obj1]);
 
         lineage.record(&task1).await;
         lineage.record(&task2).await;
@@ -341,24 +319,16 @@ mod tests {
         let lineage = MemoryLineage::new();
 
         let obj1 = ObjectRef::new(ObjectId::new([1u8; 32]), 100, TaskId(1), vec![]);
-        let task = TaskLineage::new(
-            TaskId(1),
-            "task1",
-            StageId(0),
-            WorkerId(1),
-        ).with_outputs(vec![obj1.clone()]);
+        let task = TaskLineage::new(TaskId(1), "task1", StageId(0), WorkerId(1))
+            .with_outputs(vec![obj1.clone()]);
 
         lineage.record(&task).await;
 
         assert!(lineage.can_recompute(TaskId(1)).await);
 
         // Non-deterministic task cannot be recomputed
-        let task_nd = TaskLineage::new(
-            TaskId(2),
-            "task2",
-            StageId(0),
-            WorkerId(1),
-        ).non_deterministic();
+        let task_nd =
+            TaskLineage::new(TaskId(2), "task2", StageId(0), WorkerId(1)).non_deterministic();
 
         lineage.record(&task_nd).await;
         assert!(!lineage.can_recompute(TaskId(2)).await);

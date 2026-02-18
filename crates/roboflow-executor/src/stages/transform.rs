@@ -88,12 +88,7 @@ impl Task for TransformTask {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Create object ref for episode metadata
-        let obj_ref = ObjectRef::new(
-            ObjectId::new([3u8; 32]),
-            2048,
-            ctx.task_id,
-            vec![],
-        );
+        let obj_ref = ObjectRef::new(ObjectId::new([3u8; 32]), 2048, ctx.task_id, vec![]);
 
         Ok(TaskResult {
             outputs: vec![obj_ref],

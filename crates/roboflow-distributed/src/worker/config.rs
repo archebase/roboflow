@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use roboflow_core::{validators, Result, Validate};
+use roboflow_core::{Result, Validate, validators};
 
 /// Default job poll interval in seconds.
 pub const DEFAULT_POLL_INTERVAL_SECS: u64 = 5;

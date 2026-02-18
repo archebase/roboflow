@@ -38,7 +38,9 @@ use roboflow_storage::Storage;
 use roboflow_core::Result;
 
 // Import the unified upload coordinator trait
-use crate::formats::common::upload_coordinator::{UploadCoordinator, UploadProgress as UnifiedProgress};
+use crate::formats::common::upload_coordinator::{
+    UploadCoordinator, UploadProgress as UnifiedProgress,
+};
 
 /// Progress callback type for upload progress tracking.
 ///

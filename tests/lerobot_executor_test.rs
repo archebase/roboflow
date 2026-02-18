@@ -15,10 +15,10 @@ use std::time::Duration;
 use chrono::Utc;
 use roboflow::{DatasetBaseConfig, LerobotConfig, VideoConfig};
 use roboflow_dataset::lerobot::{FlushingConfig, Mapping, MappingType, StreamingConfig};
+use roboflow_distributed::Executor;
 use roboflow_distributed::batch::{WorkFile, WorkUnit, WorkUnitStatus};
 use roboflow_distributed::lerobot_executor::LeRobotExecutor;
 use roboflow_distributed::worker::{JobRegistry, ProcessingResult};
-use roboflow_distributed::Executor;
 
 const TEST_BAG_PATH: &str =
     "tests/fixtures/A02-A01-37-45-77-factory_07-P4_210-leju_claw-20260104174020-v001.bag";
@@ -146,7 +146,10 @@ async fn test_lerobot_executor_correctness() {
             println!("   Episode index: {}", episode_index);
             println!("   Frames processed: {}", frame_count);
             println!("   Elapsed time: {:?}", elapsed);
-            println!("   Throughput: {:.2} fps", frame_count as f64 / elapsed.as_secs_f64());
+            println!(
+                "   Throughput: {:.2} fps",
+                frame_count as f64 / elapsed.as_secs_f64()
+            );
 
             // Verify output files exist (LeRobot format has nested directories)
             println!("\n   Output files:");
@@ -184,7 +187,10 @@ async fn test_lerobot_executor_correctness() {
             println!("      - {} frames processed", frame_count);
             println!("      - {} video files created", video_count);
             println!("      - {} parquet files created", parquet_count);
-            println!("      - Throughput: {:.2} fps", frame_count as f64 / elapsed.as_secs_f64());
+            println!(
+                "      - Throughput: {:.2} fps",
+                frame_count as f64 / elapsed.as_secs_f64()
+            );
         }
         Ok(ProcessingResult::Failed { error }) => {
             panic!("❌ Executor failed: {}", error);

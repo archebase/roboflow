@@ -8,7 +8,9 @@
 //! via `RoboReader`) and S3/OSS streaming (format-specific parsers). Both MCAP
 //! and Bag sources delegate to these shared helpers.
 
-use crate::sources::{SourceError, SourceMetadata, SourceResult, TimestampedMessage, TopicMetadata};
+use crate::sources::{
+    SourceError, SourceMetadata, SourceResult, TimestampedMessage, TopicMetadata,
+};
 use std::collections::HashMap;
 
 // =============================================================================

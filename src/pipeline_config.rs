@@ -53,7 +53,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use roboflow_core::{validators, Result, Validate};
+use roboflow_core::{Result, Validate, validators};
 
 // Re-export individual configs for backward compatibility
 pub use roboflow_pipeline::formats::config::{OutputConfig, OutputFormat};

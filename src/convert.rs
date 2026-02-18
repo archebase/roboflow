@@ -314,7 +314,9 @@ impl ConvertBuilder {
             .collect();
 
         let mut streaming_config =
-            roboflow_pipeline::formats::streaming::config::StreamingConfig::with_fps(config.dataset.fps);
+            roboflow_pipeline::formats::streaming::config::StreamingConfig::with_fps(
+                config.dataset.fps,
+            );
         let frame_interval_ns = 1_000_000_000u64 / config.dataset.fps as u64;
         streaming_config.completion_window_ns = frame_interval_ns * 3;
 

@@ -10,8 +10,12 @@ use roboflow_core::Result;
 use roboflow_executor::object_store::{ObjectId, ObjectRef};
 use roboflow_executor::stage::{PartitionId, Stage, StageId};
 use roboflow_executor::task::{Task, TaskContext, TaskResult, TaskStatus};
-use roboflow_pipeline::formats::{PipelineConfig, common::DatasetBaseConfig, lerobot::{DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig}};
-use roboflow_pipeline::formats::lerobot::{create_lerobot_writer, LerobotWriterConfig};
+use roboflow_pipeline::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
+use roboflow_pipeline::formats::{
+    PipelineConfig,
+    common::DatasetBaseConfig,
+    lerobot::{DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig},
+};
 use roboflow_pipeline::sources::{SourceConfig, create_source};
 
 /// Stage for converting bag files to LeRobot format.
@@ -34,7 +38,11 @@ impl ConvertStage {
     /// * `input_file` - Input file URL to convert.
     /// * `output_prefix` - Output path prefix.
     /// * `config_hash` - Configuration hash for caching.
-    pub fn new(input_file: impl Into<String>, output_prefix: impl Into<String>, config_hash: impl Into<String>) -> Self {
+    pub fn new(
+        input_file: impl Into<String>,
+        output_prefix: impl Into<String>,
+        config_hash: impl Into<String>,
+    ) -> Self {
         Self {
             input_file: input_file.into(),
             output_prefix: output_prefix.into(),
@@ -142,24 +150,24 @@ impl Task for ConvertTask {
         };
 
         // Create LerobotWriter
-        let writer_config = LerobotWriterConfig::new(&output_dir,
-            lerobot_config.clone(),
-        );
+        let writer_config = LerobotWriterConfig::new(&output_dir, lerobot_config.clone());
 
         let writer_result = create_lerobot_writer(&writer_config).map_err(|e| {
             roboflow_core::RoboflowError::other(format!("Failed to create writer: {}", e))
         })?;
-        
+
         let writer = writer_result.writer;
 
         // Create pipeline config using the streaming config from lerobot_config
-        let streaming_config = roboflow_pipeline::formats::streaming::config::StreamingConfig::with_fps(
-            lerobot_config.dataset.base.fps
-        );
+        let streaming_config =
+            roboflow_pipeline::formats::streaming::config::StreamingConfig::with_fps(
+                lerobot_config.dataset.base.fps,
+            );
         let pipeline_config = PipelineConfig::new(streaming_config);
 
         // Create pipeline executor
-        let mut executor = roboflow_pipeline::formats::PipelineExecutor::new(writer, pipeline_config);
+        let mut executor =
+            roboflow_pipeline::formats::PipelineExecutor::new(writer, pipeline_config);
 
         // Process all messages
         let mut frame_count = 0usize;
@@ -196,13 +204,8 @@ impl Task for ConvertTask {
 
         // Return output path
         let output_path = format!("{}/data", output_dir);
-        
-        let obj_ref = ObjectRef::new(
-            ObjectId::new([2u8; 32]),
-            1024,
-            ctx.task_id,
-            vec![],
-        );
+
+        let obj_ref = ObjectRef::new(ObjectId::new([2u8; 32]), 1024, ctx.task_id, vec![]);
 
         Ok(TaskResult {
             outputs: vec![obj_ref],
@@ -224,11 +227,7 @@ mod tests {
 
     #[test]
     fn test_convert_stage() {
-        let stage = ConvertStage::new(
-            "/input/test.bag",
-            "s3://bucket/output/",
-            "config_hash_123"
-        );
+        let stage = ConvertStage::new("/input/test.bag", "s3://bucket/output/", "config_hash_123");
 
         assert_eq!(stage.id(), StageId(1));
         assert_eq!(stage.name(), "convert");

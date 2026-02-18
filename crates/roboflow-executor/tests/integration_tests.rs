@@ -89,7 +89,10 @@ async fn test_stage_executor_lerobot_pipeline() {
     let pipeline = PipelineBuilder::new()
         .stage(Arc::new(DiscoverStage::new(source_prefix)))
         .stage(Arc::new(ConvertStage::new(output_prefix, "config_v1")))
-        .stage(Arc::new(MergeStage::new(format!("{}/dataset", output_prefix))))
+        .stage(Arc::new(MergeStage::new(format!(
+            "{}/dataset",
+            output_prefix
+        ))))
         .dependency(StageId(1), StageId(0))
         .dependency(StageId(2), StageId(1))
         .build()
@@ -103,10 +106,7 @@ async fn test_stage_executor_lerobot_pipeline() {
         .expect("Pipeline execution should succeed");
 
     // Verify results
-    assert_eq!(
-        result.stages_completed, 3,
-        "All 3 stages should complete"
-    );
+    assert_eq!(result.stages_completed, 3, "All 3 stages should complete");
     assert!(
         result.tasks_completed >= 3,
         "At least 3 tasks should complete (one per stage)"
@@ -151,13 +151,8 @@ async fn test_pipeline_dependency_ordering() {
     assert_eq!(order[1], StageId(1), "Convert should be second");
     assert_eq!(order[2], StageId(2), "Merge should be third");
 
-    tracing::info!(
-        "Pipeline topological order verified: {:?}",
-        order
-    );
+    tracing::info!("Pipeline topological order verified: {:?}", order);
 }
-
-
 
 /// Test error handling in stage execution.
 ///

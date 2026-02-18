@@ -98,9 +98,7 @@ impl Task for DiscoverTask {
         {
             // For S3/OSS, extract the path after the bucket
             let url = self.source_prefix.clone();
-            let path = url
-                .trim_start_matches("s3://")
-                .trim_start_matches("oss://");
+            let path = url.trim_start_matches("s3://").trim_start_matches("oss://");
             let parts: Vec<&str> = path.splitn(2, '/').collect();
             if parts.len() > 1 {
                 format!("/{}", parts[1])
@@ -129,11 +127,7 @@ impl Task for DiscoverTask {
                     || self.source_prefix.starts_with("oss://")
                 {
                     // Reconstruct full URL for cloud storage
-                    format!(
-                        "{}{}",
-                        self.source_prefix.trim_end_matches('/'),
-                        obj.path
-                    )
+                    format!("{}{}", self.source_prefix.trim_end_matches('/'), obj.path)
                 } else {
                     // Local path
                     obj.path
