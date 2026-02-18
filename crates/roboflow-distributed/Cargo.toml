@@ -55,3 +55,4 @@ polars = { version = "0.41", features = ["parquet", "lazy", "diagonal_concat"] }
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3.10"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
