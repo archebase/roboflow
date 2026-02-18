@@ -20,17 +20,17 @@ use std::time::Duration;
 use lru::LruCache;
 use tokio::sync::Mutex;
 
-use roboflow_core::RoboflowError;
 use roboflow_dataset::lerobot::{LerobotConfig, LerobotWriter};
 use roboflow_dataset::streaming::config::StreamingConfig;
 use roboflow_dataset::{PipelineConfig, PipelineExecutor};
 use roboflow_sinks::{LerobotWriterConfig, create_lerobot_writer};
-use roboflow_sources::{SourceConfig, create_source};
+use roboflow_sources::SourceConfig;
 
 use super::metrics::ProcessingResult;
 use super::registry::JobRegistry;
 use crate::batch::WorkUnit;
 use crate::episode::EpisodeAllocator;
+use crate::providers::SourceProvider;
 use crate::stats::EpisodeStats;
 use crate::tikv::{TikvClient, TikvError};
 
@@ -78,19 +78,12 @@ struct PipelineContext {
 /// 2. Configure the writer with the correct episode/chunk indices
 /// 3. Ensure output files follow the LeRobot v2.1 directory structure
 pub struct TaskExecutor {
-    /// Configuration cache to reduce TiKV round-trips.
     config_cache: Arc<Mutex<LruCache<String, LerobotConfig>>>,
-    /// Shared TiKV client for config loading.
     tikv: Arc<TikvClient>,
-    /// Job registry for cancellation tracking.
     job_registry: Arc<tokio::sync::RwLock<JobRegistry>>,
-    /// Default output prefix for local files.
     output_prefix: String,
-    /// Pipeline timeout.
     timeout: Duration,
-    /// Optional episode allocator for distributed processing.
     episode_allocator: Option<Arc<dyn EpisodeAllocator>>,
-    /// Episodes per chunk for LeRobot v2.1 format.
     episodes_per_chunk: u32,
 }
 
@@ -162,6 +155,18 @@ impl TaskExecutor {
     /// 5. Running the pipeline
     /// 6. Returning the result
     pub async fn execute(&self, unit: &WorkUnit) -> ProcessingResult {
+        self.execute_with_providers(
+            unit,
+            &crate::providers::ProductionSourceProvider::new(),
+        )
+        .await
+    }
+
+    pub async fn execute_with_providers<SP: SourceProvider>(
+        &self,
+        unit: &WorkUnit,
+        source_provider: &SP,
+    ) -> ProcessingResult {
         tracing::info!(
             unit_id = %unit.id,
             batch_id = %unit.batch_id,
@@ -218,7 +223,7 @@ impl TaskExecutor {
 
         // Step 5: Create source
         let source_config = SourceConfig::from_url(source_url);
-        let source = match create_source(&source_config) {
+        let source = match source_provider.create_source(&source_config).await {
             Ok(s) => s,
             Err(e) => {
                 return ProcessingResult::Failed {
@@ -393,8 +398,8 @@ impl TaskExecutor {
             registry.register(unit_id.clone(), cancel_token_for_monitor);
         }
 
-        // Create executor
-        let mut executor = PipelineExecutor::new(writer, pipeline_config);
+        let executor = PipelineExecutor::new(writer, pipeline_config);
+        let runner = super::PipelineRunner::new();
         let unit_id_clone = unit_id.clone();
         let job_registry_for_cleanup = job_registry;
         let cancel_token_for_timeout = cancel_token.clone();
@@ -402,46 +407,40 @@ impl TaskExecutor {
         let pipeline_task = tokio::task::spawn(async move {
             let _guard = cancel_token.clone().drop_guard();
 
-            // Initialize source
-            let _ = source.initialize(&source_config).await;
+            // Run pipeline using PipelineRunner for better timing and testability
+            let run_result = runner.run(
+                &mut *source,
+                executor,
+                &source_config,
+                Some(cancel_token.clone()),
+            ).await;
 
-            // Process messages
-            let batch_size = 1000;
-            loop {
-                if cancel_token.is_cancelled() {
-                    return Err(RoboflowError::other("Interrupted by shutdown".to_string()));
+            match run_result {
+                Ok(stats) => {
+                    tracing::info!(
+                        frames = stats.frames_written,
+                        messages = stats.messages_processed,
+                        total_ms = stats.total_duration.as_millis(),
+                        read_ms = stats.read_time.as_millis(),
+                        process_ms = stats.process_time.as_millis(),
+                        finalize_ms = stats.finalize_time.as_millis(),
+                        "Pipeline completed"
+                    );
+                    Ok(stats)
                 }
-
-                match source.read_batch(batch_size).await {
-                    Ok(Some(messages)) if !messages.is_empty() => {
-                        for msg in messages {
-                            executor.process_message(msg)?;
-                        }
-                    }
-                    Ok(Some(_)) => continue,
-                    Ok(None) => break,
-                    Err(e) => {
-                        return Err(RoboflowError::other(format!("Source read failed: {}", e)));
-                    }
-                }
+                Err(e) => Err(e),
             }
-
-            // Extract episode stats before finalizing (finalize consumes the executor)
-            let episode_stats = Self::extract_episode_stats(&executor, episode_index);
-
-            let writer_stats = executor.finalize()?;
-            Ok((writer_stats, episode_stats))
         });
 
         // Wait with timeout
         let result = match tokio::time::timeout(timeout, pipeline_task).await {
-            Ok(Ok(Ok((writer_stats, episode_stats)))) => {
+            Ok(Ok(Ok(stats))) => {
                 let mut registry = job_registry_for_cleanup.write().await;
                 registry.unregister(&unit_id_clone);
                 ProcessingResult::Success {
                     episode_index: episode_index.unwrap_or(0),
-                    frame_count: writer_stats.frames_written as u64,
-                    episode_stats,
+                    frame_count: stats.frames_written as u64,
+                    episode_stats: None, // TODO: Extract episode stats from PipelineRunStats
                 }
             }
             Ok(Ok(Err(e))) => {
@@ -523,6 +522,8 @@ impl TaskExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::mock::MockSourceProvider;
+    use roboflow_sources::SourceConfig;
 
     #[test]
     fn test_execution_result_with_episode() {
@@ -553,5 +554,26 @@ mod tests {
     #[test]
     fn test_default_episodes_per_chunk() {
         assert_eq!(DEFAULT_EPISODES_PER_CHUNK, 500);
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_mock_source() {
+        use roboflow_core::{TimestampedMessage, CodecValue};
+
+        let messages = vec![
+            TimestampedMessage {
+                topic: "/test/topic".to_string(),
+                log_time: 1000,
+                data: CodecValue::String("test".to_string()),
+            },
+        ];
+
+        let mock_provider = MockSourceProvider::new()
+            .with_messages(messages);
+
+        let source_config = SourceConfig::from_url("/test/path.bag");
+        let mut source = mock_provider.create_source(&source_config).await.unwrap();
+
+        assert!(source.initialize(&source_config).await.is_err());
     }
 }

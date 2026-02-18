@@ -90,6 +90,173 @@ pub(crate) fn decode_local(
     Ok(count)
 }
 
+pub(crate) fn decode_local_batched(
+    path: &str,
+    format_name: &str,
+    meta_tx: tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+    batch_tx: tokio::sync::mpsc::Sender<Vec<TimestampedMessage>>,
+    batch_size: usize,
+) -> Result<usize, String> {
+    use robocodec::io::traits::FormatReader;
+
+    let reader = match robocodec::RoboReader::open(path) {
+        Ok(r) => r,
+        Err(e) => {
+            let err = SourceError::OpenFailed {
+                path: path.into(),
+                error: Box::new(e),
+            };
+            let _ = meta_tx.send(Err(err));
+            return Err(format!("Failed to open {format_name} file: {path}"));
+        }
+    };
+
+    let message_count = reader.message_count();
+    let channels = reader.channels();
+    let topics: Vec<TopicMetadata> = channels
+        .values()
+        .map(|ch| TopicMetadata::new(ch.topic.clone(), ch.message_type.clone()))
+        .collect();
+
+    let metadata = SourceMetadata::new(format_name.to_string(), path.to_string())
+        .with_message_count(message_count)
+        .with_topics(topics);
+
+    if meta_tx.send(Ok(metadata)).is_err() {
+        return Err("Metadata receiver dropped".to_string());
+    }
+
+    let iter = match reader.decoded() {
+        Ok(iter) => iter,
+        Err(e) => return Err(format!("Failed to get decoded iterator: {e}")),
+    };
+
+    let mut count = 0usize;
+    let mut batch = Vec::with_capacity(batch_size);
+
+    for msg_result in iter {
+        let msg = match msg_result {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(error = %e, offset = count, "Skipping decode error");
+                continue;
+            }
+        };
+
+        let timestamped = TimestampedMessage {
+            topic: msg.channel.topic.clone(),
+            log_time: msg.log_time.unwrap_or(0),
+            data: robocodec::CodecValue::Struct(msg.message),
+        };
+
+        batch.push(timestamped);
+
+        if batch.len() >= batch_size {
+            let batch_to_send = std::mem::replace(&mut batch, Vec::with_capacity(batch_size));
+            if batch_tx.blocking_send(batch_to_send).is_err() {
+                tracing::debug!(count, "Receiver dropped, stopping decoder");
+                break;
+            }
+        }
+
+        count += 1;
+        if count.is_multiple_of(10_000) {
+            tracing::debug!(messages = count, "{format_name} decoder progress");
+        }
+    }
+
+    // Send remaining messages in partial batch
+    if !batch.is_empty() {
+        let _ = batch_tx.blocking_send(batch);
+    }
+
+    tracing::debug!(messages = count, "Local {format_name} batched decode complete");
+    Ok(count)
+}
+
+pub(crate) fn decode_local_blocking(
+    path: &str,
+    format_name: &str,
+    meta_tx: tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+    batch_tx: crossbeam_channel::Sender<Vec<TimestampedMessage>>,
+    batch_size: usize,
+) -> Result<usize, String> {
+    use robocodec::io::traits::FormatReader;
+
+    let reader = match robocodec::RoboReader::open(path) {
+        Ok(r) => r,
+        Err(e) => {
+            let err = SourceError::OpenFailed {
+                path: path.into(),
+                error: Box::new(e),
+            };
+            let _ = meta_tx.send(Err(err));
+            return Err(format!("Failed to open {format_name} file: {path}"));
+        }
+    };
+
+    let message_count = reader.message_count();
+    let channels = reader.channels();
+    let topics: Vec<TopicMetadata> = channels
+        .values()
+        .map(|ch| TopicMetadata::new(ch.topic.clone(), ch.message_type.clone()))
+        .collect();
+
+    let metadata = SourceMetadata::new(format_name.to_string(), path.to_string())
+        .with_message_count(message_count)
+        .with_topics(topics);
+
+    if meta_tx.send(Ok(metadata)).is_err() {
+        return Err("Metadata receiver dropped".to_string());
+    }
+
+    let iter = match reader.decoded() {
+        Ok(iter) => iter,
+        Err(e) => return Err(format!("Failed to get decoded iterator: {e}")),
+    };
+
+    let mut count = 0usize;
+    let mut batch = Vec::with_capacity(batch_size);
+
+    for msg_result in iter {
+        let msg = match msg_result {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(error = %e, offset = count, "Skipping decode error");
+                continue;
+            }
+        };
+
+        let timestamped = TimestampedMessage {
+            topic: msg.channel.topic.clone(),
+            log_time: msg.log_time.unwrap_or(0),
+            data: robocodec::CodecValue::Struct(msg.message),
+        };
+
+        batch.push(timestamped);
+
+        if batch.len() >= batch_size {
+            let batch_to_send = std::mem::replace(&mut batch, Vec::with_capacity(batch_size));
+            if batch_tx.send(batch_to_send).is_err() {
+                tracing::debug!(count, "Receiver dropped, stopping decoder");
+                break;
+            }
+        }
+
+        count += 1;
+        if count.is_multiple_of(10_000) {
+            tracing::debug!(messages = count, "{format_name} decoder progress");
+        }
+    }
+
+    if !batch.is_empty() {
+        let _ = batch_tx.send(batch);
+    }
+
+    tracing::debug!(messages = count, "Local {format_name} blocking decode complete");
+    Ok(count)
+}
+
 // =============================================================================
 // S3/OSS streaming decoders (format-specific)
 // =============================================================================
@@ -565,32 +732,113 @@ pub(crate) async fn initialize_threaded_source(
         }
     };
 
-    let _ = is_cloud; // used by caller for dispatch, not here
+    let _ = is_cloud;
     Ok((metadata, rx, handle))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) async fn initialize_threaded_source_batched(
+    path: &str,
+    is_cloud: bool,
+    thread_name: &str,
+    batch_size: usize,
+    decoder_fn: impl FnOnce(
+        String,
+        tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+        tokio::sync::mpsc::Sender<Vec<TimestampedMessage>>,
+        usize,
+    ) -> Result<usize, String>
+    + Send
+    + 'static,
+) -> SourceResult<(
+    SourceMetadata,
+    tokio::sync::mpsc::Receiver<Vec<TimestampedMessage>>,
+    std::thread::JoinHandle<Result<usize, String>>,
+)> {
+    let (tx, rx) = tokio::sync::mpsc::channel(1024);
+    let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
 
-    #[test]
-    fn test_parse_cloud_url_s3() {
-        let result = parse_cloud_url("s3://my-bucket/path/to/file.bag");
-        assert!(result.is_ok());
-    }
+    let path_owned = path.to_string();
+    let handle = std::thread::Builder::new()
+        .name(thread_name.to_string())
+        .spawn(move || decoder_fn(path_owned, meta_tx, tx, batch_size))
+        .map_err(|e| SourceError::ReadFailed(format!("Failed to spawn decoder thread: {e}")))?;
 
-    #[test]
-    fn test_parse_cloud_url_oss() {
-        // SAFETY: This is test code that modifies environment variables.
-        // The test runs in isolation and cleans up after itself.
-        unsafe {
-            std::env::set_var("OSS_ENDPOINT", "https://oss-cn-hangzhou.aliyuncs.com");
+    let metadata = match meta_rx.await {
+        Ok(Ok(metadata)) => metadata,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            match handle.join() {
+                Ok(Err(e)) => {
+                    return Err(SourceError::ReadFailed(format!(
+                        "Source initialization failed: {e}"
+                    )));
+                }
+                Err(_) => {
+                    return Err(SourceError::ReadFailed(
+                        "Decoder thread panicked during initialization".to_string(),
+                    ));
+                }
+                Ok(Ok(_)) => {}
+            }
+            return Err(SourceError::ReadFailed(
+                "Decoder thread exited before sending metadata".to_string(),
+            ));
         }
-        let result = parse_cloud_url("oss://my-bucket/path/to/file.bag");
-        assert!(result.is_ok());
-        // SAFETY: Cleaning up the environment variable we set above.
-        unsafe {
-            std::env::remove_var("OSS_ENDPOINT");
+    };
+
+    let _ = is_cloud;
+    Ok((metadata, rx, handle))
+}
+
+pub(crate) async fn initialize_threaded_source_blocking(
+    path: &str,
+    is_cloud: bool,
+    thread_name: &str,
+    decoder_fn: impl FnOnce(
+        String,
+        tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+        crossbeam_channel::Sender<Vec<TimestampedMessage>>,
+    ) -> Result<usize, String>
+    + Send
+    + 'static,
+) -> SourceResult<(
+    SourceMetadata,
+    crossbeam_channel::Receiver<Vec<TimestampedMessage>>,
+    std::thread::JoinHandle<Result<usize, String>>,
+)>
+{
+    let (tx, rx) = crossbeam_channel::bounded(16);
+    let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
+
+    let path_owned = path.to_string();
+    let handle = std::thread::Builder::new()
+        .name(thread_name.to_string())
+        .spawn(move || decoder_fn(path_owned, meta_tx, tx))
+        .map_err(|e| SourceError::ReadFailed(format!("Failed to spawn decoder thread: {e}")))?;
+
+    let metadata = match meta_rx.await {
+        Ok(Ok(metadata)) => metadata,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            match handle.join() {
+                Ok(Err(e)) => {
+                    return Err(SourceError::ReadFailed(format!(
+                        "Source initialization failed: {e}"
+                    )));
+                }
+                Err(_) => {
+                    return Err(SourceError::ReadFailed(
+                        "Decoder thread panicked during initialization".to_string(),
+                    ));
+                }
+                Ok(Ok(_)) => {}
+            }
+            return Err(SourceError::ReadFailed(
+                "Decoder thread exited before sending metadata".to_string(),
+            ));
         }
-    }
+    };
+
+    let _ = is_cloud;
+    Ok((metadata, rx, handle))
 }

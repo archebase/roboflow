@@ -23,6 +23,7 @@ thiserror = "1.0"
 
 # Logging
 tracing = "0.1"
+crossbeam-channel = "0.5"
 
 [features]
 default = []

@@ -13,7 +13,7 @@ mod registry;
 mod rrd;
 mod s3_prefix;
 
-pub use bag::BagSource;
+pub use bag::{BagSource, BagSourceBatched, BagSourceBlocking};
 pub use config::{SourceConfig, SourceType};
 pub use error::{SourceError, SourceResult};
 pub use mcap::McapSource;

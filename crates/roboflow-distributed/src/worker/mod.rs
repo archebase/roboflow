@@ -13,11 +13,13 @@
 //!
 //! This separation improves testability and maintainability.
 
-mod config;
-mod coordinator;
-mod executor;
-mod metrics;
-mod registry;
+pub mod config;
+pub mod coordinator;
+pub mod executor;
+pub mod injectable;
+pub mod metrics;
+pub mod pipeline_runner;
+pub mod registry;
 
 pub use config::{
     DEFAULT_CHECKPOINT_INTERVAL_FRAMES, DEFAULT_CHECKPOINT_INTERVAL_SECS,
@@ -26,7 +28,9 @@ pub use config::{
 };
 pub use coordinator::{Coordinator, send_heartbeat_inner};
 pub use executor::{DEFAULT_EPISODES_PER_CHUNK, ExecutionResult, TaskExecutor};
+pub use injectable::{JobRegistry as InjectableJobRegistry, NoOpJobRegistry, TaskExecutor as InjectableTaskExecutor};
 pub use metrics::{ProcessingResult, WorkerMetrics, WorkerMetricsSnapshot};
+pub use pipeline_runner::{PipelineRunner, PipelineRunStats};
 pub use registry::JobRegistry;
 
 use std::sync::Arc;

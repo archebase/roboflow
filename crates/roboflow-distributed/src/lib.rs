@@ -30,6 +30,15 @@ pub mod state;
 pub mod stats;
 pub mod tikv;
 pub mod worker;
+pub mod providers;
+
+pub use providers::{
+    ConfigProvider, InMemoryConfigProvider, ProductionSourceProvider, ProviderFactory,
+    SourceProvider, TikvConfigProvider,
+};
+
+#[cfg(test)]
+pub use providers::mock::{MockFrame, MockLerobotWriter, MockSource, MockSourceProvider};
 
 // Re-export public types from state (unified state lifecycle)
 pub use state::{StateLifecycle, StateTransitionError};
