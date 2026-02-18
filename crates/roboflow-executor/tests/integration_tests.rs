@@ -5,25 +5,25 @@
 //! Integration test for stage-based executor with 100k episode scale.
 //!
 //! This test verifies that the new roboflow-executor framework can handle
-//! large-scale dataset processing through the StageExecutorBridge.
+//! large-scale dataset processing through the WorkUnitExecutor.
 
 use std::sync::Arc;
 
 use roboflow_distributed::{
-    StageExecutorBridge, WorkFile, WorkUnit,
+    WorkUnitExecutor, WorkFile, WorkUnit,
     worker::{JobRegistry, ProcessingResult},
 };
 use roboflow_executor::{PipelineBuilder, StageExecutor, StageId};
 
-/// Test the StageExecutorBridge with multiple work units.
+/// Test the WorkUnitExecutor with multiple work units.
 ///
 /// This simulates processing multiple episodes through the
 /// Discover → Convert → Merge pipeline.
 #[tokio::test]
-async fn test_stage_executor_bridge_multiple_work_units() {
+async fn test_work_unit_executor_multiple_work_units() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let bridge = StageExecutorBridge::new(4, "/tmp/output");
+    let executor = WorkUnitExecutor::new(4, "/tmp/output");
     let registry = Arc::new(tokio::sync::RwLock::new(JobRegistry::default()));
 
     // Process multiple work units (simulating 100 episodes)
@@ -41,7 +41,7 @@ async fn test_stage_executor_bridge_multiple_work_units() {
             format!("config_hash_{}", i),
         );
 
-        let result = bridge.execute(&work_unit, registry.clone()).await;
+        let result = executor.execute(&work_unit, registry.clone()).await;
         results.push(result);
     }
 
@@ -157,7 +157,7 @@ async fn test_pipeline_dependency_ordering() {
 async fn test_100k_episode_scale() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let bridge = StageExecutorBridge::new(16, "/tmp/output");
+    let executor = WorkUnitExecutor::new(16, "/tmp/output");
     let registry = Arc::new(tokio::sync::RwLock::new(JobRegistry::default()));
 
     let num_episodes = 100_000usize;
@@ -183,10 +183,10 @@ async fn test_100k_episode_scale() {
             );
 
             let registry_clone = registry.clone();
-            let bridge_ref = &bridge;
+            let executor_ref = &executor;
 
             batch_futures.push(async move {
-                bridge_ref.execute(&work_unit, registry_clone).await
+                executor_ref.execute(&work_unit, registry_clone).await
             });
         }
 

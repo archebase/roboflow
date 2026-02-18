@@ -19,7 +19,7 @@ use tokio::time::sleep;
 
 use super::config::WorkerConfig;
 use super::metrics::{ProcessingResult, WorkerMetrics};
-use crate::executor_bridge::StageExecutorBridge;
+use crate::work_unit_executor::WorkUnitExecutor;
 use super::registry::JobRegistry;
 use crate::batch::{BatchController, WorkUnit};
 use crate::shutdown::ShutdownHandler;
@@ -313,7 +313,7 @@ impl Coordinator {
     /// 3. Delegates execution to the executor
     /// 4. Reports results
     /// 5. Sends periodic heartbeats
-    pub async fn run(&mut self, executor: &StageExecutorBridge) -> Result<(), TikvError> {
+    pub async fn run(&mut self, executor: &WorkUnitExecutor) -> Result<(), TikvError> {
         // Start signal handler
         let mut shutdown_rx = self.shutdown_handler.start_signal_handler();
         let shutdown_tx = self.shutdown_handler.sender();
@@ -389,7 +389,7 @@ impl Coordinator {
     /// Run the main processing loop.
     async fn run_main_loop(
         &mut self,
-        executor: &StageExecutorBridge,
+        executor: &WorkUnitExecutor,
         shutdown_rx: &mut tokio::sync::broadcast::Receiver<()>,
     ) -> Result<(), TikvError> {
         loop {
@@ -431,7 +431,7 @@ impl Coordinator {
     /// Returns Ok(true) if the loop should exit, Ok(false) to continue.
     async fn process_work_unit(
         &self,
-        executor: &StageExecutorBridge,
+        executor: &WorkUnitExecutor,
         unit: &WorkUnit,
     ) -> Result<bool, TikvError> {
         let unit_id = unit.id.clone();

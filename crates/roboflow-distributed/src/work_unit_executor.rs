@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Bridge between roboflow-executor and roboflow-distributed worker infrastructure.
+//! WorkUnit executor using the stage-based executor framework.
 
 use std::sync::Arc;
 
@@ -16,21 +16,21 @@ use crate::episode::EpisodeAllocator;
 use crate::worker::metrics::ProcessingResult;
 use crate::worker::registry::JobRegistry;
 
-/// Bridge between new StageExecutor and existing worker infrastructure.
+/// Executes WorkUnits using the stage-based executor framework.
 ///
-/// This adapter allows the new stage-based executor to process WorkUnits
-/// from the existing distributed batch system.
-pub struct StageExecutorBridge {
-    executor: StageExecutor,
+/// This executor processes WorkUnits from the distributed batch system
+/// by creating a Discover → Convert → Merge pipeline for each unit.
+pub struct WorkUnitExecutor {
+    stage_executor: StageExecutor,
     output_prefix: String,
     episode_allocator: Option<Arc<dyn EpisodeAllocator>>,
 }
 
-impl StageExecutorBridge {
-    /// Create a new bridge.
+impl WorkUnitExecutor {
+    /// Create a new WorkUnit executor.
     pub fn new(max_concurrent: usize, output_prefix: impl Into<String>) -> Self {
         Self {
-            executor: StageExecutor::new(max_concurrent),
+            stage_executor: StageExecutor::new(max_concurrent),
             output_prefix: output_prefix.into(),
             episode_allocator: None,
         }
@@ -82,7 +82,7 @@ impl StageExecutorBridge {
             })?;
 
         // Execute the pipeline
-        let result = self.executor.execute(&pipeline).await?;
+        let result = self.stage_executor.execute(&pipeline).await?;
 
         tracing::info!(
             unit_id = %unit.id,
@@ -109,7 +109,7 @@ mod tests {
     async fn test_bridge_execution() {
         let _ = tracing_subscriber::fmt::try_init();
 
-        let bridge = StageExecutorBridge::new(2, "/tmp/output");
+        let executor = WorkUnitExecutor::new(2, "/tmp/output");
         let registry = Arc::new(tokio::sync::RwLock::new(JobRegistry::default()));
 
         let work_unit = WorkUnit::new(
@@ -119,7 +119,7 @@ mod tests {
             "config_hash".to_string(),
         );
 
-        let result = bridge.execute(&work_unit, registry).await;
+        let result = executor.execute(&work_unit, registry).await;
 
         assert!(matches!(result, Ok(ProcessingResult::Success { .. })));
     }

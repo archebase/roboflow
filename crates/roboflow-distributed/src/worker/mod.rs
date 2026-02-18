@@ -9,7 +9,7 @@
 //! The worker is now composed of two main components:
 //!
 //! - **Coordinator**: Handles coordination logic (claiming work, heartbeats, shutdown)
-//! - **StageExecutorBridge**: Handles execution logic using the stage-based executor framework
+//! - **WorkUnitExecutor**: Handles execution logic using the stage-based executor framework
 //!
 //! This separation improves testability and maintainability.
 
@@ -24,7 +24,7 @@ pub use config::{
     DEFAULT_MAX_CONCURRENT_JOBS, DEFAULT_POLL_INTERVAL_SECS, WorkerConfig,
 };
 pub use coordinator::{Coordinator, send_heartbeat_inner};
-pub use crate::executor_bridge::StageExecutorBridge;
+pub use crate::work_unit_executor::WorkUnitExecutor;
 pub use metrics::{ProcessingResult, WorkerMetrics, WorkerMetricsSnapshot};
 pub use registry::JobRegistry;
 
@@ -43,7 +43,7 @@ pub struct Worker {
     /// Coordinator for work unit management.
     coordinator: Coordinator,
     /// Executor for processing work units using stage-based framework.
-    executor: StageExecutorBridge,
+    executor: WorkUnitExecutor,
     /// Cancellation token for graceful shutdown.
     cancellation_token: Arc<tokio_util::sync::CancellationToken>,
 }
@@ -68,7 +68,7 @@ impl Worker {
         )?;
 
         // Create executor using stage-based framework
-        let executor = StageExecutorBridge::new(
+        let executor = WorkUnitExecutor::new(
             config.max_concurrent_jobs as usize,
             config.output_prefix.clone(),
         );
@@ -137,7 +137,7 @@ impl Worker {
         )?;
 
         // Create executor with episode allocator using stage-based framework
-        let executor = StageExecutorBridge::new(
+        let executor = WorkUnitExecutor::new(
             config.max_concurrent_jobs as usize,
             config.output_prefix.clone(),
         )
