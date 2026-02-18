@@ -4053,10 +4053,8 @@ dependencies = [
  "regex",
  "robocodec",
  "roboflow-core",
- "roboflow-dataset",
  "roboflow-distributed",
- "roboflow-sinks",
- "roboflow-sources",
+ "roboflow-pipeline",
  "roboflow-storage",
  "rosbag",
  "serde",
@@ -4090,34 +4088,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "roboflow-dataset"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "crossbeam-channel",
- "crossbeam-deque",
- "image",
- "num_cpus",
- "png 0.17.16",
- "polars",
- "pretty_assertions",
- "rayon",
- "robocodec",
- "roboflow-core",
- "roboflow-storage",
- "roboflow-video",
- "rsmpeg",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "toml",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "roboflow-distributed"
 version = "0.2.0"
 dependencies = [
@@ -4132,10 +4102,8 @@ dependencies = [
  "polars",
  "pretty_assertions",
  "roboflow-core",
- "roboflow-dataset",
  "roboflow-executor",
- "roboflow-sinks",
- "roboflow-sources",
+ "roboflow-pipeline",
  "roboflow-storage",
  "serde",
  "serde_json",
@@ -4156,11 +4124,16 @@ name = "roboflow-executor"
 version = "0.2.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "futures",
+ "hex",
  "num_cpus",
  "roboflow-core",
  "roboflow-distributed",
  "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-test",
@@ -4169,34 +4142,45 @@ dependencies = [
 ]
 
 [[package]]
-name = "roboflow-sinks"
+name = "roboflow-pipeline"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "async-trait",
+ "bytes",
+ "bzip2",
  "chrono",
- "roboflow-core",
- "roboflow-dataset",
- "roboflow-storage",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tracing",
-]
-
-[[package]]
-name = "roboflow-sources"
-version = "0.2.0"
-dependencies = [
- "async-trait",
  "crossbeam-channel",
+ "crossbeam-deque",
+ "futures",
+ "hex",
+ "image",
+ "lz4_flex",
+ "mcap",
+ "memmap2 0.9.9",
+ "num_cpus",
+ "png 0.17.16",
+ "polars",
+ "pretty_assertions",
+ "rayon",
+ "regex",
  "robocodec",
  "roboflow-core",
+ "roboflow-executor",
  "roboflow-storage",
+ "rosbag",
+ "rsmpeg",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "toml",
  "tracing",
+ "uuid",
+ "zstd",
+ "zune-jpeg 0.4.21",
 ]
 
 [[package]]
@@ -4218,28 +4202,6 @@ dependencies = [
  "toml",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "roboflow-video"
-version = "0.2.0"
-dependencies = [
- "bytes",
- "criterion",
- "crossbeam-channel",
- "image",
- "num_cpus",
- "png 0.17.16",
- "rand 0.8.5",
- "roboflow-core",
- "roboflow-storage",
- "rsmpeg",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "zune-jpeg 0.4.21",
 ]
 
 [[package]]

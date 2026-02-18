@@ -12,8 +12,8 @@
 //!
 //! - [`roboflow_core::CodecValue`] - Core value types
 //! - [`roboflow_core::RoboflowError`] - Error handling
-//! - [`roboflow_dataset`] - Dataset writers and pipeline executor
-//! - [`roboflow_sources`] - Data sources (MCAP, bag, etc.)
+//! - [`roboflow_pipeline`] - Dataset writers and pipeline executor
+//! - [`roboflow_pipeline`] - Data sources (MCAP, bag, etc.)
 //!
 //! ## Example
 //!
@@ -68,17 +68,20 @@ pub mod core {
 // Pipeline API: Source/Sink abstraction
 // =============================================================================
 #[cfg(feature = "sources")]
-pub use roboflow_sources::{
+pub use roboflow_pipeline::sources::{
     Source, SourceConfig, SourceError, SourceFactory, SourceMetadata, SourceResult,
     TimestampedMessage, create_source, global_registry as source_registry, has_source,
     register_source, registered_sources,
 };
 
 #[cfg(feature = "sinks")]
-pub use roboflow_sinks::{
-    DatasetFrame, ImageData, ImageFormat, Sink, SinkCheckpoint, SinkConfig, SinkError, SinkFactory,
-    SinkResult, SinkStats, create_sink, global_registry as sink_registry, has_sink, register_sink,
-    registered_sinks,
+pub use roboflow_pipeline::formats::{
+    OutputConfig, OutputFormat,
+    common::{DatasetFrame, ImageData, ImageFormat},
+};
+#[cfg(feature = "sinks")]
+pub use roboflow_pipeline::formats::lerobot::{
+    create_lerobot_writer, LerobotWriterConfig,
 };
 
 // =============================================================================
@@ -90,7 +93,7 @@ pub use roboflow_sinks::{
 // Dataset structures
 // =============================================================================
 // Dataset is now provided by roboflow-dataset crate
-pub use roboflow_dataset::{
+pub use roboflow_pipeline::formats::{
     DatasetConfig, DatasetFormat, DatasetWriter,
     common::DatasetBaseConfig,
     lerobot::{
@@ -100,7 +103,7 @@ pub use roboflow_dataset::{
 };
 
 // Re-export lerobot module for test access
-pub use roboflow_dataset::lerobot;
+pub use roboflow_pipeline::formats::lerobot;
 
 // =============================================================================
 // Storage abstraction layer (always available via roboflow-storage)

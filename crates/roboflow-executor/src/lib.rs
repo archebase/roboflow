@@ -28,16 +28,42 @@
 //! ```
 
 pub mod executor;
+pub mod format;
+pub mod lineage;
+pub mod object_store;
 pub mod pipeline;
+pub mod resource;
+pub mod scheduler;
 pub mod stage;
 pub mod stages;
 pub mod task;
 
+// Core types
 pub use executor::{ExecuteResult, StageExecutor};
-pub use pipeline::{Pipeline, PipelineBuilder};
-pub use stage::{PartitionId, Stage, StageId};
-pub use stages::{ConvertStage, DiscoverStage, MergeStage};
-pub use task::{Task, TaskContext, TaskId, TaskMetrics, TaskOutput, TaskResult};
+pub use format::{
+    ConfigError, DatasetFormat, DatasetMetadata, EpisodeMetadata, EpisodeWriter, Feature,
+    FormatConfig, Frame, LeRobotV21, MetadataError, MetadataGenerator, Observation,
+    RLDS, WriterError,
+};
+pub use lineage::{
+    Lineage, LineageError, MemoryLineage, RecomputePlan, TaskLineage,
+};
+pub use object_store::{
+    LocalObjectStore, MemoryObjectStore, ObjectId, ObjectRef, ObjectStore, ObjectStoreError,
+    WorkerId,
+};
+pub use pipeline::{Pipeline, PipelineBuilder, PipelineError};
+pub use resource::{
+    ResourceCapacity, ResourceRequest, Slot, SlotGuard, SlotId, SlotPool, SlotState,
+};
+pub use scheduler::StageScheduler;
+pub use stage::{FormatStage, PartitionId, Stage, StageId};
+pub use stages::{
+    ConvertStage, DiscoverStage, MergeStage, TransformStage,
+};
+pub use task::{
+    Task, TaskContext, TaskId, TaskMetrics, TaskResult, TaskStatus,
+};
 
 /// Re-export core types
 pub use roboflow_core::Result;

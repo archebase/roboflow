@@ -1,0 +1,52 @@
+[package]
+name = "roboflow-pipeline"
+version = "0.2.0"
+edition = "2024"
+authors = ["Strata Contributors"]
+license = "MulanPSL-2.0"
+repository = "https://github.com/archebase/roboflow"
+description = "Data pipeline for converting robotics data to training datasets"
+
+[dependencies]
+roboflow-core = { workspace = true }
+roboflow-storage = { workspace = true }
+roboflow-executor = { workspace = true }
+robocodec = { workspace = true }
+
+polars = { version = "0.41", features = ["parquet", "lazy", "diagonal_concat"] }
+png = "0.17"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+zune-jpeg = "0.4"
+rsmpeg = { version = "0.18", features = ["link_system_ffmpeg"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml_ng = "0.10"
+toml = "0.8"
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+crossbeam-channel = "0.5"
+crossbeam-deque = "0.8"
+num_cpus = "1.16"
+rayon = "1.10"
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = "0.3"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+mcap = "0.24"
+rosbag = "0.6"
+chrono = { workspace = true }
+zstd = "0.13"
+lz4_flex = "0.11"
+bzip2 = "0.4"
+bytes = "1"
+memmap2 = "0.9"
+hex = "0.4"
+regex = "1.10"
+
+[features]
+default = []
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+tempfile = "3.10"

@@ -6,8 +6,9 @@
 
 use roboflow_core::Result;
 
+use crate::object_store::{ObjectId, ObjectRef};
 use crate::stage::{PartitionId, Stage, StageId};
-use crate::task::{Task, TaskContext, TaskOutput, TaskResult};
+use crate::task::{Task, TaskContext, TaskResult, TaskStatus};
 
 /// Stage for merging converted files.
 ///
@@ -71,12 +72,17 @@ impl Task for MergeTask {
         // Simulate merge work
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
+        let obj_ref = ObjectRef::new(
+            ObjectId::new([4u8; 32]),
+            2048,
+            ctx.task_id,
+            vec![],
+        );
+
         Ok(TaskResult {
-            outputs: vec![TaskOutput {
-                id: self.output_path.clone(),
-                size_bytes: 2048,
-            }],
+            outputs: vec![obj_ref],
             metrics: Default::default(),
+            status: TaskStatus::Success,
         })
     }
 }

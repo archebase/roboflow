@@ -56,7 +56,7 @@ fn topic_mappings_from_config(config: &LerobotConfig) -> HashMap<String, String>
 ///
 #[tokio::test]
 async fn test_bag_to_lerobot_conversion() {
-    use roboflow_sources::{create_source, register_builtin_sources};
+    use roboflow::sources::{create_source, register_builtin_sources};
 
     require_fixtures();
 
@@ -136,7 +136,7 @@ async fn test_bag_to_lerobot_conversion() {
 /// state/action topics that may be missing or sparse.
 #[tokio::test]
 async fn test_bag_color_images_only() {
-    use roboflow_sources::{create_source, register_builtin_sources};
+    use roboflow::sources::{create_source, register_builtin_sources};
 
     require_fixtures();
 
@@ -168,6 +168,7 @@ async fn test_bag_color_images_only() {
 
     let mut count = 0;
     while let Ok(Some(msgs)) = source.read_batch(50).await {
+        let msgs: Vec<roboflow::TimestampedMessage> = msgs;
         if msgs.is_empty() {
             break;
         }
@@ -187,7 +188,7 @@ async fn test_bag_color_images_only() {
 /// converted to RGB without panicking (L16 → RGB fix).
 #[tokio::test]
 async fn test_bag_compressed_depth_conversion() {
-    use roboflow_sources::{create_source, register_builtin_sources};
+    use roboflow::sources::{create_source, register_builtin_sources};
 
     require_fixtures();
 
@@ -220,6 +221,7 @@ async fn test_bag_compressed_depth_conversion() {
     source.initialize(&source_config).await.expect("init");
 
     while let Ok(Some(msgs)) = source.read_batch(50).await {
+        let msgs: Vec<roboflow::TimestampedMessage> = msgs;
         if msgs.is_empty() {
             break;
         }

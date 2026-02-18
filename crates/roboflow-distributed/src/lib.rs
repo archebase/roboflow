@@ -30,6 +30,7 @@ pub mod reaper;
 pub mod scanner;
 pub mod shutdown;
 pub mod slot_pool;
+pub mod stages;
 pub mod state;
 pub mod stats;
 pub mod tikv;

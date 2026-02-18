@@ -44,7 +44,7 @@
 //! This unified config can coexist with the existing individual configs:
 //! - `LerobotConfig` for dataset-specific settings
 //! - `SourceConfig` for input configuration
-//! - `SinkConfig` for output configuration
+//! - `OutputConfig` for output configuration
 //!
 //! To migrate:
 //! 1. Combine all configs into a single `pipeline.toml`
@@ -53,14 +53,14 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use roboflow_core::{Result, Validate, validators};
+use roboflow_core::{validators, Result, Validate};
 
 // Re-export individual configs for backward compatibility
-pub use roboflow_dataset::lerobot::{
+pub use roboflow_pipeline::formats::config::{OutputConfig, OutputFormat};
+pub use roboflow_pipeline::formats::lerobot::{
     DatasetConfig, FlushingConfig, LerobotConfig, Mapping, StreamingConfig, VideoConfig,
 };
-pub use roboflow_sinks::{SinkConfig, SinkType};
-pub use roboflow_sources::{SourceConfig, SourceType};
+pub use roboflow_pipeline::sources::{SourceConfig, SourceType};
 
 /// Unified pipeline configuration.
 ///
@@ -71,8 +71,8 @@ pub struct PipelineConfig {
     /// Input source configuration.
     pub source: SourceConfig,
 
-    /// Output sink configuration.
-    pub sink: SinkConfig,
+    /// Output configuration.
+    pub sink: OutputConfig,
 
     /// Dataset format configuration.
     pub dataset: DatasetConfig,
@@ -158,7 +158,7 @@ impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             source: SourceConfig::mcap(""),
-            sink: SinkConfig::lerobot(""),
+            sink: OutputConfig::lerobot(""),
             dataset: DatasetConfig {
                 base: crate::DatasetBaseConfig {
                     name: "dataset".to_string(),
@@ -221,7 +221,7 @@ fn default_batch_size() -> usize {
 #[derive(Debug, Default)]
 pub struct PipelineConfigBuilder {
     source: Option<SourceConfig>,
-    sink: Option<SinkConfig>,
+    sink: Option<OutputConfig>,
     dataset: Option<DatasetConfig>,
     mappings: Vec<Mapping>,
     video: Option<VideoConfig>,
@@ -243,15 +243,15 @@ impl PipelineConfigBuilder {
         self
     }
 
-    /// Set the output sink configuration.
-    pub fn sink(mut self, config: SinkConfig) -> Self {
+    /// Set the output configuration.
+    pub fn sink(mut self, config: OutputConfig) -> Self {
         self.sink = Some(config);
         self
     }
 
-    /// Set the output sink path (defaults to LeRobot format).
+    /// Set the output path (defaults to LeRobot format).
     pub fn sink_path(mut self, path: impl Into<String>) -> Self {
-        self.sink = Some(SinkConfig::lerobot(path));
+        self.sink = Some(OutputConfig::lerobot(path));
         self
     }
 

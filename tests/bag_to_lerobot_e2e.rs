@@ -4,7 +4,7 @@ use std::path::Path;
 use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig};
 use roboflow_dataset::common::DatasetWriter;
 use roboflow_dataset::lerobot::{FlushingConfig, Mapping, MappingType, StreamingConfig};
-use roboflow_sources::SourceConfig;
+use roboflow::sources::SourceConfig;
 
 const TEST_BAG_PATH: &str =
     "tests/fixtures/A02-A01-37-45-77-factory_07-P4_210-leju_claw-20260104174020-v001.bag";
@@ -83,7 +83,7 @@ fn test_bag_to_lerobot_e2e() {
 
     let source_config = SourceConfig::bag(TEST_BAG_PATH);
     let mut source =
-        roboflow_sources::create_source(&source_config).expect("Failed to create bag source");
+        roboflow::sources::create_source(&source_config).expect("Failed to create bag source");
 
     let metadata = tokio::runtime::Runtime::new()
         .unwrap()
@@ -166,7 +166,7 @@ fn test_bag_to_lerobot_s3_upload() {
             .expect("Failed to create LeRobot writer");
 
         let source_config = SourceConfig::bag(TEST_BAG_PATH);
-        let mut source = roboflow_sources::create_source(&source_config)
+        let mut source = roboflow::sources::create_source(&source_config)
             .expect("Failed to create bag source");
 
         let metadata = source.initialize(&source_config).await
@@ -605,7 +605,7 @@ fn test_two_bags_to_lerobot_two_episodes() {
 
         let source_config = SourceConfig::bag(*bag_path);
         let mut source =
-            roboflow_sources::create_source(&source_config).expect("Failed to create bag source");
+            roboflow::sources::create_source(&source_config).expect("Failed to create bag source");
 
         let metadata = rt
             .block_on(source.initialize(&source_config))

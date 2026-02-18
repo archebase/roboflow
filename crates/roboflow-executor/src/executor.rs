@@ -222,6 +222,7 @@ mod tests {
             Ok(TaskResult {
                 outputs: vec![],
                 metrics: Default::default(),
+                status: crate::task::TaskStatus::Success,
             })
         }
     }

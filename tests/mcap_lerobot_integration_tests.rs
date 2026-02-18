@@ -56,7 +56,7 @@ async fn test_mcap_to_lerobot_conversion() {
         return;
     }
 
-    use roboflow_sources::{create_source, register_builtin_sources};
+    use roboflow::sources::{create_source, register_builtin_sources};
 
     register_builtin_sources();
 
@@ -156,7 +156,7 @@ async fn test_mcap_source_metadata() {
         return;
     }
 
-    use roboflow_sources::{create_source, register_builtin_sources};
+    use roboflow::sources::{create_source, register_builtin_sources};
 
     register_builtin_sources();
 
@@ -185,7 +185,7 @@ async fn test_mcap_source_seek() {
         return;
     }
 
-    use roboflow_sources::{create_source, register_builtin_sources};
+    use roboflow::sources::{create_source, register_builtin_sources};
 
     register_builtin_sources();
 

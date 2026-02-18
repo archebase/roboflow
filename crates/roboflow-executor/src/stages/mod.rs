@@ -2,12 +2,14 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! LeRobot-specific stages for the executor framework.
+//! Stage implementations for the executor framework.
 
 pub mod convert;
 pub mod discover;
 pub mod merge;
+pub mod transform;
 
 pub use convert::ConvertStage;
 pub use discover::DiscoverStage;
 pub use merge::MergeStage;
+pub use transform::TransformStage;

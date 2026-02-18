@@ -7,7 +7,9 @@
 use std::fmt;
 
 /// Unique identifier for a stage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct StageId(pub u64);
 
 impl fmt::Display for StageId {
@@ -69,6 +71,19 @@ pub trait Stage: Send + Sync {
     /// Dependency stages that must complete first.
     fn dependencies(&self) -> Vec<StageId> {
         Vec::new()
+    }
+
+    /// Resource requirements for this stage.
+    fn resource_profile(&self) -> crate::resource::ResourceRequest {
+        crate::resource::ResourceRequest::default()
+    }
+}
+
+/// Marker trait for format-specific stages.
+pub trait FormatStage<F: crate::format::DatasetFormat>: Stage {
+    /// Get the format name.
+    fn format_name(&self) -> &'static str {
+        F::NAME
     }
 }
 

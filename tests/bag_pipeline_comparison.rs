@@ -5,7 +5,7 @@ use std::time::Instant;
 use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig};
 use roboflow_dataset::common::DatasetWriter;
 use roboflow_dataset::lerobot::{FlushingConfig, Mapping, MappingType, StreamingConfig};
-use roboflow_sources::SourceConfig;
+use roboflow::sources::SourceConfig;
 
 const TEST_BAG_PATH: &str =
     "tests/fixtures/A02-A01-37-45-77-factory_07-P4_210-leju_claw-20260104174020-v001.bag";
@@ -39,7 +39,7 @@ fn create_test_lerobot_config() -> LerobotConfig {
 }
 
 fn init_sources() {
-    roboflow_sources::register_builtin_sources();
+    roboflow::sources::register_builtin_sources();
 }
 
 #[test]
@@ -103,7 +103,7 @@ async fn run_read_only_benchmark() -> f64 {
 
     let source_config = SourceConfig::bag(TEST_BAG_PATH);
     let mut source =
-        roboflow_sources::create_source(&source_config).expect("Failed to create bag source");
+        roboflow::sources::create_source(&source_config).expect("Failed to create bag source");
 
     let _metadata = source
         .initialize(&source_config)
@@ -139,7 +139,7 @@ async fn run_full_pipeline_benchmark() -> f64 {
 
     let source_config = SourceConfig::bag(TEST_BAG_PATH);
     let mut source =
-        roboflow_sources::create_source(&source_config).expect("Failed to create bag source");
+        roboflow::sources::create_source(&source_config).expect("Failed to create bag source");
 
     let _metadata = source
         .initialize(&source_config)

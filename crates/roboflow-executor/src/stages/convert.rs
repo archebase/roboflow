@@ -6,8 +6,9 @@
 
 use roboflow_core::Result;
 
+use crate::object_store::{ObjectId, ObjectRef};
 use crate::stage::{PartitionId, Stage, StageId};
-use crate::task::{Task, TaskContext, TaskOutput, TaskResult};
+use crate::task::{Task, TaskContext, TaskResult, TaskStatus};
 
 /// Stage for converting bag files to LeRobot format.
 ///
@@ -82,17 +83,18 @@ impl Task for ConvertTask {
         // Simulate conversion work
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-        let output_path = format!(
-            "{}/episode_{:06}.parquet",
-            self.output_prefix, self.partition_id.0
+        // Create object ref for output
+        let obj_ref = ObjectRef::new(
+            ObjectId::new([2u8; 32]),
+            1024,
+            ctx.task_id,
+            vec![],
         );
 
         Ok(TaskResult {
-            outputs: vec![TaskOutput {
-                id: output_path,
-                size_bytes: 1024,
-            }],
+            outputs: vec![obj_ref],
             metrics: Default::default(),
+            status: TaskStatus::Success,
         })
     }
 }

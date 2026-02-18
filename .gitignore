@@ -33,3 +33,4 @@ profiles/
 *.mcap
 output.mp4
 *.json.*
+crates/roboflow*/target

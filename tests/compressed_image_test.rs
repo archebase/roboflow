@@ -327,7 +327,7 @@ fn test_video_encoding_mixed_images() {
 #[tokio::test]
 async fn test_process_bag_with_compressed_images() {
     use roboflow::SourceConfig;
-    use roboflow_sources::{create_source, register_builtin_sources};
+    use roboflow::sources::{create_source, register_builtin_sources};
 
     // Register built-in sources (bag, mcap, etc.)
     register_builtin_sources();

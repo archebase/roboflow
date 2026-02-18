@@ -35,12 +35,12 @@ use std::time::Duration;
 use roboflow_core::{Result, RoboflowError};
 
 #[cfg(feature = "sources")]
-use roboflow_sources::{SourceConfig, create_source};
+use roboflow_pipeline::sources::{SourceConfig, create_source};
 
 #[cfg(feature = "sinks")]
-use roboflow_sinks::{LerobotWriterConfig, create_lerobot_writer};
+use roboflow_pipeline::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
 
-use roboflow_dataset::{
+use roboflow_pipeline::formats::{
     PipelineConfig, PipelineStats,
     common::config::{DatasetBaseConfig, Mapping, MappingType},
     lerobot::{DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig},
@@ -314,7 +314,7 @@ impl ConvertBuilder {
             .collect();
 
         let mut streaming_config =
-            roboflow_dataset::streaming::config::StreamingConfig::with_fps(config.dataset.fps);
+            roboflow_pipeline::formats::streaming::config::StreamingConfig::with_fps(config.dataset.fps);
         let frame_interval_ns = 1_000_000_000u64 / config.dataset.fps as u64;
         streaming_config.completion_window_ns = frame_interval_ns * 3;
 
@@ -326,7 +326,7 @@ impl ConvertBuilder {
         }
 
         // Execute pipeline
-        use roboflow_dataset::PipelineExecutor;
+        use roboflow_pipeline::formats::PipelineExecutor;
 
         let mut executor = PipelineExecutor::new(writer_result.writer, pipeline_config);
 

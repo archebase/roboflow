@@ -4,8 +4,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use roboflow_core::{Result, RoboflowError};
-use roboflow_dataset::lerobot::LerobotConfig;
-use roboflow_sources::{Source, SourceConfig, SourceResult};
+use roboflow_pipeline::formats::lerobot::LerobotConfig;
+use roboflow_pipeline::sources::{Source, SourceConfig, SourceResult};
 
 pub mod mock;
 
@@ -36,7 +36,7 @@ impl Default for ProductionSourceProvider {
 #[async_trait]
 impl SourceProvider for ProductionSourceProvider {
     async fn create_source(&self, config: &SourceConfig) -> SourceResult<Box<dyn Source>> {
-        roboflow_sources::create_source(config)
+        roboflow_pipeline::sources::create_source(config)
     }
 }
 

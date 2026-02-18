@@ -6,8 +6,9 @@
 
 use roboflow_core::Result;
 
+use crate::object_store::{ObjectRef, ObjectId};
 use crate::stage::{PartitionId, Stage, StageId};
-use crate::task::{Task, TaskContext, TaskOutput, TaskResult};
+use crate::task::{Task, TaskContext, TaskResult, TaskStatus};
 
 /// Stage for discovering input files.
 ///
@@ -62,7 +63,7 @@ struct DiscoverTask {
 
 #[async_trait::async_trait]
 impl Task for DiscoverTask {
-    async fn execute(&mut self, _ctx: &TaskContext) -> Result<TaskResult> {
+    async fn execute(&mut self, ctx: &TaskContext) -> Result<TaskResult> {
         tracing::info!(
             source_prefix = %self.source_prefix,
             "Discovering input files"
@@ -75,14 +76,19 @@ impl Task for DiscoverTask {
             self.source_prefix, self.source_prefix
         );
 
-        let output_size = file_list.len() as u64;
+        // Create a simple object ref from the file list
+        let data = file_list.into_bytes();
+        let obj_ref = ObjectRef::new(
+            ObjectId::new([1u8; 32]), // In real impl, would hash the data
+            data.len() as u64,
+            ctx.task_id,
+            vec![],
+        );
 
         Ok(TaskResult {
-            outputs: vec![TaskOutput {
-                id: file_list,
-                size_bytes: output_size,
-            }],
+            outputs: vec![obj_ref],
             metrics: Default::default(),
+            status: TaskStatus::Success,
         })
     }
 }

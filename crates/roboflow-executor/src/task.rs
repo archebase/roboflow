@@ -4,12 +4,13 @@
 
 //! Task trait for atomic work units.
 
+use crate::object_store::ObjectRef;
 use std::fmt;
 
 use roboflow_core::Result;
 
 /// Unique identifier for a task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TaskId(pub u64);
 
 impl fmt::Display for TaskId {
@@ -82,11 +83,25 @@ impl TaskContext {
 
 /// Result of task execution.
 pub struct TaskResult {
-    /// Output references (object IDs or paths).
-    pub outputs: Vec<TaskOutput>,
+    /// Output references (object IDs).
+    pub outputs: Vec<ObjectRef>,
 
     /// Metrics collected during execution.
     pub metrics: TaskMetrics,
+
+    /// Task execution status.
+    pub status: TaskStatus,
+}
+
+/// Task execution status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskStatus {
+    /// Task completed successfully.
+    Success,
+    /// Task failed.
+    Failed,
+    /// Task was cancelled.
+    Cancelled,
 }
 
 /// Output reference from a task.
