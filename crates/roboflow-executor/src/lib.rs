@@ -30,12 +30,14 @@
 pub mod executor;
 pub mod pipeline;
 pub mod stage;
+pub mod stages;
 pub mod task;
 
 pub use executor::{ExecuteResult, StageExecutor};
 pub use pipeline::{Pipeline, PipelineBuilder};
-pub use stage::{Stage, StageId};
-pub use task::{Task, TaskContext, TaskId, TaskResult};
+pub use stage::{PartitionId, Stage, StageId};
+pub use stages::{ConvertStage, DiscoverStage, MergeStage};
+pub use task::{Task, TaskContext, TaskId, TaskResult, TaskOutput, TaskMetrics};
 
 /// Re-export core types
 pub use roboflow_core::Result;

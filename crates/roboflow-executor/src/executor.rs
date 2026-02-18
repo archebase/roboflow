@@ -5,8 +5,8 @@
 //! Stage-based task executor.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use roboflow_core::Result;
 
@@ -69,12 +69,8 @@ impl StageExecutor {
     ///
     /// This method runs all stages in topological order, respecting
     /// dependencies and limiting concurrency via the slot pool.
-    pub async fn execute(&self,
-        pipeline: &Pipeline,
-    ) -> Result<ExecuteResult> {
-        let execute_id = ExecuteId(
-            self.execute_id_counter.fetch_add(1, Ordering::SeqCst)
-        );
+    pub async fn execute(&self, pipeline: &Pipeline) -> Result<ExecuteResult> {
+        let execute_id = ExecuteId(self.execute_id_counter.fetch_add(1, Ordering::SeqCst));
         let start_time = std::time::Instant::now();
 
         let mut completed_stages = HashSet::new();
@@ -91,10 +87,7 @@ impl StageExecutor {
             let mut stage_futures = Vec::new();
             for stage_id in &ready {
                 if let Some(stage) = pipeline.get_stage(*stage_id) {
-                    stage_futures.push(self.execute_stage(
-                        execute_id,
-                        Arc::clone(stage),
-                    ));
+                    stage_futures.push(self.execute_stage(execute_id, Arc::clone(stage)));
                 }
             }
 
@@ -131,11 +124,7 @@ impl StageExecutor {
     }
 
     /// Execute a single stage.
-    async fn execute_stage(
-        &self,
-        _execute_id: ExecuteId,
-        stage: Arc<dyn Stage>,
-    ) -> Result<u64> {
+    async fn execute_stage(&self, _execute_id: ExecuteId, stage: Arc<dyn Stage>) -> Result<u64> {
         let partition_count = stage.partition_count();
         let mut tasks = Vec::with_capacity(partition_count);
 
@@ -156,7 +145,10 @@ impl StageExecutor {
             let stage_id = stage.id();
 
             let handle = tokio::spawn(async move {
-                let _permit = permit.acquire().await.expect("Semaphore should not be closed");
+                let _permit = permit
+                    .acquire()
+                    .await
+                    .expect("Semaphore should not be closed");
 
                 let (tx, rx) = tokio::sync::watch::channel(false);
                 let ctx = TaskContext {
@@ -195,9 +187,10 @@ impl StageExecutor {
                     return Err(e);
                 }
                 Err(e) => {
-                    return Err(roboflow_core::RoboflowError::other(
-                        format!("Task panicked: {}", e)
-                    ));
+                    return Err(roboflow_core::RoboflowError::other(format!(
+                        "Task panicked: {}",
+                        e
+                    )));
                 }
             }
         }
