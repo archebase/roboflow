@@ -101,7 +101,6 @@ fn create_work_unit(bag_path: &str, output_path: &str) -> WorkUnit {
         updated_at: Utc::now(),
         error: None,
         priority: 0,
-        episodes_per_chunk: 0,
     }
 }
 

@@ -138,7 +138,9 @@ impl PipelineRunner {
         // Process messages
         loop {
             // Check cancellation
-            if let Some(ref token) = cancel_token && token.is_cancelled() {
+            if let Some(ref token) = cancel_token
+                && token.is_cancelled()
+            {
                 return Err(RoboflowError::other("Cancelled".to_string()));
             }
 
@@ -207,7 +209,9 @@ impl PipelineRunner {
         // Process all messages
         for chunk in messages.chunks(self.batch_size) {
             // Check cancellation
-            if let Some(ref token) = cancel_token && token.is_cancelled() {
+            if let Some(ref token) = cancel_token
+                && token.is_cancelled()
+            {
                 return Err(RoboflowError::other("Cancelled".to_string()));
             }
 

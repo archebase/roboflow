@@ -58,16 +58,6 @@ pub struct WorkUnit {
     /// Priority (inherited from batch, can be overridden).
     #[serde(default)]
     pub priority: i32,
-
-    /// Number of episodes per chunk for LeRobot v2.1 format.
-    ///
-    /// When set (non-zero), this work unit will be assigned a unique
-    /// episode index via centralized allocation. The chunk directory
-    /// is calculated as: chunk_index = episode_index / episodes_per_chunk
-    ///
-    /// Default is 0 (disabled - no episode allocation).
-    #[serde(default)]
-    pub episodes_per_chunk: u32,
 }
 
 fn default_max_attempts() -> u32 {
@@ -204,7 +194,6 @@ impl WorkUnit {
             updated_at: Utc::now(),
             error: None,
             priority: 0,
-            episodes_per_chunk: 0,
         }
     }
 
@@ -230,22 +219,7 @@ impl WorkUnit {
             updated_at: Utc::now(),
             error: None,
             priority: 0,
-            episodes_per_chunk: 0,
         }
-    }
-
-    /// Set the episodes per chunk for LeRobot v2.1 format.
-    ///
-    /// When set to a non-zero value, this work unit will be assigned
-    /// a unique episode index via centralized TiKV allocation.
-    pub fn with_episodes_per_chunk(mut self, episodes: u32) -> Self {
-        self.episodes_per_chunk = episodes;
-        self
-    }
-
-    /// Check if episode allocation is enabled for this work unit.
-    pub fn has_episode_allocation(&self) -> bool {
-        self.episodes_per_chunk > 0
     }
 
     /// Try to claim this work unit.
@@ -636,41 +610,5 @@ mod tests {
         let summary = unit.summary();
         assert_eq!(summary.file_count, 2);
         assert_eq!(summary.total_size, 3000);
-    }
-
-    #[test]
-    fn test_work_unit_episodes_per_chunk() {
-        let mut unit = WorkUnit::new(
-            "batch-123".to_string(),
-            vec![WorkFile::new("s3://bucket/file.mcap".to_string(), 1024)],
-            "s3://output/".to_string(),
-            "config-hash".to_string(),
-        );
-
-        // Default is 0 (disabled)
-        assert_eq!(unit.episodes_per_chunk, 0);
-        assert!(!unit.has_episode_allocation());
-
-        // Set episodes per chunk
-        unit = unit.with_episodes_per_chunk(500);
-        assert_eq!(unit.episodes_per_chunk, 500);
-        assert!(unit.has_episode_allocation());
-    }
-
-    #[test]
-    fn test_work_unit_episodes_serialization() {
-        let unit = WorkUnit::new(
-            "batch-123".to_string(),
-            vec![WorkFile::new("s3://bucket/file.mcap".to_string(), 1024)],
-            "s3://output/".to_string(),
-            "config-hash".to_string(),
-        )
-        .with_episodes_per_chunk(250);
-
-        let serialized = bincode::serialize(&unit).unwrap();
-        let deserialized: WorkUnit = bincode::deserialize(&serialized).unwrap();
-
-        assert_eq!(deserialized.episodes_per_chunk, 250);
-        assert!(deserialized.has_episode_allocation());
     }
 }
