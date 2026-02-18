@@ -28,6 +28,23 @@ use crate::formats::common::base::{AlignedFrame, DatasetWriter, ImageData};
 use crate::formats::image::ImageFormat;
 use crate::formats::streaming::config::StreamingConfig;
 
+/// Episode management strategy for pipeline execution.
+#[derive(Debug, Clone)]
+pub enum EpisodeManager {
+    /// Single episode for entire stream (default behavior)
+    Single,
+    /// Split episodes when timestamp gap exceeds threshold
+    GapBased { threshold_ns: u64 },
+    /// Fixed number of frames per episode
+    FrameCount { max_frames: usize },
+}
+
+impl Default for EpisodeManager {
+    fn default() -> Self {
+        Self::Single
+    }
+}
+
 /// Configuration for the pipeline executor.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
@@ -39,6 +56,8 @@ pub struct PipelineConfig {
     pub checkpoint_interval: Option<Duration>,
     /// Topic mappings for dataset conversion (topic -> feature name)
     pub topic_mappings: HashMap<String, String>,
+    /// Episode management strategy
+    pub episode_manager: EpisodeManager,
 }
 
 impl PipelineConfig {
@@ -49,7 +68,14 @@ impl PipelineConfig {
             max_frames: None,
             checkpoint_interval: None,
             topic_mappings: HashMap::new(),
+            episode_manager: EpisodeManager::default(),
         }
+    }
+
+    /// Set episode management strategy.
+    pub fn with_episode_manager(mut self, manager: EpisodeManager) -> Self {
+        self.episode_manager = manager;
+        self
     }
 
     /// Set maximum frames to process.
@@ -171,6 +197,12 @@ struct ExecutorState {
     start_time: Instant,
     /// Camera info topics we've already processed (calibration is constant per bag)
     processed_camera_info: std::collections::HashSet<String>,
+    /// Whether current episode has been started
+    current_episode_started: bool,
+    /// Frames written in current episode
+    frames_in_current_episode: usize,
+    /// Last message timestamp for gap detection
+    last_timestamp_ns: Option<u64>,
 }
 
 impl<W: DatasetWriter> PipelineExecutor<W> {
@@ -188,6 +220,9 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
                 frame_index: 0,
                 start_time: Instant::now(),
                 processed_camera_info: std::collections::HashSet::new(),
+                current_episode_started: false,
+                frames_in_current_episode: 0,
+                last_timestamp_ns: None,
             },
         }
     }
@@ -211,36 +246,54 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
             return Ok(());
         }
 
+        // Auto-start episode 0 on first message
+        if !self.state.current_episode_started {
+            self.start_episode(0)?;
+        }
+
+        // Check for episode boundary based on gap
+        if let EpisodeManager::GapBased { threshold_ns } = &self.config.episode_manager {
+            if let Some(last_ts) = self.state.last_timestamp_ns {
+                if msg.log_time > last_ts && msg.log_time - last_ts > *threshold_ns {
+                    self.finish_current_episode()?;
+                    self.start_episode(self.state.episode_index + 1)?;
+                }
+            }
+        }
+
+        // Check for episode boundary based on frame count
+        if let EpisodeManager::FrameCount { max_frames } = &self.config.episode_manager {
+            if self.state.frames_in_current_episode >= *max_frames {
+                self.finish_current_episode()?;
+                self.start_episode(self.state.episode_index + 1)?;
+            }
+        }
+
+        self.state.last_timestamp_ns = Some(msg.log_time);
+
         // Quick check: skip camera info messages we've already processed
-        // Camera calibration is constant per bag, so we only need to decode it once
         if is_camera_info_topic(&msg.data)
             && !self.state.processed_camera_info.insert(msg.topic.clone())
         {
-            // Already processed this camera info topic before
             return Ok(());
         }
-        // First time seeing this camera info topic - will be decoded when buffered
 
-        // Calculate frame index for this message
         let frame_interval_ns = self.config.streaming.frame_interval_ns();
         let frame_idx = msg.log_time / frame_interval_ns;
         let aligned_timestamp = frame_idx * frame_interval_ns;
 
-        // Buffer message by timestamp
         self.state
             .message_buffer
             .entry(aligned_timestamp)
             .or_default()
             .push(msg);
 
-        // Track timestamp range
         if self.state.current_timestamp_ns.is_none() {
             self.state.current_timestamp_ns = Some(aligned_timestamp);
         }
         self.state.end_timestamp_ns =
             Some(aligned_timestamp.max(self.state.end_timestamp_ns.unwrap_or(0)));
 
-        // Process complete frames
         self.process_complete_frames()?;
 
         Ok(())
@@ -316,10 +369,15 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
             "Finalizing pipeline"
         );
 
-        // Process any remaining buffered messages
         self.flush_remaining_frames()?;
 
-        // Finalize the writer
+        // Finish current episode before finalizing writer
+        if self.state.current_episode_started {
+            if let Err(e) = self.finish_current_episode() {
+                warn!("Failed to finish episode during finalize: {}", e);
+            }
+        }
+
         self.writer
             .finalize()
             .map_err(|e| RoboflowError::other(format!("Writer finalize failed: {}", e)))?;
@@ -371,6 +429,50 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
     /// Get the current episode index.
     pub fn episode_index(&self) -> usize {
         self.state.episode_index
+    }
+
+    /// Start a new episode.
+    fn start_episode(&mut self, index: usize) -> Result<()> {
+        self.state.episode_index = index;
+        self.state.frames_in_current_episode = 0;
+        self.state.current_episode_started = true;
+
+        if let Some(writer) = ((
+            &mut self.writer
+        ) as &mut dyn std::any::Any)
+            .downcast_mut::<crate::formats::lerobot::LerobotWriter>()
+        {
+            let _ = writer.start_episode(Some(index));
+        }
+
+        info!(episode_index = index, "Started episode");
+        Ok(())
+    }
+
+    /// Finish the current episode.
+    fn finish_current_episode(&mut self) -> Result<()> {
+        if !self.state.current_episode_started {
+            return Ok(());
+        }
+
+        // Try to cast writer to LerobotWriterTrait and call finish_episode
+        let result = if let Some(writer) = ((&mut self.writer) as &mut dyn std::any::Any).downcast_mut::<crate::formats::lerobot::LerobotWriter>() {
+            writer.finish_episode(Some(self.state.episode_index))
+        } else {
+            Ok(())
+        };
+
+        if result.is_ok() {
+            self.stats.episodes_written += 1;
+            self.state.current_episode_started = false;
+            info!(
+                episode_index = self.state.episode_index,
+                frames = self.state.frames_in_current_episode,
+                "Finished episode"
+            );
+        }
+
+        result
     }
 
     /// Process complete frames from the buffer.
@@ -466,6 +568,11 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
             .map_err(|e| RoboflowError::other(format!("Write frame failed: {}", e)))?;
         self.stats.frames_written += 1;
         self.state.frame_index += 1;
+        
+        if !frame.images.is_empty() {
+            self.state.frames_in_current_episode += 1;
+        }
+        
         Ok(())
     }
 

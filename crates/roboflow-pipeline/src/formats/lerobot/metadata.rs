@@ -29,6 +29,9 @@ use roboflow_storage::Storage;
 /// LeRobot v2.1 info.json structure.
 #[derive(Debug, Serialize)]
 pub struct LerobotInfo {
+    /// Dataset name
+    pub name: String,
+
     /// Codebase version
     pub codebase_version: String,
 
@@ -263,6 +266,8 @@ impl MetadataCollector {
             );
         }
 
+        let name = config.dataset.name.clone();
+
         let robot_type = config
             .dataset
             .robot_type
@@ -270,6 +275,7 @@ impl MetadataCollector {
             .unwrap_or_else(|| "unknown".to_string());
 
         let info = LerobotInfo {
+            name,
             codebase_version: "v2.1".to_string(),
             robot_type,
             total_episodes: self.episodes.len(),
@@ -425,6 +431,8 @@ impl MetadataCollector {
             );
         }
 
+        let name = config.dataset.name.clone();
+
         let robot_type = config
             .dataset
             .robot_type
@@ -432,6 +440,7 @@ impl MetadataCollector {
             .unwrap_or_else(|| "unknown".to_string());
 
         let info = LerobotInfo {
+            name,
             codebase_version: "v2.1".to_string(),
             robot_type,
             total_episodes: self.episodes.len(),
