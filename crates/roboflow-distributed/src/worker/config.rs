@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use roboflow_core::{Result, Validate, validators};
+use roboflow_core::{validators, Result, Validate};
 
 /// Default job poll interval in seconds.
 pub const DEFAULT_POLL_INTERVAL_SECS: u64 = 5;
@@ -103,7 +103,7 @@ impl Default for WorkerConfig {
             output_storage_url: None,
             expected_workers: 1,
             merge_output_path: String::from("datasets/merged"),
-            episodes_per_chunk: super::executor::DEFAULT_EPISODES_PER_CHUNK,
+            episodes_per_chunk: crate::converter::DEFAULT_EPISODES_PER_CHUNK,
         }
     }
 }

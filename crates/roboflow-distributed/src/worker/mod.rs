@@ -15,10 +15,7 @@
 
 pub mod config;
 pub mod coordinator;
-pub mod executor;
-pub mod injectable;
 pub mod metrics;
-pub mod pipeline_runner;
 pub mod registry;
 
 pub use config::{
@@ -28,22 +25,13 @@ pub use config::{
 };
 pub use coordinator::{Coordinator, send_heartbeat_inner};
 pub use crate::executor_bridge::StageExecutorBridge;
-pub use injectable::{
-    JobRegistry as InjectableJobRegistry, NoOpJobRegistry, TaskExecutor as InjectableTaskExecutor,
-};
 pub use metrics::{ProcessingResult, WorkerMetrics, WorkerMetricsSnapshot};
-pub use pipeline_runner::{PipelineRunStats, PipelineRunner};
 pub use registry::JobRegistry;
 
 use std::sync::Arc;
 
 use super::tikv::{TikvError, client::TikvClient};
-use tokio::sync::{Mutex, RwLock};
-
-use lru::LruCache;
-
-// Dataset conversion imports
-use roboflow_dataset::lerobot::LerobotConfig;
+use tokio::sync::RwLock;
 
 use crate::episode::EpisodeAllocator;
 
@@ -51,10 +39,6 @@ use crate::episode::EpisodeAllocator;
 pub const DEFAULT_CANCELLATION_CHECK_INTERVAL_SECS: u64 = 5;
 
 /// Worker actor for claiming and processing work units.
-///
-/// This is a thin wrapper around Coordinator and StageExecutorBridge for backward compatibility.
-/// New code should use Coordinator and StageExecutorBridge directly.
-#[allow(dead_code)]
 pub struct Worker {
     /// Coordinator for work unit management.
     coordinator: Coordinator,
@@ -62,8 +46,6 @@ pub struct Worker {
     executor: StageExecutorBridge,
     /// Cancellation token for graceful shutdown.
     cancellation_token: Arc<tokio_util::sync::CancellationToken>,
-    /// Config cache (kept for backward compatibility).
-    config_cache: Arc<Mutex<LruCache<String, LerobotConfig>>>,
 }
 
 impl Worker {
@@ -91,16 +73,10 @@ impl Worker {
             config.output_prefix.clone(),
         );
 
-        // Create config cache for backward compatibility
-        let config_cache = Arc::new(Mutex::new(LruCache::new(
-            std::num::NonZeroUsize::new(100).expect("100 is always non-zero"),
-        )));
-
         Ok(Self {
             coordinator,
             executor,
             cancellation_token,
-            config_cache,
         })
     }
 
@@ -167,16 +143,10 @@ impl Worker {
         )
         .with_episode_allocator(episode_allocator);
 
-        // Create config cache for backward compatibility
-        let config_cache = Arc::new(Mutex::new(LruCache::new(
-            std::num::NonZeroUsize::new(100).expect("100 is always non-zero"),
-        )));
-
         Ok(Self {
             coordinator,
             executor,
             cancellation_token,
-            config_cache,
         })
     }
 
