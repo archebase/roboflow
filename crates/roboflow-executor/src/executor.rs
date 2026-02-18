@@ -208,7 +208,7 @@ impl Default for StageExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stage::{PartitionId, Stage};
+    use crate::stage::{PartitionId, Stage, StageId};
     use crate::task::{Task, TaskContext, TaskResult};
 
     struct MockTask {

@@ -210,7 +210,7 @@ impl Default for PipelineBuilder {
 mod tests {
     use super::*;
     use crate::stage::{PartitionId, Stage};
-    use crate::task::{Task, TaskContext, TaskResult};
+    use crate::task::Task;
 
     struct MockStage {
         id: StageId,
@@ -287,16 +287,18 @@ mod tests {
 
     #[test]
     fn test_duplicate_stage_error() {
-        let stage = Arc::new(MockStage {
+        let stage1: Arc<dyn Stage> = Arc::new(MockStage {
+            id: StageId(0),
+            name: "stage".to_string(),
+            deps: vec![],
+        });
+        let stage2: Arc<dyn Stage> = Arc::new(MockStage {
             id: StageId(0),
             name: "stage".to_string(),
             deps: vec![],
         });
 
-        let result = PipelineBuilder::new()
-            .stage(Arc::clone(&stage))
-            .stage(stage)
-            .build();
+        let result = PipelineBuilder::new().stage(stage1).stage(stage2).build();
 
         assert!(matches!(result, Err(PipelineError::DuplicateStage(_))));
     }
