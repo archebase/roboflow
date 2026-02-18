@@ -9,7 +9,7 @@
 //! The worker is now composed of two main components:
 //!
 //! - **Coordinator**: Handles coordination logic (claiming work, heartbeats, shutdown)
-//! - **TaskExecutor**: Handles execution logic (running the pipeline)
+//! - **StageExecutorBridge**: Handles execution logic using the stage-based executor framework
 //!
 //! This separation improves testability and maintainability.
 
@@ -27,7 +27,7 @@ pub use config::{
     DEFAULT_MAX_CONCURRENT_JOBS, DEFAULT_POLL_INTERVAL_SECS, WorkerConfig,
 };
 pub use coordinator::{Coordinator, send_heartbeat_inner};
-pub use executor::{DEFAULT_EPISODES_PER_CHUNK, ExecutionResult, TaskExecutor};
+pub use crate::executor_bridge::StageExecutorBridge;
 pub use injectable::{
     JobRegistry as InjectableJobRegistry, NoOpJobRegistry, TaskExecutor as InjectableTaskExecutor,
 };
@@ -52,14 +52,14 @@ pub const DEFAULT_CANCELLATION_CHECK_INTERVAL_SECS: u64 = 5;
 
 /// Worker actor for claiming and processing work units.
 ///
-/// This is a thin wrapper around Coordinator and TaskExecutor for backward compatibility.
-/// New code should use Coordinator and TaskExecutor directly.
+/// This is a thin wrapper around Coordinator and StageExecutorBridge for backward compatibility.
+/// New code should use Coordinator and StageExecutorBridge directly.
 #[allow(dead_code)]
 pub struct Worker {
     /// Coordinator for work unit management.
     coordinator: Coordinator,
-    /// Executor for processing work units.
-    executor: TaskExecutor,
+    /// Executor for processing work units using stage-based framework.
+    executor: StageExecutorBridge,
     /// Cancellation token for graceful shutdown.
     cancellation_token: Arc<tokio_util::sync::CancellationToken>,
     /// Config cache (kept for backward compatibility).
@@ -85,12 +85,10 @@ impl Worker {
             job_registry.clone(),
         )?;
 
-        // Create executor
-        let executor = TaskExecutor::new(
-            tikv,
-            job_registry,
+        // Create executor using stage-based framework
+        let executor = StageExecutorBridge::new(
+            config.max_concurrent_jobs as usize,
             config.output_prefix.clone(),
-            config.job_timeout,
         );
 
         // Create config cache for backward compatibility
@@ -162,15 +160,12 @@ impl Worker {
             job_registry.clone(),
         )?;
 
-        // Create executor with episode allocator
-        let executor = TaskExecutor::with_episode_allocator(
-            tikv,
-            job_registry,
+        // Create executor with episode allocator using stage-based framework
+        let executor = StageExecutorBridge::new(
+            config.max_concurrent_jobs as usize,
             config.output_prefix.clone(),
-            config.job_timeout,
-            episode_allocator,
-            config.episodes_per_chunk,
-        );
+        )
+        .with_episode_allocator(episode_allocator);
 
         // Create config cache for backward compatibility
         let config_cache = Arc::new(Mutex::new(LruCache::new(

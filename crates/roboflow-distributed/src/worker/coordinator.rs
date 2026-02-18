@@ -18,8 +18,8 @@ use tokio::sync::RwLock;
 use tokio::time::sleep;
 
 use super::config::WorkerConfig;
-use super::executor::TaskExecutor;
 use super::metrics::{ProcessingResult, WorkerMetrics};
+use crate::executor_bridge::StageExecutorBridge;
 use super::registry::JobRegistry;
 use crate::batch::{BatchController, WorkUnit};
 use crate::shutdown::ShutdownHandler;
@@ -313,7 +313,7 @@ impl Coordinator {
     /// 3. Delegates execution to the executor
     /// 4. Reports results
     /// 5. Sends periodic heartbeats
-    pub async fn run(&mut self, executor: &TaskExecutor) -> Result<(), TikvError> {
+    pub async fn run(&mut self, executor: &StageExecutorBridge) -> Result<(), TikvError> {
         // Start signal handler
         let mut shutdown_rx = self.shutdown_handler.start_signal_handler();
         let shutdown_tx = self.shutdown_handler.sender();
@@ -389,7 +389,7 @@ impl Coordinator {
     /// Run the main processing loop.
     async fn run_main_loop(
         &mut self,
-        executor: &TaskExecutor,
+        executor: &StageExecutorBridge,
         shutdown_rx: &mut tokio::sync::broadcast::Receiver<()>,
     ) -> Result<(), TikvError> {
         loop {
@@ -431,7 +431,7 @@ impl Coordinator {
     /// Returns Ok(true) if the loop should exit, Ok(false) to continue.
     async fn process_work_unit(
         &self,
-        executor: &TaskExecutor,
+        executor: &StageExecutorBridge,
         unit: &WorkUnit,
     ) -> Result<bool, TikvError> {
         let unit_id = unit.id.clone();
@@ -445,11 +445,27 @@ impl Coordinator {
         }
 
         // Execute the work unit
-        let result = executor.execute(unit).await;
+        let result = executor.execute(unit, self.job_registry.clone()).await;
 
         // Handle result
-        self.handle_execution_result(&batch_id, &unit_id, result)
-            .await
+        match result {
+            Ok(processing_result) => {
+                self.handle_execution_result(&batch_id, &unit_id, processing_result)
+                    .await
+            }
+            Err(e) => {
+                tracing::error!(
+                    pod_id = %self.pod_id,
+                    batch_id = %batch_id,
+                    unit_id = %unit_id,
+                    error = %e,
+                    "Work unit execution failed"
+                );
+                self.fail_work(&batch_id, &unit_id, format!("Execution error: {}", e))
+                    .await?;
+                Ok(false)
+            }
+        }
     }
 
     /// Handle the result of work unit execution.
