@@ -7,8 +7,8 @@
 //! Supports both local files and S3/OSS URLs via robocodec's native streaming.
 //! Uses a background decoder thread with a bounded channel for backpressure.
 
-use crate::sources::decode;
-use crate::sources::{Source, SourceConfig, SourceError, SourceMetadata, SourceResult};
+use crate::sources::{Source, SourceConfig, SourceError, SourceMetadata, SourceResult, TopicMetadata};
+use robocodec::io::traits::FormatReader;
 use roboflow_core::TimestampedMessage;
 use std::thread;
 
@@ -68,6 +68,123 @@ impl BagSource {
     }
 }
 
+/// Spawn a decoder thread for local file decoding.
+fn spawn_local_decoder(
+    path: String,
+    meta_tx: tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+    msg_tx: tokio::sync::mpsc::Sender<TimestampedMessage>,
+    format_name: &'static str,
+) -> Result<usize, String> {
+    let reader = match robocodec::RoboReader::open(&path) {
+        Ok(r) => r,
+        Err(e) => {
+            let err = SourceError::OpenFailed {
+                path: std::path::PathBuf::from(&path),
+                error: Box::new(e),
+            };
+            let _ = meta_tx.send(Err(err));
+            return Err(format!("Failed to open {format_name} file: {path}"));
+        }
+    };
+
+    let message_count = reader.message_count();
+    let channels = reader.channels();
+    let topics: Vec<TopicMetadata> = channels
+        .values()
+        .map(|ch| TopicMetadata::new(ch.topic.clone(), ch.message_type.clone()))
+        .collect();
+
+    let metadata = SourceMetadata::new(format_name.to_string(), path)
+        .with_message_count(message_count)
+        .with_topics(topics);
+
+    if meta_tx.send(Ok(metadata)).is_err() {
+        return Err("Metadata receiver dropped".to_string());
+    }
+
+    let iter = match reader.decoded() {
+        Ok(iter) => iter,
+        Err(e) => return Err(format!("Failed to get decoded iterator: {e}")),
+    };
+
+    let mut count = 0usize;
+    for msg_result in iter {
+        let msg = match msg_result {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(error = %e, offset = count, "Skipping decode error");
+                continue;
+            }
+        };
+
+        let timestamped = TimestampedMessage::from(msg);
+
+        if msg_tx.blocking_send(timestamped).is_err() {
+            tracing::debug!(count, "Receiver dropped, stopping decoder");
+            break;
+        }
+
+        count += 1;
+        if count.is_multiple_of(10_000) {
+            tracing::debug!(messages = count, "{format_name} decoder progress");
+        }
+    }
+
+    tracing::debug!(messages = count, "Local {format_name} decode complete");
+    Ok(count)
+}
+
+/// Initialize a threaded source with a decoder function.
+async fn initialize_threaded_source(
+    path: &str,
+    thread_name: &str,
+    decoder_fn: impl FnOnce(
+            String,
+            tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+            tokio::sync::mpsc::Sender<TimestampedMessage>,
+        ) -> Result<usize, String>
+        + Send
+        + 'static,
+) -> SourceResult<(
+    SourceMetadata,
+    tokio::sync::mpsc::Receiver<TimestampedMessage>,
+    thread::JoinHandle<Result<usize, String>>,
+)> {
+    let (tx, rx) = tokio::sync::mpsc::channel(8192);
+    let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
+
+    let path_owned = path.to_string();
+    let handle = thread::Builder::new()
+        .name(thread_name.to_string())
+        .spawn(move || decoder_fn(path_owned, meta_tx, tx))
+        .map_err(|e| SourceError::ReadFailed(format!("Failed to spawn decoder thread: {e}")))?;
+
+    let metadata = match meta_rx.await {
+        Ok(Ok(metadata)) => metadata,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            match handle.join() {
+                Ok(Err(e)) => {
+                    return Err(SourceError::ReadFailed(format!(
+                        "Source initialization failed: {e}"
+                    )));
+                }
+                Err(_) => {
+                    return Err(SourceError::ReadFailed(
+                        "Decoder thread panicked during initialization".to_string(),
+                    ));
+                }
+                Ok(Ok(_)) => {}
+            }
+            return Err(SourceError::ReadFailed(
+                "Decoder thread exited before sending metadata".to_string(),
+            ));
+        }
+    };
+
+    Ok((metadata, rx, handle))
+}
+
 #[async_trait::async_trait]
 impl Source for BagSource {
     async fn initialize(&mut self, config: &SourceConfig) -> SourceResult<SourceMetadata> {
@@ -76,20 +193,17 @@ impl Source for BagSource {
             self.path = path.clone();
         }
 
-        let is_cloud = self.is_cloud_url();
-        let (metadata, rx, handle) = decode::initialize_threaded_source(
-            &self.path,
-            is_cloud,
-            "bag-decoder",
-            move |path, meta_tx, msg_tx| {
-                if is_cloud {
-                    decode::decode_s3_bag(&path, meta_tx, msg_tx)
-                } else {
-                    decode::decode_local(&path, "bag", meta_tx, msg_tx)
-                }
-            },
-        )
-        .await?;
+        if self.is_cloud_url() {
+            return Err(SourceError::InvalidConfig(
+                "Cloud URLs not yet supported for BagSource. Use local files.".to_string(),
+            ));
+        }
+
+        let (metadata, rx, handle) =
+            initialize_threaded_source(&self.path, "bag-decoder", |path, meta_tx, msg_tx| {
+                spawn_local_decoder(path, meta_tx, msg_tx, "bag")
+            })
+            .await?;
 
         self.metadata = Some(metadata.clone());
         self.receiver = Some(rx);
@@ -156,9 +270,7 @@ impl Source for BagSource {
 /// Batched ROS bag source that decodes messages in background thread.
 ///
 /// This source uses a dedicated decoder thread to read and parse bag files,
-/// delivering messages in batches for efficient processing. It's particularly
-/// useful for high-throughput scenarios where decoding overhead would otherwise
-/// block the async runtime.
+/// delivering messages in batches for efficient processing.
 pub struct BagSourceBatched {
     path: String,
     metadata: Option<SourceMetadata>,
@@ -216,6 +328,136 @@ impl BagSourceBatched {
     }
 }
 
+/// Spawn a batched decoder thread for local file decoding.
+fn spawn_local_decoder_batched(
+    path: String,
+    meta_tx: tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+    batch_tx: tokio::sync::mpsc::Sender<Vec<TimestampedMessage>>,
+    batch_size: usize,
+    format_name: &'static str,
+) -> Result<usize, String> {
+    let reader = match robocodec::RoboReader::open(&path) {
+        Ok(r) => r,
+        Err(e) => {
+            let err = SourceError::OpenFailed {
+                path: std::path::PathBuf::from(&path),
+                error: Box::new(e),
+            };
+            let _ = meta_tx.send(Err(err));
+            return Err(format!("Failed to open {format_name} file: {path}"));
+        }
+    };
+
+    let message_count = reader.message_count();
+    let channels = reader.channels();
+    let topics: Vec<TopicMetadata> = channels
+        .values()
+        .map(|ch| TopicMetadata::new(ch.topic.clone(), ch.message_type.clone()))
+        .collect();
+
+    let metadata = SourceMetadata::new(format_name.to_string(), path)
+        .with_message_count(message_count)
+        .with_topics(topics);
+
+    if meta_tx.send(Ok(metadata)).is_err() {
+        return Err("Metadata receiver dropped".to_string());
+    }
+
+    let iter = match reader.decoded() {
+        Ok(iter) => iter,
+        Err(e) => return Err(format!("Failed to get decoded iterator: {e}")),
+    };
+
+    let mut count = 0usize;
+    let mut batch = Vec::with_capacity(batch_size);
+
+    for msg_result in iter {
+        let msg = match msg_result {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(error = %e, offset = count, "Skipping decode error");
+                continue;
+            }
+        };
+
+        batch.push(TimestampedMessage::from(msg));
+
+        if batch.len() >= batch_size {
+            let batch_to_send = std::mem::replace(&mut batch, Vec::with_capacity(batch_size));
+            if batch_tx.blocking_send(batch_to_send).is_err() {
+                tracing::debug!(count, "Receiver dropped, stopping decoder");
+                break;
+            }
+        }
+
+        count += 1;
+        if count.is_multiple_of(10_000) {
+            tracing::debug!(messages = count, "{format_name} decoder progress");
+        }
+    }
+
+    // Send remaining messages in partial batch
+    if !batch.is_empty() {
+        let _ = batch_tx.blocking_send(batch);
+    }
+
+    tracing::debug!(messages = count, "Local {format_name} batched decode complete");
+    Ok(count)
+}
+
+/// Initialize a threaded source with batched output.
+async fn initialize_threaded_source_batched(
+    path: &str,
+    thread_name: &str,
+    batch_size: usize,
+    decoder_fn: impl FnOnce(
+            String,
+            tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+            tokio::sync::mpsc::Sender<Vec<TimestampedMessage>>,
+            usize,
+        ) -> Result<usize, String>
+        + Send
+        + 'static,
+) -> SourceResult<(
+    SourceMetadata,
+    tokio::sync::mpsc::Receiver<Vec<TimestampedMessage>>,
+    thread::JoinHandle<Result<usize, String>>,
+)> {
+    let (tx, rx) = tokio::sync::mpsc::channel(1024);
+    let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
+
+    let path_owned = path.to_string();
+    let handle = thread::Builder::new()
+        .name(thread_name.to_string())
+        .spawn(move || decoder_fn(path_owned, meta_tx, tx, batch_size))
+        .map_err(|e| SourceError::ReadFailed(format!("Failed to spawn decoder thread: {e}")))?;
+
+    let metadata = match meta_rx.await {
+        Ok(Ok(metadata)) => metadata,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            match handle.join() {
+                Ok(Err(e)) => {
+                    return Err(SourceError::ReadFailed(format!(
+                        "Source initialization failed: {e}"
+                    )));
+                }
+                Err(_) => {
+                    return Err(SourceError::ReadFailed(
+                        "Decoder thread panicked during initialization".to_string(),
+                    ));
+                }
+                Ok(Ok(_)) => {}
+            }
+            return Err(SourceError::ReadFailed(
+                "Decoder thread exited before sending metadata".to_string(),
+            ));
+        }
+    };
+
+    Ok((metadata, rx, handle))
+}
+
 #[async_trait::async_trait]
 impl Source for BagSourceBatched {
     async fn initialize(&mut self, config: &SourceConfig) -> SourceResult<SourceMetadata> {
@@ -223,22 +465,19 @@ impl Source for BagSourceBatched {
             self.path = path.clone();
         }
 
-        let is_cloud = self.is_cloud_url();
-        let batch_size = self.batch_size;
-
-        if is_cloud {
+        if self.is_cloud_url() {
             return Err(SourceError::InvalidConfig(
                 "Batched mode not supported for cloud URLs yet".to_string(),
             ));
         }
 
-        let (metadata, rx, handle) = decode::initialize_threaded_source_batched(
+        let batch_size = self.batch_size;
+        let (metadata, rx, handle) = initialize_threaded_source_batched(
             &self.path,
-            is_cloud,
             "bag-decoder-batched",
             batch_size,
-            move |path, meta_tx, batch_tx, batch_size| {
-                decode::decode_local_batched(&path, "bag", meta_tx, batch_tx, batch_size)
+            |path, meta_tx, batch_tx, batch_size| {
+                spawn_local_decoder_batched(path, meta_tx, batch_tx, batch_size, "bag")
             },
         )
         .await?;
@@ -322,7 +561,6 @@ impl Source for BagSourceBatched {
 /// Blocking ROS bag source for synchronous decoding.
 ///
 /// Similar to `BagSourceBatched` but uses blocking channels instead of async.
-/// Suitable for synchronous contexts where async runtime is not available.
 pub struct BagSourceBlocking {
     path: String,
     metadata: Option<SourceMetadata>,
@@ -380,6 +618,82 @@ impl BagSourceBlocking {
     }
 }
 
+/// Spawn a blocking decoder thread for local file decoding.
+fn spawn_local_decoder_blocking(
+    path: String,
+    meta_tx: tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+    batch_tx: crossbeam_channel::Sender<Vec<TimestampedMessage>>,
+    batch_size: usize,
+    format_name: &'static str,
+) -> Result<usize, String> {
+    let reader = match robocodec::RoboReader::open(&path) {
+        Ok(r) => r,
+        Err(e) => {
+            let err = SourceError::OpenFailed {
+                path: std::path::PathBuf::from(&path),
+                error: Box::new(e),
+            };
+            let _ = meta_tx.send(Err(err));
+            return Err(format!("Failed to open {format_name} file: {path}"));
+        }
+    };
+
+    let message_count = reader.message_count();
+    let channels = reader.channels();
+    let topics: Vec<TopicMetadata> = channels
+        .values()
+        .map(|ch| TopicMetadata::new(ch.topic.clone(), ch.message_type.clone()))
+        .collect();
+
+    let metadata = SourceMetadata::new(format_name.to_string(), path)
+        .with_message_count(message_count)
+        .with_topics(topics);
+
+    if meta_tx.send(Ok(metadata)).is_err() {
+        return Err("Metadata receiver dropped".to_string());
+    }
+
+    let iter = match reader.decoded() {
+        Ok(iter) => iter,
+        Err(e) => return Err(format!("Failed to get decoded iterator: {e}")),
+    };
+
+    let mut count = 0usize;
+    let mut batch = Vec::with_capacity(batch_size);
+
+    for msg_result in iter {
+        let msg = match msg_result {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(error = %e, offset = count, "Skipping decode error");
+                continue;
+            }
+        };
+
+        batch.push(TimestampedMessage::from(msg));
+
+        if batch.len() >= batch_size {
+            let batch_to_send = std::mem::replace(&mut batch, Vec::with_capacity(batch_size));
+            if batch_tx.send(batch_to_send).is_err() {
+                tracing::debug!(count, "Receiver dropped, stopping decoder");
+                break;
+            }
+        }
+
+        count += 1;
+        if count.is_multiple_of(10_000) {
+            tracing::debug!(messages = count, "{format_name} decoder progress");
+        }
+    }
+
+    if !batch.is_empty() {
+        let _ = batch_tx.send(batch);
+    }
+
+    tracing::debug!(messages = count, "Local {format_name} blocking decode complete");
+    Ok(count)
+}
+
 #[async_trait::async_trait]
 impl Source for BagSourceBlocking {
     async fn initialize(&mut self, config: &SourceConfig) -> SourceResult<SourceMetadata> {
@@ -387,28 +701,48 @@ impl Source for BagSourceBlocking {
             self.path = path.clone();
         }
 
-        let is_cloud = self.is_cloud_url();
-        let batch_size = self.batch_size;
-
-        if is_cloud {
+        if self.is_cloud_url() {
             return Err(SourceError::InvalidConfig(
                 "Blocking mode not supported for cloud URLs".to_string(),
             ));
         }
 
-        let (metadata, rx, handle): (
-            SourceMetadata,
-            crossbeam_channel::Receiver<Vec<TimestampedMessage>>,
-            _,
-        ) = decode::initialize_threaded_source_blocking(
-            &self.path,
-            is_cloud,
-            "bag-decoder-blocking",
-            move |path, meta_tx, batch_tx| {
-                decode::decode_local_blocking(&path, "bag", meta_tx, batch_tx, batch_size)
-            },
-        )
-        .await?;
+        let batch_size = self.batch_size;
+        let (tx, rx) = crossbeam_channel::bounded(16);
+        let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
+
+        let path_owned = self.path.clone();
+        let handle = thread::Builder::new()
+            .name("bag-decoder-blocking".to_string())
+            .spawn(move || {
+                spawn_local_decoder_blocking(path_owned, meta_tx, tx, batch_size, "bag")
+            })
+            .map_err(|e| {
+                SourceError::ReadFailed(format!("Failed to spawn decoder thread: {e}"))
+            })?;
+
+        let metadata = match meta_rx.await {
+            Ok(Ok(metadata)) => metadata,
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                match handle.join() {
+                    Ok(Err(e)) => {
+                        return Err(SourceError::ReadFailed(format!(
+                            "Source initialization failed: {e}"
+                        )));
+                    }
+                    Err(_) => {
+                        return Err(SourceError::ReadFailed(
+                            "Decoder thread panicked during initialization".to_string(),
+                        ));
+                    }
+                    Ok(Ok(_)) => {}
+                }
+                return Err(SourceError::ReadFailed(
+                    "Decoder thread exited before sending metadata".to_string(),
+                ));
+            }
+        };
 
         self.metadata = Some(metadata.clone());
         self.receiver = Some(rx);

@@ -7,7 +7,7 @@ use roboflow_storage::{LocalStorage, Storage};
 use crate::formats::common::{
     ImageData, Sink, VideoEncoderConfig, WriteOperation, decode_image_to_rgb,
 };
-use crate::media::video::{RsmpegMp4Encoder, VideoFrame, VideoFrameBuffer};
+use crate::media::video::{RsmpegMp4Encoder, RsmpegVideoComposer, VideoFrame, VideoFrameBuffer};
 
 pub struct StorageSink {
     storage: Arc<dyn Storage>,
@@ -81,8 +81,9 @@ impl Sink for StorageSink {
                 destination,
             } => {
                 let source_refs: Vec<_> = sources.iter().map(|p| p.as_path()).collect();
+                let composer = RsmpegVideoComposer::new();
                 self.storage
-                    .compose_objects(&source_refs, &destination)
+                    .compose_objects(&source_refs, &destination, &composer)
                     .map_err(|e| RoboflowError::other(format!("Storage error: {}", e)))?;
                 Ok(())
             }
@@ -322,24 +323,38 @@ mod tests {
 
     #[test]
     fn test_storage_sink_compose_files() {
+        use roboflow_core::MockVideoComposer;
+        use roboflow_storage::Storage;
+
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let storage = Arc::new(roboflow_storage::LocalStorage::new(dir.path()));
+        let _sink = StorageSink::with_storage(storage.clone(), dir.path().join(".temp"));
 
-        let source1 = dir.path().join("source1.txt");
-        let source2 = dir.path().join("source2.txt");
-        std::fs::write(&source1, "hello ").unwrap();
-        std::fs::write(&source2, "world").unwrap();
+        // Create two dummy MP4 files (content doesn't matter for this test since we use MockVideoComposer)
+        let source1 = dir.path().join("source1.mp4");
+        let source2 = dir.path().join("source2.mp4");
+        std::fs::write(&source1, "dummy mp4 data 1").unwrap();
+        std::fs::write(&source2, "dummy mp4 data 2").unwrap();
 
-        sink.execute(WriteOperation::ComposeFiles {
-            sources: vec![source1, source2],
-            destination: PathBuf::from("combined.txt"),
-        })
-        .unwrap();
+        // Verify source files exist
+        assert!(storage.exists(&source1));
+        assert!(storage.exists(&source2));
 
-        let path = dir.path().join("combined.txt");
-        assert!(path.exists());
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(content, "hello world");
+        // Compose them using MockVideoComposer to verify the compose operation is called
+        let composer = MockVideoComposer::new();
+        storage
+            .compose_objects(
+                &[&source1, &source2],
+                &PathBuf::from("combined.mp4"),
+                &composer,
+            )
+            .unwrap();
+
+        // Verify composer was called
+        let ops = composer.get_operations();
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].sources.len(), 2);
+        assert!(ops[0].dest.to_string_lossy().contains("combined.mp4"));
     }
 
     #[test]

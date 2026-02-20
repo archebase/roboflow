@@ -130,7 +130,7 @@ async fn test_e2e_multi_episode_processing() {
     let mut writer = InMemoryWriter::new();
 
     // Process 5 episodes with varying frame counts
-    let episode_frames = vec![10, 20, 15, 25, 30];
+    let episode_frames = [10, 20, 15, 25, 30];
 
     for (ep_idx, &frame_count) in episode_frames.iter().enumerate() {
         writer.start_episode(Some(ep_idx)).unwrap();

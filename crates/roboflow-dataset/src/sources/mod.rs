@@ -1,6 +1,5 @@
 pub mod bag;
 pub mod config;
-pub mod decode;
 pub mod error;
 pub mod mcap;
 pub mod metadata;

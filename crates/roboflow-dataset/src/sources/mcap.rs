@@ -7,10 +7,11 @@
 //! Supports both local files and S3/OSS URLs via robocodec's native streaming.
 //! Uses a background decoder thread with a bounded channel for backpressure.
 
-use crate::sources::decode;
 use crate::sources::{
-    Source, SourceConfig, SourceError, SourceMetadata, SourceResult, TimestampedMessage,
+    Source, SourceConfig, SourceError, SourceMetadata, SourceResult, TopicMetadata,
 };
+use robocodec::io::traits::FormatReader;
+use roboflow_core::TimestampedMessage;
 use std::thread;
 
 /// MCAP source reader.
@@ -69,6 +70,123 @@ impl McapSource {
     }
 }
 
+/// Spawn a decoder thread for local MCAP file decoding.
+fn spawn_local_decoder(
+    path: String,
+    meta_tx: tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+    msg_tx: tokio::sync::mpsc::Sender<TimestampedMessage>,
+    format_name: &'static str,
+) -> Result<usize, String> {
+    let reader = match robocodec::RoboReader::open(&path) {
+        Ok(r) => r,
+        Err(e) => {
+            let err = SourceError::OpenFailed {
+                path: std::path::PathBuf::from(&path),
+                error: Box::new(e),
+            };
+            let _ = meta_tx.send(Err(err));
+            return Err(format!("Failed to open {format_name} file: {path}"));
+        }
+    };
+
+    let message_count = reader.message_count();
+    let channels = reader.channels();
+    let topics: Vec<TopicMetadata> = channels
+        .values()
+        .map(|ch| TopicMetadata::new(ch.topic.clone(), ch.message_type.clone()))
+        .collect();
+
+    let metadata = SourceMetadata::new(format_name.to_string(), path)
+        .with_message_count(message_count)
+        .with_topics(topics);
+
+    if meta_tx.send(Ok(metadata)).is_err() {
+        return Err("Metadata receiver dropped".to_string());
+    }
+
+    let iter = match reader.decoded() {
+        Ok(iter) => iter,
+        Err(e) => return Err(format!("Failed to get decoded iterator: {e}")),
+    };
+
+    let mut count = 0usize;
+    for msg_result in iter {
+        let msg = match msg_result {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(error = %e, offset = count, "Skipping decode error");
+                continue;
+            }
+        };
+
+        let timestamped = TimestampedMessage::from(msg);
+
+        if msg_tx.blocking_send(timestamped).is_err() {
+            tracing::debug!(count, "Receiver dropped, stopping decoder");
+            break;
+        }
+
+        count += 1;
+        if count.is_multiple_of(10_000) {
+            tracing::debug!(messages = count, "{format_name} decoder progress");
+        }
+    }
+
+    tracing::debug!(messages = count, "Local {format_name} decode complete");
+    Ok(count)
+}
+
+/// Initialize a threaded source with a decoder function.
+async fn initialize_threaded_source(
+    path: &str,
+    thread_name: &str,
+    decoder_fn: impl FnOnce(
+            String,
+            tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+            tokio::sync::mpsc::Sender<TimestampedMessage>,
+        ) -> Result<usize, String>
+        + Send
+        + 'static,
+) -> SourceResult<(
+    SourceMetadata,
+    tokio::sync::mpsc::Receiver<TimestampedMessage>,
+    thread::JoinHandle<Result<usize, String>>,
+)> {
+    let (tx, rx) = tokio::sync::mpsc::channel(8192);
+    let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
+
+    let path_owned = path.to_string();
+    let handle = thread::Builder::new()
+        .name(thread_name.to_string())
+        .spawn(move || decoder_fn(path_owned, meta_tx, tx))
+        .map_err(|e| SourceError::ReadFailed(format!("Failed to spawn decoder thread: {e}")))?;
+
+    let metadata = match meta_rx.await {
+        Ok(Ok(metadata)) => metadata,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            match handle.join() {
+                Ok(Err(e)) => {
+                    return Err(SourceError::ReadFailed(format!(
+                        "Source initialization failed: {e}"
+                    )));
+                }
+                Err(_) => {
+                    return Err(SourceError::ReadFailed(
+                        "Decoder thread panicked during initialization".to_string(),
+                    ));
+                }
+                Ok(Ok(_)) => {}
+            }
+            return Err(SourceError::ReadFailed(
+                "Decoder thread exited before sending metadata".to_string(),
+            ));
+        }
+    };
+
+    Ok((metadata, rx, handle))
+}
+
 #[async_trait::async_trait]
 impl Source for McapSource {
     async fn initialize(&mut self, config: &SourceConfig) -> SourceResult<SourceMetadata> {
@@ -77,20 +195,17 @@ impl Source for McapSource {
             self.path = path.clone();
         }
 
-        let is_cloud = self.is_cloud_url();
-        let (metadata, rx, handle) = decode::initialize_threaded_source(
-            &self.path,
-            is_cloud,
-            "mcap-decoder",
-            move |path, meta_tx, msg_tx| {
-                if is_cloud {
-                    decode::decode_s3_mcap(&path, meta_tx, msg_tx)
-                } else {
-                    decode::decode_local(&path, "mcap", meta_tx, msg_tx)
-                }
-            },
-        )
-        .await?;
+        if self.is_cloud_url() {
+            return Err(SourceError::InvalidConfig(
+                "Cloud URLs not yet supported for McapSource. Use local files.".to_string(),
+            ));
+        }
+
+        let (metadata, rx, handle) =
+            initialize_threaded_source(&self.path, "mcap-decoder", |path, meta_tx, msg_tx| {
+                spawn_local_decoder(path, meta_tx, msg_tx, "mcap")
+            })
+            .await?;
 
         self.metadata = Some(metadata.clone());
         self.receiver = Some(rx);
