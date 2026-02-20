@@ -120,7 +120,7 @@ impl WriteOperation {
 /// # Example
 ///
 /// ```rust,ignore
-/// use roboflow_pipeline::formats::{WriteOperation, Sink};
+/// use roboflow_dataset::formats::{WriteOperation, Sink};
 ///
 /// // Mock sink for testing
 /// pub struct VecSink {

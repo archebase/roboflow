@@ -58,7 +58,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use roboflow_pipeline::formats::lerobot::LerobotWriter;
+use roboflow_dataset::formats::lerobot::LerobotWriter;
 
 use crate::CheckpointState;
 use crate::episode::{EpisodeAllocation, EpisodeAllocator, EpisodeAllocatorError};

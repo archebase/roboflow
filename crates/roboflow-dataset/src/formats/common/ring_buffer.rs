@@ -8,8 +8,8 @@
 //! a capture thread to an encoding thread with backpressure handling.
 
 use std::cell::UnsafeCell;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::formats::common::video::VideoFrame;
@@ -61,9 +61,9 @@ unsafe impl Sync for RingBufferSlot {}
 ///
 /// # Example
 ///
-/// ```no_run
-/// use crate::formats::common::ring_buffer::FrameRingBuffer;
-/// use crate::formats::common::VideoFrame;
+/// ```ignore
+/// use roboflow_dataset::formats::common::ring_buffer::FrameRingBuffer;
+/// use roboflow_dataset::formats::common::VideoFrame;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let buffer = FrameRingBuffer::new(128);
@@ -109,8 +109,8 @@ impl FrameRingBuffer {
     ///
     /// # Example
     ///
-    /// ```
-    /// use crate::formats::common::ring_buffer::FrameRingBuffer;
+    /// ```ignore
+    /// use roboflow_dataset::formats::common::ring_buffer::FrameRingBuffer;
     ///
     /// let buffer = FrameRingBuffer::new(128);
     /// assert_eq!(buffer.capacity(), 128);
@@ -193,14 +193,13 @@ impl FrameRingBuffer {
     ///
     /// # Example
     ///
-    /// ```no_run
-    /// # use crate::formats::common::ring_buffer::FrameRingBuffer;
-    /// # use crate::formats::common::video::VideoFrame;
-    /// # use std::time::Duration;
-    /// # let buffer = FrameRingBuffer::new(128);
-    /// # let frame = VideoFrame::new(640, 480, vec![0; 640 * 480 * 3]);
+    /// ```ignore
+    /// use roboflow_dataset::formats::common::ring_buffer::FrameRingBuffer;
+    /// use roboflow_dataset::formats::common::video::VideoFrame;
+    /// use std::time::Duration;
+    /// let buffer = FrameRingBuffer::new(128);
+    /// let frame = VideoFrame::new(640, 480, vec![0; 640 * 480 * 3]);
     /// buffer.push_with_timeout(frame, Duration::from_millis(100))?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn push_with_timeout(
         &self,

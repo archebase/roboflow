@@ -21,7 +21,7 @@ use roboflow::{
     DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig, LerobotWriter,
     LerobotWriterTrait, VideoConfig,
 };
-use roboflow_pipeline::{ImageData, common::AlignedFrame};
+use roboflow_dataset::{ImageData, common::AlignedFrame};
 use roboflow_storage::{LocalStorage, StorageFactory, StorageUrl};
 
 /// Create a test output directory.

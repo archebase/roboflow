@@ -27,7 +27,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use roboflow_pipeline::core::{FormatWriter, AlignedFrame, EpisodeManager};
+//! use roboflow_dataset::core::{FormatWriter, AlignedFrame, EpisodeManager};
 //!
 //! fn process_dataset<W: FormatWriter>(writer: &mut W, frames: &[AlignedFrame]) -> Result<()> {
 //!     writer.start_episode(None)?;

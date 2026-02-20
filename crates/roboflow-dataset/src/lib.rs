@@ -17,7 +17,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use roboflow_pipeline::core::{FormatWriter, AlignedFrame};
+//! use roboflow_dataset::core::{FormatWriter, AlignedFrame};
 //!
 //! let mut writer = LerobotWriter::builder()
 //!     .output_dir("/output")

@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 /// # Example
 ///
 /// ```rust,ignore
-/// use roboflow_pipeline::video::LeRobotVideoPathScheme;
+/// use roboflow_dataset::video::LeRobotVideoPathScheme;
 ///
 /// let scheme = LeRobotVideoPathScheme::new("dataset/episode_001");
 /// let path = scheme.video_path(0, "observation.images.cam_left", 0);

@@ -4,7 +4,7 @@ members = [
     "crates/roboflow-core",
     "crates/roboflow-storage",
     "crates/roboflow-executor",
-    "crates/roboflow-pipeline",
+    "crates/roboflow-dataset",
     "crates/roboflow-distributed",
 ]
 resolver = "2"
@@ -13,9 +13,9 @@ resolver = "2"
 # Internal crates
 roboflow-core = { path = "crates/roboflow-core", version = "0.2.0" }
 roboflow-storage = { path = "crates/roboflow-storage", version = "0.2.0" }
+roboflow-dataset = { path = "crates/roboflow-dataset", version = "0.2.0" }
 roboflow-distributed = { path = "crates/roboflow-distributed", version = "0.2.0" }
 roboflow-executor = { path = "crates/roboflow-executor", version = "0.2.0" }
-roboflow-pipeline = { path = "crates/roboflow-pipeline", version = "0.2.0" }
 
 # External dependencies
 # Pinned to specific commit for reproducible builds
@@ -46,7 +46,7 @@ robocodec = { workspace = true }
 roboflow-core = { workspace = true }
 roboflow-storage = { workspace = true }
 roboflow-distributed = { workspace = true }
-roboflow-pipeline = { workspace = true }
+roboflow-dataset = { workspace = true }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

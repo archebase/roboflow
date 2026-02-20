@@ -13,7 +13,7 @@ use roboflow::{
     DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig, LerobotWriter,
     LerobotWriterTrait, VideoConfig,
 };
-use roboflow_pipeline::{ImageData, common::AlignedFrame};
+use roboflow_dataset::{ImageData, common::AlignedFrame};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Path to the extracted MCAP file

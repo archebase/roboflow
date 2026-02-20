@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use roboflow_core::TimestampedMessage;
-use roboflow_pipeline::sources::{Source, SourceConfig, SourceError, SourceMetadata, SourceResult};
+use roboflow_dataset::sources::{Source, SourceConfig, SourceError, SourceMetadata, SourceResult};
 
 use super::SourceProvider;
 

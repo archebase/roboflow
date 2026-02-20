@@ -56,11 +56,11 @@ use std::path::Path;
 use roboflow_core::{Result, Validate, validators};
 
 // Re-export individual configs for backward compatibility
-pub use roboflow_pipeline::formats::config::{OutputConfig, OutputFormat};
-pub use roboflow_pipeline::formats::lerobot::{
+pub use roboflow_dataset::formats::config::{OutputConfig, OutputFormat};
+pub use roboflow_dataset::formats::lerobot::{
     DatasetConfig, FlushingConfig, LerobotConfig, Mapping, StreamingConfig, VideoConfig,
 };
-pub use roboflow_pipeline::sources::{SourceConfig, SourceType};
+pub use roboflow_dataset::sources::{SourceConfig, SourceType};
 
 /// Unified pipeline configuration.
 ///

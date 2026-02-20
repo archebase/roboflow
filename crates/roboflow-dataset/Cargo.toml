@@ -1,11 +1,11 @@
 [package]
-name = "roboflow-pipeline"
+name = "roboflow-dataset"
 version = "0.2.0"
 edition = "2024"
 authors = ["Strata Contributors"]
 license = "MulanPSL-2.0"
 repository = "https://github.com/archebase/roboflow"
-description = "Data pipeline for converting robotics data to training datasets"
+description = "Dataset formats and conversion for robotics training data"
 
 [dependencies]
 roboflow-core = { workspace = true }

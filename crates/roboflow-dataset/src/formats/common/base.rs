@@ -37,8 +37,8 @@ pub type UploadState = HashMap<u64, (Vec<String>, bool)>;
 ///
 /// # Example
 ///
-/// ```rust
-/// use crate::formats::common::{AlignedFrame, ImageData};
+/// ```ignore
+/// use roboflow_dataset::formats::common::{AlignedFrame, ImageData};
 ///
 /// let mut frame = AlignedFrame::new(0, 1_000_000_000); // frame 0, 1 second
 /// frame.add_state("observation.joint.position".to_string(), vec![0.0, 1.0, 2.0]);

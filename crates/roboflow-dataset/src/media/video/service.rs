@@ -46,7 +46,7 @@ impl VideoServiceConfig {
 /// # Example
 ///
 /// ```ignore
-/// use roboflow_pipeline::video::{VideoEncoderService, LeRobotVideoPathScheme};
+/// use roboflow_dataset::video::{VideoEncoderService, LeRobotVideoPathScheme};
 /// use std::sync::Arc;
 ///
 /// let path_scheme = Arc::new(LeRobotVideoPathScheme::new("dataset/episode_001"));

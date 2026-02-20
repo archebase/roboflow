@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use roboflow::{LerobotConfig, LerobotWriter};
-use roboflow_pipeline::formats::alignment::StreamingConfig;
-use roboflow_pipeline::{PipelineConfig, PipelineExecutor};
+use roboflow_dataset::formats::alignment::StreamingConfig;
+use roboflow_dataset::{PipelineConfig, PipelineExecutor};
 
 const MCAP_PATH: &str = "tests/fixtures/sample.mcap";
 const CONFIG_PATH: &str = "tests/fixtures/sample_mcap_lerobot.toml";

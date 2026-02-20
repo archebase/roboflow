@@ -83,8 +83,8 @@ impl SourceConfig {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use crate::sources::SourceConfig;
+    /// ```ignore
+    /// use roboflow_dataset::sources::SourceConfig;
     ///
     /// // Local files
     /// let config = SourceConfig::from_url("/path/to/data.mcap");

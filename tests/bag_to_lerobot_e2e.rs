@@ -3,13 +3,13 @@ use std::fs;
 use std::path::Path;
 
 use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig};
-use roboflow_pipeline::DatasetWriter;
-use roboflow_pipeline::formats::alignment::StreamingConfig;
-use roboflow_pipeline::formats::lerobot::{
+use roboflow_dataset::DatasetWriter;
+use roboflow_dataset::formats::alignment::StreamingConfig;
+use roboflow_dataset::formats::lerobot::{
     FlushingConfig, Mapping, MappingType, StreamingConfig as LerobotStreamingConfig,
 };
-use roboflow_pipeline::sources::SourceConfig;
-use roboflow_pipeline::{PipelineConfig, PipelineExecutor};
+use roboflow_dataset::sources::SourceConfig;
+use roboflow_dataset::{PipelineConfig, PipelineExecutor};
 
 // Large bag files (1.6GB/1.7GB) - used for comprehensive testing
 const _LARGE_BAG_PATH_1: &str =
@@ -88,7 +88,7 @@ fn test_bag_to_lerobot_e2e() {
     let config = create_test_lerobot_config();
 
     // Register builtin sources before creating source
-    roboflow_pipeline::sources::register_builtin_sources();
+    roboflow_dataset::sources::register_builtin_sources();
 
     let topic_mappings: HashMap<String, String> = config
         .mappings
@@ -98,7 +98,7 @@ fn test_bag_to_lerobot_e2e() {
 
     // Use streaming config from LerobotConfig
     let pipeline_streaming =
-        roboflow_pipeline::formats::alignment::StreamingConfig::with_fps(config.dataset.base.fps);
+        roboflow_dataset::formats::alignment::StreamingConfig::with_fps(config.dataset.base.fps);
     let pipeline_config =
         PipelineConfig::new(pipeline_streaming).with_topic_mappings(topic_mappings);
 
@@ -107,10 +107,10 @@ fn test_bag_to_lerobot_e2e() {
     let mut executor = PipelineExecutor::new(writer, pipeline_config);
 
     let source_config = SourceConfig::bag(TEST_BAG_PATH);
-    let mut source = roboflow_pipeline::sources::create_source(&source_config)
+    let mut source = roboflow_dataset::sources::create_source(&source_config)
         .expect("Failed to create bag source");
 
-    let _metadata: roboflow_pipeline::sources::SourceMetadata = tokio::runtime::Runtime::new()
+    let _metadata: roboflow_dataset::sources::SourceMetadata = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(source.initialize(&source_config))
         .expect("Failed to initialize source");
@@ -204,10 +204,10 @@ fn test_bag_to_lerobot_s3_upload() {
             .expect("Failed to create LeRobot writer");
 
         let source_config = SourceConfig::bag(TEST_BAG_PATH);
-        let mut source = roboflow_pipeline::sources::create_source(&source_config)
+        let mut source = roboflow_dataset::sources::create_source(&source_config)
             .expect("Failed to create bag source");
 
-        let metadata: roboflow_pipeline::sources::SourceMetadata = source.initialize(&source_config).await
+        let metadata: roboflow_dataset::sources::SourceMetadata = source.initialize(&source_config).await
             .expect("Failed to initialize source");
         println!("Source metadata: {:?}", metadata);
 
@@ -635,7 +635,7 @@ fn test_two_bags_to_lerobot_two_episodes() {
     let config = create_test_lerobot_config();
 
     // Register builtin sources before creating source
-    roboflow_pipeline::sources::register_builtin_sources();
+    roboflow_dataset::sources::register_builtin_sources();
 
     let rt = tokio::runtime::Runtime::new().unwrap();
 
@@ -659,10 +659,10 @@ fn test_two_bags_to_lerobot_two_episodes() {
         );
 
         let source_config = SourceConfig::bag(*bag_path);
-        let mut source = roboflow_pipeline::sources::create_source(&source_config)
+        let mut source = roboflow_dataset::sources::create_source(&source_config)
             .expect("Failed to create bag source");
 
-        let _metadata: roboflow_pipeline::sources::SourceMetadata = rt
+        let _metadata: roboflow_dataset::sources::SourceMetadata = rt
             .block_on(source.initialize(&source_config))
             .expect("Failed to initialize source");
 

@@ -39,7 +39,7 @@ pub use roboflow_core::Result;
 /// # Example
 ///
 /// ```rust,ignore
-/// use roboflow_pipeline::core::{FormatWriter, AlignedFrame};
+/// use roboflow_dataset::core::{FormatWriter, AlignedFrame};
 ///
 /// fn process_episode<W: FormatWriter>(writer: &mut W, frames: &[AlignedFrame]) -> Result<()> {
 ///     writer.start_episode(None)?;

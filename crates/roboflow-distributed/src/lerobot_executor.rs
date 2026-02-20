@@ -53,7 +53,7 @@ impl LeRobotExecutor {
         _job_registry: Arc<tokio::sync::RwLock<JobRegistry>>,
     ) -> Result<ProcessingResult> {
         // Ensure sources are registered
-        roboflow_pipeline::sources::register_builtin_sources();
+        roboflow_dataset::sources::register_builtin_sources();
         tracing::info!(
             unit_id = %unit.id,
             files = unit.files.len(),

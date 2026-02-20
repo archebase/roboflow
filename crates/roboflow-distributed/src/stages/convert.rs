@@ -8,13 +8,13 @@ use roboflow_core::Result;
 use roboflow_executor::object_store::{ObjectId, ObjectRef};
 use roboflow_executor::stage::{PartitionId, Stage, StageId};
 use roboflow_executor::task::{Task, TaskContext, TaskResult, TaskStatus};
-use roboflow_pipeline::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
-use roboflow_pipeline::formats::{
+use roboflow_dataset::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
+use roboflow_dataset::formats::{
     ParallelPipelineExecutor, PipelineConfig,
     common::DatasetBaseConfig,
     lerobot::{DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig},
 };
-use roboflow_pipeline::sources::{SourceConfig, create_source};
+use roboflow_dataset::sources::{SourceConfig, create_source};
 
 /// Stage for converting bag files to LeRobot format.
 ///
@@ -160,7 +160,7 @@ impl Task for ConvertTask {
 
         // Create pipeline config using the streaming config from lerobot_config
         let streaming_config =
-            roboflow_pipeline::formats::alignment::config::StreamingConfig::with_fps(
+            roboflow_dataset::formats::alignment::config::StreamingConfig::with_fps(
                 lerobot_config.dataset.base.fps,
             );
         let pipeline_config = PipelineConfig::new(streaming_config);

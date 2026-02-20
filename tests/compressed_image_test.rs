@@ -13,8 +13,8 @@ use roboflow::{
     DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig as DatasetConfig,
     LerobotWriter, LerobotWriterTrait, VideoConfig,
 };
-use roboflow_pipeline::formats::alignment::StreamingConfig;
-use roboflow_pipeline::{ImageData, PipelineConfig, PipelineExecutor, common::AlignedFrame};
+use roboflow_dataset::formats::alignment::StreamingConfig;
+use roboflow_dataset::{ImageData, PipelineConfig, PipelineExecutor, common::AlignedFrame};
 
 /// Test that ImageData correctly handles compressed vs raw images.
 #[test]

@@ -183,9 +183,12 @@ async fn test_stage_execution_error_handling() {
         .unwrap()
         .join("tests/fixtures");
     let input_file = format!("file://{}/sample.bag", fixture_dir.display());
-    
+
     let pipeline = PipelineBuilder::new()
-        .stage(Arc::new(DiscoverStage::new(&format!("file://{}/", fixture_dir.display()))))
+        .stage(Arc::new(DiscoverStage::new(&format!(
+            "file://{}/",
+            fixture_dir.display()
+        ))))
         .stage(Arc::new(ConvertStage::new(
             &input_file,
             "/tmp/output/",

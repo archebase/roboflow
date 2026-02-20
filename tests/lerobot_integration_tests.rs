@@ -15,7 +15,7 @@ use std::fs;
 
 use roboflow::LerobotDatasetConfig as DatasetConfig;
 use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, LerobotWriterTrait, VideoConfig};
-use roboflow_pipeline::ImageData;
+use roboflow_dataset::ImageData;
 
 /// Create a test output directory.
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {

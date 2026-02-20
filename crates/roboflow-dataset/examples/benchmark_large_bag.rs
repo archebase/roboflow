@@ -6,14 +6,14 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
-use roboflow_pipeline::formats::alignment::StreamingConfig;
-use roboflow_pipeline::formats::lerobot::{
+use roboflow_dataset::formats::alignment::StreamingConfig;
+use roboflow_dataset::formats::lerobot::{
     FlushingConfig, LerobotConfig, LerobotWriter, Mapping, MappingType,
     StreamingConfig as LerobotStreamingConfig, VideoConfig, config::DatasetBaseConfig,
     config::DatasetConfig,
 };
-use roboflow_pipeline::formats::{ParallelPipelineExecutor, PipelineConfig};
-use roboflow_pipeline::sources::SourceConfig;
+use roboflow_dataset::formats::{ParallelPipelineExecutor, PipelineConfig};
+use roboflow_dataset::sources::SourceConfig;
 
 fn create_lerobot_config() -> LerobotConfig {
     LerobotConfig {
@@ -87,7 +87,7 @@ fn benchmark_bag_conversion(
 
     let config = create_lerobot_config();
 
-    roboflow_pipeline::sources::register_builtin_sources();
+    roboflow_dataset::sources::register_builtin_sources();
 
     let topic_mappings: HashMap<String, String> = config
         .mappings
@@ -103,10 +103,10 @@ fn benchmark_bag_conversion(
     let mut executor = ParallelPipelineExecutor::new(writer, pipeline_config)?;
 
     let source_config = SourceConfig::bag(bag_path);
-    let mut source = roboflow_pipeline::sources::create_source(&source_config)?;
+    let mut source = roboflow_dataset::sources::create_source(&source_config)?;
 
     let rt = tokio::runtime::Runtime::new()?;
-    let _metadata: roboflow_pipeline::sources::SourceMetadata =
+    let _metadata: roboflow_dataset::sources::SourceMetadata =
         rt.block_on(async { source.initialize(&source_config).await })?;
 
     let overall_start = Instant::now();
