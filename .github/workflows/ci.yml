@@ -13,7 +13,7 @@ env:
 jobs:
   license:
     name: License Compliance
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -67,7 +67,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -95,7 +95,7 @@ jobs:
   coverage:
     name: Coverage
     needs: rust-test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -137,7 +137,7 @@ jobs:
   security:
     name: Security Audit
     needs: license
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
