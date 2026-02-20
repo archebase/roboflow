@@ -7,7 +7,9 @@
 //! Supports both local files and S3/OSS URLs via robocodec's native streaming.
 //! Uses a background decoder thread with a bounded channel for backpressure.
 
-use crate::sources::{Source, SourceConfig, SourceError, SourceMetadata, SourceResult, TopicMetadata};
+use crate::sources::{
+    Source, SourceConfig, SourceError, SourceMetadata, SourceResult, TopicMetadata,
+};
 use robocodec::io::traits::FormatReader;
 use roboflow_core::TimestampedMessage;
 use std::thread;
@@ -139,12 +141,12 @@ async fn initialize_threaded_source(
     path: &str,
     thread_name: &str,
     decoder_fn: impl FnOnce(
-            String,
-            tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
-            tokio::sync::mpsc::Sender<TimestampedMessage>,
-        ) -> Result<usize, String>
-        + Send
-        + 'static,
+        String,
+        tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+        tokio::sync::mpsc::Sender<TimestampedMessage>,
+    ) -> Result<usize, String>
+    + Send
+    + 'static,
 ) -> SourceResult<(
     SourceMetadata,
     tokio::sync::mpsc::Receiver<TimestampedMessage>,
@@ -401,7 +403,10 @@ fn spawn_local_decoder_batched(
         let _ = batch_tx.blocking_send(batch);
     }
 
-    tracing::debug!(messages = count, "Local {format_name} batched decode complete");
+    tracing::debug!(
+        messages = count,
+        "Local {format_name} batched decode complete"
+    );
     Ok(count)
 }
 
@@ -411,13 +416,13 @@ async fn initialize_threaded_source_batched(
     thread_name: &str,
     batch_size: usize,
     decoder_fn: impl FnOnce(
-            String,
-            tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
-            tokio::sync::mpsc::Sender<Vec<TimestampedMessage>>,
-            usize,
-        ) -> Result<usize, String>
-        + Send
-        + 'static,
+        String,
+        tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+        tokio::sync::mpsc::Sender<Vec<TimestampedMessage>>,
+        usize,
+    ) -> Result<usize, String>
+    + Send
+    + 'static,
 ) -> SourceResult<(
     SourceMetadata,
     tokio::sync::mpsc::Receiver<Vec<TimestampedMessage>>,
@@ -690,7 +695,10 @@ fn spawn_local_decoder_blocking(
         let _ = batch_tx.send(batch);
     }
 
-    tracing::debug!(messages = count, "Local {format_name} blocking decode complete");
+    tracing::debug!(
+        messages = count,
+        "Local {format_name} blocking decode complete"
+    );
     Ok(count)
 }
 
@@ -714,12 +722,8 @@ impl Source for BagSourceBlocking {
         let path_owned = self.path.clone();
         let handle = thread::Builder::new()
             .name("bag-decoder-blocking".to_string())
-            .spawn(move || {
-                spawn_local_decoder_blocking(path_owned, meta_tx, tx, batch_size, "bag")
-            })
-            .map_err(|e| {
-                SourceError::ReadFailed(format!("Failed to spawn decoder thread: {e}"))
-            })?;
+            .spawn(move || spawn_local_decoder_blocking(path_owned, meta_tx, tx, batch_size, "bag"))
+            .map_err(|e| SourceError::ReadFailed(format!("Failed to spawn decoder thread: {e}")))?;
 
         let metadata = match meta_rx.await {
             Ok(Ok(metadata)) => metadata,

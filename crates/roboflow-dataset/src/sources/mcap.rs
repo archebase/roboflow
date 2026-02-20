@@ -141,12 +141,12 @@ async fn initialize_threaded_source(
     path: &str,
     thread_name: &str,
     decoder_fn: impl FnOnce(
-            String,
-            tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
-            tokio::sync::mpsc::Sender<TimestampedMessage>,
-        ) -> Result<usize, String>
-        + Send
-        + 'static,
+        String,
+        tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+        tokio::sync::mpsc::Sender<TimestampedMessage>,
+    ) -> Result<usize, String>
+    + Send
+    + 'static,
 ) -> SourceResult<(
     SourceMetadata,
     tokio::sync::mpsc::Receiver<TimestampedMessage>,
