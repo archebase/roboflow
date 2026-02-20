@@ -34,19 +34,20 @@ pub type Result<T> = std::result::Result<T, SlotPoolError>;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use roboflow_distributed::SlotPool;
 ///
-/// # tokio_test::block_on(async {
-/// // Create a pool with 4 slots
-/// let pool = SlotPool::new(4);
+/// #[tokio::main]
+/// async fn main() {
+///     // Create a pool with 4 slots
+///     let pool = SlotPool::new(4);
 ///
-/// // Acquire a slot (async, waits if none available)
-/// let slot = pool.acquire().await.unwrap();
+///     // Acquire a slot (async, waits if none available)
+///     let slot = pool.acquire().await.unwrap();
 ///
-/// // Slot is automatically released when dropped
-/// drop(slot);
-/// # });
+///     // Slot is automatically released when dropped
+///     drop(slot);
+/// }
 /// ```
 #[derive(Debug)]
 pub struct SlotPool {

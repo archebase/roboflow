@@ -18,7 +18,7 @@ use roboflow::{
     LerobotWriter, LerobotWriterTrait, VideoConfig,
 };
 
-use roboflow_pipeline::{ImageData, common::AlignedFrame};
+use roboflow_pipeline::{common::AlignedFrame, ImageData};
 
 /// Create a test output directory.
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
@@ -580,9 +580,10 @@ fn test_lerobot_writer_stats_accuracy() {
     writer.finish_episode(Some(0)).unwrap();
     let stats = writer.finalize_with_config().unwrap();
 
-    // Stats should be valid (no data written without state/action frames)
+    // Stats should be valid (metadata written, but no frame data)
     assert!(stats.duration_sec >= 0.0);
-    assert_eq!(stats.output_bytes, 0); // No Parquet/video files without frames
+    assert!(stats.output_bytes > 0);
+    assert_eq!(stats.frames_written, 0);
 }
 
 #[test]
