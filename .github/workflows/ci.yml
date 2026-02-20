@@ -46,13 +46,13 @@ jobs:
       - name: Check formatting (Rust)
         run: cargo fmt -- --check
 
-      - name: Install HDF5
+      - name: Install system dependencies
         run: |
           if [ "$RUNNER_OS" == "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y libhdf5-dev
+            sudo apt-get update && sudo apt-get install -y libhdf5-dev ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libswresample-dev pkg-config
           elif [ "$RUNNER_OS" == "macOS" ]; then
             # Use HDF5 1.10 as hdf5-sys doesn't support HDF5 2.x yet
-            brew install hdf5@1.10
+            brew install hdf5@1.10 ffmpeg
             echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
           fi
         shell: bash
@@ -78,13 +78,13 @@ jobs:
           # Invalidate cache when robocodec git dependency changes
           cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
 
-      - name: Install HDF5
+      - name: Install system dependencies
         run: |
           if [ "$RUNNER_OS" == "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y libhdf5-dev
+            sudo apt-get update && sudo apt-get install -y libhdf5-dev ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libswresample-dev pkg-config
           elif [ "$RUNNER_OS" == "macOS" ]; then
             # Use HDF5 1.10 as hdf5-sys doesn't support HDF5 2.x yet
-            brew install hdf5@1.10
+            brew install hdf5@1.10 ffmpeg
             echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
           fi
         shell: bash
@@ -120,8 +120,8 @@ jobs:
         if: steps.cache-llvm-cov.outputs.cache-hit != 'true'
         run: cargo install cargo-llvm-cov
 
-      - name: Install HDF5
-        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libswresample-dev pkg-config
 
       - name: Generate Rust coverage
         run: cargo llvm-cov --features dataset-all --workspace --lcov --output-path lcov.info
