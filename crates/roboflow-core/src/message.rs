@@ -7,7 +7,7 @@
 //! These types define the data structures passed between sources, sinks,
 //! and processing stages in the roboflow pipeline.
 
-use robocodec::CodecValue;
+use robocodec::{CodecValue, DecodedMessageResult};
 
 /// A decoded message from a source.
 ///
@@ -40,4 +40,14 @@ pub struct TimestampedMessage {
     pub log_time: u64,
     /// Decoded message data
     pub data: CodecValue,
+}
+
+impl From<DecodedMessageResult> for TimestampedMessage {
+    fn from(result: DecodedMessageResult) -> Self {
+        Self {
+            topic: result.channel.topic,
+            log_time: result.log_time.unwrap_or(0),
+            data: CodecValue::Struct(result.message),
+        }
+    }
 }
