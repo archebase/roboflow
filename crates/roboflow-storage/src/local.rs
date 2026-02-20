@@ -296,7 +296,12 @@ impl Storage for LocalStorage {
         self
     }
 
-    fn compose_objects(&self, sources: &[&Path], dest: &Path) -> Result<()> {
+    fn compose_objects(
+        &self,
+        sources: &[&Path],
+        dest: &Path,
+        composer: &dyn roboflow_core::VideoComposer,
+    ) -> Result<()> {
         if sources.is_empty() {
             return Err(StorageError::Other(
                 "compose_objects requires at least one source".to_string(),
@@ -308,11 +313,11 @@ impl Storage for LocalStorage {
             return self.copy(sources[0], dest);
         }
 
-        // For multiple sources, concatenate them
+        // For multiple sources, use the composer for proper remuxing
         let dest_path = self.full_path(dest)?;
         self.ensure_parent(&dest_path)?;
 
-        // Verify all sources exist first
+        // Verify all sources exist first and convert to full paths
         let source_paths: Vec<PathBuf> = sources
             .iter()
             .map(|&s| self.full_path(s))
@@ -328,28 +333,16 @@ impl Storage for LocalStorage {
             }
         }
 
-        // Create destination file
-        let mut dest_file = File::create(&dest_path).map_err(StorageError::Io)?;
-
-        // Concatenate all source files
-        let mut total_bytes = 0u64;
-        for (i, source_path) in source_paths.iter().enumerate() {
-            let mut source_file = File::open(source_path)
-                .map_err(|e| StorageError::Other(format!("failed to open source {}: {}", i, e)))?;
-
-            let bytes = std::io::copy(&mut source_file, &mut dest_file)
-                .map_err(|e| StorageError::Other(format!("failed to copy source {}: {}", i, e)))?;
-
-            total_bytes += bytes;
-        }
-
-        dest_file.flush().map_err(StorageError::Io)?;
+        // Use VideoComposer for proper MP4 composition (not byte concatenation)
+        let source_refs: Vec<&Path> = source_paths.iter().map(|p| p.as_path()).collect();
+        composer
+            .compose(&source_refs, &dest_path)
+            .map_err(|e| StorageError::Other(format!("video composition failed: {}", e)))?;
 
         tracing::info!(
             dest = %dest_path.display(),
             sources = sources.len(),
-            bytes = total_bytes,
-            "Composed {} files into {}",
+            "Composed {} video segments into {}",
             sources.len(),
             dest.display()
         );
@@ -851,7 +844,10 @@ mod tests {
 
         // Compose single source (should just copy)
         let dest_path = Path::new("episode_000000.mp4");
-        storage.compose_objects(&[src_path], dest_path).unwrap();
+        let composer = roboflow_core::MockVideoComposer::new();
+        storage
+            .compose_objects(&[src_path], dest_path, &composer)
+            .unwrap();
 
         // Verify destination exists and has same content
         assert!(storage.exists(dest_path));
@@ -873,7 +869,6 @@ mod tests {
             Path::new("segment_2.mp4"),
         ];
 
-        let expected_content = "segment_0 content; segment_1 content; segment_2 content; ";
         for (i, &src) in sources.iter().enumerate() {
             let mut writer = storage.writer(src).unwrap();
             writer
@@ -882,22 +877,18 @@ mod tests {
             writer.flush().unwrap();
         }
 
-        // Compose all sources
+        // Compose all sources using mock composer
         let dest_path = Path::new("episode_000000.mp4");
-        storage.compose_objects(&sources, dest_path).unwrap();
+        let composer = roboflow_core::MockVideoComposer::new();
+        storage
+            .compose_objects(&sources, dest_path, &composer)
+            .unwrap();
 
-        // Verify destination has concatenated content
-        assert!(storage.exists(dest_path));
-        let mut reader = storage.reader(dest_path).unwrap();
-        let mut content = Vec::new();
-        reader.read_to_end(&mut content).unwrap();
-        assert_eq!(String::from_utf8(content).unwrap(), expected_content);
-
-        // Verify size is sum of all sources
-        assert_eq!(
-            storage.size(dest_path).unwrap(),
-            expected_content.len() as u64
-        );
+        // Verify composer was called with correct arguments
+        let ops = composer.get_operations();
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].sources.len(), 3);
+        assert!(ops[0].dest.to_string_lossy().contains("episode_000000.mp4"));
     }
 
     #[test]
@@ -906,7 +897,8 @@ mod tests {
         let storage = LocalStorage::new(temp_dir.path());
 
         let dest_path = Path::new("episode_000000.mp4");
-        let result = storage.compose_objects(&[], dest_path);
+        let composer = roboflow_core::MockVideoComposer::new();
+        let result = storage.compose_objects(&[], dest_path, &composer);
 
         assert!(result.is_err());
         assert!(
@@ -931,7 +923,8 @@ mod tests {
         // Try to compose with a missing source
         let src1 = Path::new("segment_1.mp4"); // This doesn't exist
         let dest_path = Path::new("episode_000000.mp4");
-        let result = storage.compose_objects(&[src0, src1], dest_path);
+        let composer = roboflow_core::MockVideoComposer::new();
+        let result = storage.compose_objects(&[src0, src1], dest_path, &composer);
 
         assert!(result.is_err());
         assert!(matches!(result, Err(StorageError::NotFound(_))));
@@ -950,7 +943,10 @@ mod tests {
 
         // Compose to nested destination
         let dest_path = Path::new("videos/chunk-000/camera/episode_000000.mp4");
-        storage.compose_objects(&[src_path], dest_path).unwrap();
+        let composer = roboflow_core::MockVideoComposer::new();
+        storage
+            .compose_objects(&[src_path], dest_path, &composer)
+            .unwrap();
 
         // Verify destination exists with parent directories
         assert!(storage.exists(dest_path));

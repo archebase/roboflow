@@ -8,8 +8,8 @@
 //! a capture thread to an encoding thread with backpressure handling.
 
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crate::formats::common::video::VideoFrame;

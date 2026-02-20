@@ -23,8 +23,10 @@ pub mod logging;
 pub mod message;
 pub mod registry;
 pub mod retry;
+pub mod task;
 pub mod trace;
 pub mod value;
+pub mod video;
 
 // Re-export core types for convenience
 pub use config::{Validate, validators};
@@ -36,10 +38,15 @@ pub use registry::{
     TypeRegistry,
 };
 pub use retry::{IsRetryableRef, RetryConfig, retry_with_backoff};
+pub use task::{
+    ConversionResult, ConversionTask, EpisodeAllocation, InputSource, OutputDestination,
+    OutputFile, OutputFileType,
+};
 pub use trace::{
     generate_job_request_id, generate_request_id, with_dataset_span, with_job_span, with_request_id,
 };
 pub use value::{CodecValue, DecodedMessage};
+pub use video::{ComposeOperation, MockVideoComposer, VideoComposer};
 
 // Re-export from robocodec
 pub use robocodec::core::CodecError;

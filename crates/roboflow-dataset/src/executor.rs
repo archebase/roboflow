@@ -51,9 +51,7 @@ pub struct PipelineExecutor {
 impl PipelineExecutor {
     /// Create a new pipeline executor with the given storage.
     pub fn new(storage: Arc<dyn Storage>) -> Self {
-        Self {
-            _storage: storage,
-        }
+        Self { _storage: storage }
     }
 
     /// Ensure input is available locally.

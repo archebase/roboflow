@@ -47,10 +47,12 @@
 
 mod collector;
 mod keys;
+mod mock;
 mod tikv_collector;
 mod types;
 
 pub use collector::StatsCollector;
 pub use keys::StatsKeys;
+pub use mock::InMemoryStatsCollector;
 pub use tikv_collector::TiKVStatsCollector;
 pub use types::{BatchStatsSummary, EpisodeStats, FeatureStats};

@@ -10,6 +10,8 @@
 use std::io::{Read, Write};
 use std::path::Path;
 
+use roboflow_core::VideoComposer;
+
 use crate::error::{StorageError, StorageResult};
 use crate::metadata::{ObjectMetadata, StreamingConfig};
 
@@ -248,10 +250,16 @@ pub trait Storage: Send + Sync {
     ///     Path::new("temp/session123/segment_1.mp4"),
     /// ];
     /// let dest = Path::new("videos/episode_000000.mp4");
-    /// storage.compose_objects(&segments, dest)?;
+    /// let composer = RsmpegVideoComposer::new();
+    /// storage.compose_objects(&segments, dest, &composer)?;
     /// ```
-    fn compose_objects(&self, sources: &[&Path], dest: &Path) -> StorageResult<()> {
-        let _ = (sources, dest);
+    fn compose_objects(
+        &self,
+        sources: &[&Path],
+        dest: &Path,
+        composer: &dyn VideoComposer,
+    ) -> StorageResult<()> {
+        let _ = (sources, dest, composer);
         Err(StorageError::Other(
             "compose_objects not implemented for this storage type".to_string(),
         ))

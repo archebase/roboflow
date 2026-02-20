@@ -5,9 +5,6 @@
 //! Convert stage for processing bag files to LeRobot format.
 
 use roboflow_core::Result;
-use roboflow_executor::object_store::{ObjectId, ObjectRef};
-use roboflow_executor::stage::{PartitionId, Stage, StageId};
-use roboflow_executor::task::{Task, TaskContext, TaskResult, TaskStatus};
 use roboflow_dataset::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
 use roboflow_dataset::formats::{
     ParallelPipelineExecutor, PipelineConfig,
@@ -15,6 +12,9 @@ use roboflow_dataset::formats::{
     lerobot::{DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig},
 };
 use roboflow_dataset::sources::{SourceConfig, create_source};
+use roboflow_executor::object_store::{ObjectId, ObjectRef};
+use roboflow_executor::stage::{PartitionId, Stage, StageId};
+use roboflow_executor::task::{Task, TaskContext, TaskResult, TaskStatus};
 
 /// Stage for converting bag files to LeRobot format.
 ///

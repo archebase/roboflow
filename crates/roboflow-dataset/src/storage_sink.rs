@@ -1,17 +1,18 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use roboflow_core::{Result, RoboflowError};
+use roboflow_core::{Result, RoboflowError, VideoComposer};
 use roboflow_storage::{LocalStorage, Storage};
 
 use crate::formats::common::{
     ImageData, Sink, VideoEncoderConfig, WriteOperation, decode_image_to_rgb,
 };
-use crate::media::video::{RsmpegMp4Encoder, VideoFrame, VideoFrameBuffer};
+use crate::media::video::{RsmpegMp4Encoder, RsmpegVideoComposer, VideoFrame, VideoFrameBuffer};
 
 pub struct StorageSink {
     storage: Arc<dyn Storage>,
     temp_dir: PathBuf,
+    composer: Arc<dyn VideoComposer>,
 }
 
 impl StorageSink {
@@ -22,11 +23,21 @@ impl StorageSink {
         Ok(Self {
             storage: Arc::new(LocalStorage::new(&base)),
             temp_dir: base.join(".temp"),
+            composer: Arc::new(RsmpegVideoComposer::new()),
         })
     }
 
     pub fn with_storage(storage: Arc<dyn Storage>, temp_dir: PathBuf) -> Self {
-        Self { storage, temp_dir }
+        Self {
+            storage,
+            temp_dir,
+            composer: Arc::new(RsmpegVideoComposer::new()),
+        }
+    }
+
+    pub fn with_composer(mut self, composer: Arc<dyn VideoComposer>) -> Self {
+        self.composer = composer;
+        self
     }
 
     fn is_local_storage(&self) -> bool {
@@ -82,7 +93,7 @@ impl Sink for StorageSink {
             } => {
                 let source_refs: Vec<_> = sources.iter().map(|p| p.as_path()).collect();
                 self.storage
-                    .compose_objects(&source_refs, &destination)
+                    .compose_objects(&source_refs, &destination, self.composer.as_ref())
                     .map_err(|e| RoboflowError::other(format!("Storage error: {}", e)))?;
                 Ok(())
             }
@@ -322,24 +333,32 @@ mod tests {
 
     #[test]
     fn test_storage_sink_compose_files() {
+        use roboflow_core::MockVideoComposer;
+
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let composer = Arc::new(MockVideoComposer::new());
+        let sink = StorageSink::new_local(dir.path())
+            .unwrap()
+            .with_composer(composer.clone());
 
-        let source1 = dir.path().join("source1.txt");
-        let source2 = dir.path().join("source2.txt");
-        std::fs::write(&source1, "hello ").unwrap();
-        std::fs::write(&source2, "world").unwrap();
+        let source1 = dir.path().join("source1.mp4");
+        let source2 = dir.path().join("source2.mp4");
+        std::fs::write(&source1, "fake mp4 data 1").unwrap();
+        std::fs::write(&source2, "fake mp4 data 2").unwrap();
 
+        let dest = PathBuf::from("combined.mp4");
         sink.execute(WriteOperation::ComposeFiles {
-            sources: vec![source1, source2],
-            destination: PathBuf::from("combined.txt"),
+            sources: vec![source1.clone(), source2.clone()],
+            destination: dest.clone(),
         })
         .unwrap();
 
-        let path = dir.path().join("combined.txt");
-        assert!(path.exists());
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(content, "hello world");
+        // Verify the composer recorded the operation
+        let ops = composer.get_operations();
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].sources.len(), 2);
+        // Destination is resolved to absolute path by storage
+        assert!(ops[0].dest.ends_with(&dest));
     }
 
     #[test]

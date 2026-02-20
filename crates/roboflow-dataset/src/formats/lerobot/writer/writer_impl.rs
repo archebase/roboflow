@@ -21,6 +21,7 @@ use crate::formats::lerobot::config::LerobotConfig;
 use crate::formats::lerobot::metadata::MetadataCollector;
 use crate::formats::lerobot::trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 use crate::formats::lerobot::video_profiles::ResolvedConfig;
+use crate::media::video::RsmpegVideoComposer;
 use roboflow_core::Result;
 
 use super::camera::{CameraExtrinsic, CameraIntrinsic};
@@ -1247,8 +1248,9 @@ impl LerobotWriter {
             let source_refs: Vec<&Path> = segments.iter().map(|p| p.as_path()).collect();
 
             // Compose all segments into the final file
+            let composer = RsmpegVideoComposer::new();
             self.storage
-                .compose_objects(&source_refs, &final_path)
+                .compose_objects(&source_refs, &final_path, &composer)
                 .map_err(|e| {
                     roboflow_core::RoboflowError::encode(
                         "LerobotWriter",

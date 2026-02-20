@@ -752,8 +752,7 @@ impl SubmitCommand {
                 .map_err(|e| format!("TOML validation failed in '{}': {}", filename, e))?;
 
             // Validate as actual LeRobotConfig
-            if let Err(e) = roboflow_dataset::formats::lerobot::LerobotConfig::from_toml(&content)
-            {
+            if let Err(e) = roboflow_dataset::formats::lerobot::LerobotConfig::from_toml(&content) {
                 return Err(format!("Invalid LeRobot config in '{}': {}", filename, e));
             }
 

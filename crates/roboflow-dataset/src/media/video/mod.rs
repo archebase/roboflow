@@ -1,4 +1,5 @@
 pub mod arena;
+pub mod composer;
 pub mod config;
 pub mod convert;
 pub mod decode;
@@ -17,6 +18,7 @@ pub mod streaming;
 pub mod test_utils;
 
 pub use arena::{FramePool, FramePoolConfig};
+pub use composer::RsmpegVideoComposer;
 pub use config::{DepthEncoderConfig, VideoEncoderConfig};
 pub use convert::{ConvertPool, ConvertPoolConfig, TargetFormat};
 pub use decode::{DecodePool, DecodePoolConfig};

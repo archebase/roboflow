@@ -803,7 +803,12 @@ impl Storage for S3Storage {
         Ok(stats.total_bytes)
     }
 
-    fn compose_objects(&self, sources: &[&Path], dest: &Path) -> Result<()> {
+    fn compose_objects(
+        &self,
+        sources: &[&Path],
+        dest: &Path,
+        composer: &dyn roboflow_core::VideoComposer,
+    ) -> Result<()> {
         if sources.is_empty() {
             return Err(StorageError::Other(
                 "compose_objects requires at least one source".to_string(),
@@ -815,44 +820,35 @@ impl Storage for S3Storage {
             return self.copy(sources[0], dest);
         }
 
-        // TODO: Optimize using S3 UploadPartCopy API for server-side compose.
-        // This would require adding aws-sdk-s3 as a direct dependency.
-        // Current implementation: download → concat → upload
-
+        // Download all sources to temp files
         let temp_dir = tempfile::tempdir().map_err(StorageError::Io)?;
 
         tracing::info!(
             sources = sources.len(),
             dest = %dest.display(),
-            "Composing objects (download → concat → upload)"
+            "Composing video segments (download → compose → upload)"
         );
 
         // Download all sources to temp files
         let mut temp_files: Vec<std::path::PathBuf> = Vec::new();
-        let mut total_bytes = 0u64;
 
         for (i, &src) in sources.iter().enumerate() {
             let temp_path = temp_dir.path().join(format!("segment_{}.mp4", i));
-            let bytes = self.download_file(src, &temp_path)?;
-            total_bytes += bytes;
+            let _bytes = self.download_file(src, &temp_path)?;
             temp_files.push(temp_path);
         }
 
-        // Concatenate all temp files into a single temp file
+        // Compose using VideoComposer (proper MP4 remuxing, not byte concat)
         let merged_path = temp_dir.path().join("merged.mp4");
-        let merged_file = std::fs::File::create(&merged_path).map_err(StorageError::Io)?;
-        let mut merged_writer = std::io::BufWriter::new(merged_file);
-
-        for temp_file in &temp_files {
-            let mut reader = std::fs::File::open(temp_file).map_err(StorageError::Io)?;
-            std::io::copy(&mut reader, &mut merged_writer).map_err(StorageError::Io)?;
-        }
-        merged_writer.flush().map_err(StorageError::Io)?;
+        let temp_refs: Vec<&std::path::Path> = temp_files.iter().map(|p| p.as_path()).collect();
+        composer
+            .compose(&temp_refs, &merged_path)
+            .map_err(|e| StorageError::Other(format!("video composition failed: {}", e)))?;
 
         // Upload the merged file
         self.upload_file(&merged_path, dest)?;
 
-        tracing::info!(sources = sources.len(), total_bytes, "Compose complete");
+        tracing::info!(sources = sources.len(), "Video compose complete");
 
         // Temp files are automatically cleaned up when temp_dir is dropped
         Ok(())

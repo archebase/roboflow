@@ -8,7 +8,9 @@
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use roboflow_dataset::core::traits::FormatWriter;
-use roboflow_dataset::testing::{FrameBuilder, InMemoryWriter, MessageBuilder, generate_test_frames};
+use roboflow_dataset::testing::{
+    FrameBuilder, InMemoryWriter, MessageBuilder, generate_test_frames,
+};
 
 fn bench_frame_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("frame_creation");
