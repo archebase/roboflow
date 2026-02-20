@@ -8,13 +8,13 @@ use tempfile::TempDir;
 
 use roboflow_dataset::formats::common::config::DatasetBaseConfig;
 use roboflow_dataset::formats::common::{AlignedFrame, DatasetWriter, ImageData};
+use roboflow_dataset::formats::lerobot::LerobotWriterTrait;
 use roboflow_dataset::formats::lerobot::config::{
     DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig,
 };
 use roboflow_dataset::formats::lerobot::metadata::MetadataCollector;
 use roboflow_dataset::formats::lerobot::writer::LerobotWriter;
-use roboflow_dataset::formats::lerobot::LerobotWriterTrait;
-use roboflow_dataset::testing::{generate_test_jpeg, FrameBuilder};
+use roboflow_dataset::testing::{FrameBuilder, generate_test_jpeg};
 
 pub fn default_lerobot_config() -> LerobotConfig {
     LerobotConfig {

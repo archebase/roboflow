@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 
 use roboflow_dataset::formats::common::DatasetWriter;
-use roboflow_dataset::formats::lerobot::writer::LerobotWriter;
 use roboflow_dataset::formats::lerobot::LerobotWriterTrait;
+use roboflow_dataset::formats::lerobot::writer::LerobotWriter;
 use roboflow_dataset::testing::FrameBuilder;
 use tempfile::tempdir;
 
@@ -137,10 +137,12 @@ fn test_writer_handles_episode_gap() {
 
     writer.finalize_with_config().expect("Failed to finalize");
 
-    assert!(temp_dir
-        .path()
-        .join("data/chunk-000/episode_000000.parquet")
-        .exists());
+    assert!(
+        temp_dir
+            .path()
+            .join("data/chunk-000/episode_000000.parquet")
+            .exists()
+    );
 }
 
 #[test]

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-mod helpers;
 mod compliance;
+mod helpers;
 mod metadata_tests;
 mod writer_tests;
