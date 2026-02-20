@@ -60,3 +60,7 @@ harness = false
 [[example]]
 name = "benchmark_large_bag"
 path = "examples/benchmark_large_bag.rs"
+
+[[test]]
+name = "lerobot"
+path = "tests/lerobot/mod.rs"
