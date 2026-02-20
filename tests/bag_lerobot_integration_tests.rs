@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use roboflow::{LerobotConfig, LerobotWriter};
-use roboflow_pipeline::streaming::StreamingConfig;
+use roboflow_pipeline::formats::alignment::StreamingConfig;
 use roboflow_pipeline::{PipelineConfig, PipelineExecutor};
 
 const BAG_PATH: &str = "tests/fixtures/extracted_messages.bag";

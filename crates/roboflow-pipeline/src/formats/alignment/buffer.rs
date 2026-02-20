@@ -10,10 +10,10 @@ use std::time::Instant;
 
 use robocodec::CodecValue;
 
+use crate::formats::alignment::completion::FrameCompletionCriteria;
+use crate::formats::alignment::config::StreamingConfig;
+use crate::formats::alignment::stats::AlignmentStats;
 use crate::formats::common::AlignedFrame;
-use crate::formats::streaming::completion::FrameCompletionCriteria;
-use crate::formats::streaming::config::StreamingConfig;
-use crate::formats::streaming::stats::AlignmentStats;
 use crate::media::image::{ImageDecoderFactory, ImageFormat};
 
 /// Extracted image data from a message.

@@ -39,9 +39,9 @@ pub mod sources;
 pub mod storage_sink;
 
 // Re-export format submodules for convenient access
+pub use formats::alignment;
 pub use formats::common;
 pub use formats::lerobot;
-pub use formats::streaming;
 
 // Re-export commonly used types
 pub use sources::{

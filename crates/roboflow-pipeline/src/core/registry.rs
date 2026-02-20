@@ -57,10 +57,7 @@ impl FormatDescriptor {
         factory: fn(&serde_json::Value, &FormatContext) -> Result<Box<dyn FormatWriter>>,
     ) -> Self {
         assert!(!name.is_empty(), "Format name cannot be empty");
-        assert!(
-            !file_extension.is_empty(),
-            "File extension cannot be empty"
-        );
+        assert!(!file_extension.is_empty(), "File extension cannot be empty");
         Self {
             name,
             description,
@@ -137,10 +134,12 @@ impl FormatRegistry {
         config: &serde_json::Value,
         context: &FormatContext,
     ) -> Result<Box<dyn FormatWriter>> {
-        let descriptor = self
-            .formats
-            .get(format)
-            .ok_or_else(|| PipelineError::FormatNotSupported { format: format.to_string() })?;
+        let descriptor =
+            self.formats
+                .get(format)
+                .ok_or_else(|| PipelineError::FormatNotSupported {
+                    format: format.to_string(),
+                })?;
 
         // Note: Feature flag checking is done at registration time.
         // If a format is registered, it's available.
@@ -234,7 +233,11 @@ mod tests {
             description: "Test format",
             file_extension: "test",
             feature_flag: None,
-            factory: |_, _| Err(PipelineError::NotSupported { operation: "test".to_string() }),
+            factory: |_, _| {
+                Err(PipelineError::NotSupported {
+                    operation: "test".to_string(),
+                })
+            },
         });
 
         assert!(registry.is_available("test"));
@@ -250,7 +253,11 @@ mod tests {
             description: "Test format 1",
             file_extension: "t1",
             feature_flag: None,
-            factory: |_, _| Err(PipelineError::NotSupported { operation: "test".to_string() }),
+            factory: |_, _| {
+                Err(PipelineError::NotSupported {
+                    operation: "test".to_string(),
+                })
+            },
         });
 
         registry.register(FormatDescriptor {
@@ -258,7 +265,11 @@ mod tests {
             description: "Test format 2",
             file_extension: "t2",
             feature_flag: None,
-            factory: |_, _| Err(PipelineError::NotSupported { operation: "test".to_string() }),
+            factory: |_, _| {
+                Err(PipelineError::NotSupported {
+                    operation: "test".to_string(),
+                })
+            },
         });
 
         let list = registry.list();

@@ -623,7 +623,7 @@ fn process_message_for_frame(
 mod tests {
     use super::*;
     use crate::core::traits::{AlignedFrame, FormatWriter, WriterStats};
-    use crate::formats::streaming::config::StreamingConfig;
+    use crate::formats::alignment::config::StreamingConfig;
     use robocodec::CodecValue;
     use std::any::Any;
     use std::collections::HashMap;

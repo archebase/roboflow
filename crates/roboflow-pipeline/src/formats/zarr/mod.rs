@@ -58,14 +58,14 @@ impl FormatWriter for ZarrWriter {
     fn write_frame(&mut self, _frame: &AlignedFrame) -> Result<()> {
         // Zarr format is not yet implemented
         Err(RoboflowError::unsupported(
-            "Zarr format is not yet implemented. Frames cannot be written."
+            "Zarr format is not yet implemented. Frames cannot be written.",
         ))
     }
 
     fn finalize(&mut self) -> Result<WriterStats> {
         // Zarr format is not yet implemented
         Err(RoboflowError::unsupported(
-            "Zarr format is not yet implemented. No output was produced."
+            "Zarr format is not yet implemented. No output was produced.",
         ))
     }
 

@@ -160,7 +160,7 @@ impl Task for ConvertTask {
 
         // Create pipeline config using the streaming config from lerobot_config
         let streaming_config =
-            roboflow_pipeline::formats::streaming::config::StreamingConfig::with_fps(
+            roboflow_pipeline::formats::alignment::config::StreamingConfig::with_fps(
                 lerobot_config.dataset.base.fps,
             );
         let pipeline_config = PipelineConfig::new(streaming_config);

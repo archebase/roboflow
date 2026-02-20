@@ -53,14 +53,14 @@ impl FormatWriter for Hdf5Writer {
     fn write_frame(&mut self, _frame: &AlignedFrame) -> Result<()> {
         // HDF5 format is not yet implemented
         Err(RoboflowError::unsupported(
-            "HDF5 format is not yet implemented. Frames cannot be written."
+            "HDF5 format is not yet implemented. Frames cannot be written.",
         ))
     }
 
     fn finalize(&mut self) -> Result<WriterStats> {
         // HDF5 format is not yet implemented
         Err(RoboflowError::unsupported(
-            "HDF5 format is not yet implemented. No output was produced."
+            "HDF5 format is not yet implemented. No output was produced.",
         ))
     }
 

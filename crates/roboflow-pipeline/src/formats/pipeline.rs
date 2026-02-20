@@ -25,10 +25,10 @@ use roboflow_core::{Result, RoboflowError, TimestampedMessage};
 use tracing::{debug, info, instrument, trace, warn};
 
 use crate::core::traits::{AlignedFrame, FormatWriter};
+use crate::formats::alignment::config::StreamingConfig;
 use crate::formats::common::ImageData;
 use crate::formats::common::{extract_image_bytes, extract_u32, is_camera_info_topic};
 use crate::formats::pipeline_common::{ExecutorState, ExecutorStats};
-use crate::formats::streaming::config::StreamingConfig;
 use crate::media::image::ImageFormat;
 
 /// Episode management strategy for pipeline execution.
@@ -150,7 +150,7 @@ pub struct PipelineStats {
 /// ```rust,ignore
 /// use crate::formats::{PipelineExecutor, PipelineConfig};
 /// use crate::formats::lerobot::LerobotWriter;
-/// use crate::formats::streaming::config::StreamingConfig;
+/// use crate::formats::alignment::config::StreamingConfig;
 ///
 /// let streaming_config = StreamingConfig::with_fps(30);
 /// let pipeline_config = PipelineConfig::new(streaming_config);

@@ -47,11 +47,7 @@ pub mod traits;
 
 // Re-export commonly used types
 pub use error::{DatasetWriterError, PipelineError, Result, VideoError};
-pub use frame::{
-    AlignedFrame, AudioData, CameraInfo, DatasetFrame, ImageData, UploadState,
-};
+pub use frame::{AlignedFrame, AudioData, CameraInfo, DatasetFrame, ImageData, UploadState};
 pub use registry::{FormatDescriptor, FormatRegistry, register_format};
 pub use stats::{EpisodeStats, ProgressStats, WriterStats};
-pub use traits::{
-    EpisodeManager, FormatContext, FormatFactory, FormatWriter, VideoPathScheme,
-};
+pub use traits::{EpisodeManager, FormatContext, FormatFactory, FormatWriter, VideoPathScheme};

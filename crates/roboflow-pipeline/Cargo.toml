@@ -50,3 +50,7 @@ default = []
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3.10"
+
+[[example]]
+name = "benchmark_large_bag"
+path = "examples/benchmark_large_bag.rs"

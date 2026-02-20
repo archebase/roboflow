@@ -1,11 +1,10 @@
+pub mod alignment;
 pub mod common;
 pub mod config;
-pub mod hardware;
 pub mod lerobot;
 pub mod parallel_pipeline;
 pub mod pipeline;
 pub mod pipeline_common;
-pub mod streaming;
 
 // Format modules - always available (stubs for future formats)
 pub mod hdf5;

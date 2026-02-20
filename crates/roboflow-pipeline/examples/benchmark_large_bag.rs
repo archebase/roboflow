@@ -6,12 +6,12 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
+use roboflow_pipeline::formats::alignment::StreamingConfig;
 use roboflow_pipeline::formats::lerobot::{
     FlushingConfig, LerobotConfig, LerobotWriter, Mapping, MappingType,
     StreamingConfig as LerobotStreamingConfig, VideoConfig, config::DatasetBaseConfig,
     config::DatasetConfig,
 };
-use roboflow_pipeline::formats::streaming::StreamingConfig;
 use roboflow_pipeline::formats::{ParallelPipelineExecutor, PipelineConfig};
 use roboflow_pipeline::sources::SourceConfig;
 

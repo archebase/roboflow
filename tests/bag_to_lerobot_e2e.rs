@@ -4,10 +4,10 @@ use std::path::Path;
 
 use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig};
 use roboflow_pipeline::DatasetWriter;
+use roboflow_pipeline::formats::alignment::StreamingConfig;
 use roboflow_pipeline::formats::lerobot::{
     FlushingConfig, Mapping, MappingType, StreamingConfig as LerobotStreamingConfig,
 };
-use roboflow_pipeline::formats::streaming::StreamingConfig;
 use roboflow_pipeline::sources::SourceConfig;
 use roboflow_pipeline::{PipelineConfig, PipelineExecutor};
 
@@ -98,7 +98,7 @@ fn test_bag_to_lerobot_e2e() {
 
     // Use streaming config from LerobotConfig
     let pipeline_streaming =
-        roboflow_pipeline::formats::streaming::StreamingConfig::with_fps(config.dataset.base.fps);
+        roboflow_pipeline::formats::alignment::StreamingConfig::with_fps(config.dataset.base.fps);
     let pipeline_config =
         PipelineConfig::new(pipeline_streaming).with_topic_mappings(topic_mappings);
 

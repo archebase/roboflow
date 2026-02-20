@@ -59,14 +59,14 @@ impl FormatWriter for RldsWriter {
     fn write_frame(&mut self, _frame: &AlignedFrame) -> Result<()> {
         // RLDS format is not yet implemented
         Err(RoboflowError::unsupported(
-            "RLDS format is not yet implemented. Frames cannot be written."
+            "RLDS format is not yet implemented. Frames cannot be written.",
         ))
     }
 
     fn finalize(&mut self) -> Result<WriterStats> {
         // RLDS format is not yet implemented
         Err(RoboflowError::unsupported(
-            "RLDS format is not yet implemented. No output was produced."
+            "RLDS format is not yet implemented. No output was produced.",
         ))
     }
 
@@ -77,14 +77,14 @@ impl FormatWriter for RldsWriter {
     fn start_episode(&mut self, _task_index: Option<usize>) -> Result<usize> {
         // RLDS format is not yet implemented
         Err(RoboflowError::unsupported(
-            "RLDS format is not yet implemented. Episode management is not available."
+            "RLDS format is not yet implemented. Episode management is not available.",
         ))
     }
 
     fn finish_episode(&mut self) -> Result<EpisodeStats> {
         // RLDS format is not yet implemented
         Err(RoboflowError::unsupported(
-            "RLDS format is not yet implemented. Episode management is not available."
+            "RLDS format is not yet implemented. Episode management is not available.",
         ))
     }
 
