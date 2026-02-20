@@ -12,6 +12,7 @@ use std::sync::Arc;
 use roboflow_distributed::{
     LeRobotExecutor, WorkFile, WorkUnit,
     worker::{JobRegistry, ProcessingResult},
+    stages::{ConvertStage, DiscoverStage, MergeStage},
 };
 use roboflow_executor::{PipelineBuilder, StageExecutor, StageId};
 
@@ -80,15 +81,14 @@ async fn test_work_unit_executor_pipeline_structure() {
 async fn test_stage_executor_lerobot_pipeline() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    use roboflow_executor::{ConvertStage, DiscoverStage, MergeStage};
-
     // Build the LeRobot pipeline
     let source_prefix = "file:///tmp/input/";
+    let input_file = "file:///tmp/input/test.bag";
     let output_prefix = "/tmp/output";
 
     let pipeline = PipelineBuilder::new()
         .stage(Arc::new(DiscoverStage::new(source_prefix)))
-        .stage(Arc::new(ConvertStage::new(output_prefix, "config_v1")))
+        .stage(Arc::new(ConvertStage::new(input_file, output_prefix, "config_v1")))
         .stage(Arc::new(MergeStage::new(format!(
             "{}/dataset",
             output_prefix
@@ -132,12 +132,14 @@ async fn test_stage_executor_lerobot_pipeline() {
 async fn test_pipeline_dependency_ordering() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    use roboflow_executor::{ConvertStage, DiscoverStage, MergeStage};
-
     // Build pipeline with explicit dependencies
     let pipeline = PipelineBuilder::new()
         .stage(Arc::new(DiscoverStage::new("s3://bucket/input/")))
-        .stage(Arc::new(ConvertStage::new("s3://bucket/output/", "v1")))
+        .stage(Arc::new(ConvertStage::new(
+            "s3://bucket/input/test.bag",
+            "s3://bucket/output/",
+            "v1"
+        )))
         .stage(Arc::new(MergeStage::new("s3://bucket/output/dataset")))
         .dependency(StageId(1), StageId(0))
         .dependency(StageId(2), StageId(1))
@@ -161,12 +163,10 @@ async fn test_pipeline_dependency_ordering() {
 async fn test_stage_execution_error_handling() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    use roboflow_executor::{ConvertStage, DiscoverStage, MergeStage};
-
     // Build a valid pipeline
     let pipeline = PipelineBuilder::new()
         .stage(Arc::new(DiscoverStage::new("/tmp/input/")))
-        .stage(Arc::new(ConvertStage::new("/tmp/output/", "v1")))
+        .stage(Arc::new(ConvertStage::new("/tmp/input/test.bag", "/tmp/output/", "v1")))
         .stage(Arc::new(MergeStage::new("/tmp/output/dataset")))
         .dependency(StageId(1), StageId(0))
         .dependency(StageId(2), StageId(1))

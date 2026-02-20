@@ -35,7 +35,6 @@ pub mod pipeline;
 pub mod resource;
 pub mod scheduler;
 pub mod stage;
-pub mod stages;
 pub mod task;
 
 // Core types
@@ -56,7 +55,6 @@ pub use resource::{
 };
 pub use scheduler::StageScheduler;
 pub use stage::{FormatStage, PartitionId, Stage, StageId};
-pub use stages::{ConvertStage, DiscoverStage, MergeStage, TransformStage};
 pub use task::{Task, TaskContext, TaskId, TaskMetrics, TaskResult, TaskStatus};
 
 /// Re-export core types

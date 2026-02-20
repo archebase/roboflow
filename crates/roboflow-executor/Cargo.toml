@@ -25,6 +25,5 @@ serde_json = { workspace = true }
 [dev-dependencies]
 tokio-test = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-roboflow-distributed = { path = "../roboflow-distributed" }
 tokio = { version = "1.40", features = ["rt-multi-thread", "macros"] }
 tempfile = "3"
