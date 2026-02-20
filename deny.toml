@@ -7,8 +7,8 @@
 all-features = true
 
 [advisories]
-# The database url to use for advisories
-db-url = "https://github.com/rustsec/advisory-db"
+# The database urls to use for advisories
+db-urls = ["https://github.com/rustsec/advisory-db"]
 # The path where the advisory database is stored
 db-path = "~/.cargo/advisory-db"
 # The vulnerability ids to ignore (from RUSTSEC)
