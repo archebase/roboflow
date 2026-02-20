@@ -33,10 +33,13 @@
 //! ```
 
 pub mod core;
+pub mod executor;
 pub mod formats;
 pub mod media;
 pub mod sources;
 pub mod storage_sink;
+
+pub mod testing;
 
 // Re-export format submodules for convenient access
 pub use formats::alignment;
