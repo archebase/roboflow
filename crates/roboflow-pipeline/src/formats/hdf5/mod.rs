@@ -12,12 +12,18 @@
 //! This is a stub implementation. Full HDF5 support is planned for a future release.
 
 use crate::core::traits::{AlignedFrame, FormatWriter, Result, WriterStats};
+use roboflow_core::RoboflowError;
 use std::any::Any;
 
 /// HDF5 dataset writer.
 ///
 /// This writer produces HDF5 files compatible with common scientific
 /// computing tools (Python h5py, MATLAB, etc.).
+///
+/// # Status
+///
+/// **STUB IMPLEMENTATION** - All operations return an unsupported error.
+/// Full implementation is planned for a future release.
 ///
 /// # Planned Features
 ///
@@ -28,7 +34,6 @@ use std::any::Any;
 #[derive(Debug)]
 pub struct Hdf5Writer {
     _output_path: std::path::PathBuf,
-    frames_written: usize,
 }
 
 impl Hdf5Writer {
@@ -40,28 +45,27 @@ impl Hdf5Writer {
     pub fn new(output_path: impl Into<std::path::PathBuf>) -> Self {
         Self {
             _output_path: output_path.into(),
-            frames_written: 0,
         }
     }
 }
 
 impl FormatWriter for Hdf5Writer {
     fn write_frame(&mut self, _frame: &AlignedFrame) -> Result<()> {
-        // TODO: Implement HDF5 frame writing
-        self.frames_written += 1;
-        Ok(())
+        // HDF5 format is not yet implemented
+        Err(RoboflowError::unsupported(
+            "HDF5 format is not yet implemented. Frames cannot be written."
+        ))
     }
 
     fn finalize(&mut self) -> Result<WriterStats> {
-        // TODO: Implement HDF5 finalization
-        Ok(WriterStats {
-            frames_written: self.frames_written,
-            ..Default::default()
-        })
+        // HDF5 format is not yet implemented
+        Err(RoboflowError::unsupported(
+            "HDF5 format is not yet implemented. No output was produced."
+        ))
     }
 
     fn frame_count(&self) -> usize {
-        self.frames_written
+        0 // No frames can be written in stub implementation
     }
 
     fn format_name(&self) -> &'static str {

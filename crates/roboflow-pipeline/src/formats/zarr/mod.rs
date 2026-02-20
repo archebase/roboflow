@@ -17,12 +17,18 @@
 //! - [Zarr-Python](https://zarr.readthedocs.io/)
 
 use crate::core::traits::{AlignedFrame, FormatWriter, Result, WriterStats};
+use roboflow_core::RoboflowError;
 use std::any::Any;
 
 /// Zarr dataset writer.
 ///
 /// This writer produces Zarr-format datasets compatible with
 /// zarr-python, xarray, and other tools supporting the Zarr specification.
+///
+/// # Status
+///
+/// **STUB IMPLEMENTATION** - All operations return an unsupported error.
+/// Full implementation is planned for a future release.
 ///
 /// # Planned Features
 ///
@@ -33,7 +39,6 @@ use std::any::Any;
 #[derive(Debug)]
 pub struct ZarrWriter {
     _output_path: std::path::PathBuf,
-    frames_written: usize,
 }
 
 impl ZarrWriter {
@@ -45,28 +50,27 @@ impl ZarrWriter {
     pub fn new(output_path: impl Into<std::path::PathBuf>) -> Self {
         Self {
             _output_path: output_path.into(),
-            frames_written: 0,
         }
     }
 }
 
 impl FormatWriter for ZarrWriter {
     fn write_frame(&mut self, _frame: &AlignedFrame) -> Result<()> {
-        // TODO: Implement Zarr array writing
-        self.frames_written += 1;
-        Ok(())
+        // Zarr format is not yet implemented
+        Err(RoboflowError::unsupported(
+            "Zarr format is not yet implemented. Frames cannot be written."
+        ))
     }
 
     fn finalize(&mut self) -> Result<WriterStats> {
-        // TODO: Implement Zarr finalization (write metadata, consolidate)
-        Ok(WriterStats {
-            frames_written: self.frames_written,
-            ..Default::default()
-        })
+        // Zarr format is not yet implemented
+        Err(RoboflowError::unsupported(
+            "Zarr format is not yet implemented. No output was produced."
+        ))
     }
 
     fn frame_count(&self) -> usize {
-        self.frames_written
+        0 // No frames can be written in stub implementation
     }
 
     fn format_name(&self) -> &'static str {

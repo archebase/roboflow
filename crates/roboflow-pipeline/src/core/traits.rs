@@ -90,9 +90,16 @@ pub trait FormatWriter: Send + Sync + Any {
     /// # Note
     ///
     /// For formats that don't support episodes, this is a no-op
-    /// and returns 0.
+    /// and returns 0. If `task_index` is provided but not supported,
+    /// a debug log message is emitted.
     fn start_episode(&mut self, task_index: Option<usize>) -> Result<usize> {
-        let _ = task_index;
+        if task_index.is_some() && !self.supports_episodes() {
+            tracing::debug!(
+                format = self.format_name(),
+                task_index = ?task_index,
+                "task_index provided but format does not support episodes"
+            );
+        }
         Ok(0)
     }
 

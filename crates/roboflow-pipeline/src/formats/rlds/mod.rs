@@ -18,12 +18,18 @@
 
 use crate::core::stats::EpisodeStats;
 use crate::core::traits::{AlignedFrame, FormatWriter, Result, WriterStats};
+use roboflow_core::RoboflowError;
 use std::any::Any;
 
 /// RLDS dataset writer.
 ///
 /// This writer produces RLDS-format datasets compatible with
 /// TensorFlow Datasets and other RLDS tools.
+///
+/// # Status
+///
+/// **STUB IMPLEMENTATION** - All operations return an unsupported error.
+/// Full implementation is planned for a future release.
 ///
 /// # Planned Features
 ///
@@ -34,8 +40,6 @@ use std::any::Any;
 #[derive(Debug)]
 pub struct RldsWriter {
     _output_path: std::path::PathBuf,
-    frames_written: usize,
-    current_episode: usize,
 }
 
 impl RldsWriter {
@@ -47,47 +51,49 @@ impl RldsWriter {
     pub fn new(output_path: impl Into<std::path::PathBuf>) -> Self {
         Self {
             _output_path: output_path.into(),
-            frames_written: 0,
-            current_episode: 0,
         }
     }
 }
 
 impl FormatWriter for RldsWriter {
     fn write_frame(&mut self, _frame: &AlignedFrame) -> Result<()> {
-        // TODO: Implement RLDS step writing
-        self.frames_written += 1;
-        Ok(())
+        // RLDS format is not yet implemented
+        Err(RoboflowError::unsupported(
+            "RLDS format is not yet implemented. Frames cannot be written."
+        ))
     }
 
     fn finalize(&mut self) -> Result<WriterStats> {
-        // TODO: Implement RLDS finalization
-        Ok(WriterStats {
-            frames_written: self.frames_written,
-            ..Default::default()
-        })
+        // RLDS format is not yet implemented
+        Err(RoboflowError::unsupported(
+            "RLDS format is not yet implemented. No output was produced."
+        ))
     }
 
     fn frame_count(&self) -> usize {
-        self.frames_written
+        0 // No frames can be written in stub implementation
     }
 
     fn start_episode(&mut self, _task_index: Option<usize>) -> Result<usize> {
-        let episode = self.current_episode;
-        self.current_episode += 1;
-        Ok(episode)
+        // RLDS format is not yet implemented
+        Err(RoboflowError::unsupported(
+            "RLDS format is not yet implemented. Episode management is not available."
+        ))
     }
 
     fn finish_episode(&mut self) -> Result<EpisodeStats> {
-        Ok(EpisodeStats::default())
+        // RLDS format is not yet implemented
+        Err(RoboflowError::unsupported(
+            "RLDS format is not yet implemented. Episode management is not available."
+        ))
     }
 
     fn episode_index(&self) -> Option<usize> {
-        Some(self.current_episode)
+        None // No episodes in stub implementation
     }
 
     fn supports_episodes(&self) -> bool {
-        true
+        false // Stub does not support episodes
     }
 
     fn format_name(&self) -> &'static str {
@@ -126,6 +132,17 @@ mod tests {
     fn test_rlds_writer_creation() {
         let writer = RldsWriter::new("/tmp/rlds_dataset");
         assert_eq!(writer.format_name(), "rlds");
-        assert!(writer.supports_episodes());
+        // Stub implementation does not support episodes
+        assert!(!writer.supports_episodes());
+        assert_eq!(writer.frame_count(), 0);
+    }
+
+    #[test]
+    fn test_rlds_write_frame_returns_error() {
+        let mut writer = RldsWriter::new("/tmp/rlds_dataset");
+        // Creating a dummy frame - this test just verifies the error is returned
+        let frame = AlignedFrame::new(0, 0);
+        let result = writer.write_frame(&frame);
+        assert!(result.is_err());
     }
 }

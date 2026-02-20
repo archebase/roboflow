@@ -35,6 +35,42 @@ pub struct FormatDescriptor {
     pub factory: fn(&serde_json::Value, &FormatContext) -> Result<Box<dyn FormatWriter>>,
 }
 
+impl FormatDescriptor {
+    /// Create a new format descriptor with validation.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Format name (must be non-empty)
+    /// * `description` - Human-readable description
+    /// * `file_extension` - File extension (must be non-empty)
+    /// * `feature_flag` - Optional feature flag
+    /// * `factory` - Factory function to create writers
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name` or `file_extension` is empty.
+    pub fn new(
+        name: &'static str,
+        description: &'static str,
+        file_extension: &'static str,
+        feature_flag: Option<&'static str>,
+        factory: fn(&serde_json::Value, &FormatContext) -> Result<Box<dyn FormatWriter>>,
+    ) -> Self {
+        assert!(!name.is_empty(), "Format name cannot be empty");
+        assert!(
+            !file_extension.is_empty(),
+            "File extension cannot be empty"
+        );
+        Self {
+            name,
+            description,
+            file_extension,
+            feature_flag,
+            factory,
+        }
+    }
+}
+
 /// Registry of available dataset formats.
 pub struct FormatRegistry {
     formats: HashMap<&'static str, FormatDescriptor>,
@@ -54,8 +90,23 @@ impl FormatRegistry {
     }
 
     /// Register a format descriptor.
-    pub fn register(&mut self, descriptor: FormatDescriptor) {
-        self.formats.insert(descriptor.name, descriptor);
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if a format with the same name was already registered
+    /// (and thus overwritten), `false` if this is a new registration.
+    pub fn register(&mut self, descriptor: FormatDescriptor) -> bool {
+        let name = descriptor.name;
+        let existing = self.formats.insert(descriptor.name, descriptor);
+        if existing.is_some() {
+            tracing::warn!(
+                format_name = name,
+                "Format registration overwrote existing format with the same name"
+            );
+            true
+        } else {
+            false
+        }
     }
 
     /// Get a format descriptor by name.
@@ -89,7 +140,7 @@ impl FormatRegistry {
         let descriptor = self
             .formats
             .get(format)
-            .ok_or_else(|| PipelineError::FormatNotSupported(format.to_string()))?;
+            .ok_or_else(|| PipelineError::FormatNotSupported { format: format.to_string() })?;
 
         // Note: Feature flag checking is done at registration time.
         // If a format is registered, it's available.
@@ -107,8 +158,19 @@ impl Default for FormatRegistry {
 /// Register a format in the global registry.
 ///
 /// This is typically called from a format module's `init` function.
+///
+/// # Panics
+///
+/// Panics if the registry lock is poisoned, which indicates a previous
+/// panic while holding the lock. This should never happen in normal operation.
 pub fn register_format(descriptor: FormatDescriptor) {
-    let mut registry = REGISTRY.write().unwrap();
+    let mut registry = REGISTRY.write().unwrap_or_else(|e| {
+        panic!(
+            "Failed to acquire registry lock for format '{}': {}. \
+             This indicates a previous panic while holding the lock.",
+            descriptor.name, e
+        )
+    });
     registry.register(descriptor);
 }
 
@@ -172,7 +234,7 @@ mod tests {
             description: "Test format",
             file_extension: "test",
             feature_flag: None,
-            factory: |_, _| Err(PipelineError::NotSupported("test".to_string())),
+            factory: |_, _| Err(PipelineError::NotSupported { operation: "test".to_string() }),
         });
 
         assert!(registry.is_available("test"));
@@ -188,7 +250,7 @@ mod tests {
             description: "Test format 1",
             file_extension: "t1",
             feature_flag: None,
-            factory: |_, _| Err(PipelineError::NotSupported("test".to_string())),
+            factory: |_, _| Err(PipelineError::NotSupported { operation: "test".to_string() }),
         });
 
         registry.register(FormatDescriptor {
@@ -196,7 +258,7 @@ mod tests {
             description: "Test format 2",
             file_extension: "t2",
             feature_flag: None,
-            factory: |_, _| Err(PipelineError::NotSupported("test".to_string())),
+            factory: |_, _| Err(PipelineError::NotSupported { operation: "test".to_string() }),
         });
 
         let list = registry.list();

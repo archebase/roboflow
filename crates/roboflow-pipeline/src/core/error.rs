@@ -24,28 +24,41 @@ pub enum PipelineError {
     Writer(#[from] DatasetWriterError),
 
     /// Format not supported or registered.
-    #[error("Format not supported: {0}")]
-    FormatNotSupported(String),
+    #[error("Format not supported: {format}")]
+    FormatNotSupported {
+        /// Format name that was requested
+        format: String,
+    },
 
-    /// Configuration error.
-    #[error("Configuration error: {0}")]
-    Config(String),
+    /// Configuration error with structured context.
+    #[error("Configuration error in {context}: {message}")]
+    Config {
+        /// Configuration context (e.g., field name)
+        context: String,
+        /// Error message
+        message: String,
+    },
 
     /// I/O error during operation.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// Storage backend error.
-    #[error("Storage error: {0}")]
-    Storage(String),
+    /// Storage backend error with path context.
+    #[error("Storage error at {path}: {message}")]
+    Storage {
+        /// Path where the error occurred
+        path: PathBuf,
+        /// Error message
+        message: String,
+    },
 
-    /// Video encoding error.
+    /// Video encoding error (preserves original error).
     #[error("Video encoding error: {0}")]
-    VideoEncoding(String),
+    VideoEncoding(#[from] VideoError),
 
-    /// Image processing error.
+    /// Image processing error (preserves original error).
     #[error("Image processing error: {0}")]
-    ImageProcessing(String),
+    ImageProcessing(#[from] ImageDataError),
 
     /// Pipeline execution error.
     #[error("Pipeline error: {0}")]
@@ -60,12 +73,20 @@ pub enum PipelineError {
     InvalidData(String),
 
     /// Required resource not found.
-    #[error("Resource not found: {0}")]
-    NotFound(String),
+    #[error("Resource not found: {resource_type} at {location}")]
+    NotFound {
+        /// Type of resource (e.g., "file", "topic")
+        resource_type: String,
+        /// Location where resource was expected
+        location: String,
+    },
 
     /// Operation not supported.
-    #[error("Operation not supported: {0}")]
-    NotSupported(String),
+    #[error("Operation not supported: {operation}")]
+    NotSupported {
+        /// The unsupported operation
+        operation: String,
+    },
 
     /// Internal error (should not happen in normal operation).
     #[error("Internal error: {0}")]
@@ -196,17 +217,5 @@ pub enum VideoError {
     FragmentError(String),
 }
 
-// Note: DatasetWriterError -> PipelineError conversion is provided
-// by the #[error] derive macro through the #[from] attribute on the Writer variant
-
-impl From<ImageDataError> for PipelineError {
-    fn from(err: ImageDataError) -> Self {
-        PipelineError::ImageProcessing(err.to_string())
-    }
-}
-
-impl From<VideoError> for PipelineError {
-    fn from(err: VideoError) -> Self {
-        PipelineError::VideoEncoding(err.to_string())
-    }
-}
+// Note: DatasetWriterError, ImageDataError, and VideoError -> PipelineError conversions
+// are provided by the #[from] attribute on their respective variants.
