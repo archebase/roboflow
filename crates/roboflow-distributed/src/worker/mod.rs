@@ -140,11 +140,8 @@ impl Worker {
 
         // Create executor with episode allocator using stage-based framework
         let executor: Box<dyn Executor> = Box::new(
-            LeRobotExecutor::new(
-                config.max_concurrent_jobs,
-                config.output_prefix.clone(),
-            )
-            .with_episode_allocator(episode_allocator),
+            LeRobotExecutor::new(config.max_concurrent_jobs, config.output_prefix.clone())
+                .with_episode_allocator(episode_allocator),
         );
 
         Ok(Self {

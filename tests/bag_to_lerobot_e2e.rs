@@ -680,7 +680,7 @@ fn test_two_bags_to_lerobot_two_episodes() {
                             if executor.process_message(msg).is_ok() {
                                 count += 1;
                             }
-                    if count.is_multiple_of(100) {
+                            if count.is_multiple_of(100) {
                                 println!("Episode {}: Processed {} frames...", episode_idx, count);
                             }
                         }
