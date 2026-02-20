@@ -40,7 +40,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          # Invalidate cache when robocodec git dependency changes
           cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Check formatting (Rust)
@@ -49,9 +48,12 @@ jobs:
       - name: Install system dependencies
         run: |
           if [ "$RUNNER_OS" == "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y libhdf5-dev ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libswresample-dev libavdevice-dev pkg-config
+            sudo apt-get update
+            sudo apt-get install -y libhdf5-dev libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libswresample-dev libavdevice-dev pkg-config
+            # Verify FFmpeg version
+            echo "FFmpeg version:"
+            pkg-config --modversion libavcodec
           elif [ "$RUNNER_OS" == "macOS" ]; then
-            # Use HDF5 1.10 as hdf5-sys doesn't support HDF5 2.x yet
             brew install hdf5@1.10 ffmpeg
             echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
           fi
@@ -75,15 +77,16 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          # Invalidate cache when robocodec git dependency changes
           cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Install system dependencies
         run: |
           if [ "$RUNNER_OS" == "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y libhdf5-dev ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libswresample-dev libavdevice-dev pkg-config
+            sudo apt-get update
+            sudo apt-get install -y libhdf5-dev libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libswresample-dev libavdevice-dev pkg-config
+            echo "FFmpeg version:"
+            pkg-config --modversion libavcodec
           elif [ "$RUNNER_OS" == "macOS" ]; then
-            # Use HDF5 1.10 as hdf5-sys doesn't support HDF5 2.x yet
             brew install hdf5@1.10 ffmpeg
             echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
           fi
@@ -106,7 +109,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          # Invalidate cache when robocodec git dependency changes
           cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Cache cargo-llvm-cov
@@ -121,7 +123,9 @@ jobs:
         run: cargo install cargo-llvm-cov
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libswresample-dev libavdevice-dev pkg-config
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libswresample-dev libavdevice-dev pkg-config
 
       - name: Generate Rust coverage
         run: cargo llvm-cov --features dataset-all --workspace --lcov --output-path lcov.info
