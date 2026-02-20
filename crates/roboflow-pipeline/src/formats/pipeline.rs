@@ -5,14 +5,14 @@
 //! Unified pipeline executor for dataset writing.
 //!
 //! This module provides a streamlined pipeline orchestration that works
-//! directly with `TimestampedMessage` from sources and `DatasetWriter`
+//! directly with `TimestampedMessage` from sources and `FormatWriter`
 //! for output.
 //!
 //! # Architecture
 //!
 //! ```text
-//! Source (MCAP) -> PipelineExecutor -> DatasetWriter
-//!   TimestampedMsg    Frame alignment    (LeRobotWriter)
+//! Source (MCAP) -> PipelineExecutor -> FormatWriter
+//!   TimestampedMsg    Frame alignment    (LerobotWriter)
 //!                     Episode tracking
 //!                     Message aggregation
 //! ```
@@ -24,11 +24,12 @@ use std::time::Duration;
 use roboflow_core::{Result, RoboflowError, TimestampedMessage};
 use tracing::{debug, info, instrument, trace, warn};
 
-use crate::formats::common::base::{AlignedFrame, DatasetWriter, ImageData};
+use crate::core::traits::{AlignedFrame, FormatWriter};
+use crate::formats::common::ImageData;
 use crate::formats::common::{extract_image_bytes, extract_u32, is_camera_info_topic};
-use crate::formats::image::ImageFormat;
 use crate::formats::pipeline_common::{ExecutorState, ExecutorStats};
 use crate::formats::streaming::config::StreamingConfig;
+use crate::media::image::ImageFormat;
 
 /// Episode management strategy for pipeline execution.
 #[derive(Debug, Clone, Default)]
@@ -142,7 +143,7 @@ pub struct PipelineStats {
 ///
 /// This executor processes `TimestampedMessage` directly and uses
 /// `StreamingConfig` for frame alignment, producing `AlignedFrame`
-/// for the `DatasetWriter`.
+/// for the `FormatWriter`.
 ///
 /// # Example
 ///
@@ -164,14 +165,14 @@ pub struct PipelineStats {
 ///
 /// let stats = executor.finalize()?;
 /// ```
-pub struct PipelineExecutor<W: DatasetWriter> {
+pub struct PipelineExecutor<W: FormatWriter> {
     writer: W,
     config: PipelineConfig,
     stats: ExecutorStats,
     state: ExecutorState,
 }
 
-impl<W: DatasetWriter> PipelineExecutor<W> {
+impl<W: FormatWriter> PipelineExecutor<W> {
     /// Create a new pipeline executor.
     pub fn new(writer: W, config: PipelineConfig) -> Self {
         Self {
@@ -392,11 +393,9 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
         self.state.frames_in_current_episode = 0;
         self.state.current_episode_started = true;
 
-        if let Some(writer) = ((&mut self.writer) as &mut dyn std::any::Any)
-            .downcast_mut::<crate::formats::lerobot::LerobotWriter>()
-        {
-            let _ = writer.start_episode(Some(index));
-        }
+        // Use FormatWriter's start_episode method directly
+        // (no need for downcast_mut anymore)
+        let _ = self.writer.start_episode(Some(index));
 
         info!(episode_index = index, "Started episode");
         Ok(())
@@ -408,14 +407,9 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
             return Ok(());
         }
 
-        // Try to cast writer to LerobotWriterTrait and call finish_episode
-        let result = if let Some(writer) = ((&mut self.writer) as &mut dyn std::any::Any)
-            .downcast_mut::<crate::formats::lerobot::LerobotWriter>()
-        {
-            writer.finish_episode(Some(self.state.episode_index))
-        } else {
-            Ok(())
-        };
+        // Use FormatWriter's finish_episode method directly
+        // (no need for downcast_mut anymore)
+        let result = self.writer.finish_episode();
 
         if result.is_ok() {
             self.stats.episodes_written += 1;
@@ -427,7 +421,7 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
             );
         }
 
-        result
+        result.map(|_| ())
     }
 
     /// Process complete frames from the buffer.
@@ -729,7 +723,8 @@ impl<W: DatasetWriter> PipelineExecutor<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::formats::common::base::{DatasetWriter, ImageData, UploadState, WriterStats};
+    use crate::core::traits::{AlignedFrame, FormatWriter, WriterStats};
+    use crate::formats::common::ImageData;
     use std::any::Any;
 
     /// Mock writer for testing pipeline executor.
@@ -748,7 +743,7 @@ mod tests {
         }
     }
 
-    impl DatasetWriter for MockWriter {
+    impl FormatWriter for MockWriter {
         fn write_frame(&mut self, frame: &AlignedFrame) -> Result<()> {
             self.frame_count += 1;
             // Capture images from the frame for test assertions
@@ -784,12 +779,20 @@ mod tests {
             Some(0)
         }
 
+        fn supports_episodes(&self) -> bool {
+            true
+        }
+
+        fn format_name(&self) -> &'static str {
+            "mock"
+        }
+
         fn as_any(&self) -> &dyn Any {
             self
         }
 
-        fn get_upload_state(&self) -> Option<UploadState> {
-            None
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
         }
     }
 

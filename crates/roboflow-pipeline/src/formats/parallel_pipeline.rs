@@ -11,7 +11,7 @@
 //! # Architecture
 //!
 //! ```text
-//! Source (MCAP) -> ParallelPipelineExecutor -> DatasetWriter
+//! Source (MCAP) -> ParallelPipelineExecutor -> FormatWriter
 //!                     ├─ Parallel frame conversion (rayon)
 //!                     ├─ Batch frame writes
 //!                     └─ Lock-free message buffering
@@ -29,11 +29,12 @@ use rayon::prelude::*;
 use roboflow_core::{Result, RoboflowError, TimestampedMessage};
 use tracing::{info, instrument, trace, warn};
 
-use crate::formats::common::base::{AlignedFrame, DatasetWriter, ImageData};
+use crate::core::traits::{AlignedFrame, FormatWriter};
+use crate::formats::common::ImageData;
 use crate::formats::common::{extract_image_bytes, extract_u32, is_camera_info_topic};
-use crate::formats::image::ImageFormat;
 use crate::formats::pipeline::{EpisodeManager, PipelineConfig};
 use crate::formats::pipeline_common::{ExecutorState, ExecutorStats};
+use crate::media::image::ImageFormat;
 
 /// Statistics from parallel pipeline execution.
 #[derive(Debug, Clone)]
@@ -74,7 +75,7 @@ pub struct ParallelPipelineStats {
 ///
 /// let stats = executor.finalize()?;
 /// ```
-pub struct ParallelPipelineExecutor<W: DatasetWriter> {
+pub struct ParallelPipelineExecutor<W: FormatWriter> {
     writer: W,
     config: PipelineConfig,
     stats: ExecutorStats,
@@ -82,7 +83,7 @@ pub struct ParallelPipelineExecutor<W: DatasetWriter> {
     thread_pool: rayon::ThreadPool,
 }
 
-impl<W: DatasetWriter> ParallelPipelineExecutor<W> {
+impl<W: FormatWriter> ParallelPipelineExecutor<W> {
     /// Create a new parallel pipeline executor.
     ///
     /// # Arguments
@@ -431,11 +432,9 @@ impl<W: DatasetWriter> ParallelPipelineExecutor<W> {
         self.state.frames_in_current_episode = 0;
         self.state.current_episode_started = true;
 
-        if let Some(writer) = ((&mut self.writer) as &mut dyn std::any::Any)
-            .downcast_mut::<crate::formats::lerobot::LerobotWriter>()
-        {
-            let _ = writer.start_episode(Some(index));
-        }
+        // Use FormatWriter's start_episode method directly
+        // (no need for downcast_mut anymore)
+        let _ = self.writer.start_episode(Some(index));
 
         info!(episode_index = index, "Started episode");
         Ok(())
@@ -446,13 +445,9 @@ impl<W: DatasetWriter> ParallelPipelineExecutor<W> {
             return Ok(());
         }
 
-        let result = if let Some(writer) = ((&mut self.writer) as &mut dyn std::any::Any)
-            .downcast_mut::<crate::formats::lerobot::LerobotWriter>()
-        {
-            writer.finish_episode(Some(self.state.episode_index))
-        } else {
-            Ok(())
-        };
+        // Use FormatWriter's finish_episode method directly
+        // (no need for downcast_mut anymore)
+        let result = self.writer.finish_episode();
 
         if result.is_ok() {
             self.stats.episodes_written += 1;
@@ -464,7 +459,7 @@ impl<W: DatasetWriter> ParallelPipelineExecutor<W> {
             );
         }
 
-        result
+        result.map(|_| ())
     }
 
     fn convert_messages_to_frame(
@@ -627,7 +622,7 @@ fn process_message_for_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::formats::common::base::{DatasetWriter, UploadState, WriterStats};
+    use crate::core::traits::{AlignedFrame, FormatWriter, WriterStats};
     use crate::formats::streaming::config::StreamingConfig;
     use robocodec::CodecValue;
     use std::any::Any;
@@ -643,7 +638,7 @@ mod tests {
         }
     }
 
-    impl DatasetWriter for MockWriter {
+    impl FormatWriter for MockWriter {
         fn write_frame(&mut self, frame: &AlignedFrame) -> roboflow_core::Result<()> {
             self.frames.push(frame.clone());
             Ok(())
@@ -674,12 +669,20 @@ mod tests {
             Some(0)
         }
 
+        fn supports_episodes(&self) -> bool {
+            true
+        }
+
+        fn format_name(&self) -> &'static str {
+            "mock"
+        }
+
         fn as_any(&self) -> &dyn Any {
             self
         }
 
-        fn get_upload_state(&self) -> Option<UploadState> {
-            None
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
         }
     }
 

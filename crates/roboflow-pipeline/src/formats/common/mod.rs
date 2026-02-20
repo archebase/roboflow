@@ -45,7 +45,7 @@ pub use parquet_base::{FeatureStats, ParquetWriterBase, calculate_stats};
 pub use progress::{ProgressReceiver, ProgressSender, ProgressUpdate};
 
 // Re-export image format detection from the image module (canonical location)
-pub use crate::formats::image::{ImageFormat, can_passthrough, detect_image_format};
+pub use crate::media::image::{ImageFormat, can_passthrough, detect_image_format};
 
 // Re-export image decode utilities
 pub use image_decode::{decode_image_to_rgb, decode_to_rgb};
@@ -62,7 +62,7 @@ pub use video::{
 };
 
 // Re-export SIMD RGB to YUV conversion from roboflow-video (canonical location)
-pub use crate::video::{ConversionStrategy, optimal_strategy, rgb_to_nv12, rgb_to_yuv420p};
+pub use crate::media::video::{ConversionStrategy, optimal_strategy, rgb_to_nv12, rgb_to_yuv420p};
 
 // Platform-specific re-exports
 #[cfg(target_os = "macos")]
@@ -75,7 +75,9 @@ pub use streaming_uploader::{
 };
 
 // Re-export streaming encoder from roboflow-video (canonical location)
-pub use crate::video::streaming::{EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder};
+pub use crate::media::video::streaming::{
+    EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder,
+};
 
 // Re-export camera streaming pipeline
 pub use camera_streaming_pipeline::{

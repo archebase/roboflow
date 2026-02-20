@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::ImageData;
-use crate::video::VideoEncoderConfig;
+use crate::media::video::VideoEncoderConfig;
 
 #[derive(Debug, Clone, Default)]
 pub struct DatasetStats {
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_encode_video_operation() {
-        use crate::video::VideoEncoderConfig;
+        use crate::media::video::VideoEncoderConfig;
 
         let op = WriteOperation::EncodeAndWriteVideo {
             camera: "cam_0".to_string(),

@@ -90,21 +90,23 @@
 //! ```
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crossbeam_channel::{Receiver, unbounded};
 use roboflow_core::{Result, RoboflowError};
 use roboflow_storage::S3Config;
 
+use crate::core::VideoPathScheme;
 use crate::formats::common::ImageData;
 use crate::formats::common::camera_streaming_pipeline::{
     EitherPipeline, PipelineAdapter, StreamingPipelineConfig, StreamingUploadCommand,
     spawn_streaming_pipeline,
 };
 use crate::formats::common::video::VideoEncoderConfig;
-use crate::video::pipeline::VideoPipelineConfig;
+use crate::media::video::pipeline::VideoPipelineConfig;
 
 /// Configuration for concurrent video encoder.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ConcurrentEncoderConfig {
     /// Key prefix for output videos within the storage bucket.
     /// This should be a relative path (e.g., "dataset/episode_001"), not a full URL.
@@ -126,6 +128,9 @@ pub struct ConcurrentEncoderConfig {
     /// When true, uses SIMD-accelerated parallel processing for higher throughput.
     /// When false, uses the 2-stage single-threaded pipeline (StreamingMp4Encoder).
     pub use_parallel_pipeline: bool,
+    /// Optional video path scheme for generating output paths.
+    /// If None, uses the default LeRobot v2.1 format.
+    pub path_scheme: Option<Arc<dyn VideoPathScheme>>,
 }
 
 impl ConcurrentEncoderConfig {
@@ -140,7 +145,14 @@ impl ConcurrentEncoderConfig {
             frame_channel_capacity: 64,
             s3_config,
             use_parallel_pipeline: false,
+            path_scheme: None,
         }
+    }
+
+    /// Set the video path scheme.
+    pub fn with_path_scheme(mut self, scheme: Arc<dyn VideoPathScheme>) -> Self {
+        self.path_scheme = Some(scheme);
+        self
     }
 }
 
@@ -191,14 +203,27 @@ impl ConcurrentVideoEncoder {
         })
     }
 
-    /// Build the destination key for a camera in LeRobot v2.1 format.
-    /// Format: {prefix}/videos/chunk-{chunk:03}/{camera}/episode_{episode:06d}.mp4
+    /// Build the destination key for a camera using the configured path scheme.
+    /// If no path scheme is configured, uses the default LeRobot v2.1 format.
     fn build_dest_url(&self, camera: &str) -> String {
-        let prefix = self.config.key_prefix.trim_end_matches('/');
-        format!(
-            "{}/videos/chunk-{:03}/{}/episode_{:06}.mp4",
-            prefix, self.config.chunk_index, camera, self.config.episode_index
-        )
+        if let Some(ref scheme) = self.config.path_scheme {
+            // Use the configured path scheme
+            scheme
+                .video_path(
+                    self.config.episode_index as usize,
+                    camera,
+                    self.config.chunk_index as usize,
+                )
+                .to_string_lossy()
+                .to_string()
+        } else {
+            // Default LeRobot v2.1 format
+            let prefix = self.config.key_prefix.trim_end_matches('/');
+            format!(
+                "{}/videos/chunk-{:03}/{}/episode_{:06}.mp4",
+                prefix, self.config.chunk_index, camera, self.config.episode_index
+            )
+        }
     }
 
     /// Ensure a pipeline exists for the given camera.
@@ -513,6 +538,7 @@ mod tests {
             video_config: crate::formats::common::video::VideoEncoderConfig::default(),
             frame_channel_capacity: 32,
             s3_config: test_s3_config(),
+            path_scheme: None,
         };
 
         assert_eq!(config.key_prefix, "test/prefix");
@@ -556,6 +582,7 @@ mod tests {
             video_config: crate::formats::common::video::VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
             s3_config: test_s3_config(),
+            path_scheme: None,
         };
 
         let encoder = ConcurrentVideoEncoder::new(config).unwrap();
@@ -577,6 +604,7 @@ mod tests {
             video_config: crate::formats::common::video::VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
             s3_config: test_s3_config(),
+            path_scheme: None,
         };
 
         let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
@@ -610,6 +638,7 @@ mod tests {
             video_config: crate::formats::common::video::VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
             s3_config: test_s3_config(),
+            path_scheme: None,
         };
 
         let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
@@ -649,6 +678,7 @@ mod tests {
             video_config: crate::formats::common::video::VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
             s3_config: test_s3_config(),
+            path_scheme: None,
         };
 
         let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
@@ -680,6 +710,7 @@ mod tests {
             video_config: crate::formats::common::video::VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
             s3_config: test_s3_config(),
+            path_scheme: None,
         };
 
         let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();

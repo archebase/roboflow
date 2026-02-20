@@ -981,6 +981,7 @@ impl LerobotWriter {
             frame_channel_capacity: self.config.streaming.ring_buffer_size,
             s3_config,
             use_parallel_pipeline: false,
+            path_scheme: None,
         };
 
         // Create concurrent encoder

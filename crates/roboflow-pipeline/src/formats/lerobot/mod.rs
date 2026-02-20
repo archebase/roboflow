@@ -11,6 +11,7 @@ pub mod annotations;
 pub mod config;
 pub mod episode;
 pub mod factory;
+pub mod format_writer_impl;
 pub mod metadata;
 pub mod trait_impl;
 pub mod upload;
@@ -27,7 +28,7 @@ pub use episode::{
     convert_camera_calibration, convert_camera_extrinsic, convert_camera_intrinsic,
 };
 // Re-export hardware types from roboflow-video
-pub use crate::video::{HardwareBackend, HardwareConfig};
+pub use crate::media::video::{HardwareBackend, HardwareConfig};
 pub use trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 
 pub use factory::{LerobotWriterConfig, LerobotWriterResult, create_lerobot_writer};

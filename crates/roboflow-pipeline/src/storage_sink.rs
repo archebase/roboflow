@@ -7,7 +7,7 @@ use roboflow_storage::{LocalStorage, Storage};
 use crate::formats::common::{
     ImageData, Sink, VideoEncoderConfig, WriteOperation, decode_image_to_rgb,
 };
-use crate::video::{RsmpegMp4Encoder, VideoFrame, VideoFrameBuffer};
+use crate::media::video::{RsmpegMp4Encoder, VideoFrame, VideoFrameBuffer};
 
 pub struct StorageSink {
     storage: Arc<dyn Storage>,

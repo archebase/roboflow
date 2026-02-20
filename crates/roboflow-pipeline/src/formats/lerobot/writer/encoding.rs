@@ -13,7 +13,7 @@ use crate::formats::common::video::VideoEncoderError;
 use crate::formats::common::video::{VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
 use crate::formats::common::{ImageData, decode_image_to_rgb};
 use crate::formats::lerobot::video_profiles::ResolvedConfig;
-use crate::video::RsmpegMp4Encoder;
+use crate::media::video::RsmpegMp4Encoder;
 use roboflow_core::Result;
 
 /// Encode videos for all cameras.

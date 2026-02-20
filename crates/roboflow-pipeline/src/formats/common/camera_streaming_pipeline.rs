@@ -20,9 +20,9 @@ use roboflow_core::{Result, RoboflowError};
 
 use crate::formats::common::video::VideoEncoderConfig;
 use crate::formats::common::{ImageData, decode_to_rgb};
-use crate::video::StreamingMp4Encoder;
-use crate::video::pipeline::PipelineConfig;
-use crate::video::streaming::{EncodedChunk, StreamingEncoderConfig};
+use crate::media::video::StreamingMp4Encoder;
+use crate::media::video::pipeline::PipelineConfig;
+use crate::media::video::streaming::{EncodedChunk, StreamingEncoderConfig};
 
 // =============================================================================
 // Commands
@@ -478,13 +478,13 @@ impl PipelineAdapter {
     /// - Converts to StreamingUploadCommand for upload thread
     pub fn new(
         camera: String,
-        video_pipeline_config: crate::video::pipeline::VideoPipelineConfig,
+        video_pipeline_config: crate::media::video::pipeline::VideoPipelineConfig,
         upload_tx: Sender<StreamingUploadCommand>,
     ) -> Result<Self> {
         let (cmd_tx, cmd_rx) = crossbeam_channel::bounded(64);
 
         // Create channel for receiving encoded chunks from VideoPipeline
-        let (chunk_tx, chunk_rx) = std::sync::mpsc::channel::<crate::video::EncodedChunk>();
+        let (chunk_tx, chunk_rx) = std::sync::mpsc::channel::<crate::media::video::EncodedChunk>();
 
         // Create the VideoPipeline with chunk_tx
         let pipeline = video_pipeline_config.create_pipeline(chunk_tx)?;
@@ -512,8 +512,8 @@ impl PipelineAdapter {
         camera: String,
         cmd_rx: Receiver<StreamingCommand>,
         upload_tx: Sender<StreamingUploadCommand>,
-        chunk_rx: std::sync::mpsc::Receiver<crate::video::EncodedChunk>,
-        pipeline: Box<dyn crate::video::PipelineHandle>,
+        chunk_rx: std::sync::mpsc::Receiver<crate::media::video::EncodedChunk>,
+        pipeline: Box<dyn crate::media::video::PipelineHandle>,
     ) -> Result<StreamingPipelineResult> {
         // Clone upload_tx and camera for the chunk upload thread
         let upload_tx_clone = upload_tx.clone();

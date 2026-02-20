@@ -288,6 +288,7 @@ fn test_concurrent_encoder_with_minio() {
         frame_channel_capacity: 64,
         s3_config: config.s3_config(),
         use_parallel_pipeline: false,
+        path_scheme: None,
     };
 
     let mut encoder =
@@ -338,6 +339,7 @@ fn test_concurrent_encoder_multicam_with_minio() {
         frame_channel_capacity: 100,
         s3_config: config.s3_config(),
         use_parallel_pipeline: false,
+        path_scheme: None,
     };
 
     let mut encoder =
@@ -399,6 +401,7 @@ fn test_compressed_images_with_minio_upload() {
         frame_channel_capacity: 100,
         s3_config: config.s3_config(),
         use_parallel_pipeline: false,
+        path_scheme: None,
     };
 
     let mut encoder =
@@ -509,6 +512,7 @@ fn test_concurrent_minio_uploads() {
                     frame_channel_capacity: 50,
                     s3_config: s3_config_clone,
                     use_parallel_pipeline: false,
+                    path_scheme: None,
                 };
 
                 let mut encoder =
@@ -624,6 +628,7 @@ fn test_lerobot_v21_video_path_structure() {
         frame_channel_capacity: 64,
         s3_config: config.s3_config(),
         use_parallel_pipeline: false,
+        path_scheme: None,
     };
 
     let mut encoder =
@@ -736,6 +741,7 @@ fn test_multi_camera_unique_temp_files() {
         frame_channel_capacity: 64,
         s3_config: config.s3_config(),
         use_parallel_pipeline: false,
+        path_scheme: None,
     };
 
     let mut encoder =

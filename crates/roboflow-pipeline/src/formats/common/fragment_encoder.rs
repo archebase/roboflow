@@ -8,4 +8,4 @@
 //! The canonical implementations are in `roboflow-video/src/fragment.rs`.
 
 // Re-export all fragment types from roboflow-video crate (canonical location)
-pub use crate::video::{FragmentEncoder, FragmentEncoderConfig, FragmentInfo};
+pub use crate::media::video::{FragmentEncoder, FragmentEncoderConfig, FragmentInfo};

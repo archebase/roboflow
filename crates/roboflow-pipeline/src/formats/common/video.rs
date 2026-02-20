@@ -16,7 +16,7 @@
 //! is implemented in `common/camera_streaming_pipeline.rs`.
 
 // Re-export all video types from roboflow-video crate (canonical location)
-pub use crate::video::{
+pub use crate::media::video::{
     DepthEncoderConfig, DepthFrame, DepthFrameBuffer, DepthMkvEncoder, EncodeFrame, EncoderChoice,
     Mp4Encoder, NvencEncoder, RsmpegEncoder, RsmpegEncoderConfig, RsmpegMp4Encoder,
     VideoEncoderConfig, VideoEncoderError, VideoFrame, VideoFrameBuffer, VideoToolboxEncoder,

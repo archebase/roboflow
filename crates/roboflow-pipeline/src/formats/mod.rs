@@ -1,16 +1,21 @@
 pub mod common;
 pub mod config;
 pub mod hardware;
-pub mod image;
 pub mod lerobot;
 pub mod parallel_pipeline;
 pub mod pipeline;
 pub mod pipeline_common;
 pub mod streaming;
 
+// Format modules - always available (stubs for future formats)
+pub mod hdf5;
+pub mod rlds;
+pub mod zarr;
+
 pub use common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats};
 pub use config::{OutputConfig, OutputFormat};
-pub use image::{
+// Re-export image types from media module for backward compatibility
+pub use crate::media::image::{
     DecodedImage, ImageDecoderBackend, ImageDecoderConfig, ImageDecoderFactory, ImageError,
     ImageFormat, decode_compressed_image,
 };

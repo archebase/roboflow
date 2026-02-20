@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use crate::formats::image::ImageDecoderConfig;
+use crate::media::image::ImageDecoderConfig;
 
 /// Configuration for streaming frame alignment.
 #[derive(Debug, Clone)]
