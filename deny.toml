@@ -13,7 +13,31 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 db-path = "~/.cargo/advisory-db"
 # The vulnerability ids to ignore (from RUSTSEC)
 ignore = [
-    # Add any false positives here with a reason
+    # RUSTSEC-2025-0141: bincode is unmaintained
+    # Team ceased development due to harassment. v1.3.3 is considered complete.
+    # Used by: roboflow, roboflow-distributed (TiKV client)
+    # Migration needed: postcard or rkyv
+    "RUSTSEC-2025-0141",
+    
+    # RUSTSEC-2025-0003: fast-float segmentation fault on empty input
+    # Used by: polars 0.41 (core dependency)
+    # Fix available in fast-float2 fork, but polars hasn't migrated
+    "RUSTSEC-2025-0003",
+    
+    # RUSTSEC-2024-0436: paste crate no longer maintained
+    # Used by: mcap, rsmpeg (both via robocodec/roboflow-dataset)
+    # Migration needed: pastey or with_builtin_macros
+    "RUSTSEC-2024-0436",
+    
+    # RUSTSEC-2024-0437: protobuf crash due to uncontrolled recursion
+    # Used by: prometheus -> tikv-client
+    # Upgrade needed: protobuf >=3.7.2, but tikv-client depends on 2.x
+    "RUSTSEC-2024-0437",
+    
+    # RUSTSEC-2025-0134: rustls-pemfile is unmaintained
+    # Used by: tonic -> tikv-client
+    # Migration needed: Use rustls-pki-types directly
+    "RUSTSEC-2025-0134",
 ]
 
 [licenses]
