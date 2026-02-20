@@ -1036,4 +1036,88 @@ mod tests {
         stats.total_duration = Duration::from_secs(2);
         assert_eq!(stats.throughput_mbps(), 5.0);
     }
+
+    #[test]
+    fn test_upload_stats_new() {
+        let stats = UploadStats::new();
+        assert_eq!(stats.total_files, 0);
+        assert_eq!(stats.failed_count, 0);
+        assert_eq!(stats.total_bytes, 0);
+        assert_eq!(stats.success_rate(), 100.0);
+    }
+
+    #[test]
+    fn test_upload_stats_success_rate_zero_files() {
+        let stats = UploadStats::new();
+        assert_eq!(stats.success_rate(), 100.0);
+    }
+
+    #[test]
+    fn test_upload_stats_success_rate_all_failed() {
+        let mut stats = UploadStats::new();
+        stats.total_files = 10;
+        stats.failed_count = 10;
+        assert_eq!(stats.success_rate(), 50.0);
+    }
+
+    #[test]
+    fn test_upload_stats_throughput_zero_duration() {
+        let mut stats = UploadStats::new();
+        stats.total_bytes = 1024 * 1024;
+        stats.total_duration = Duration::from_secs(0);
+        assert_eq!(stats.throughput_mbps(), 0.0);
+    }
+
+    #[test]
+    fn test_upload_file_type_variants() {
+        assert!(matches!(
+            UploadFileType::Video("cam_0".to_string()),
+            UploadFileType::Video(_)
+        ));
+        assert!(matches!(UploadFileType::Parquet, UploadFileType::Parquet));
+    }
+
+    #[test]
+    fn test_upload_task_creation() {
+        let task = UploadTask {
+            local_path: std::path::PathBuf::from("local/test.mp4"),
+            remote_path: std::path::PathBuf::from("remote/test.mp4"),
+            file_size: 1024,
+            episode_index: Some(0),
+            file_type: UploadFileType::Video("cam_0".to_string()),
+        };
+        assert_eq!(task.episode_index, Some(0));
+        assert_eq!(task.file_size, 1024);
+        assert!(matches!(task.file_type, UploadFileType::Video(_)));
+    }
+
+    #[test]
+    fn test_default_concurrency() {
+        assert_eq!(default_concurrency(), 4);
+    }
+
+    #[test]
+    fn test_default_show_progress() {
+        assert!(default_show_progress());
+    }
+
+    #[test]
+    fn test_default_delete_after_upload() {
+        assert!(!default_delete_after_upload());
+    }
+
+    #[test]
+    fn test_default_max_pending() {
+        assert_eq!(default_max_pending(), 100);
+    }
+
+    #[test]
+    fn test_default_max_retries() {
+        assert_eq!(default_max_retries(), 3);
+    }
+
+    #[test]
+    fn test_default_initial_backoff_ms() {
+        assert_eq!(default_initial_backoff_ms(), 100);
+    }
 }

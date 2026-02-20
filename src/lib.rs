@@ -67,16 +67,16 @@ pub mod core {
 // =============================================================================
 // Pipeline API: Source/Sink abstraction
 // =============================================================================
-#[cfg(feature = "sources")]
 pub use roboflow_pipeline::sources::{
     Source, SourceConfig, SourceError, SourceFactory, SourceMetadata, SourceResult,
     TimestampedMessage, create_source, global_registry as source_registry, has_source,
     register_source, registered_sources,
 };
 
-#[cfg(feature = "sinks")]
+// Re-export sources module for test access
+pub use roboflow_pipeline::sources;
+
 pub use roboflow_pipeline::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
-#[cfg(feature = "sinks")]
 pub use roboflow_pipeline::formats::{
     OutputConfig, OutputFormat,
     common::{DatasetFrame, ImageData, ImageFormat},
@@ -162,5 +162,4 @@ pub trait Decoder: Send + Sync {
 // =============================================================================
 // High-level Conversion API
 // =============================================================================
-#[cfg(all(feature = "sources", feature = "sinks"))]
 pub use convert::{ConversionReport, ConvertBuilder, convert, convert_with_defaults};

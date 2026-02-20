@@ -41,8 +41,7 @@ pub use simd::{
 pub use streaming::{EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder};
 
 pub use pipeline::{
-    PipelineConfig, PipelineHandle, PipelineResult, ThreeStageConfig, ThreeStagePipeline,
-    TwoStageConfig, TwoStagePipeline,
+    PipelineConfig, PipelineHandle, PipelineResult, VideoPipeline, VideoPipelineConfig,
 };
 
 // Re-export ImageData from formats::common for convenience

@@ -4,7 +4,13 @@
 
 pub mod formats;
 pub mod sources;
+pub mod storage_sink;
 pub mod video;
+
+// Re-export format submodules for convenient access
+pub use formats::common;
+pub use formats::lerobot;
+pub use formats::streaming;
 
 // Re-export commonly used types
 pub use sources::{
@@ -28,3 +34,5 @@ pub use video::{
     FragmentEncoder, FragmentEncoderConfig, PixelFormat, StreamingEncoderConfig,
     StreamingMp4Encoder, VideoEncoderConfig, VideoFrame,
 };
+
+pub use storage_sink::StorageSink;

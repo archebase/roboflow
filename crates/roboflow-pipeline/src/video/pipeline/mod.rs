@@ -4,20 +4,12 @@
 
 //! Pipeline abstraction for video encoding strategies.
 //!
-//! This module defines a trait-based abstraction that allows different
-//! pipeline implementations (2-stage, 3-stage, future variants) to be
-//! used interchangeably at runtime.
+//! This module defines a trait-based abstraction for video encoding pipelines
+//! using parallel decode + convert + encode stages.
 //!
 //! # Architecture
 //!
-//! ## Pipeline Types
-//!
-//! - **TwoStagePipeline**: Single-threaded decode + encode per camera (current default)
-//!   - Uses `StreamingMp4Encoder` directly
-//!   - Lower memory usage, simpler flow
-//!   - Best for: single camera or low-throughput scenarios
-//!
-//! - **ThreeStagePipeline**: Parallel decode + convert + encode
+//! - **VideoPipeline**: Parallel decode + convert + encode
 //!   - Uses `DecodePool` → `ConvertPool` → `EncoderPool`
 //!   - SIMD color conversion (8-12x faster than FFmpeg sws_scale)
 //!   - Best for: multi-camera, high-throughput scenarios
@@ -25,15 +17,11 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! use crate::video::pipeline::{PipelineHandle, TwoStageConfig, ThreeStageConfig};
+//! use crate::video::pipeline::{PipelineHandle, VideoPipelineConfig};
 //! use crate::video::streaming::EncodedChunk;
 //!
-//! // Choose pipeline based on config
-//! let pipeline: Box<dyn PipelineHandle> = if config.use_parallel {
-//!     Box::new(ThreeStagePipeline::new(config)?)
-//! } else {
-//!     Box::new(TwoStagePipeline::new(config)?)
-//! };
+//! // Create pipeline
+//! let pipeline: Box<dyn PipelineHandle> = Box::new(VideoPipeline::new(config)?);
 //!
 //! // Add frames
 //! pipeline.add_frame(image)?;
@@ -42,13 +30,11 @@
 //! let result = pipeline.join()?;
 //! ```
 
-pub mod three_stage;
-pub mod two_stage;
+pub mod parallel;
 
 use std::sync::mpsc::Sender;
 
-pub use three_stage::{ThreeStageConfig, ThreeStagePipeline};
-pub use two_stage::{TwoStageConfig, TwoStagePipeline};
+pub use parallel::{VideoPipeline, VideoPipelineConfig};
 
 use crate::ImageData;
 

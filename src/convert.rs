@@ -34,10 +34,8 @@ use std::time::Duration;
 
 use roboflow_core::{Result, RoboflowError};
 
-#[cfg(feature = "sources")]
 use roboflow_pipeline::sources::{SourceConfig, create_source};
 
-#[cfg(feature = "sinks")]
 use roboflow_pipeline::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
 
 use roboflow_pipeline::formats::{
@@ -250,7 +248,6 @@ impl ConvertBuilder {
     /// - Configuration cannot be loaded
     /// - Source or sink creation fails
     /// - Processing fails
-    #[cfg(all(feature = "sources", feature = "sinks"))]
     pub async fn run(self) -> Result<ConversionReport> {
         let input = self.input.clone().ok_or_else(|| {
             RoboflowError::other("Input path not set. Call .input() before .run()")
@@ -358,7 +355,6 @@ impl ConvertBuilder {
     /// Run the conversion with a timeout.
     ///
     /// This is a convenience method that wraps `run()` with a timeout.
-    #[cfg(all(feature = "sources", feature = "sinks"))]
     pub async fn run_with_timeout(self, timeout: Duration) -> Result<ConversionReport> {
         tokio::time::timeout(timeout, self.run())
             .await
@@ -393,7 +389,6 @@ impl Default for ConvertBuilder {
 /// let report = convert("recording.mcap", "dataset/", "lerobot_config.toml").await?;
 /// println!("Converted {} frames in {:.2}s", report.frames_total, report.duration_sec);
 /// ```
-#[cfg(all(feature = "sources", feature = "sinks"))]
 pub async fn convert(
     input: impl AsRef<str>,
     output: impl AsRef<str>,
@@ -420,7 +415,6 @@ pub async fn convert(
 /// let report = convert_with_defaults("recording.mcap", "dataset/").await?;
 /// println!("Converted {} frames", report.frames_total);
 /// ```
-#[cfg(all(feature = "sources", feature = "sinks"))]
 pub async fn convert_with_defaults(
     input: impl AsRef<str>,
     output: impl AsRef<str>,
@@ -502,7 +496,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "sources")]
     #[test]
     fn test_source_config_from_url_local() {
         let config = SourceConfig::from_url("/path/to/file.mcap");
@@ -515,7 +508,6 @@ mod tests {
         assert_eq!(config.source_type.name(), "rrd");
     }
 
-    #[cfg(feature = "sources")]
     #[test]
     fn test_source_config_from_url_cloud() {
         let config = SourceConfig::from_url("s3://bucket/path/file.mcap");

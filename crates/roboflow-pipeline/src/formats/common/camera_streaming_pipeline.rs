@@ -469,25 +469,25 @@ pub struct PipelineAdapter {
 }
 
 impl PipelineAdapter {
-    /// Create a new adapter from roboflow-video's ThreeStagePipeline.
+    /// Create a new adapter from roboflow-video's VideoPipeline.
     ///
     /// This spawns a thread that bridges between the two APIs:
     /// - Receives StreamingCommand from ConcurrentVideoEncoder
-    /// - Forwards to ThreeStagePipeline as ImageData
-    /// - Receives EncodedChunk from ThreeStagePipeline
+    /// - Forwards to VideoPipeline as ImageData
+    /// - Receives EncodedChunk from VideoPipeline
     /// - Converts to StreamingUploadCommand for upload thread
     pub fn new(
         camera: String,
-        three_stage_config: crate::video::pipeline::ThreeStageConfig,
+        video_pipeline_config: crate::video::pipeline::VideoPipelineConfig,
         upload_tx: Sender<StreamingUploadCommand>,
     ) -> Result<Self> {
         let (cmd_tx, cmd_rx) = crossbeam_channel::bounded(64);
 
-        // Create channel for receiving encoded chunks from ThreeStagePipeline
+        // Create channel for receiving encoded chunks from VideoPipeline
         let (chunk_tx, chunk_rx) = std::sync::mpsc::channel::<crate::video::EncodedChunk>();
 
-        // Create the ThreeStagePipeline with chunk_tx
-        let pipeline = three_stage_config.create_pipeline(chunk_tx)?;
+        // Create the VideoPipeline with chunk_tx
+        let pipeline = video_pipeline_config.create_pipeline(chunk_tx)?;
 
         let thread_name = format!("pipeline-adapter-{}", camera);
         let camera_clone = camera.clone();

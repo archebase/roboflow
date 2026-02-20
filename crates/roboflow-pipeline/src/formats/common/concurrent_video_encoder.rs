@@ -101,7 +101,7 @@ use crate::formats::common::camera_streaming_pipeline::{
     spawn_streaming_pipeline,
 };
 use crate::formats::common::video::VideoEncoderConfig;
-use crate::video::pipeline::ThreeStageConfig;
+use crate::video::pipeline::VideoPipelineConfig;
 
 /// Configuration for concurrent video encoder.
 #[derive(Debug, Clone)]
@@ -237,8 +237,8 @@ impl ConcurrentVideoEncoder {
         // Spawn streaming encoding pipeline
         // Choose pipeline type based on use_parallel_pipeline flag
         let pipeline: EitherPipeline = if self.config.use_parallel_pipeline {
-            // Create 3-stage pipeline (parallel decode + convert + encode)
-            let three_stage_config = ThreeStageConfig {
+            // Create parallel video pipeline (decode + convert + encode)
+            let video_pipeline_config = VideoPipelineConfig {
                 camera: camera.to_string(),
                 video_config: self.config.video_config.clone(),
                 decode_workers: Some(num_cpus::get_physical()),
@@ -252,7 +252,7 @@ impl ConcurrentVideoEncoder {
 
             EitherPipeline::Adapter(PipelineAdapter::new(
                 camera.to_string(),
-                three_stage_config,
+                video_pipeline_config,
                 upload_tx,
             )?)
         } else {

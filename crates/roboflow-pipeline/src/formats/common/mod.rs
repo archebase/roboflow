@@ -20,6 +20,8 @@ pub mod camera_streaming_pipeline;
 pub mod concurrent_video_encoder;
 pub mod config;
 pub mod image_decode;
+pub mod message_utils;
+pub mod operation;
 pub mod parquet_base;
 pub mod progress;
 pub mod ring_buffer;
@@ -88,3 +90,7 @@ pub use concurrent_video_encoder::{
 
 // Re-export upload coordinator trait
 pub use upload_coordinator::{UploadCoordinator, UploadProgress};
+
+pub use operation::{Sink, VecSink, WriteOperation};
+
+pub use message_utils::{extract_image_bytes, extract_u32, is_camera_info_topic};

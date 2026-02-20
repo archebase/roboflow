@@ -187,6 +187,15 @@ impl LerobotWriter {
         let output_prefix = String::new();
         let cloud_uploader = CloudUploader::new(Arc::clone(&storage), output_prefix.clone());
 
+        let mut config = config;
+        if config.flushing.max_frames_per_chunk > 0 {
+            tracing::info!(
+                max_frames_per_chunk = config.flushing.max_frames_per_chunk,
+                "Disabling video segmentation for local storage"
+            );
+            config.flushing.max_frames_per_chunk = 0;
+        }
+
         Ok(Self {
             storage,
             output_prefix,
@@ -1015,7 +1024,6 @@ impl LerobotWriter {
             images_encoded,
             skipped_frames,
             failed_encodings: 0,
-            decode_failures: 0,
             output_bytes: 0,
         };
 
@@ -1577,7 +1585,6 @@ impl DatasetWriter for LerobotWriter {
             state_records: self.total_frames * 2,
             output_bytes: self.output_bytes,
             duration_sec: duration,
-            decode_failures: self.failed_encodings,
         })
     }
 

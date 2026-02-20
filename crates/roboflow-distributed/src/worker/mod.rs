@@ -46,6 +46,7 @@ pub struct Worker {
     /// Executor for processing work units.
     executor: Box<dyn Executor>,
     /// Cancellation token for graceful shutdown.
+    #[allow(dead_code)]
     cancellation_token: Arc<tokio_util::sync::CancellationToken>,
 }
 
@@ -70,7 +71,7 @@ impl Worker {
 
         // Create executor using stage-based framework
         let executor: Box<dyn Executor> = Box::new(LeRobotExecutor::new(
-            config.max_concurrent_jobs as usize,
+            config.max_concurrent_jobs,
             config.output_prefix.clone(),
         ));
 
@@ -140,7 +141,7 @@ impl Worker {
         // Create executor with episode allocator using stage-based framework
         let executor: Box<dyn Executor> = Box::new(
             LeRobotExecutor::new(
-                config.max_concurrent_jobs as usize,
+                config.max_concurrent_jobs,
                 config.output_prefix.clone(),
             )
             .with_episode_allocator(episode_allocator),

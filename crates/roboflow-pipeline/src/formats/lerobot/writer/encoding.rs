@@ -43,6 +43,17 @@ pub fn encode_videos(
         "Video encoding configuration"
     );
 
+    if video_config.hardware_accelerated {
+        tracing::info!(
+            codec = %video_config.codec,
+            "Using hardware-accelerated video encoding"
+        );
+    } else {
+        tracing::info!(
+            "Using software video encoding (CPU). Consider enabling hardware acceleration for better performance."
+        );
+    }
+
     // Filter out empty cameras
     let camera_data: Vec<(String, Vec<ImageData>)> = image_buffers
         .iter()
@@ -87,12 +98,10 @@ pub fn encode_videos(
 pub struct EncodeStats {
     /// Number of images encoded
     pub images_encoded: usize,
-    /// Number of frames skipped due to dimension mismatches
+    /// Number of frames skipped due to dimension mismatches or decode failures
     pub skipped_frames: usize,
     /// Number of videos that failed to encode
     pub failed_encodings: usize,
-    /// Number of images that failed to decode (corrupted/unsupported format)
-    pub decode_failures: usize,
     /// Total output bytes
     pub output_bytes: u64,
 }
@@ -127,7 +136,7 @@ fn encode_videos_sequential(
             {
                 Ok(()) => {
                     stats.images_encoded += buffer.len();
-                    tracing::debug!(
+                    tracing::info!(
                         camera = %camera,
                         frames = buffer.len(),
                         path = %video_path.display(),
@@ -282,7 +291,6 @@ fn encode_videos_parallel(
         images_encoded: images_encoded.load(Ordering::Relaxed),
         skipped_frames: skipped_frames.load(Ordering::Relaxed),
         failed_encodings: failed_encodings.load(Ordering::Relaxed),
-        decode_failures: skipped_frames.load(Ordering::Relaxed), // Decode failures tracked as skips
         output_bytes: output_bytes.load(Ordering::Relaxed),
     };
 
@@ -304,72 +312,95 @@ fn encode_videos_parallel(
 /// Returns (buffer, skipped_frame_count) where skipped frames are those
 /// that had dimension mismatches or failed to decode (when encoded).
 /// Compressed images (JPEG/PNG) are decoded to RGB before encoding to MP4.
+///
 pub fn build_frame_buffer_static(images: &[ImageData]) -> Result<(VideoFrameBuffer, usize)> {
+    use rayon::prelude::*;
+
     let mut buffer = VideoFrameBuffer::new();
     let mut skipped = 0usize;
-    let mut decode_failures = 0usize;
 
-    for img in images {
-        if img.width == 0 || img.height == 0 {
-            tracing::debug!("Skipping image with zero dimensions");
-            skipped += 1;
-            continue;
-        }
+    let encoded_count = images.iter().filter(|img| img.is_encoded).count();
+    let use_parallel = encoded_count > 10 && rayon::current_num_threads() > 1;
 
-        let (width, height, rgb_data) = if img.is_encoded {
-            match decode_image_to_rgb(img) {
-                Some((w, h, data)) => (w, h, data),
-                None => {
-                    decode_failures += 1;
+    if use_parallel {
+        let decoded: Vec<_> = images
+            .par_iter()
+            .map(|img| {
+                if img.width == 0 || img.height == 0 {
+                    return Ok(None);
+                }
+
+                if img.is_encoded {
+                    match decode_image_to_rgb(img) {
+                        Some((w, h, data)) => Ok(Some((w, h, data))),
+                        None => Err(()),
+                    }
+                } else {
+                    Ok(Some((img.width, img.height, img.data.clone())))
+                }
+            })
+            .collect();
+
+        for result in decoded {
+            match result {
+                Ok(Some((width, height, rgb_data))) => {
+                    let video_frame = VideoFrame::new(width, height, rgb_data);
+                    if let Err(e) = buffer.add_frame(video_frame) {
+                        skipped += 1;
+                        tracing::warn!(
+                            expected_width = buffer.width.unwrap_or(0),
+                            expected_height = buffer.height.unwrap_or(0),
+                            actual_width = width,
+                            actual_height = height,
+                            error = %e,
+                            "Frame dimension mismatch - skipping frame"
+                        );
+                    }
+                }
+                Ok(None) | Err(()) => {
                     skipped += 1;
-                    tracing::debug!(
-                        width = img.width,
-                        height = img.height,
-                        data_len = img.data.len(),
-                        "Skipping encoded image (decode failed)"
-                    );
-                    continue;
                 }
             }
-        } else {
-            (img.width, img.height, img.data.clone())
-        };
+        }
+    } else {
+        for img in images {
+            if img.width == 0 || img.height == 0 {
+                skipped += 1;
+                continue;
+            }
 
-        let video_frame = VideoFrame::new(width, height, rgb_data);
-        if let Err(e) = buffer.add_frame(video_frame) {
-            skipped += 1;
-            tracing::warn!(
-                expected_width = buffer.width.unwrap_or(0),
-                expected_height = buffer.height.unwrap_or(0),
-                actual_width = width,
-                actual_height = height,
-                error = %e,
-                "Frame dimension mismatch - skipping frame"
-            );
+            let (width, height, rgb_data) = if img.is_encoded {
+                match decode_image_to_rgb(img) {
+                    Some((w, h, data)) => (w, h, data),
+                    None => {
+                        skipped += 1;
+                        continue;
+                    }
+                }
+            } else {
+                (img.width, img.height, img.data.clone())
+            };
+
+            let video_frame = VideoFrame::new(width, height, rgb_data);
+            if let Err(e) = buffer.add_frame(video_frame) {
+                skipped += 1;
+                tracing::warn!(
+                    expected_width = buffer.width.unwrap_or(0),
+                    expected_height = buffer.height.unwrap_or(0),
+                    actual_width = width,
+                    actual_height = height,
+                    error = %e,
+                    "Frame dimension mismatch - skipping frame"
+                );
+            }
         }
     }
 
-    // When all frames were skipped, log and continue (no video for this camera, episode still succeeds)
     if !images.is_empty() && buffer.is_empty() {
         tracing::warn!(
             frame_count = images.len(),
-            decode_failures,
-            "All frames skipped for video (decode failed or dimension mismatch); \
-             Parquet and other cameras will still be written. \
-             Check image data integrity and codec compatibility."
-        );
-    }
-
-    // Log decode failure summary
-    if decode_failures > 0 {
-        tracing::warn!(
-            decode_failures,
-            total_frames = images.len(),
-            failure_rate = format!(
-                "{:.1}%",
-                (decode_failures as f64 / images.len() as f64) * 100.0
-            ),
-            "Image decode failures detected"
+            skipped_frames = skipped,
+            "All frames skipped for video; Parquet and other cameras will still be written"
         );
     }
 
@@ -470,7 +501,6 @@ mod tests {
         assert_eq!(stats.images_encoded, 0);
         assert_eq!(stats.skipped_frames, 0);
         assert_eq!(stats.failed_encodings, 0);
-        assert_eq!(stats.decode_failures, 0);
         assert_eq!(stats.output_bytes, 0);
     }
 

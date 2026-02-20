@@ -10,11 +10,8 @@
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use chrono::Utc;
-use roboflow::{DatasetBaseConfig, LerobotConfig, VideoConfig};
-use roboflow_pipeline::lerobot::{FlushingConfig, Mapping, MappingType, StreamingConfig};
 use roboflow_distributed::Executor;
 use roboflow_distributed::batch::{WorkFile, WorkUnit, WorkUnitStatus};
 use roboflow_distributed::lerobot_executor::LeRobotExecutor;
@@ -23,60 +20,6 @@ use roboflow_distributed::worker::{JobRegistry, ProcessingResult};
 const TEST_BAG_PATH: &str =
     "tests/fixtures/A02-A01-37-45-77-factory_07-P4_210-leju_claw-20260104174020-v001.bag";
 const CONFIG_HASH: &str = "test_config_v1";
-
-fn create_lerobot_config() -> LerobotConfig {
-    LerobotConfig {
-        dataset: roboflow::lerobot::DatasetConfig {
-            base: DatasetBaseConfig {
-                name: "test_dataset".to_string(),
-                fps: 30,
-                robot_type: Some("kuavo_p4".to_string()),
-            },
-            env_type: None,
-        },
-        mappings: vec![
-            Mapping {
-                topic: "/cam_h/color/image_raw/compressed".to_string(),
-                feature: "observation.images.cam_high".to_string(),
-                mapping_type: MappingType::Image,
-                camera_key: Some("cam_high".to_string()),
-            },
-            Mapping {
-                topic: "/cam_l/color/image_raw/compressed".to_string(),
-                feature: "observation.images.cam_left".to_string(),
-                mapping_type: MappingType::Image,
-                camera_key: Some("cam_left".to_string()),
-            },
-            Mapping {
-                topic: "/cam_r/color/image_raw/compressed".to_string(),
-                feature: "observation.images.cam_right".to_string(),
-                mapping_type: MappingType::Image,
-                camera_key: Some("cam_right".to_string()),
-            },
-            Mapping {
-                topic: "/kuavo_arm_traj".to_string(),
-                feature: "observation.state".to_string(),
-                mapping_type: MappingType::State,
-                camera_key: None,
-            },
-            Mapping {
-                topic: "/joint_cmd".to_string(),
-                feature: "action".to_string(),
-                mapping_type: MappingType::Action,
-                camera_key: None,
-            },
-        ],
-        video: VideoConfig {
-            codec: "libx264".to_string(),
-            crf: 18,
-            preset: "fast".to_string(),
-            profile: None,
-        },
-        annotation_file: None,
-        flushing: FlushingConfig::default(),
-        streaming: StreamingConfig::default(),
-    }
-}
 
 fn create_work_unit(bag_path: &str, output_path: &str) -> WorkUnit {
     let metadata = fs::metadata(bag_path).expect("Failed to read bag metadata");

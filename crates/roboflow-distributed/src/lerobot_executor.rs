@@ -20,6 +20,7 @@ use crate::worker::registry::JobRegistry;
 ///
 /// This executor processes source files and converts them to LeRobot v2.1 format
 /// by creating a Discover → Convert → Merge pipeline for each work unit.
+/// Uses parallel processing for maximum throughput.
 pub struct LeRobotExecutor {
     stage_executor: StageExecutor,
     output_prefix: String,

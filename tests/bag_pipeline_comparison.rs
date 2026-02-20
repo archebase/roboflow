@@ -60,9 +60,9 @@ fn test_reading_vs_full_pipeline() {
     let input_metadata = fs::metadata(TEST_BAG_PATH).expect("Failed to read input metadata");
     let input_size_mb = input_metadata.len() as f64 / (1024.0 * 1024.0);
 
-    println!("\n{}", std::iter::repeat("=").take(80).collect::<String>());
+    println!("\n{}", "=".repeat(80));
     println!("READING vs FULL PIPELINE (with video encoding)");
-    println!("{}", std::iter::repeat("=").take(80).collect::<String>());
+    println!("{}", "=".repeat(80));
     println!("Input: {} ({:.2} MB)\n", TEST_BAG_PATH, input_size_mb);
 
     println!("Test 1: Reading only (no writer)...");
@@ -76,7 +76,7 @@ fn test_reading_vs_full_pipeline() {
     let overhead = pipeline_time - read_time;
     let overhead_pct = overhead / pipeline_time * 100.0;
 
-    println!("{}", std::iter::repeat("=").take(80).collect::<String>());
+    println!("{}", "=".repeat(80));
     println!("RESULTS:");
     println!("  Reading only:        {:.2}s", read_time);
     println!("  Full pipeline:       {:.2}s", pipeline_time);
@@ -95,7 +95,7 @@ fn test_reading_vs_full_pipeline() {
             overhead_pct
         );
     }
-    println!("{}", std::iter::repeat("=").take(80).collect::<String>());
+    println!("{}", "=".repeat(80));
 }
 
 async fn run_read_only_benchmark() -> f64 {
@@ -110,12 +110,9 @@ async fn run_read_only_benchmark() -> f64 {
         .await
         .expect("Failed to initialize");
 
-    let mut count = 0usize;
     loop {
         match source.read_batch(100).await {
-            Ok(Some(messages)) => {
-                count += messages.len();
-            }
+            Ok(Some(_messages)) => {}
             Ok(None) => break,
             Err(_) => break,
         }
@@ -148,15 +145,9 @@ async fn run_full_pipeline_benchmark() -> f64 {
 
     let start = Instant::now();
 
-    let mut total_frames = 0usize;
-
     loop {
         match source.read_batch(100).await {
-            Ok(Some(messages)) => {
-                for _msg in messages {
-                    total_frames += 1;
-                }
-            }
+            Ok(Some(_messages)) => {}
             Ok(None) => break,
             Err(_) => break,
         }

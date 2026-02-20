@@ -289,9 +289,6 @@ pub struct WriterStats {
 
     /// Processing duration in seconds.
     pub duration_sec: f64,
-
-    /// Number of images that failed to decode (corrupted/unsupported).
-    pub decode_failures: usize,
 }
 
 impl WriterStats {
@@ -313,16 +310,6 @@ impl WriterStats {
     pub fn mb_per_sec(&self) -> f64 {
         if self.duration_sec > 0.0 {
             (self.output_bytes as f64 / (1024.0 * 1024.0)) / self.duration_sec
-        } else {
-            0.0
-        }
-    }
-
-    /// Get decode failure rate as percentage (0-100).
-    pub fn decode_failure_rate(&self) -> f64 {
-        let total = self.images_encoded + self.decode_failures;
-        if total > 0 {
-            (self.decode_failures as f64 / total as f64) * 100.0
         } else {
             0.0
         }
@@ -832,7 +819,6 @@ mod tests {
         assert_eq!(stats.state_records, 0);
         assert_eq!(stats.output_bytes, 0);
         assert_eq!(stats.duration_sec, 0.0);
-        assert_eq!(stats.decode_failures, 0);
     }
 
     #[test]
@@ -844,21 +830,6 @@ mod tests {
         };
 
         assert_eq!(stats.mb_per_sec(), 5.0);
-    }
-
-    #[test]
-    fn test_writer_stats_decode_failure_rate() {
-        let stats = WriterStats {
-            images_encoded: 90,
-            decode_failures: 10,
-            ..Default::default()
-        };
-
-        assert_eq!(stats.decode_failure_rate(), 10.0);
-
-        // Zero case
-        let stats_zero = WriterStats::default();
-        assert_eq!(stats_zero.decode_failure_rate(), 0.0);
     }
 
     #[test]

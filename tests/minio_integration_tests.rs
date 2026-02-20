@@ -31,8 +31,8 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 use roboflow_pipeline::{
-    AlignedFrame, ImageData,
-    common::{ConcurrentEncoderConfig, ConcurrentVideoEncoder},
+    ImageData,
+    common::{AlignedFrame, ConcurrentEncoderConfig, ConcurrentVideoEncoder},
 };
 use roboflow_storage::{
     AsyncStorage,

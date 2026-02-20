@@ -14,7 +14,7 @@ use roboflow::{
     LerobotWriter, LerobotWriterTrait, VideoConfig,
 };
 use roboflow_pipeline::streaming::StreamingConfig;
-use roboflow_pipeline::{AlignedFrame, ImageData, PipelineConfig, PipelineExecutor};
+use roboflow_pipeline::{ImageData, PipelineConfig, PipelineExecutor, common::AlignedFrame};
 
 /// Test that ImageData correctly handles compressed vs raw images.
 #[test]

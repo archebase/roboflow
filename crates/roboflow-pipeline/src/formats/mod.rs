@@ -3,7 +3,9 @@ pub mod config;
 pub mod hardware;
 pub mod image;
 pub mod lerobot;
+pub mod parallel_pipeline;
 pub mod pipeline;
+pub mod pipeline_common;
 pub mod streaming;
 
 pub use common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats};
@@ -12,6 +14,7 @@ pub use image::{
     DecodedImage, ImageDecoderBackend, ImageDecoderConfig, ImageDecoderFactory, ImageError,
     ImageFormat, decode_compressed_image,
 };
+pub use parallel_pipeline::{ParallelPipelineExecutor, ParallelPipelineStats};
 pub use pipeline::{PipelineConfig, PipelineExecutor, PipelineStats};
 
 use roboflow_core::Result;
@@ -129,5 +132,138 @@ pub fn create_writer(
                 Ok(Box::new(writer))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_dataset_format_lerobot() {
+        assert_eq!(DatasetFormat::Lerobot, DatasetFormat::Lerobot);
+    }
+
+    #[test]
+    fn test_dataset_config_lerobot() {
+        let config = lerobot::LerobotConfig {
+            dataset: lerobot::DatasetConfig {
+                base: common::DatasetBaseConfig {
+                    name: "test".to_string(),
+                    fps: 30,
+                    robot_type: Some("test_robot".to_string()),
+                },
+                env_type: None,
+            },
+            mappings: vec![],
+            video: Default::default(),
+            annotation_file: None,
+            flushing: Default::default(),
+            streaming: Default::default(),
+        };
+
+        let dataset_config = DatasetConfig::lerobot(config);
+        assert!(matches!(dataset_config, DatasetConfig::Lerobot(_)));
+    }
+
+    #[test]
+    fn test_dataset_config_new() {
+        let config = DatasetConfig::new(
+            DatasetFormat::Lerobot,
+            "test_dataset",
+            30,
+            Some("robot".to_string()),
+        );
+
+        assert_eq!(config.format(), DatasetFormat::Lerobot);
+        assert_eq!(config.name(), "test_dataset");
+        assert_eq!(config.fps(), 30);
+        assert_eq!(config.robot_type(), Some("robot"));
+    }
+
+    #[test]
+    fn test_dataset_config_name_only() {
+        let config = DatasetConfig::new(DatasetFormat::Lerobot, "test", 60, None);
+        assert_eq!(config.name(), "test");
+        assert_eq!(config.fps(), 60);
+        assert_eq!(config.robot_type(), None);
+    }
+
+    #[test]
+    fn test_dataset_config_as_lerobot() {
+        let config = DatasetConfig::new(DatasetFormat::Lerobot, "test", 30, None);
+        assert!(config.as_lerobot().is_some());
+    }
+
+    #[test]
+    fn test_create_writer_local() {
+        let temp_dir = tempdir().unwrap();
+        let config = DatasetConfig::new(DatasetFormat::Lerobot, "test", 30, None);
+
+        let writer = create_writer(temp_dir.path(), None, None, &config);
+        assert!(writer.is_ok());
+    }
+
+    #[test]
+    fn test_dataset_config_from_toml_valid() {
+        let toml = r#"
+            [dataset]
+            name = "test"
+            fps = 30
+            robot_type = "test_robot"
+
+            [[mappings]]
+            topic = "/cam"
+            feature = "observation.images.cam"
+            type = "image"
+        "#;
+
+        let result = DatasetConfig::from_toml(toml, DatasetFormat::Lerobot);
+        assert!(result.is_ok());
+
+        let config = result.unwrap();
+        assert_eq!(config.name(), "test");
+        assert_eq!(config.fps(), 30);
+    }
+
+    #[test]
+    fn test_dataset_config_from_toml_invalid() {
+        let toml = "invalid toml content {{{";
+        let result = DatasetConfig::from_toml(toml, DatasetFormat::Lerobot);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_dataset_config_from_file() {
+        let temp_dir = tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        std::fs::write(
+            &config_path,
+            r#"
+            [dataset]
+            name = "test"
+            fps = 30
+        "#,
+        )
+        .unwrap();
+
+        let result = DatasetConfig::from_file(&config_path, DatasetFormat::Lerobot);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().name(), "test");
+    }
+
+    #[test]
+    fn test_dataset_config_from_file_not_found() {
+        let result = DatasetConfig::from_file("/nonexistent/path.toml", DatasetFormat::Lerobot);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_exports_exist() {
+        // Test that all public exports are accessible
+        let _: AlignedFrame = AlignedFrame::new(0, 0);
+        let _: ImageData = ImageData::new(640, 480, vec![0u8; 640 * 480 * 3]);
     }
 }

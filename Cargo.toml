@@ -125,15 +125,8 @@ pprof = { version = "0.14", features = ["flamegraph", "cpp", "prost-codec", "fra
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.7", optional = true }
 
-# Dataset features
+# Optional features
 [features]
-# Include sources + sinks by default so the roboflow binary (submit, run, batch) is built with `cargo build`
-default = ["sources", "sinks"]
-
-# Pipeline API (Source/Sink abstraction)
-sources = []
-sinks = []
-
 # Note: Cloud storage (S3, OSS) is always available via roboflow-storage
 
 # Use jemalloc as global allocator on Linux (better for concurrent workloads)
@@ -167,7 +160,6 @@ object_store = "0.11"
 [[bin]]
 name = "roboflow"
 path = "src/bin/roboflow.rs"
-required-features = ["sources", "sinks"]
 
 # Examples
 [[example]]

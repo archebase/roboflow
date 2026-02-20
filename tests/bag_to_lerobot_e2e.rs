@@ -2,17 +2,19 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use roboflow_pipeline::sources::SourceConfig;
 use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig};
 use roboflow_pipeline::DatasetWriter;
-use roboflow_pipeline::formats::lerobot::{FlushingConfig, Mapping, MappingType, StreamingConfig as LerobotStreamingConfig};
+use roboflow_pipeline::formats::lerobot::{
+    FlushingConfig, Mapping, MappingType, StreamingConfig as LerobotStreamingConfig,
+};
 use roboflow_pipeline::formats::streaming::StreamingConfig;
+use roboflow_pipeline::sources::SourceConfig;
 use roboflow_pipeline::{PipelineConfig, PipelineExecutor};
 
 // Large bag files (1.6GB/1.7GB) - used for comprehensive testing
-const LARGE_BAG_PATH_1: &str =
+const _LARGE_BAG_PATH_1: &str =
     "tests/fixtures/A02-A01-37-45-77-factory_07-P4_210-leju_claw-20260104174020-v001.bag";
-const LARGE_BAG_PATH_2: &str =
+const _LARGE_BAG_PATH_2: &str =
     "tests/fixtures/A02-A01-37-45-77-factory_07-P4_210-leju_claw-20260105142915-v001.bag";
 
 // Smaller fixture files (~120MB, ~4000 frames) - used for faster CI testing
@@ -95,17 +97,18 @@ fn test_bag_to_lerobot_e2e() {
         .collect();
 
     // Use streaming config from LerobotConfig
-    let pipeline_streaming = roboflow_pipeline::formats::streaming::StreamingConfig::with_fps(config.dataset.base.fps);
-    let pipeline_config = PipelineConfig::new(pipeline_streaming)
-        .with_topic_mappings(topic_mappings);
+    let pipeline_streaming =
+        roboflow_pipeline::formats::streaming::StreamingConfig::with_fps(config.dataset.base.fps);
+    let pipeline_config =
+        PipelineConfig::new(pipeline_streaming).with_topic_mappings(topic_mappings);
 
     let writer = LerobotWriter::new_local(output_path, config.clone())
         .expect("Failed to create LeRobot writer");
     let mut executor = PipelineExecutor::new(writer, pipeline_config);
 
     let source_config = SourceConfig::bag(TEST_BAG_PATH);
-    let mut source =
-        roboflow_pipeline::sources::create_source(&source_config).expect("Failed to create bag source");
+    let mut source = roboflow_pipeline::sources::create_source(&source_config)
+        .expect("Failed to create bag source");
 
     let _metadata: roboflow_pipeline::sources::SourceMetadata = tokio::runtime::Runtime::new()
         .unwrap()
@@ -122,7 +125,7 @@ fn test_bag_to_lerobot_e2e() {
                         if executor.process_message(msg).is_ok() {
                             count += 1;
                         }
-                        if count % 100 == 0 {
+                        if count.is_multiple_of(100) {
                             println!("Processed {} frames...", count);
                         }
                     }
@@ -145,7 +148,7 @@ fn test_bag_to_lerobot_e2e() {
 
     let stats = executor.finalize().expect("Failed to finalize executor");
     println!("Writer stats: {:?}", stats);
-    
+
     println!("\nOutput directory structure:");
     fn list_dir(path: &std::path::Path, prefix: &str) {
         if let Ok(entries) = std::fs::read_dir(path) {
@@ -156,12 +159,10 @@ fn test_bag_to_lerobot_e2e() {
                 if full_path.is_dir() {
                     println!("{}{}/", prefix, name_str);
                     list_dir(&full_path, &format!("{}  ", prefix));
+                } else if let Ok(meta) = entry.metadata() {
+                    println!("{}{} ({} bytes)", prefix, name_str, meta.len());
                 } else {
-                    if let Ok(meta) = entry.metadata() {
-                        println!("{}{} ({} bytes)", prefix, name_str, meta.len());
-                    } else {
-                        println!("{}{}", prefix, name_str);
-                    }
+                    println!("{}{}", prefix, name_str);
                 }
             }
         }
@@ -216,9 +217,9 @@ fn test_bag_to_lerobot_s3_upload() {
         loop {
             match source.read_batch(100).await {
                 Ok(Some(messages)) => {
-                    for msg in messages {
+                    for _msg in messages {
                         frame_count += 1;
-                        if frame_count % 100 == 0 {
+                        if frame_count.is_multiple_of(100) {
                             println!("Processed {} frames...", frame_count);
                         }
                     }
@@ -248,6 +249,7 @@ fn test_bag_to_lerobot_s3_upload() {
     });
 }
 
+#[allow(clippy::cognitive_complexity)]
 fn verify_lerobot_structure(output_path: &Path, config: &LerobotConfig) {
     use serde_json::Value;
 
@@ -409,11 +411,12 @@ fn verify_lerobot_structure(output_path: &Path, config: &LerobotConfig) {
                 .join("chunk-000")
                 .join(&mapping.feature)
                 .join("episode_000000.mp4");
-            
+
             println!("  Looking for video at: {}", video_path.display());
-            
+
             if video_path.exists() {
-                let video_metadata = fs::metadata(&video_path).expect("Failed to read video metadata");
+                let video_metadata =
+                    fs::metadata(&video_path).expect("Failed to read video metadata");
                 if video_metadata.len() > 0 {
                     video_count += 1;
                     println!(
@@ -423,12 +426,19 @@ fn verify_lerobot_structure(output_path: &Path, config: &LerobotConfig) {
                     );
                 }
             } else {
-                println!("  ✗ Video not found at expected path: {}", video_path.display());
+                println!(
+                    "  ✗ Video not found at expected path: {}",
+                    video_path.display()
+                );
             }
         }
     }
-    
-    assert!(video_count >= 3, "Expected at least 3 videos (cam_high, cam_left, cam_right), found {}", video_count);
+
+    assert!(
+        video_count >= 3,
+        "Expected at least 3 videos (cam_high, cam_left, cam_right), found {}",
+        video_count
+    );
 
     println!("\nLeRobot v2.1 structure verification complete!");
     println!("  - info.json: ✓ (codebase_version, robot_type, fps, features)");
@@ -437,6 +447,7 @@ fn verify_lerobot_structure(output_path: &Path, config: &LerobotConfig) {
     println!("  - videos/chunk-000/*/episode_000000.mp4: ✓");
 }
 
+#[allow(dead_code)]
 fn verify_lerobot_structure_multi_episode(
     output_path: &Path,
     config: &LerobotConfig,
@@ -609,7 +620,7 @@ fn verify_lerobot_structure_multi_episode(
 #[test]
 fn test_two_bags_to_lerobot_two_episodes() {
     // Test that two bag files = two work units = two episodes
-    let bag_files = vec![TEST_BAG_PATH, TEST_BAG_PATH_2];
+    let bag_files = [TEST_BAG_PATH, TEST_BAG_PATH_2];
 
     for (i, bag_path) in bag_files.iter().enumerate() {
         if !Path::new(bag_path).exists() {
@@ -637,8 +648,8 @@ fn test_two_bags_to_lerobot_two_episodes() {
 
     // Use streaming config from LerobotConfig
     let pipeline_streaming = StreamingConfig::with_fps(config.dataset.base.fps);
-    let pipeline_config = PipelineConfig::new(pipeline_streaming)
-        .with_topic_mappings(topic_mappings);
+    let pipeline_config =
+        PipelineConfig::new(pipeline_streaming).with_topic_mappings(topic_mappings);
 
     // Process each bag file as a separate episode
     for (episode_idx, bag_path) in bag_files.iter().enumerate() {
@@ -648,8 +659,8 @@ fn test_two_bags_to_lerobot_two_episodes() {
         );
 
         let source_config = SourceConfig::bag(*bag_path);
-        let mut source =
-            roboflow_pipeline::sources::create_source(&source_config).expect("Failed to create bag source");
+        let mut source = roboflow_pipeline::sources::create_source(&source_config)
+            .expect("Failed to create bag source");
 
         let _metadata: roboflow_pipeline::sources::SourceMetadata = rt
             .block_on(source.initialize(&source_config))
@@ -669,7 +680,7 @@ fn test_two_bags_to_lerobot_two_episodes() {
                             if executor.process_message(msg).is_ok() {
                                 count += 1;
                             }
-                            if count % 100 == 0 {
+                    if count.is_multiple_of(100) {
                                 println!("Episode {}: Processed {} frames...", episode_idx, count);
                             }
                         }

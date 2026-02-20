@@ -164,9 +164,9 @@ impl ObjectStore for MemoryObjectStore {
         let size = data.len() as u64;
 
         let mut inner = self.inner.write().await;
-        inner.entry(id).or_insert_with(|| {
-            (data, owner, std::sync::atomic::AtomicUsize::new(1))
-        });
+        inner
+            .entry(id)
+            .or_insert_with(|| (data, owner, std::sync::atomic::AtomicUsize::new(1)));
 
         Ok(ObjectRef::new(id, size, owner, vec![]))
     }

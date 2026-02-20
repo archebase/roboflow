@@ -4,15 +4,13 @@
 
 //! Convert stage for processing bag files to LeRobot format.
 
-use std::collections::HashMap;
-
 use roboflow_core::Result;
 use roboflow_executor::object_store::{ObjectId, ObjectRef};
 use roboflow_executor::stage::{PartitionId, Stage, StageId};
 use roboflow_executor::task::{Task, TaskContext, TaskResult, TaskStatus};
 use roboflow_pipeline::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
 use roboflow_pipeline::formats::{
-    PipelineConfig,
+    ParallelPipelineExecutor, PipelineConfig,
     common::DatasetBaseConfig,
     lerobot::{DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig},
 };
@@ -21,7 +19,8 @@ use roboflow_pipeline::sources::{SourceConfig, create_source};
 /// Stage for converting bag files to LeRobot format.
 ///
 /// This stage processes input files and converts them to the
-/// LeRobot v2.1 dataset format (Parquet + MP4 videos).
+/// LeRobot v2.1 dataset format (Parquet + MP4 videos) using
+/// parallel processing for maximum throughput.
 ///
 /// Each partition processes one input file independently.
 pub struct ConvertStage {
@@ -82,6 +81,7 @@ impl Stage for ConvertStage {
 struct ConvertTask {
     input_file: String,
     output_prefix: String,
+    #[allow(dead_code)]
     config_hash: String,
     partition_id: PartitionId,
 }
@@ -165,23 +165,22 @@ impl Task for ConvertTask {
             );
         let pipeline_config = PipelineConfig::new(streaming_config);
 
-        // Create pipeline executor
-        let mut executor =
-            roboflow_pipeline::formats::PipelineExecutor::new(writer, pipeline_config);
+        // Create parallel pipeline executor for maximum throughput
+        let mut executor = ParallelPipelineExecutor::new(writer, pipeline_config).map_err(|e| {
+            roboflow_core::RoboflowError::other(format!(
+                "Failed to create parallel executor: {}",
+                e
+            ))
+        })?;
 
-        // Process all messages
-        let mut frame_count = 0usize;
+        // Collect all messages from source
+        let mut all_messages = Vec::new();
         loop {
             match source.read_batch(100).await {
                 Ok(Some(messages)) => {
-                    for msg in messages {
-                        executor.process_message(msg).map_err(|e| {
-                            roboflow_core::RoboflowError::other(format!("Pipeline error: {}", e))
-                        })?;
-                    }
-                    frame_count += 1;
+                    all_messages.extend(messages);
                 }
-                Ok(None) => break, // End of stream
+                Ok(None) => break,
                 Err(e) => {
                     return Err(roboflow_core::RoboflowError::other(format!(
                         "Source read error: {}",
@@ -191,20 +190,27 @@ impl Task for ConvertTask {
             }
         }
 
-        // Finalize the pipeline
+        // Process messages in parallel
+        executor
+            .process_messages_parallel(all_messages)
+            .map_err(|e| {
+                roboflow_core::RoboflowError::other(format!("Parallel pipeline error: {}", e))
+            })?;
+
+        // Finalize and get stats
         let stats = executor.finalize().map_err(|e| {
             roboflow_core::RoboflowError::other(format!("Pipeline finalize error: {}", e))
         })?;
+        let frames_written = stats.frames_written;
+        let episodes_written = stats.episodes_written;
 
         tracing::info!(
-            frames_written = stats.frames_written,
-            episodes_written = stats.episodes_written,
+            frames_written = frames_written,
+            episodes_written = episodes_written,
             "Conversion complete"
         );
 
-        // Return output path
-        let output_path = format!("{}/data", output_dir);
-
+        let _output_path = format!("{}/data", output_dir);
         let obj_ref = ObjectRef::new(ObjectId::new([2u8; 32]), 1024, ctx.task_id, vec![]);
 
         Ok(TaskResult {
@@ -214,7 +220,7 @@ impl Task for ConvertTask {
                 cpu_secs: 0.0,
                 memory_peak_bytes: 0,
                 bytes_read: 0,
-                bytes_written: stats.frames_written as u64 * 1024, // Rough estimate
+                bytes_written: frames_written as u64 * 1024,
             },
             status: TaskStatus::Success,
         })

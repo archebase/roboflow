@@ -18,6 +18,7 @@ use super::frame::LerobotFrame;
 
 /// Default action dimension for robotics datasets when not inferable from state.
 /// Common for dual-arm setups like BridgeData and Aloha (7 DOF per arm).
+#[allow(dead_code)]
 const DEFAULT_ACTION_DIMENSION: usize = 14;
 
 /// Write current episode to Parquet file.
@@ -27,6 +28,7 @@ const DEFAULT_ACTION_DIMENSION: usize = 14;
 ///
 /// This is a convenience wrapper that uses chunk index 0.
 /// For distributed processing with dynamic chunk indices, use `write_episode_parquet_with_chunk`.
+#[allow(dead_code)]
 pub fn write_episode_parquet(
     frame_data: &[LerobotFrame],
     episode_index: usize,
@@ -278,32 +280,36 @@ pub fn write_episode_parquet_with_chunk(
 
     // Track last action for forward-fill
     let mut last_action: Option<Vec<f32>> = None;
+    // Track last state for forward-fill
+    let mut last_state: Option<Vec<f32>> = None;
 
     for frame in frame_data {
-        if frame.observation_state.is_none() {
-            continue;
-        }
-
+        // Include ALL frames, not just those with state
         episode_index_vec.push(frame.episode_index as i64);
         frame_index.push(frame.frame_index as i64);
         index.push(frame.index as i64);
         timestamp.push(frame.timestamp);
 
+        // Handle state: use frame state, or last known state, or zeros
         if let Some(ref state) = frame.observation_state {
             observation_state.push(state.clone());
+            last_state = Some(state.clone());
+        } else if let Some(ref state) = last_state {
+            // Forward-fill from previous frame
+            observation_state.push(state.clone());
+        } else {
+            // No state available yet, use zeros
+            observation_state.push(vec![0.0; state_dim]);
         }
 
+        // Handle action: use frame action, or last known action, or zeros
         let act = frame.action.as_ref().or(last_action.as_ref());
         if let Some(a) = act {
             action.push(a.clone());
             last_action = Some(a.clone());
-        } else if !observation_state.is_empty() {
-            let dim = observation_state
-                .last()
-                .map_or(DEFAULT_ACTION_DIMENSION, |s| {
-                    s.len().min(DEFAULT_ACTION_DIMENSION)
-                });
-            action.push(vec![0.0; dim]);
+        } else {
+            // No action available, use zeros
+            action.push(vec![0.0; state_dim]);
         }
 
         task_index.push(frame.task_index.map(|t| t as i64).unwrap_or(0));

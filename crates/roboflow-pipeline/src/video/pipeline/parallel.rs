@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Three-stage pipeline: Parallel decode + convert + encode.
+//! Parallel video pipeline: Parallel decode + convert + encode.
 
 use std::io;
 use std::sync::Arc;
@@ -24,9 +24,9 @@ use crate::video::{
     streaming::EncodedChunk,
 };
 
-/// Configuration for the three-stage pipeline.
+/// Configuration for the parallel video pipeline.
 #[derive(Debug, Clone)]
-pub struct ThreeStageConfig {
+pub struct VideoPipelineConfig {
     /// Camera name.
     pub camera: String,
     /// Video encoder configuration.
@@ -46,7 +46,7 @@ pub struct ThreeStageConfig {
     pub chunk_size: usize,
 }
 
-impl Default for ThreeStageConfig {
+impl Default for VideoPipelineConfig {
     fn default() -> Self {
         let cpu_count = num_cpus::get();
         Self {
@@ -63,18 +63,17 @@ impl Default for ThreeStageConfig {
     }
 }
 
-impl PipelineConfig for ThreeStageConfig {
+impl PipelineConfig for VideoPipelineConfig {
     fn create_pipeline(
         &self,
         upload_tx: Sender<EncodedChunk>,
     ) -> io::Result<Box<dyn PipelineHandle>> {
-        ThreeStagePipeline::new(self.clone(), upload_tx)
-            .map(|p| Box::new(p) as Box<dyn PipelineHandle>)
+        VideoPipeline::new(self.clone(), upload_tx).map(|p| Box::new(p) as Box<dyn PipelineHandle>)
     }
 }
 
-/// Three-stage pipeline handle.
-pub struct ThreeStagePipeline {
+/// Parallel video pipeline handle.
+pub struct VideoPipeline {
     #[allow(dead_code)] // Stored for debugging and potential future use
     camera: String,
     cmd_tx: Sender<PipelineCommand>,
@@ -87,8 +86,8 @@ enum PipelineCommand {
     Shutdown,
 }
 
-impl ThreeStagePipeline {
-    pub fn new(config: ThreeStageConfig, upload_tx: Sender<EncodedChunk>) -> io::Result<Self> {
+impl VideoPipeline {
+    pub fn new(config: VideoPipelineConfig, upload_tx: Sender<EncodedChunk>) -> io::Result<Self> {
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
 
         // Clone camera BEFORE moving config into the closure
@@ -97,7 +96,7 @@ impl ThreeStagePipeline {
         let chunk_size = config.chunk_size;
 
         let handle = std::thread::Builder::new()
-            .name(format!("three-stage-pipeline-{}", camera))
+            .name(format!("video-pipeline-{}", camera))
             .spawn(move || run_coordinator(camera, cmd_rx, upload_tx, config, chunk_size))
             .map_err(|e| io::Error::other(e.to_string()))?;
 
@@ -113,7 +112,7 @@ fn run_coordinator(
     camera: String,
     cmd_rx: std::sync::mpsc::Receiver<PipelineCommand>,
     upload_tx: Sender<EncodedChunk>,
-    config: ThreeStageConfig,
+    config: VideoPipelineConfig,
     chunk_size: usize,
 ) -> io::Result<PipelineResult> {
     let decode_workers = config.decode_workers.unwrap_or(2);
@@ -484,7 +483,7 @@ fn submit_encode(
     Ok(())
 }
 
-impl PipelineHandle for ThreeStagePipeline {
+impl PipelineHandle for VideoPipeline {
     fn add_frame(&self, image: ImageData) -> io::Result<()> {
         self.cmd_tx
             .send(PipelineCommand::AddFrame(image))
@@ -521,7 +520,7 @@ mod tests {
 
     #[test]
     fn test_config_default() {
-        let config = ThreeStageConfig::default();
+        let config = VideoPipelineConfig::default();
         assert_eq!(config.camera, "");
         assert_eq!(config.frames_per_fragment, 30);
     }

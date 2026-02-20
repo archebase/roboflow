@@ -98,17 +98,17 @@ impl Task for MergeTask {
                             for ep_entry in episode_entries.flatten() {
                                 let ep_path = ep_entry.path();
                                 if ep_path.is_file() {
-                                    if let Some(ext) = ep_path.extension() {
-                                        if ext == "parquet" {
-                                            parquet_files.push(ep_path.clone());
-                                        }
+                                    if let Some(ext) = ep_path.extension()
+                                        && ext == "parquet"
+                                    {
+                                        parquet_files.push(ep_path.clone());
                                     }
-                                } else if ep_path.is_dir() {
-                                    if let Some(dir_name) = ep_path.file_name() {
-                                        let dir_str = dir_name.to_string_lossy();
-                                        if dir_str.contains("video") || dir_str.contains("cam") {
-                                            video_dirs.push(ep_path.clone());
-                                        }
+                                } else if ep_path.is_dir()
+                                    && let Some(dir_name) = ep_path.file_name()
+                                {
+                                    let dir_str = dir_name.to_string_lossy();
+                                    if dir_str.contains("video") || dir_str.contains("cam") {
+                                        video_dirs.push(ep_path.clone());
                                     }
                                 }
                             }
@@ -125,7 +125,7 @@ impl Task for MergeTask {
             "Found converted files to merge"
         );
 
-        if parquet_files.len() >= 1 {
+        if !parquet_files.is_empty() {
             let output_parquet = format!("{}/data.parquet", self.output_path);
             std::fs::copy(&parquet_files[0], &output_parquet).map_err(|e| {
                 roboflow_core::RoboflowError::other(format!("Failed to copy parquet: {}", e))

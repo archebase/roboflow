@@ -18,7 +18,7 @@ use roboflow::{
     DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig as DatasetConfig,
     LerobotWriter, LerobotWriterTrait, VideoConfig,
 };
-use roboflow_pipeline::{AlignedFrame, ImageData};
+use roboflow_pipeline::{ImageData, common::AlignedFrame};
 
 /// Create test image data with a gradient pattern for uniqueness.
 fn create_test_image_with_pattern(width: u32, height: u32, pattern: u8) -> ImageData {
