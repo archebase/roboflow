@@ -6,7 +6,8 @@
   "dependencies": [
     {
       "name": "ffmpeg",
-      "default-features": true
+      "default-features": true,
+      "features": ["x264"]
     }
   ],
   "builtin-baseline": "66c0373dc7fca549e5803087b9487edfe3aca0a1"
