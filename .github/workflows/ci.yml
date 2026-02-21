@@ -8,7 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -C linker=cc
 
 jobs:
   license:
@@ -30,7 +29,13 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-24.04, macos-latest]
+        include:
+          - os: ubuntu-24.04
+            triplet: x64-linux
+          - os: macos-latest
+            triplet: arm64-osx
+    env:
+      RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C linker=cc' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +45,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-key: "robocodec-vcpkg-${{ hashFiles('**/Cargo.lock') }}"
+          cache-key: "vcpkg-${{ matrix.triplet }}-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Check formatting (Rust)
         run: cargo fmt -- --check
@@ -49,12 +54,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libhdf5-dev pkg-config
+          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm
 
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install hdf5@1.10
+          brew install hdf5@1.10 nasm
           echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
 
       - name: Setup vcpkg
@@ -62,14 +67,13 @@ jobs:
         id: vcpkg
         with:
           manifest-dir: ${{ github.workspace }}
-          triplet: ${{ runner.os == 'Linux' && 'x64-linux' || 'x64-osx' }}
+          triplet: ${{ matrix.triplet }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure vcpkg environment
         run: |
           echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
-          echo "FFMPEG_DIR=${{ github.workspace }}/vcpkg/installed/${{ runner.os == 'Linux' && 'x64-linux' || 'x64-osx' }}" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=${{ github.workspace }}/vcpkg/installed/${{ runner.os == 'Linux' && 'x64-linux' || 'x64-osx' }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=${{ github.workspace }}/vcpkg/installed/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
@@ -81,7 +85,13 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-24.04, macos-latest]
+        include:
+          - os: ubuntu-24.04
+            triplet: x64-linux
+          - os: macos-latest
+            triplet: arm64-osx
+    env:
+      RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C linker=cc' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -89,18 +99,18 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-key: "robocodec-vcpkg-${{ hashFiles('**/Cargo.lock') }}"
+          cache-key: "vcpkg-${{ matrix.triplet }}-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libhdf5-dev pkg-config
+          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm
 
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install hdf5@1.10
+          brew install hdf5@1.10 nasm
           echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
 
       - name: Setup vcpkg
@@ -108,14 +118,13 @@ jobs:
         id: vcpkg
         with:
           manifest-dir: ${{ github.workspace }}
-          triplet: ${{ runner.os == 'Linux' && 'x64-linux' || 'x64-osx' }}
+          triplet: ${{ matrix.triplet }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure vcpkg environment
         run: |
           echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
-          echo "FFMPEG_DIR=${{ github.workspace }}/vcpkg/installed/${{ runner.os == 'Linux' && 'x64-linux' || 'x64-osx' }}" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=${{ github.workspace }}/vcpkg/installed/${{ runner.os == 'Linux' && 'x64-linux' || 'x64-osx' }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=${{ github.workspace }}/vcpkg/installed/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
 
       - name: Run tests
         run: cargo test --features dataset-all
@@ -124,6 +133,8 @@ jobs:
     name: Coverage
     needs: rust-test
     runs-on: ubuntu-24.04
+    env:
+      RUSTFLAGS: -C linker=cc
     steps:
       - uses: actions/checkout@v4
 
@@ -134,7 +145,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-key: "robocodec-vcpkg-${{ hashFiles('**/Cargo.lock') }}"
+          cache-key: "vcpkg-x64-linux-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Cache cargo-llvm-cov
         uses: actions/cache@v4
@@ -150,7 +161,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libhdf5-dev pkg-config
+          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm
 
       - name: Setup vcpkg
         uses: johnwason/vcpkg-action@v7
@@ -163,7 +174,6 @@ jobs:
       - name: Configure vcpkg environment
         run: |
           echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
-          echo "FFMPEG_DIR=${{ github.workspace }}/vcpkg/installed/x64-linux" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=${{ github.workspace }}/vcpkg/installed/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
 
       - name: Generate Rust coverage
