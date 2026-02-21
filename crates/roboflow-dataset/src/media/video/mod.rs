@@ -1,6 +1,7 @@
 pub mod arena;
 pub mod codec;
 pub mod composer;
+pub mod concurrent;
 pub mod config;
 pub mod convert;
 pub mod decode;
@@ -19,7 +20,7 @@ pub mod streaming;
 pub mod test_utils;
 
 pub use arena::{FramePool, FramePoolConfig};
-pub use composer::RsmpegVideoComposer;
+pub use composer::{RsmpegVideoComposer, VideoComposer};
 pub use config::{DepthEncoderConfig, VideoEncoderConfig};
 pub use convert::{ConvertPool, ConvertPoolConfig, TargetFormat};
 pub use decode::{DecodePool, DecodePoolConfig};
@@ -52,6 +53,9 @@ pub use streaming::{EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder};
 pub use pipeline::{
     PipelineConfig, PipelineHandle, PipelineResult, VideoPipeline, VideoPipelineConfig,
 };
+
+// Re-export concurrent video encoder
+pub use concurrent::{ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder};
 
 // Re-export VideoPathScheme from core traits
 pub use crate::core::VideoPathScheme;

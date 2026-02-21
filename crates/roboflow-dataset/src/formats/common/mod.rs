@@ -17,7 +17,6 @@
 
 pub mod base;
 pub mod camera_streaming_pipeline;
-pub mod concurrent_video_encoder;
 pub mod config;
 pub mod image_decode;
 pub mod message_utils;
@@ -89,8 +88,8 @@ pub use camera_streaming_pipeline::{
     StreamingPipelineResult, StreamingUploadCommand, spawn_streaming_pipeline,
 };
 
-// Re-export concurrent video encoder
-pub use concurrent_video_encoder::{
+// Re-export concurrent video encoder from media/video (canonical location)
+pub use crate::media::video::{
     ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder,
 };
 

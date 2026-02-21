@@ -59,7 +59,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use crate::formats::common::concurrent_video_encoder::{
+//! use roboflow_dataset::media::video::{
 //!     ConcurrentVideoEncoder, ConcurrentEncoderConfig,
 //! };
 //! use std::path::PathBuf;
@@ -91,12 +91,11 @@ use crossbeam_channel::{Receiver, unbounded};
 use roboflow_core::{Result, RoboflowError};
 
 use crate::core::VideoPathScheme;
-use crate::formats::common::ImageData;
 use crate::formats::common::camera_streaming_pipeline::{
     EitherPipeline, PipelineAdapter, StreamingPipelineConfig, StreamingUploadCommand,
     spawn_streaming_pipeline,
 };
-use crate::formats::common::video::VideoEncoderConfig;
+use crate::formats::common::{ImageData, VideoEncoderConfig};
 use crate::media::video::pipeline::VideoPipelineConfig;
 
 /// Configuration for concurrent video encoder.
@@ -227,7 +226,8 @@ impl ConcurrentVideoEncoder {
 
         // Build output path
         let output_path = self.build_output_path(camera);
-        self.output_paths.insert(camera.to_string(), output_path.clone());
+        self.output_paths
+            .insert(camera.to_string(), output_path.clone());
 
         // Create pipeline config
         let pipeline_config = StreamingPipelineConfig {
@@ -249,7 +249,9 @@ impl ConcurrentVideoEncoder {
             .spawn(move || {
                 Self::file_writer_thread(camera_clone, output_path_clone, writer_rx);
             })
-            .map_err(|e| RoboflowError::other(format!("Failed to spawn file writer thread: {}", e)))?;
+            .map_err(|e| {
+                RoboflowError::other(format!("Failed to spawn file writer thread: {}", e))
+            })?;
 
         // Spawn streaming encoding pipeline
         // Choose pipeline type based on use_parallel_pipeline flag
@@ -480,7 +482,6 @@ impl ConcurrentVideoEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::formats::common::ImageData;
     use tempfile::tempdir;
 
     fn test_output_dir() -> PathBuf {
@@ -502,7 +503,7 @@ mod tests {
             chunk_index: 5,
             episode_index: 42,
             chunk_size: 128 * 1024,
-            video_config: crate::formats::common::video::VideoEncoderConfig::default(),
+            video_config: VideoEncoderConfig::default(),
             frame_channel_capacity: 32,
             output_dir: test_output_dir(),
             path_scheme: None,
@@ -546,7 +547,7 @@ mod tests {
             chunk_index: 0,
             episode_index: 42,
             chunk_size: 256 * 1024,
-            video_config: crate::formats::common::video::VideoEncoderConfig::default(),
+            video_config: VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
             output_dir: test_output_dir(),
             path_scheme: None,
@@ -569,7 +570,7 @@ mod tests {
             chunk_index: 0,
             episode_index: 0,
             chunk_size: 256 * 1024,
-            video_config: crate::formats::common::video::VideoEncoderConfig::default(),
+            video_config: VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
             output_dir: output_dir.clone(),
             path_scheme: None,
@@ -607,7 +608,7 @@ mod tests {
             chunk_index: 0,
             episode_index: 0,
             chunk_size: 256 * 1024,
-            video_config: crate::formats::common::video::VideoEncoderConfig::default(),
+            video_config: VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
             output_dir: output_dir.clone(),
             path_scheme: None,
@@ -650,7 +651,7 @@ mod tests {
             chunk_index: 0,
             episode_index: 0,
             chunk_size: 256 * 1024,
-            video_config: crate::formats::common::video::VideoEncoderConfig::default(),
+            video_config: VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
             output_dir: output_dir.clone(),
             path_scheme: None,
@@ -684,7 +685,7 @@ mod tests {
             chunk_index: 0,
             episode_index: 0,
             chunk_size: 256 * 1024,
-            video_config: crate::formats::common::video::VideoEncoderConfig::default(),
+            video_config: VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
             output_dir: output_dir.clone(),
             path_scheme: None,

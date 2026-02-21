@@ -89,11 +89,12 @@ pub use formats::lerobot::{
 
 // Re-export video types from media::video for backward compatibility
 pub use media::video::{
-    FragmentEncoder, FragmentEncoderConfig, PixelFormat, StreamingEncoderConfig,
-    StreamingMp4Encoder, VideoEncoderConfig, VideoFrame,
+    ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder, FragmentEncoder,
+    FragmentEncoderConfig, PixelFormat, StreamingEncoderConfig, StreamingMp4Encoder,
+    VideoEncoderConfig, VideoFrame,
 };
 
 // Re-export conversion API
 pub use conversion::{
-    convert_file, ConversionConfig, ConversionResult, ConversionStats, OutputFiles,
+    ConversionConfig, ConversionResult, ConversionStats, OutputFiles, convert_file,
 };

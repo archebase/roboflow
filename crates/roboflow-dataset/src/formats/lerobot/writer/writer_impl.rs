@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::formats::common::{
-    AlignedFrame, ConcurrentEncoderConfig, ConcurrentVideoEncoder, DatasetWriter, ImageData,
-    WriterStats,
+    AlignedFrame, DatasetWriter, ImageData, WriterStats,
 };
+use crate::media::video::{ConcurrentEncoderConfig, ConcurrentVideoEncoder};
 use crate::formats::lerobot::config::LerobotConfig;
 use crate::formats::lerobot::metadata::MetadataCollector;
 use crate::formats::lerobot::trait_impl::{FromAlignedFrame, LerobotWriterTrait};
