@@ -56,10 +56,12 @@ pub use ring_buffer::{FrameRingBuffer, RingBufferError, RingBufferSnapshot};
 // Re-export video utilities from the video module (which re-exports from roboflow-video)
 pub use video::{
     DepthEncoderConfig, DepthMkvEncoder, EncoderChoice, Mp4Encoder, NvencEncoder,
-    VideoEncoderConfig, VideoEncoderError, VideoFrame, VideoFrameBuffer, VideoToolboxEncoder,
-    available_encoders, check_nvenc_available, check_videotoolbox_available, is_encoder_available,
+    VideoEncoderConfig, VideoEncoderError, VideoFrame, VideoFrameBuffer, available_encoders,
+    check_nvenc_available, check_videotoolbox_available, is_encoder_available,
     print_encoder_diagnostics, select_best_encoder,
 };
+#[cfg(target_os = "macos")]
+pub use video::VideoToolboxEncoder;
 
 // Re-export SIMD RGB to YUV conversion from roboflow-video (canonical location)
 pub use crate::media::video::{ConversionStrategy, optimal_strategy, rgb_to_nv12, rgb_to_yuv420p};
