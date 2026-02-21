@@ -19,10 +19,10 @@ use crossbeam_channel::{Receiver, Sender};
 use roboflow_core::{Result, RoboflowError};
 
 use crate::formats::common::video::VideoEncoderConfig;
-use crate::formats::common::{decode_to_rgb, ImageData};
+use crate::formats::common::{ImageData, decode_to_rgb};
+use crate::media::video::StreamingMp4Encoder;
 use crate::media::video::pipeline::PipelineConfig;
 use crate::media::video::streaming::{EncodedChunk, StreamingEncoderConfig};
-use crate::media::video::StreamingMp4Encoder;
 
 // =============================================================================
 // Commands
