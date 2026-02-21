@@ -22,6 +22,19 @@ jobs:
       - name: Check REUSE compliance
         run: reuse lint
 
+  rust-fmt:
+    name: Rust Format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
   rust-lint:
     name: Rust Lint
     needs: license
@@ -41,14 +54,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
           cache-key: "vcpkg-${{ matrix.triplet }}-${{ hashFiles('**/Cargo.lock') }}"
-
-      - name: Check formatting (Rust)
-        run: cargo fmt -- --check
 
       - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'
@@ -62,14 +72,25 @@ jobs:
           brew install hdf5@1.10 nasm ffmpeg
           echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
 
-      - name: Setup vcpkg
+      - name: Cache vcpkg
         if: runner.os == 'Linux'
-        uses: johnwason/vcpkg-action@v7
-        id: vcpkg
+        uses: actions/cache@v4
+        id: cache-vcpkg
         with:
-          manifest-dir: ${{ github.workspace }}
-          triplet: ${{ matrix.triplet }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          path: ${{ github.workspace }}/vcpkg
+          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Clone vcpkg
+        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: git clone https://github.com/microsoft/vcpkg --depth 1 "${{ github.workspace }}/vcpkg"
+
+      - name: Bootstrap vcpkg
+        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: "${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh"
+
+      - name: Install vcpkg packages
+        if: runner.os == 'Linux'
+        run: "${{ github.workspace }}/vcpkg/vcpkg" install --triplet ${{ matrix.triplet }} --x-manifest-root="${{ github.workspace }}"
 
       - name: Configure vcpkg environment
         if: runner.os == 'Linux'
@@ -82,7 +103,7 @@ jobs:
 
   rust-test:
     name: Rust Tests
-    needs: rust-lint
+    needs: license
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
@@ -115,14 +136,25 @@ jobs:
           brew install hdf5@1.10 nasm ffmpeg
           echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
 
-      - name: Setup vcpkg
+      - name: Cache vcpkg
         if: runner.os == 'Linux'
-        uses: johnwason/vcpkg-action@v7
-        id: vcpkg
+        uses: actions/cache@v4
+        id: cache-vcpkg
         with:
-          manifest-dir: ${{ github.workspace }}
-          triplet: ${{ matrix.triplet }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          path: ${{ github.workspace }}/vcpkg
+          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Clone vcpkg
+        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: git clone https://github.com/microsoft/vcpkg --depth 1 "${{ github.workspace }}/vcpkg"
+
+      - name: Bootstrap vcpkg
+        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: "${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh"
+
+      - name: Install vcpkg packages
+        if: runner.os == 'Linux'
+        run: "${{ github.workspace }}/vcpkg/vcpkg" install --triplet ${{ matrix.triplet }} --x-manifest-root="${{ github.workspace }}"
 
       - name: Configure vcpkg environment
         if: runner.os == 'Linux'
@@ -135,7 +167,7 @@ jobs:
 
   coverage:
     name: Coverage
-    needs: rust-test
+    needs: [rust-lint, rust-test]
     runs-on: ubuntu-24.04
     env:
       RUSTFLAGS: -C linker=cc
@@ -167,13 +199,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm
 
-      - name: Setup vcpkg
-        uses: johnwason/vcpkg-action@v7
-        id: vcpkg
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        id: cache-vcpkg
         with:
-          manifest-dir: ${{ github.workspace }}
-          triplet: x64-linux
-          token: ${{ secrets.GITHUB_TOKEN }}
+          path: ${{ github.workspace }}/vcpkg
+          key: vcpkg-x64-linux-${{ hashFiles('vcpkg.json') }}
+
+      - name: Clone vcpkg
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: git clone https://github.com/microsoft/vcpkg --depth 1 "${{ github.workspace }}/vcpkg"
+
+      - name: Bootstrap vcpkg
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: "${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh"
+
+      - name: Install vcpkg packages
+        run: "${{ github.workspace }}/vcpkg/vcpkg" install --triplet x64-linux --x-manifest-root="${{ github.workspace }}"
 
       - name: Configure vcpkg environment
         run: |
