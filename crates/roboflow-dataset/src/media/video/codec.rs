@@ -96,6 +96,66 @@ impl CodecContext {
 // Codec Detection
 // =============================================================================
 
+/// Check if running on macOS with actual VideoToolbox hardware support.
+///
+/// VideoToolbox is available on:
+/// - All Apple Silicon Macs (M1, M2, M3, etc.)
+/// - Intel Macs with integrated graphics (most Intel Macs)
+///
+/// This check prevents selecting VideoToolbox in CI/virtualized environments
+/// where the codec exists but hardware acceleration is unavailable.
+#[cfg(target_os = "macos")]
+fn has_videotoolbox_hardware() -> bool {
+    use std::process::Command;
+
+    // Check system profiler for Apple Silicon or Intel graphics
+    let output = Command::new("system_profiler")
+        .args(["SPHardwareDataType", "-json"])
+        .output();
+
+    if let Ok(output) = output
+        && output.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Apple Silicon Macs always have VideoToolbox
+        if stdout.contains("Apple M") || stdout.contains("Mac") {
+            return true;
+        }
+    }
+
+    // Fallback: check if we can actually create a VideoToolbox context
+    // by attempting to open the codec with test parameters
+    if let Some(codec) = AVCodec::find_encoder_by_name(c"h264_videotoolbox")
+        && let Ok(Some(_ctx)) = AVCodecContext::new(&codec).open(None)
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Check if NVIDIA GPU with NVENC is present on Linux.
+#[cfg(target_os = "linux")]
+fn has_nvenc_hardware() -> bool {
+    use std::process::Command;
+
+    // Check for NVIDIA GPU via nvidia-smi
+    if Command::new("nvidia-smi")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    // Check /proc/driver/nvidia/gpus
+    if std::path::Path::new("/proc/driver/nvidia/gpus").exists() {
+        return true;
+    }
+
+    false
+}
+
 /// Detect the best available codec for the platform.
 ///
 /// Priority: NVENC (Linux) → VideoToolbox (macOS) → libx264 (fallback).
@@ -103,7 +163,7 @@ impl CodecContext {
 pub fn detect_best_codec() -> (&'static str, &'static str) {
     #[cfg(target_os = "linux")]
     {
-        if AVCodec::find_encoder_by_name(c"h264_nvenc").is_some() {
+        if has_nvenc_hardware() && AVCodec::find_encoder_by_name(c"h264_nvenc").is_some() {
             tracing::info!("Detected NVENC encoder for hardware acceleration");
             return ("h264_nvenc", "nv12");
         }
@@ -111,7 +171,9 @@ pub fn detect_best_codec() -> (&'static str, &'static str) {
 
     #[cfg(target_os = "macos")]
     {
-        if AVCodec::find_encoder_by_name(c"h264_videotoolbox").is_some() {
+        if has_videotoolbox_hardware()
+            && AVCodec::find_encoder_by_name(c"h264_videotoolbox").is_some()
+        {
             tracing::info!("Detected VideoToolbox encoder for hardware acceleration");
             return ("h264_videotoolbox", "nv12");
         }
