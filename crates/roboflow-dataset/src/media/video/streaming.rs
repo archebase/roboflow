@@ -377,7 +377,13 @@ impl StreamingMp4Encoder {
             (*codec_context.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
         }
 
-        codec_context.open(None).map_err(|e| {
+        // libx264 requires preset option to initialize properly
+        let codec_opts = if self.config.codec == "libx264" {
+            Some(AVDictionary::new(c"preset", c"ultrafast", 0))
+        } else {
+            None
+        };
+        codec_context.open(codec_opts).map_err(|e| {
             VideoEncoderError::InitializationError(format!("Failed to open codec: {}", e))
         })?;
 

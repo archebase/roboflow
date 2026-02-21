@@ -32,7 +32,7 @@ use crate::media::video::frame::{VideoEncoderError, VideoFrameBuffer};
 pub use rsmpeg::{
     avcodec::{AVCodec, AVCodecContext, AVCodecID, AVPacket},
     avformat::AVFormatContextOutput,
-    avutil::{AVFrame, AVRational},
+    avutil::{AVDictionary, AVFrame, AVRational},
     error::RsmpegError,
     swscale::SwsContext,
 };
@@ -751,8 +751,13 @@ impl RsmpegMp4Encoder {
             (*codec_context.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
         }
 
-        // Open codec
-        codec_context.open(None).map_err(|e| {
+        // Open codec (libx264 requires preset option)
+        let codec_opts = if codec_name == "libx264" {
+            Some(AVDictionary::new(c"preset", c"ultrafast", 0))
+        } else {
+            None
+        };
+        codec_context.open(codec_opts).map_err(|e| {
             VideoEncoderError::FfmpegFailed(-1, format!("Failed to open codec: {}", e))
         })?;
 
@@ -1328,8 +1333,13 @@ impl PersistentEncoder {
             (*codec_ctx.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
         }
 
-        // Open codec
-        codec_ctx.open(None).map_err(|e| {
+        // Open codec (libx264 requires preset option)
+        let codec_opts = if config.codec == "libx264" {
+            Some(AVDictionary::new(c"preset", c"ultrafast", 0))
+        } else {
+            None
+        };
+        codec_ctx.open(codec_opts).map_err(|e| {
             VideoEncoderError::FfmpegFailed(-1, format!("Failed to open codec: {}", e))
         })?;
 
