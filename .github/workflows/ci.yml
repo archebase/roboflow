@@ -58,7 +58,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-key: "vcpkg-${{ matrix.triplet }}-${{ hashFiles('**/Cargo.lock') }}"
+          key: "vcpkg-${{ matrix.triplet }}-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'
@@ -123,7 +123,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-key: "vcpkg-${{ matrix.triplet }}-${{ hashFiles('**/Cargo.lock') }}"
+          key: "vcpkg-${{ matrix.triplet }}-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'
@@ -183,7 +183,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-key: "vcpkg-x64-linux-${{ hashFiles('**/Cargo.lock') }}"
+          key: "vcpkg-x64-linux-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Cache cargo-llvm-cov
         uses: actions/cache@v4
