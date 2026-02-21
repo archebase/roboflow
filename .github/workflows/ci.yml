@@ -165,7 +165,7 @@ jobs:
           echo "PKG_CONFIG_PATH=${{ github.workspace }}/vcpkg/installed/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
 
       - name: Run tests
-        run: cargo test --features dataset-all
+        run: cargo test --all-features
 
   coverage:
     name: Coverage
@@ -226,7 +226,7 @@ jobs:
           echo "PKG_CONFIG_PATH=${{ github.workspace }}/vcpkg/installed/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
 
       - name: Generate Rust coverage
-        run: cargo llvm-cov --features dataset-all --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
