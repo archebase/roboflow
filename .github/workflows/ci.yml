@@ -97,13 +97,16 @@ jobs:
       - name: Configure vcpkg environment
         if: runner.os == 'Linux'
         run: |
-          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
           VCPKG_INSTALLED=${{ github.workspace }}/vcpkg/installed
+          # Export for current step and future steps
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
           echo "FFMPEG_PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
           echo "FFMPEG_INCLUDE_DIR=${VCPKG_INSTALLED}/${{ matrix.triplet }}/include" >> $GITHUB_ENV
           echo "FFMPEG_LIBS_DIR=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib" >> $GITHUB_ENV
+          # Export for current step
+          export PKG_CONFIG_PATH="${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           # Verify FFmpeg and x264 were installed correctly
           ls ${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig/libav*.pc
           ls ${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig/x264.pc
@@ -174,13 +177,16 @@ jobs:
       - name: Configure vcpkg environment
         if: runner.os == 'Linux'
         run: |
-          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
           VCPKG_INSTALLED=${{ github.workspace }}/vcpkg/installed
+          # Export for current step and future steps
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
           echo "FFMPEG_PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
           echo "FFMPEG_INCLUDE_DIR=${VCPKG_INSTALLED}/${{ matrix.triplet }}/include" >> $GITHUB_ENV
           echo "FFMPEG_LIBS_DIR=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib" >> $GITHUB_ENV
+          # Export for current step
+          export PKG_CONFIG_PATH="${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           ls ${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig/libav*.pc
 
       - name: Run tests
@@ -245,13 +251,16 @@ jobs:
 
       - name: Configure vcpkg environment
         run: |
-          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
           VCPKG_INSTALLED=${{ github.workspace }}/vcpkg/installed
+          # Export for current step and future steps
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=${VCPKG_INSTALLED}/x64-linux/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
           echo "FFMPEG_PKG_CONFIG_PATH=${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig" >> $GITHUB_ENV
           echo "FFMPEG_INCLUDE_DIR=${VCPKG_INSTALLED}/x64-linux/include" >> $GITHUB_ENV
           echo "FFMPEG_LIBS_DIR=${VCPKG_INSTALLED}/x64-linux/lib" >> $GITHUB_ENV
+          # Export for current step
+          export PKG_CONFIG_PATH="${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           # Verify FFmpeg and x264 were installed correctly
           ls ${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig/libav*.pc
           ls ${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig/x264.pc
