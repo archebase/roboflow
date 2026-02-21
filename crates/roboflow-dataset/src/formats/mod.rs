@@ -114,6 +114,7 @@ impl DatasetConfig {
     }
 }
 
+#[allow(deprecated)]
 pub fn create_writer(
     output_dir: impl AsRef<Path>,
     storage: Option<&std::sync::Arc<dyn roboflow_storage::Storage>>,

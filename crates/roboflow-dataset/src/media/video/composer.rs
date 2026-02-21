@@ -2,13 +2,49 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
+//! Video composition for merging multiple video segments.
+//!
+//! This module provides the [`VideoComposer`] trait and [`RsmpegVideoComposer`]
+//! implementation for concatenating MP4 video files while maintaining proper
+//! timestamps and stream continuity.
+
 use std::ffi::CString;
 use std::path::Path;
 
-use roboflow_core::{RoboflowError, VideoComposer};
+use roboflow_core::{Result, RoboflowError};
 use rsmpeg::avformat::{AVFormatContextInput, AVFormatContextOutput};
 use rsmpeg::avutil::AVRational;
 use rsmpeg::ffi;
+
+/// Trait for composing multiple video files into a single output.
+///
+/// Video composition requires proper remuxing (not byte concatenation) to
+/// maintain valid MP4 structure and continuous timestamps across segments.
+pub trait VideoComposer: Send + Sync {
+    /// Compose multiple source videos into a single destination file.
+    ///
+    /// Sources are concatenated in order. For a single source, this is
+    /// equivalent to a file copy.
+    ///
+    /// # Arguments
+    ///
+    /// * `sources` - Source video paths in concatenation order
+    /// * `dest` - Destination path for the composed video
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - `sources` is empty
+    /// - Any source file cannot be opened
+    /// - The output file cannot be created
+    /// - Remuxing fails
+    fn compose(&self, sources: &[&Path], dest: &Path) -> Result<()>;
+
+    /// Check if composition is possible with the given sources.
+    ///
+    /// This is a preflight check that verifies all sources exist.
+    fn can_compose(&self, sources: &[&Path]) -> Result<()>;
+}
 
 pub struct RsmpegVideoComposer;
 
@@ -25,7 +61,7 @@ impl Default for RsmpegVideoComposer {
 }
 
 impl VideoComposer for RsmpegVideoComposer {
-    fn compose(&self, sources: &[&Path], dest: &Path) -> roboflow_core::Result<()> {
+    fn compose(&self, sources: &[&Path], dest: &Path) -> Result<()> {
         if sources.is_empty() {
             return Err(RoboflowError::other("compose requires at least one source"));
         }
@@ -139,7 +175,7 @@ impl VideoComposer for RsmpegVideoComposer {
         Ok(())
     }
 
-    fn can_compose(&self, sources: &[&Path]) -> roboflow_core::Result<()> {
+    fn can_compose(&self, sources: &[&Path]) -> Result<()> {
         if sources.is_empty() {
             return Err(RoboflowError::other("no sources to compose"));
         }

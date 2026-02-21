@@ -62,6 +62,7 @@ pub fn create_lerobot_writer(config: &LerobotWriterConfig) -> Result<LerobotWrit
     }
 }
 
+#[allow(deprecated)]
 fn create_cloud_writer(config: &LerobotWriterConfig) -> Result<LerobotWriterResult, String> {
     let output_path = &config.output_path;
 

@@ -13,10 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::formats::common::{
-    AlignedFrame, DatasetWriter, ImageData, WriterStats,
-};
-use crate::media::video::{ConcurrentEncoderConfig, ConcurrentVideoEncoder};
+use crate::formats::common::{AlignedFrame, DatasetWriter, ImageData, WriterStats};
 use crate::formats::lerobot::config::LerobotConfig;
 use crate::formats::lerobot::metadata::MetadataCollector;
 use crate::formats::lerobot::trait_impl::{FromAlignedFrame, LerobotWriterTrait};
@@ -26,7 +23,6 @@ use roboflow_core::Result;
 
 use super::camera::{CameraExtrinsic, CameraIntrinsic};
 use super::camera_params::CameraParamsWriter;
-use super::cloud_upload::CloudUploader;
 use super::encoding::{EncodeStats, encode_videos};
 use super::frame::LerobotFrame;
 use super::stats;
@@ -37,9 +33,6 @@ pub const DEFAULT_EPISODES_PER_CHUNK: u32 = 500;
 
 /// LeRobot v2.1 dataset writer.
 pub struct LerobotWriter {
-    /// Storage backend for writing data
-    storage: Arc<dyn roboflow_storage::Storage>,
-
     /// Output prefix within storage (empty for local filesystem root)
     output_prefix: String,
 
@@ -105,15 +98,6 @@ pub struct LerobotWriter {
 
     /// Number of videos that failed to encode
     failed_encodings: usize,
-
-    /// Whether to use cloud storage (detected from storage type)
-    use_cloud_storage: bool,
-
-    /// Upload coordinator for cloud uploads (optional).
-    upload_coordinator: Option<Arc<crate::formats::lerobot::upload::EpisodeUploadCoordinator>>,
-
-    /// Helper for cloud uploads
-    cloud_uploader: CloudUploader,
 
     /// Images added since last flush (for correct flush triggering)
     images_since_flush: usize,
@@ -181,12 +165,8 @@ impl LerobotWriter {
         fs::create_dir_all(&meta_dir)?;
         fs::create_dir_all(&params_dir)?;
 
-        // Create LocalStorage for backward compatibility
-        let storage: Arc<dyn roboflow_storage::Storage> =
-            Arc::new(roboflow_storage::LocalStorage::new(output_dir));
         let local_buffer = output_dir.to_path_buf();
         let output_prefix = String::new();
-        let cloud_uploader = CloudUploader::new(Arc::clone(&storage), output_prefix.clone());
 
         let mut config = config;
         if config.flushing.max_frames_per_chunk > 0 {
@@ -198,7 +178,6 @@ impl LerobotWriter {
         }
 
         Ok(Self {
-            storage,
             output_prefix,
             _local_buffer: local_buffer,
             output_dir: output_dir.to_path_buf(),
@@ -220,9 +199,6 @@ impl LerobotWriter {
             start_time: None,
             output_bytes: 0,
             failed_encodings: 0,
-            use_cloud_storage: false,
-            upload_coordinator: None,
-            cloud_uploader,
             images_since_flush: 0,
         })
     }
@@ -258,8 +234,13 @@ impl LerobotWriter {
     ///     LerobotConfig::default(),
     /// )?;
     /// ```
+    #[deprecated(
+        since = "0.2.0",
+        note = "Cloud storage is no longer supported. Use `new_local()` instead. \
+                The executor handles cloud uploads after local conversion."
+    )]
     pub fn new(
-        storage: Arc<dyn roboflow_storage::Storage>,
+        _storage: Arc<dyn roboflow_storage::Storage>,
         output_prefix: String,
         local_buffer: impl AsRef<Path>,
         config: LerobotConfig,
@@ -277,92 +258,7 @@ impl LerobotWriter {
         fs::create_dir_all(&meta_dir)?;
         fs::create_dir_all(&params_dir)?;
 
-        // Detect if this is cloud storage (not LocalStorage)
-        use roboflow_storage::LocalStorage;
-        let is_local = storage.as_any().is::<LocalStorage>();
-        let use_cloud_storage = !is_local;
-
-        tracing::info!(
-            is_local,
-            use_cloud_storage,
-            "Cloud storage detection result"
-        );
-
-        // Create remote directories
-        if !output_prefix.is_empty() {
-            let data_prefix = format!("{}/data/chunk-000", output_prefix);
-            let videos_prefix = format!("{}/videos/chunk-000", output_prefix);
-            let meta_prefix = format!("{}/meta", output_prefix);
-
-            storage
-                .create_dir_all(Path::new(&data_prefix))
-                .map_err(|e| {
-                    roboflow_core::RoboflowError::encode(
-                        "Storage",
-                        format!(
-                            "Failed to create remote data directory '{}': {}",
-                            data_prefix, e
-                        ),
-                    )
-                })?;
-            storage
-                .create_dir_all(Path::new(&videos_prefix))
-                .map_err(|e| {
-                    roboflow_core::RoboflowError::encode(
-                        "Storage",
-                        format!(
-                            "Failed to create remote videos directory '{}': {}",
-                            videos_prefix, e
-                        ),
-                    )
-                })?;
-            storage
-                .create_dir_all(Path::new(&meta_prefix))
-                .map_err(|e| {
-                    roboflow_core::RoboflowError::encode(
-                        "Storage",
-                        format!(
-                            "Failed to create remote meta directory '{}': {}",
-                            meta_prefix, e
-                        ),
-                    )
-                })?;
-        }
-
-        // Create upload coordinator for cloud storage
-        let upload_coordinator = if use_cloud_storage {
-            tracing::info!("Creating upload coordinator for cloud storage...");
-            let upload_config = crate::formats::lerobot::upload::UploadConfig {
-                show_progress: false,
-                ..Default::default()
-            };
-
-            match crate::formats::lerobot::upload::EpisodeUploadCoordinator::new(
-                Arc::clone(&storage),
-                upload_config,
-                None,
-            ) {
-                Ok(coordinator) => {
-                    tracing::info!("Upload coordinator created successfully");
-                    Some(Arc::new(coordinator))
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Failed to create upload coordinator, uploads will be done synchronously"
-                    );
-                    None
-                }
-            }
-        } else {
-            tracing::info!("Not creating upload coordinator (use_cloud_storage=false)");
-            None
-        };
-
-        let cloud_uploader = CloudUploader::new(Arc::clone(&storage), output_prefix.clone());
-
         Ok(Self {
-            storage,
             output_prefix,
             _local_buffer: local_buffer.to_path_buf(),
             output_dir: local_buffer.to_path_buf(),
@@ -384,20 +280,8 @@ impl LerobotWriter {
             start_time: None,
             output_bytes: 0,
             failed_encodings: 0,
-            use_cloud_storage,
-            upload_coordinator: upload_coordinator.clone(),
-            cloud_uploader,
             images_since_flush: 0,
         })
-    }
-
-    /// Log the upload coordinator state for debugging
-    pub fn log_upload_state(&self) {
-        tracing::info!(
-            use_cloud_storage = self.use_cloud_storage,
-            has_upload_coordinator = self.upload_coordinator.is_some(),
-            "LerobotWriter upload state"
-        );
     }
 
     /// Calculate the chunk index for the current episode.
@@ -429,40 +313,11 @@ impl LerobotWriter {
         self.output_dir.join("videos").join(self.chunk_dir_name())
     }
 
-    /// Ensure chunk directories exist (locally and remotely if using cloud storage).
+    /// Ensure chunk directories exist.
     fn ensure_chunk_dirs(&self) -> Result<()> {
         // Create local directories
         fs::create_dir_all(self.data_chunk_dir())?;
         fs::create_dir_all(self.videos_chunk_dir())?;
-
-        // Create remote directories if using cloud storage
-        if self.use_cloud_storage && !self.output_prefix.is_empty() {
-            let data_prefix = format!("{}/data/{}", self.output_prefix, self.chunk_dir_name());
-            let videos_prefix = format!("{}/videos/{}", self.output_prefix, self.chunk_dir_name());
-
-            self.storage
-                .create_dir_all(Path::new(&data_prefix))
-                .map_err(|e| {
-                    roboflow_core::RoboflowError::encode(
-                        "Storage",
-                        format!(
-                            "Failed to create remote data directory '{}': {}",
-                            data_prefix, e
-                        ),
-                    )
-                })?;
-            self.storage
-                .create_dir_all(Path::new(&videos_prefix))
-                .map_err(|e| {
-                    roboflow_core::RoboflowError::encode(
-                        "Storage",
-                        format!(
-                            "Failed to create remote videos directory '{}': {}",
-                            videos_prefix, e
-                        ),
-                    )
-                })?;
-        }
 
         Ok(())
     }
@@ -594,7 +449,7 @@ impl LerobotWriter {
 
         let start = std::time::Instant::now();
         // Encode videos
-        let (video_files, encode_stats) = self.encode_videos()?;
+        let (_video_files, encode_stats) = self.encode_videos()?;
         let video_time = start.elapsed();
 
         // Update statistics
@@ -608,87 +463,6 @@ impl LerobotWriter {
             video_ms = video_time.as_secs_f64() * 1000.0,
             "finish_episode timing"
         );
-
-        // Queue upload via coordinator if available (non-blocking)
-        tracing::debug!(
-            has_upload_coordinator = self.upload_coordinator.is_some(),
-            use_cloud_storage = self.use_cloud_storage,
-            episode_index = self.episode_index,
-            "Checking upload coordinator availability"
-        );
-        if self.upload_coordinator.is_some() {
-            tracing::info!(
-                episode = self.episode_index,
-                "Upload coordinator available, queuing episode upload..."
-            );
-            // Reconstruct parquet path
-            let parquet_path = self.output_dir.join(format!(
-                "data/chunk-000/episode_{:06}.parquet",
-                self.episode_index
-            ));
-
-            // Check if parquet file exists
-            let parquet_exists = parquet_path.exists();
-            tracing::info!(
-                episode = self.episode_index,
-                parquet_path = %parquet_path.display(),
-                parquet_exists,
-                "Parquet file existence check"
-            );
-
-            // Use video_files returned by encode_videos (contains (camera, PathBuf) tuples)
-            // When use_cloud_storage is true with S3Storage:
-            //   - encode_videos_with_coordinator uploads videos directly to S3 and returns empty video_files
-            //   - Only the parquet file needs to be uploaded
-            // When use_cloud_storage is false:
-            //   - video_files is empty (no upload needed)
-            let video_paths_for_upload: Vec<(String, PathBuf)> = if self.use_cloud_storage {
-                // Use the video_files returned by encode_videos
-                video_files
-                    .into_iter()
-                    .map(|(path, camera)| (camera, path))
-                    .collect()
-            } else {
-                // Local storage: no upload coordinator should be used
-                return Err(roboflow_core::RoboflowError::other(
-                    "Upload coordinator should not be used with local storage (use_cloud_storage=false)",
-                ));
-            };
-
-            tracing::info!(
-                episode = self.episode_index,
-                video_count = video_paths_for_upload.len(),
-                "Calling queue_episode_upload"
-            );
-
-            match self.queue_episode_upload(&parquet_path, &video_paths_for_upload) {
-                Ok(_) => {
-                    tracing::info!(
-                        episode = self.episode_index,
-                        video_count = video_paths_for_upload.len(),
-                        output_prefix = %self.output_prefix,
-                        "Queued episode for upload via coordinator"
-                    );
-                }
-                Err(e) => {
-                    let hint = if e.to_string().contains("disconnected") {
-                        " (channel disconnected — coordinator may have been shut down, e.g. job cancelled)"
-                    } else {
-                        ""
-                    };
-                    tracing::error!(
-                        episode = self.episode_index,
-                        error = %e,
-                        "Failed to queue episode upload, files will remain local{}",
-                        hint
-                    );
-                    // Fallback: upload this episode synchronously so data still reaches cloud
-                    if self.use_cloud_storage {
-                        self.upload_fallback_sync(&parquet_path, &video_paths_for_upload);
-                    }
-                }
-            }
-        }
 
         // Calculate and store episode stats
         self.calculate_episode_stats()?;
@@ -718,8 +492,8 @@ impl LerobotWriter {
     /// Flush video buffers to temp segment files.
     ///
     /// This method is called when memory threshold is hit during processing.
-    /// It encodes the current video buffers to temporary segment files in cloud
-    /// storage, without writing parquet or clearing frame data.
+    /// It encodes the current video buffers to temporary segment files,
+    /// without writing parquet or clearing frame data.
     ///
     /// The parquet file is written once on finalize with all accumulated frame data.
     fn flush_video_segment(&mut self) -> Result<()> {
@@ -737,12 +511,75 @@ impl LerobotWriter {
             "Flushing video segment to temporary storage"
         );
 
-        // Encode videos to temp segment paths
-        let (video_files, encode_stats) = if self.upload_coordinator.is_some() {
-            self.encode_videos_with_coordinator()?
-        } else {
-            self.encode_videos()?
-        };
+        // Collect camera data for encoding
+        let camera_data: Vec<(String, Vec<ImageData>)> = self
+            .image_buffers
+            .iter()
+            .map(|(camera, images)| (camera.clone(), images.clone()))
+            .collect();
+
+        // Resolve video configuration
+        let resolved = ResolvedConfig::from_video_config(&self.config.video);
+        let encoder_config = resolved.to_encoder_config(self.config.dataset.fps);
+
+        // Create temp directory for segments
+        let temp_base = self.output_dir.join("temp").join(&self.session_id);
+        let segment_dir = temp_base.join(format!("segment_{:04}", self.segment_index));
+        fs::create_dir_all(&segment_dir)?;
+
+        // Encode each camera to a temp segment file
+        let mut encode_stats = EncodeStats::default();
+        let mut segment_paths: Vec<(PathBuf, String)> = Vec::new();
+
+        for (camera, images) in &camera_data {
+            if images.is_empty() {
+                continue;
+            }
+
+            // Build frame buffer
+            let (buffer, skipped) = super::encoding::build_frame_buffer_static(images)?;
+            encode_stats.skipped_frames += skipped;
+
+            if buffer.is_empty() {
+                continue;
+            }
+
+            // Create temp segment path for this camera
+            let camera_dir = segment_dir.join(camera);
+            fs::create_dir_all(&camera_dir)?;
+            let segment_path = camera_dir.join("segment.mp4");
+
+            // Use RsmpegMp4Encoder to create a valid MP4 file
+            use crate::media::video::RsmpegMp4Encoder;
+
+            match RsmpegMp4Encoder::with_config(encoder_config.clone()).encode_buffer(&buffer, &segment_path) {
+                Ok(()) => {
+                    encode_stats.images_encoded += buffer.len();
+                    let file_size = std::fs::metadata(&segment_path)
+                        .map(|m| m.len())
+                        .unwrap_or(0);
+                    encode_stats.output_bytes += file_size;
+
+                    segment_paths.push((segment_path.clone(), camera.clone()));
+
+                    tracing::debug!(
+                        camera = %camera,
+                        segment_index = self.segment_index,
+                        frames = buffer.len(),
+                        path = %segment_path.display(),
+                        "Encoded video segment"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        camera = %camera,
+                        error = %e,
+                        "Failed to encode video segment"
+                    );
+                    encode_stats.failed_encodings += 1;
+                }
+            }
+        }
 
         // Update statistics
         self.images_encoded += encode_stats.images_encoded;
@@ -750,43 +587,19 @@ impl LerobotWriter {
         self.failed_encodings += encode_stats.failed_encodings;
         self.output_bytes += encode_stats.output_bytes;
 
-        // For non-cloud storage, move encoded videos to temp paths too
-        // This ensures consistent behavior across storage backends
-        if !video_files.is_empty() && !self.use_cloud_storage {
-            // Videos were encoded locally - move them to temp segment paths
-            let temp_prefix = format!("temp/{}/episode_{:06}", self.session_id, self.episode_index);
+        // Track segment paths for later merging
+        for (segment_path, camera) in segment_paths {
+            self.pending_segments
+                .entry(camera.clone())
+                .or_default()
+                .push(segment_path.clone());
 
-            for (local_path, camera) in video_files {
-                // Build temp segment path
-                let temp_path = PathBuf::from(format!(
-                    "{}/{}/segment_{:04}.mp4",
-                    temp_prefix, camera, self.segment_index
-                ));
-
-                // Track for later merging
-                self.pending_segments
-                    .entry(camera.clone())
-                    .or_default()
-                    .push(temp_path.clone());
-
-                // Move file to temp location (or copy if cross-device)
-                if let Some(parent) = temp_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::rename(&local_path, &temp_path).or_else(|_| {
-                    // Fallback to copy + remove if rename fails (cross-device)
-                    fs::copy(&local_path, &temp_path)?;
-                    fs::remove_file(&local_path)?;
-                    Ok::<_, std::io::Error>(())
-                })?;
-
-                tracing::debug!(
-                    camera = %camera,
-                    segment_index = self.segment_index,
-                    temp_path = %temp_path.display(),
-                    "Moved local video to temp segment path"
-                );
-            }
+            tracing::debug!(
+                camera = %camera,
+                segment_index = self.segment_index,
+                segment_path = %segment_path.display(),
+                "Tracked video segment for later merging"
+            );
         }
 
         // Clear only image buffers - keep frame_data for parquet write on finalize
@@ -839,14 +652,6 @@ impl LerobotWriter {
 
         self.output_bytes += size as u64;
 
-        // Upload to cloud storage if enabled (without upload coordinator)
-        if self.use_cloud_storage
-            && self.upload_coordinator.is_none()
-            && !parquet_path.as_os_str().is_empty()
-        {
-            self.cloud_uploader.upload_parquet(&parquet_path)?;
-        }
-
         Ok((parquet_path, size))
     }
 
@@ -881,251 +686,17 @@ impl LerobotWriter {
         // Resolve the video configuration
         let resolved = ResolvedConfig::from_video_config(&self.config.video);
 
-        // Use streaming coordinator for cloud storage (OSS/S3)
-        // For local storage, use batch encoding
-        let (mut video_files, encode_stats) = if self.use_cloud_storage
-            && self
-                .storage
-                .as_any()
-                .downcast_ref::<roboflow_storage::S3Storage>()
-                .is_some()
-        {
-            tracing::info!(
-                episode_index = self.episode_index,
-                chunk_index = self.chunk_index(),
-                "Using streaming coordinator for direct S3/OSS upload"
-            );
-            self.encode_videos_with_coordinator()?
-        } else {
-            // Batch encoding with intermediate files
-            encode_videos(
-                &camera_data,
-                self.episode_index,
-                &self.videos_chunk_dir(),
-                &resolved,
-                self.config.dataset.fps,
-                self.use_cloud_storage,
-            )?
-        };
-
-        // Upload videos to cloud storage (without upload coordinator)
-        if self.use_cloud_storage && self.upload_coordinator.is_none() && !video_files.is_empty() {
-            self.cloud_uploader.upload_videos_parallel(&video_files)?;
-            // Clear video files after upload to avoid double-upload
-            video_files.clear();
-        }
+        // Batch encoding with intermediate files
+        let (video_files, encode_stats) = encode_videos(
+            &camera_data,
+            self.episode_index,
+            &self.videos_chunk_dir(),
+            &resolved,
+            self.config.dataset.fps,
+            false, // local-only
+        )?;
 
         Ok((video_files, encode_stats))
-    }
-
-    /// Encode videos using the concurrent video encoder for multi-camera parallel encoding.
-    ///
-    /// This method provides better performance for multi-camera setups by using
-    /// dedicated encoder threads for each camera with local file output.
-    ///
-    /// Videos are written to local temp paths and tracked for later merging.
-    ///
-    /// # Returns
-    ///
-    /// A tuple of (video_files, encode_stats) where video_files contains
-    /// (path, camera) tuples and encode_stats contains encoding statistics.
-    fn encode_videos_with_coordinator(&mut self) -> Result<(Vec<(PathBuf, String)>, EncodeStats)> {
-        // Skip if no cameras have any frames
-        if self.image_buffers.values().all(|v| v.is_empty()) {
-            tracing::debug!(
-                episode_index = self.episode_index,
-                segment_index = self.segment_index,
-                "Video skip: no frames in image_buffers"
-            );
-            return Ok((Vec::new(), EncodeStats::default()));
-        }
-
-        let total_images: usize = self.image_buffers.values().map(|v| v.len()).sum();
-        tracing::info!(
-            episode_index = self.episode_index,
-            segment_index = self.segment_index,
-            cameras = self.image_buffers.len(),
-            total_frames = total_images,
-            "Encoding videos with concurrent encoder"
-        );
-
-        // Resolve video configuration
-        let resolved = ResolvedConfig::from_video_config(&self.config.video);
-
-        // Use temp path for segment files
-        // Format: temp/{session_id}/episode_{episode:06}/{camera}/segment_{segment:04}.mp4
-        let key_prefix = format!("temp/{}/episode_{:06}", self.session_id, self.episode_index);
-
-        // Create concurrent encoder configuration
-        // Note: We use segment_index in place of episode_index for the filename
-        let encoder_config = ConcurrentEncoderConfig {
-            key_prefix,
-            chunk_index: self.chunk_index(),
-            episode_index: self.segment_index, // Use segment_index for filename
-            chunk_size: 256 * 1024,            // 256KB chunks for streaming
-            video_config: resolved.to_encoder_config(self.config.dataset.fps),
-            frame_channel_capacity: self.config.streaming.ring_buffer_size,
-            output_dir: self.output_dir.clone(),
-            use_parallel_pipeline: false,
-            path_scheme: None,
-        };
-
-        // Create concurrent encoder
-        let mut encoder = ConcurrentVideoEncoder::new(encoder_config)?;
-
-        // Add all frames from all cameras
-        let mut skipped_frames = 0;
-        for (camera, images) in &self.image_buffers {
-            for image in images {
-                if let Err(e) = encoder.add_frame(camera, image.clone()) {
-                    tracing::debug!(
-                        camera = %camera,
-                        error = %e,
-                        "Failed to add frame to encoder"
-                    );
-                    skipped_frames += 1;
-                }
-            }
-        }
-
-        // Finalize and get results
-        let results = encoder.finalize()?;
-
-        let camera_count = results.len();
-        let images_encoded: usize = results.iter().map(|r| r.frames_encoded).sum();
-
-        // Track written segment paths for later merging
-        let mut video_files: Vec<(PathBuf, String)> = Vec::new();
-        for result in &results {
-            let segment_path = result.output_path.clone();
-            video_files.push((segment_path.clone(), result.camera.clone()));
-            self.pending_segments
-                .entry(result.camera.clone())
-                .or_default()
-                .push(segment_path);
-        }
-
-        let output_bytes: u64 = video_files
-            .iter()
-            .filter_map(|(path, _)| std::fs::metadata(path).ok().map(|m| m.len()))
-            .sum();
-
-        let encode_stats = EncodeStats {
-            images_encoded,
-            skipped_frames,
-            failed_encodings: 0,
-            output_bytes,
-        };
-
-        tracing::info!(
-            episode_index = self.episode_index,
-            segment_index = self.segment_index,
-            cameras = camera_count,
-            images_encoded = encode_stats.images_encoded,
-            output_bytes = encode_stats.output_bytes,
-            "Completed encoding with concurrent encoder (videos written to local temp path)"
-        );
-
-        Ok((video_files, encode_stats))
-    }
-
-    /// Queue episode upload via the upload coordinator (non-blocking).
-    fn queue_episode_upload(
-        &self,
-        parquet_path: &Path,
-        video_paths: &[(String, PathBuf)],
-    ) -> Result<bool> {
-        tracing::info!(
-            episode = self.episode_index,
-            parquet_path = %parquet_path.display(),
-            video_count = video_paths.len(),
-            "queue_episode_upload: called with coordinator"
-        );
-        if let Some(coordinator) = &self.upload_coordinator {
-            let episode_files = crate::formats::lerobot::upload::EpisodeFiles {
-                parquet_path: parquet_path.to_path_buf(),
-                video_paths: video_paths.to_vec(),
-                remote_prefix: self.output_prefix.clone(),
-                episode_index: self.episode_index as u64,
-            };
-
-            tracing::info!(
-                episode = self.episode_index,
-                "queue_episode_upload: calling coordinator.queue_episode_upload"
-            );
-            match coordinator.queue_episode_upload(episode_files) {
-                Ok(_) => {
-                    tracing::info!(
-                        episode = self.episode_index,
-                        "queue_episode_upload: coordinator.queue_episode_upload returned Ok"
-                    );
-                }
-                Err(e) => {
-                    tracing::error!(
-                        episode = self.episode_index,
-                        error = %e,
-                        "queue_episode_upload: coordinator.queue_episode_upload returned Err"
-                    );
-                    return Err(e);
-                }
-            }
-            tracing::debug!(
-                episode = self.episode_index,
-                "Queued episode upload via coordinator"
-            );
-            Ok(true)
-        } else {
-            tracing::warn!(
-                episode = self.episode_index,
-                "queue_episode_upload: no coordinator available"
-            );
-            Ok(false)
-        }
-    }
-
-    /// Upload episode files synchronously as fallback when coordinator fails.
-    fn upload_fallback_sync(&self, parquet_path: &Path, video_paths: &[(String, PathBuf)]) {
-        // Upload parquet file
-        if parquet_path.exists() {
-            match self.cloud_uploader.upload_parquet(parquet_path) {
-                Ok(()) => {
-                    tracing::info!(
-                        episode = self.episode_index,
-                        "Uploaded episode Parquet via fallback (coordinator unavailable)"
-                    );
-                }
-                Err(e) => {
-                    tracing::error!(
-                        episode = self.episode_index,
-                        error = %e,
-                        "Fallback Parquet upload failed"
-                    );
-                }
-            }
-        }
-
-        // Upload video files
-        for (camera, path) in video_paths {
-            if path.exists() {
-                match self.cloud_uploader.upload_video(path, camera) {
-                    Ok(()) => {
-                        tracing::debug!(
-                            episode = self.episode_index,
-                            camera = %camera,
-                            "Uploaded episode video via fallback"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            episode = self.episode_index,
-                            camera = %camera,
-                            error = %e,
-                            "Fallback video upload failed"
-                        );
-                    }
-                }
-            }
-        }
     }
 
     /// Calculate episode statistics.
@@ -1144,10 +715,6 @@ impl LerobotWriter {
         self.merge_pending_segments()?;
 
         // Write metadata files
-        if self.use_cloud_storage {
-            self.metadata
-                .write_all_to_storage(&self.storage, &self.output_prefix, &self.config)?;
-        }
         self.metadata.write_all(&self.output_dir, &self.config)?;
 
         let duration = self
@@ -1233,22 +800,20 @@ impl LerobotWriter {
                 "Composing segments into final video"
             );
 
-            // Download all segments to temp files (works for both local and cloud storage)
+            // Copy all segments to temp files for composition
             let temp_dir = tempfile::tempdir().map_err(|e| {
                 roboflow_core::RoboflowError::io(format!("Failed to create temp dir: {}", e))
             })?;
             let mut temp_segments: Vec<PathBuf> = Vec::new();
             for (i, segment) in segments.iter().enumerate() {
                 let temp_path = temp_dir.path().join(format!("segment_{}.mp4", i));
-                self.storage
-                    .download_file(segment, &temp_path)
-                    .map_err(|e| {
-                        roboflow_core::RoboflowError::io(format!(
-                            "Failed to download segment {}: {}",
-                            segment.display(),
-                            e
-                        ))
-                    })?;
+                fs::copy(segment, &temp_path).map_err(|e| {
+                    roboflow_core::RoboflowError::io(format!(
+                        "Failed to copy segment {}: {}",
+                        segment.display(),
+                        e
+                    ))
+                })?;
                 temp_segments.push(temp_path);
             }
 
@@ -1270,16 +835,24 @@ impl LerobotWriter {
                     )
                 })?;
 
-            // Upload the composed file to final destination
-            self.storage
-                .upload_file(&composed_path, &final_path)
-                .map_err(|e| {
+            // Copy the composed file to final destination (local file operation)
+            let final_full_path = self.output_dir.join(&final_path);
+            if let Some(parent) = final_full_path.parent() {
+                fs::create_dir_all(parent).map_err(|e| {
                     roboflow_core::RoboflowError::io(format!(
-                        "Failed to upload composed video to {}: {}",
-                        final_path.display(),
+                        "Failed to create video directory {}: {}",
+                        parent.display(),
                         e
                     ))
                 })?;
+            }
+            fs::copy(&composed_path, &final_full_path).map_err(|e| {
+                roboflow_core::RoboflowError::io(format!(
+                    "Failed to copy composed video to {}: {}",
+                    final_full_path.display(),
+                    e
+                ))
+            })?;
 
             total_merged += 1;
 
@@ -1291,23 +864,24 @@ impl LerobotWriter {
             );
         }
 
-        // Clean up temp directory for this session
-        let temp_prefix = PathBuf::from(format!("temp/{}", self.session_id));
-        match self.storage.delete_prefix(&temp_prefix) {
-            Ok(deleted_count) => {
-                tracing::debug!(
-                    temp_prefix = %temp_prefix.display(),
-                    deleted_count,
-                    "Cleaned up temporary segment files"
-                );
-            }
-            Err(e) => {
-                // Log warning but don't fail - temp files can be cleaned up later
-                tracing::warn!(
-                    temp_prefix = %temp_prefix.display(),
-                    error = %e,
-                    "Failed to clean up temporary segment files (non-critical)"
-                );
+        // Clean up temp directory for this session (local file operation)
+        let temp_dir = self.output_dir.join("temp").join(&self.session_id);
+        if temp_dir.exists() {
+            match fs::remove_dir_all(&temp_dir) {
+                Ok(()) => {
+                    tracing::debug!(
+                        temp_dir = %temp_dir.display(),
+                        "Cleaned up temporary segment files"
+                    );
+                }
+                Err(e) => {
+                    // Log warning but don't fail - temp files can be cleaned up later
+                    tracing::warn!(
+                        temp_dir = %temp_dir.display(),
+                        error = %e,
+                        "Failed to clean up temporary segment files (non-critical)"
+                    );
+                }
             }
         }
 
@@ -1380,11 +954,11 @@ impl LerobotWriter {
 
     /// Internal constructor used by the builder.
     pub(super) fn new_internal(
-        storage: Arc<dyn roboflow_storage::Storage>,
+        _storage: Arc<dyn roboflow_storage::Storage>,
         output_prefix: String,
         local_buffer: PathBuf,
         config: LerobotConfig,
-        use_cloud_storage: bool,
+        _use_cloud_storage: bool,
     ) -> Result<Self> {
         let local_buffer_path = local_buffer.clone();
 
@@ -1399,39 +973,7 @@ impl LerobotWriter {
         fs::create_dir_all(&meta_dir)?;
         fs::create_dir_all(&params_dir)?;
 
-        // Detect if this is cloud storage
-        use roboflow_storage::LocalStorage;
-        let is_local = storage.as_any().is::<LocalStorage>();
-
-        // Create upload coordinator for cloud storage
-        let upload_coordinator = if use_cloud_storage && !is_local {
-            let upload_config = crate::formats::lerobot::upload::UploadConfig {
-                show_progress: false,
-                ..Default::default()
-            };
-
-            match crate::formats::lerobot::upload::EpisodeUploadCoordinator::new(
-                Arc::clone(&storage),
-                upload_config,
-                None,
-            ) {
-                Ok(coordinator) => Some(Arc::new(coordinator)),
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Failed to create upload coordinator, uploads will be done synchronously"
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        let cloud_uploader = CloudUploader::new(Arc::clone(&storage), output_prefix.clone());
-
         Ok(Self {
-            storage,
             output_prefix,
             _local_buffer: local_buffer_path,
             output_dir: local_buffer,
@@ -1453,9 +995,6 @@ impl LerobotWriter {
             start_time: Some(std::time::Instant::now()),
             output_bytes: 0,
             failed_encodings: 0,
-            use_cloud_storage,
-            upload_coordinator,
-            cloud_uploader,
             images_since_flush: 0,
         })
     }
@@ -1543,10 +1082,6 @@ impl DatasetWriter for LerobotWriter {
         self.write_camera_parameters()?;
 
         // Write metadata files
-        if self.use_cloud_storage {
-            self.metadata
-                .write_all_to_storage(&self.storage, &self.output_prefix, &self.config)?;
-        }
         self.metadata.write_all(&self.output_dir, &self.config)?;
 
         let duration = self
@@ -1573,33 +1108,6 @@ impl DatasetWriter for LerobotWriter {
             );
         }
 
-        // Flush pending uploads to cloud storage; fail finalize if uploads don't complete or any failed
-        if let Some(coordinator) = &self.upload_coordinator {
-            let stats_before = coordinator.stats();
-            tracing::info!(
-                pending = stats_before.pending_count,
-                in_progress = stats_before.in_progress_count,
-                "Waiting for pending cloud uploads to complete before finalize..."
-            );
-            coordinator.flush().map_err(|e| {
-                roboflow_core::RoboflowError::other(format!(
-                    "Cloud upload flush failed: {e}. Not all data/video may have been written to sink."
-                ))
-            })?;
-            let stats = coordinator.stats();
-            if stats.failed_count > 0 {
-                return Err(roboflow_core::RoboflowError::other(format!(
-                    "{} cloud upload(s) failed. Data/video may be incomplete in sink.",
-                    stats.failed_count
-                )));
-            }
-            tracing::info!(
-                files_uploaded = stats.total_files,
-                total_bytes = stats.total_bytes,
-                "All cloud uploads completed successfully"
-            );
-        }
-
         Ok(WriterStats {
             frames_written: self.total_frames,
             images_encoded: self.images_encoded,
@@ -1619,12 +1127,6 @@ impl DatasetWriter for LerobotWriter {
 
     fn episode_index(&self) -> Option<usize> {
         Some(self.episode_index)
-    }
-
-    fn get_upload_state(&self) -> Option<crate::formats::common::base::UploadState> {
-        self.upload_coordinator
-            .as_ref()
-            .map(|coordinator| coordinator.completed_uploads())
     }
 }
 

@@ -45,7 +45,6 @@
 mod builder;
 mod camera;
 mod camera_params;
-mod cloud_upload;
 mod encoding;
 mod episode_writer;
 mod frame;

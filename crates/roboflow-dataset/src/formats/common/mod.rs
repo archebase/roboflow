@@ -24,10 +24,6 @@ pub mod operation;
 pub mod parquet_base;
 pub mod progress;
 pub mod ring_buffer;
-
-// Internal modules for upload coordination (used by executor, not public API)
-pub mod streaming_uploader;
-pub mod upload_coordinator;
 pub mod video;
 
 // Re-export core types (shared across all formats)
@@ -71,12 +67,6 @@ pub use crate::media::video::{ConversionStrategy, optimal_strategy, rgb_to_nv12,
 #[cfg(target_os = "macos")]
 pub use video::VideoToolboxEncoder as AppleVideoEncoder;
 
-// Re-export streaming uploader
-pub use streaming_uploader::{
-    StreamingUploader, UploadConfig as StreamingUploadConfig,
-    UploadProgress as StreamingUploadProgress, UploadStats,
-};
-
 // Re-export streaming encoder from roboflow-video (canonical location)
 pub use crate::media::video::streaming::{
     EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder,
@@ -92,9 +82,6 @@ pub use camera_streaming_pipeline::{
 pub use crate::media::video::{
     ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder,
 };
-
-// Re-export upload coordinator trait (internal - for executor use)
-pub use upload_coordinator::{UploadCoordinator, UploadProgress};
 
 // Re-export DatasetStats for return values, but keep WriteOperation/Sink/VecSink internal
 pub use operation::DatasetStats;

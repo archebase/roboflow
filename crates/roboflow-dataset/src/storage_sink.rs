@@ -11,8 +11,8 @@ use std::path::PathBuf;
 
 use roboflow_core::{Result, RoboflowError};
 
-use crate::formats::common::{ImageData, VideoEncoderConfig, decode_image_to_rgb};
 use crate::formats::common::operation::{Sink, WriteOperation};
+use crate::formats::common::{ImageData, VideoEncoderConfig, decode_image_to_rgb};
 use crate::media::video::{
     RsmpegMp4Encoder, RsmpegVideoComposer, VideoComposer, VideoFrame, VideoFrameBuffer,
 };
@@ -92,10 +92,8 @@ impl Sink for LocalSink {
                 let full_dest = self.base_path.join(&destination);
 
                 // All sources are local files
-                let source_paths: Vec<std::path::PathBuf> = sources
-                    .iter()
-                    .map(|s| self.base_path.join(s))
-                    .collect();
+                let source_paths: Vec<std::path::PathBuf> =
+                    sources.iter().map(|s| self.base_path.join(s)).collect();
 
                 // Verify all sources exist
                 for src in &source_paths {
@@ -115,11 +113,9 @@ impl Sink for LocalSink {
                 // Compose using RsmpegVideoComposer
                 let source_refs: Vec<_> = source_paths.iter().map(|p| p.as_path()).collect();
                 let composer = RsmpegVideoComposer::new();
-                composer
-                    .compose(&source_refs, &full_dest)
-                    .map_err(|e| {
-                        RoboflowError::other(format!("Video composition failed: {}", e))
-                    })?;
+                composer.compose(&source_refs, &full_dest).map_err(|e| {
+                    RoboflowError::other(format!("Video composition failed: {}", e))
+                })?;
 
                 tracing::info!(
                     sources = sources.len(),

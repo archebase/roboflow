@@ -43,13 +43,13 @@ bytes = "1"
 memmap2 = "0.9"
 hex = "0.4"
 regex = "1.10"
+tempfile = "3.10"
 
 [features]
 default = []
 
 [dev-dependencies]
 pretty_assertions = "1.4"
-tempfile = "3.10"
 proptest = "1.5"
 criterion = "0.5"
 

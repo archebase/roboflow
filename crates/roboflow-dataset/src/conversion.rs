@@ -33,10 +33,10 @@ use std::path::{Path, PathBuf};
 
 use roboflow_core::{Result, RoboflowError};
 
+use crate::formats::alignment::config::StreamingConfig;
 use crate::formats::lerobot::LerobotWriter;
 use crate::formats::pipeline::{PipelineConfig, PipelineExecutor, PipelineStats};
-use crate::formats::alignment::config::StreamingConfig;
-use crate::sources::{create_source, register_builtin_sources, SourceConfig};
+use crate::sources::{SourceConfig, create_source, register_builtin_sources};
 
 /// Configuration for file conversion.
 #[derive(Debug, Clone)]
@@ -195,9 +195,9 @@ pub fn convert_file(
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| RoboflowError::other(format!("Failed to create runtime: {}", e)))?;
 
-    let metadata = runtime.block_on(async {
-        source.initialize(&source_config).await
-    }).map_err(|e| RoboflowError::other(format!("Failed to initialize source: {}", e)))?;
+    let metadata = runtime
+        .block_on(async { source.initialize(&source_config).await })
+        .map_err(|e| RoboflowError::other(format!("Failed to initialize source: {}", e)))?;
 
     tracing::info!(
         input = %input.display(),
@@ -220,9 +220,10 @@ pub fn convert_file(
     }
 
     // Create the writer based on format
-    let lerobot_config = config.dataset.as_lerobot().ok_or_else(|| {
-        RoboflowError::other("Only LeRobot format is currently supported")
-    })?;
+    let lerobot_config = config
+        .dataset
+        .as_lerobot()
+        .ok_or_else(|| RoboflowError::other("Only LeRobot format is currently supported"))?;
 
     let writer = LerobotWriter::new_local(output_dir, lerobot_config.clone())?;
 
@@ -232,9 +233,9 @@ pub fn convert_file(
     // Process messages in batches
     let batch_size = 1000;
     loop {
-        let batch = runtime.block_on(async {
-            source.read_batch(batch_size).await
-        }).map_err(|e| RoboflowError::other(format!("Failed to read batch: {}", e)))?;
+        let batch = runtime
+            .block_on(async { source.read_batch(batch_size).await })
+            .map_err(|e| RoboflowError::other(format!("Failed to read batch: {}", e)))?;
 
         match batch {
             Some(messages) if !messages.is_empty() => {
@@ -286,7 +287,10 @@ fn collect_output_files(output_dir: &Path) -> Result<OutputFiles> {
             if path.is_dir() {
                 collect_recursive(&path, files)?;
             } else {
-                let ext = path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase());
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase());
                 match ext.as_deref() {
                     Some("parquet") => files.parquet_files.push(path),
                     Some("mp4") | Some("mkv") => files.video_files.push(path),
@@ -305,17 +309,16 @@ fn collect_output_files(output_dir: &Path) -> Result<OutputFiles> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
     use crate::formats::{DatasetConfig, DatasetFormat};
+    use tempfile::tempdir;
 
     #[test]
     fn test_conversion_config_builder() {
-        let config = ConversionConfig::new(
-            DatasetConfig::new(DatasetFormat::Lerobot, "test", 30, None)
-        )
-            .with_output_prefix("episode_001")
-            .with_max_frames(1000)
-            .with_topic_mapping("/camera", "observation.images.camera");
+        let config =
+            ConversionConfig::new(DatasetConfig::new(DatasetFormat::Lerobot, "test", 30, None))
+                .with_output_prefix("episode_001")
+                .with_max_frames(1000)
+                .with_topic_mapping("/camera", "observation.images.camera");
 
         assert_eq!(config.output_prefix, Some("episode_001".to_string()));
         assert_eq!(config.max_frames, Some(1000));

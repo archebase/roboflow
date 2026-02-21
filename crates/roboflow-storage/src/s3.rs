@@ -803,57 +803,6 @@ impl Storage for S3Storage {
         Ok(stats.total_bytes)
     }
 
-    fn compose_objects(
-        &self,
-        sources: &[&Path],
-        dest: &Path,
-        composer: &dyn roboflow_core::VideoComposer,
-    ) -> Result<()> {
-        if sources.is_empty() {
-            return Err(StorageError::Other(
-                "compose_objects requires at least one source".to_string(),
-            ));
-        }
-
-        // For a single source, just do a copy
-        if sources.len() == 1 {
-            return self.copy(sources[0], dest);
-        }
-
-        // Download all sources to temp files
-        let temp_dir = tempfile::tempdir().map_err(StorageError::Io)?;
-
-        tracing::info!(
-            sources = sources.len(),
-            dest = %dest.display(),
-            "Composing video segments (download → compose → upload)"
-        );
-
-        // Download all sources to temp files
-        let mut temp_files: Vec<std::path::PathBuf> = Vec::new();
-
-        for (i, &src) in sources.iter().enumerate() {
-            let temp_path = temp_dir.path().join(format!("segment_{}.mp4", i));
-            let _bytes = self.download_file(src, &temp_path)?;
-            temp_files.push(temp_path);
-        }
-
-        // Compose using VideoComposer (proper MP4 remuxing, not byte concat)
-        let merged_path = temp_dir.path().join("merged.mp4");
-        let temp_refs: Vec<&std::path::Path> = temp_files.iter().map(|p| p.as_path()).collect();
-        composer
-            .compose(&temp_refs, &merged_path)
-            .map_err(|e| StorageError::Other(format!("video composition failed: {}", e)))?;
-
-        // Upload the merged file
-        self.upload_file(&merged_path, dest)?;
-
-        tracing::info!(sources = sources.len(), "Video compose complete");
-
-        // Temp files are automatically cleaned up when temp_dir is dropped
-        Ok(())
-    }
-
     fn delete_prefix(&self, prefix: &Path) -> Result<usize> {
         use futures::StreamExt;
 

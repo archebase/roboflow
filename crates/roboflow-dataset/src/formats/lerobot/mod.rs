@@ -14,7 +14,6 @@ pub mod factory;
 pub mod format_writer_impl;
 pub mod metadata;
 pub mod trait_impl;
-pub mod upload;
 pub mod video_profiles;
 pub mod writer;
 
@@ -32,7 +31,5 @@ pub use crate::media::video::{HardwareBackend, HardwareConfig};
 pub use trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 
 pub use factory::{LerobotWriterConfig, LerobotWriterResult, create_lerobot_writer};
-pub use upload::EpisodeUploadCoordinator;
-pub use upload::{EpisodeFiles, UploadConfig, UploadProgress, UploadStats};
 pub use video_profiles::{Profile, QualityTier, ResolvedConfig, SpeedPreset, VideoEncodingProfile};
 pub use writer::{CameraExtrinsic, CameraIntrinsic, EpisodeWriter, LerobotFrame, LerobotWriter};
