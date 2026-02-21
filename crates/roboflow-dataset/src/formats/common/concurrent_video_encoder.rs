@@ -5,14 +5,14 @@
 //! Concurrent video encoder for multi-camera streaming.
 //!
 //! This module provides `ConcurrentVideoEncoder` which orchestrates
-//! video encoding for multiple cameras with concurrent upload.
+//! video encoding for multiple cameras with local file output.
 //!
 //! # Design
 //!
 //! - Single encoder initialization per camera per episode
 //! - Streaming fMP4 output via channels (no temp files)
 //! - Per-camera pipeline threads with backpressure
-//! - Per-camera upload threads with isolated Tokio runtimes for S3 operations
+//! - Per-camera file writer threads for local file I/O
 //! - Clean abort on errors
 //! - **Configurable pipeline selection**: 2-stage (single-threaded) or 3-stage (parallel SIMD)
 //!
@@ -42,17 +42,16 @@
 //! │         │ EncodedChunk     │ EncodedChunk     │ EncodedChunk │
 //! │         ▼                  ▼                  ▼              │
 //! │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐      │
-//! │  │   Upload    │    │   Upload    │    │   Upload    │      │
+//! │  │   File      │    │   File      │    │   File      │      │
+//! │  │   Writer    │    │   Writer    │    │   Writer    │      │
 //! │  │   Thread    │    │   Thread    │    │   Thread    │      │
-//! │  │ (own RT +   │    │ (own RT +   │    │ (own RT +   │      │
-//! │  │ own S3)     │    │ own S3)     │    │ own S3)     │      │
 //! │  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘      │
 //! │         │                  │                  │              │
 //! │         └──────────────────┼──────────────────┘              │
 //! │                            ▼                                 │
 //! │                     ┌─────────────┐                          │
-//! │                     │  S3/MinIO   │                          │
-//! │                     │  Storage    │                          │
+//! │                     │   Local     │                          │
+//! │                     │   Files     │                          │
 //! │                     └─────────────┘                          │
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
@@ -63,16 +62,11 @@
 //! use crate::formats::common::concurrent_video_encoder::{
 //!     ConcurrentVideoEncoder, ConcurrentEncoderConfig,
 //! };
-//! use roboflow_storage::S3Config;
+//! use std::path::PathBuf;
 //!
 //! let config = ConcurrentEncoderConfig {
 //!     key_prefix: "dataset/episode_001".to_string(),
-//!     s3_config: S3Config::new(
-//!         "my-bucket",
-//!         "s3.amazonaws.com",
-//!         "access_key",
-//!         "secret_key",
-//!     ),
+//!     output_dir: PathBuf::from("./output"),
 //!     ..Default::default()
 //! };
 //!
@@ -85,16 +79,16 @@
 //! // Finalize and get results
 //! let results = encoder.finalize()?;
 //! for result in results {
-//!     println!("{}: {} frames -> {}", result.camera, result.frames_encoded, result.url);
+//!     println!("{}: {} frames -> {}", result.camera, result.frames_encoded, result.output_path.display());
 //! }
 //! ```
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crossbeam_channel::{Receiver, unbounded};
 use roboflow_core::{Result, RoboflowError};
-use roboflow_storage::S3Config;
 
 use crate::core::VideoPathScheme;
 use crate::formats::common::ImageData;
@@ -108,8 +102,8 @@ use crate::media::video::pipeline::VideoPipelineConfig;
 /// Configuration for concurrent video encoder.
 #[derive(Clone)]
 pub struct ConcurrentEncoderConfig {
-    /// Key prefix for output videos within the storage bucket.
-    /// This should be a relative path (e.g., "dataset/episode_001"), not a full URL.
+    /// Key prefix for output videos within the output directory.
+    /// This should be a relative path (e.g., "dataset/episode_001").
     pub key_prefix: String,
     /// Chunk index for video organization (0 = chunk-000).
     /// Videos will be saved as "{prefix}/videos/chunk-{chunk:03d}/{camera}/episode_{episode:06d}.mp4".
@@ -122,8 +116,8 @@ pub struct ConcurrentEncoderConfig {
     pub video_config: VideoEncoderConfig,
     /// Frame channel capacity (backpressure threshold).
     pub frame_channel_capacity: usize,
-    /// S3 storage configuration for uploads.
-    pub s3_config: S3Config,
+    /// Output directory for video files.
+    pub output_dir: PathBuf,
     /// Whether to use the 3-stage parallel pipeline (DecodePool + ConvertPool + EncoderPool).
     /// When true, uses SIMD-accelerated parallel processing for higher throughput.
     /// When false, uses the 2-stage single-threaded pipeline (StreamingMp4Encoder).
@@ -134,8 +128,8 @@ pub struct ConcurrentEncoderConfig {
 }
 
 impl ConcurrentEncoderConfig {
-    /// Create a new encoder config with the given S3 configuration.
-    pub fn new(s3_config: S3Config) -> Self {
+    /// Create a new encoder config with the given output directory.
+    pub fn new(output_dir: PathBuf) -> Self {
         Self {
             key_prefix: String::new(),
             chunk_index: 0,
@@ -143,7 +137,7 @@ impl ConcurrentEncoderConfig {
             chunk_size: 256 * 1024, // 256KB chunks
             video_config: VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
-            s3_config,
+            output_dir,
             use_parallel_pipeline: false,
             path_scheme: None,
         }
@@ -161,8 +155,8 @@ impl ConcurrentEncoderConfig {
 pub struct ConcurrentEncoderResult {
     /// Camera name.
     pub camera: String,
-    /// Destination URL.
-    pub url: String,
+    /// Output file path.
+    pub output_path: PathBuf,
     /// Frames encoded.
     pub frames_encoded: usize,
     /// Frames skipped.
@@ -171,20 +165,20 @@ pub struct ConcurrentEncoderResult {
 
 /// Concurrent video encoder for multiple cameras.
 ///
-/// This orchestrates per-camera streaming encoding pipelines with upload threads.
+/// This orchestrates per-camera streaming encoding pipelines with file writer threads.
 /// Each pipeline runs in a dedicated thread with single encoder initialization,
-/// while upload threads handle I/O-bound uploads to S3 with isolated runtimes.
+/// while writer threads handle I/O-bound local file writes.
 pub struct ConcurrentVideoEncoder {
     /// Per-camera pipeline handles (either legacy or adapter).
     pipelines: HashMap<String, EitherPipeline>,
-    /// Per-camera upload thread handles.
-    upload_handles: HashMap<String, std::thread::JoinHandle<()>>,
+    /// Per-camera file writer thread handles.
+    writer_handles: HashMap<String, std::thread::JoinHandle<()>>,
     /// Configuration.
     config: ConcurrentEncoderConfig,
     /// Whether the encoder has been finalized.
     finalized: bool,
-    /// Destination URLs per camera.
-    dest_urls: HashMap<String, String>,
+    /// Output paths per camera.
+    output_paths: HashMap<String, PathBuf>,
 }
 
 impl ConcurrentVideoEncoder {
@@ -192,38 +186,37 @@ impl ConcurrentVideoEncoder {
     ///
     /// # Arguments
     ///
-    /// * `config` - Encoder configuration including S3 settings
+    /// * `config` - Encoder configuration including output directory
     pub fn new(config: ConcurrentEncoderConfig) -> Result<Self> {
         Ok(Self {
             pipelines: HashMap::new(),
-            upload_handles: HashMap::new(),
+            writer_handles: HashMap::new(),
             config,
             finalized: false,
-            dest_urls: HashMap::new(),
+            output_paths: HashMap::new(),
         })
     }
 
-    /// Build the destination key for a camera using the configured path scheme.
+    /// Build the output path for a camera using the configured path scheme.
     /// If no path scheme is configured, uses the default LeRobot v2.1 format.
-    fn build_dest_url(&self, camera: &str) -> String {
-        if let Some(ref scheme) = self.config.path_scheme {
+    fn build_output_path(&self, camera: &str) -> PathBuf {
+        let relative_path = if let Some(ref scheme) = self.config.path_scheme {
             // Use the configured path scheme
-            scheme
-                .video_path(
-                    self.config.episode_index as usize,
-                    camera,
-                    self.config.chunk_index as usize,
-                )
-                .to_string_lossy()
-                .to_string()
+            scheme.video_path(
+                self.config.episode_index as usize,
+                camera,
+                self.config.chunk_index as usize,
+            )
         } else {
             // Default LeRobot v2.1 format
             let prefix = self.config.key_prefix.trim_end_matches('/');
-            format!(
+            PathBuf::from(format!(
                 "{}/videos/chunk-{:03}/{}/episode_{:06}.mp4",
                 prefix, self.config.chunk_index, camera, self.config.episode_index
-            )
-        }
+            ))
+        };
+
+        self.config.output_dir.join(relative_path)
     }
 
     /// Ensure a pipeline exists for the given camera.
@@ -232,9 +225,9 @@ impl ConcurrentVideoEncoder {
             return Ok(());
         }
 
-        // Build destination URL
-        let dest_url = self.build_dest_url(camera);
-        self.dest_urls.insert(camera.to_string(), dest_url.clone());
+        // Build output path
+        let output_path = self.build_output_path(camera);
+        self.output_paths.insert(camera.to_string(), output_path.clone());
 
         // Create pipeline config
         let pipeline_config = StreamingPipelineConfig {
@@ -243,21 +236,20 @@ impl ConcurrentVideoEncoder {
             chunk_size: self.config.chunk_size,
         };
 
-        // Create crossbeam channel for upload commands
-        let (upload_tx, upload_rx) = unbounded::<StreamingUploadCommand>();
+        // Create crossbeam channel for writer commands
+        let (writer_tx, writer_rx) = unbounded::<StreamingUploadCommand>();
 
-        // Clone S3 config for the upload thread
-        let s3_config = self.config.s3_config.clone();
+        // Clone output path for the writer thread
         let camera_clone = camera.to_string();
-        let dest_url_clone = dest_url.clone();
+        let output_path_clone = output_path.clone();
 
-        // Spawn upload thread with isolated runtime and S3Storage
-        let upload_handle = std::thread::Builder::new()
-            .name(format!("upload-{}", camera))
+        // Spawn file writer thread
+        let writer_handle = std::thread::Builder::new()
+            .name(format!("file-writer-{}", camera))
             .spawn(move || {
-                Self::upload_thread(camera_clone, dest_url_clone, s3_config, upload_rx);
+                Self::file_writer_thread(camera_clone, output_path_clone, writer_rx);
             })
-            .map_err(|e| RoboflowError::other(format!("Failed to spawn upload thread: {}", e)))?;
+            .map_err(|e| RoboflowError::other(format!("Failed to spawn file writer thread: {}", e)))?;
 
         // Spawn streaming encoding pipeline
         // Choose pipeline type based on use_parallel_pipeline flag
@@ -278,124 +270,98 @@ impl ConcurrentVideoEncoder {
             EitherPipeline::Adapter(PipelineAdapter::new(
                 camera.to_string(),
                 video_pipeline_config,
-                upload_tx,
+                writer_tx,
             )?)
         } else {
             // Create 2-stage pipeline (single-threaded decode + encode)
-            let handle = spawn_streaming_pipeline(pipeline_config, upload_tx)?;
+            let handle = spawn_streaming_pipeline(pipeline_config, writer_tx)?;
             EitherPipeline::Legacy(handle)
         };
 
         let camera_string = camera.to_string();
         self.pipelines.insert(camera_string.clone(), pipeline);
-        self.upload_handles.insert(camera_string, upload_handle);
+        self.writer_handles.insert(camera_string, writer_handle);
 
         Ok(())
     }
 
-    /// Upload thread for a single camera.
+    /// File writer thread for a single camera.
     ///
-    /// This thread uses a simple, correct concurrency model:
-    /// 1. Create `AsyncS3Storage` directly (sync, no runtime needed)
-    /// 2. Create an OWNED Tokio runtime
-    /// 3. Use `rt.block_on()` DIRECTLY for all async operations
-    fn upload_thread(
+    /// This thread receives encoded chunks and writes them to a local file.
+    fn file_writer_thread(
         camera: String,
-        dest_url: String,
-        s3_config: S3Config,
-        upload_rx: Receiver<StreamingUploadCommand>,
+        output_path: PathBuf,
+        writer_rx: Receiver<StreamingUploadCommand>,
     ) {
-        // Create AsyncS3Storage directly (synchronous, no runtime needed)
-        let async_storage = match roboflow_storage::AsyncS3Storage::with_config(s3_config) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(camera = %camera, error = %e, "Failed to create AsyncS3Storage");
-                return;
-            }
-        };
-
-        // Create OWNED runtime for this thread
-        let rt = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
+        // Ensure parent directory exists
+        if let Some(parent) = output_path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
         {
-            Ok(rt) => rt,
-            Err(e) => {
-                tracing::error!(camera = %camera, error = %e, "Failed to create upload runtime");
-                return;
-            }
-        };
+            tracing::error!(camera = %camera, error = %e, "Failed to create output directory");
+            return;
+        }
 
-        // Multipart upload state
-        let mut multipart: Option<roboflow_storage::object_store::WriteMultipart> = None;
-        let mut bytes_uploaded: u64 = 0;
+        // Output file
+        let mut file: Option<std::fs::File> = None;
+        let mut bytes_written: u64 = 0;
         let mut chunks_count: usize = 0;
 
-        // Process upload commands
-        for cmd in upload_rx {
+        // Process writer commands
+        for cmd in writer_rx {
             match cmd {
                 StreamingUploadCommand::UploadChunk { chunk } => {
-                    // Create multipart upload if not exists
-                    if multipart.is_none() {
-                        use roboflow_storage::object_store::path::Path as ObjectPath;
-                        let key = ObjectPath::from(dest_url.as_str());
-                        let store = async_storage.object_store();
-
-                        // Use rt.block_on() DIRECTLY - this works correctly
-                        match rt.block_on(store.put_multipart(&key)) {
-                            Ok(upload) => {
-                                use roboflow_storage::object_store::WriteMultipart;
-                                // 5MB chunk size for S3
-                                multipart = Some(WriteMultipart::new_with_chunk_size(
-                                    upload,
-                                    5 * 1024 * 1024,
-                                ));
-                            }
+                    // Create file if not exists
+                    if file.is_none() {
+                        match std::fs::File::create(&output_path) {
+                            Ok(f) => file = Some(f),
                             Err(e) => {
-                                tracing::error!(camera = %camera, error = %e, "Failed to create multipart upload");
+                                tracing::error!(camera = %camera, error = %e, "Failed to create output file");
                                 continue;
                             }
                         }
                     }
 
-                    // Upload chunk data
-                    if let Some(ref mut mp) = multipart {
-                        mp.write(&chunk.data);
-                        bytes_uploaded += chunk.data.len() as u64;
-                        chunks_count += 1;
-                    }
-                }
-                StreamingUploadCommand::Finish { .. } => {
-                    if let Some(mp) = multipart.take() {
-                        // Use rt.block_on() DIRECTLY for finish
-                        match rt.block_on(mp.finish()) {
+                    // Write chunk data
+                    if let Some(ref mut f) = file {
+                        use std::io::Write;
+                        match f.write_all(&chunk.data) {
                             Ok(_) => {
-                                tracing::info!(
-                                    camera = %camera,
-                                    bytes = bytes_uploaded,
-                                    chunks = chunks_count,
-                                    "Upload completed"
-                                );
+                                bytes_written += chunk.data.len() as u64;
+                                chunks_count += 1;
                             }
                             Err(e) => {
-                                tracing::error!(camera = %camera, error = %e, "Failed to finish upload");
+                                tracing::error!(camera = %camera, error = %e, "Failed to write chunk");
                             }
                         }
                     }
+                }
+                StreamingUploadCommand::Finish { .. } => {
+                    // Flush and close file
+                    if let Some(mut f) = file.take() {
+                        use std::io::Write;
+                        if let Err(e) = f.flush() {
+                            tracing::error!(camera = %camera, error = %e, "Failed to flush file");
+                        }
+                    }
+
+                    tracing::info!(
+                        camera = %camera,
+                        path = %output_path.display(),
+                        bytes = bytes_written,
+                        chunks = chunks_count,
+                        "File write completed"
+                    );
                     break;
                 }
                 StreamingUploadCommand::AbortAll => {
-                    if let Some(mp) = multipart.take() {
-                        // Use rt.block_on() DIRECTLY for abort
-                        let _ = rt.block_on(mp.abort());
-                    }
-                    tracing::warn!(camera = %camera, "Upload aborted");
+                    // Delete partial file if exists
+                    drop(file.take());
+                    let _ = std::fs::remove_file(&output_path);
+                    tracing::warn!(camera = %camera, "File write aborted");
                     break;
                 }
             }
         }
-
-        // Runtime is dropped here, cleaning up resources
     }
 
     /// Add a frame for a specific camera.
@@ -422,10 +388,10 @@ impl ConcurrentVideoEncoder {
         pipeline.add_frame(image)
     }
 
-    /// Finalize encoding and wait for all uploads to complete.
+    /// Finalize encoding and wait for all file writes to complete.
     ///
     /// This signals all pipelines to flush remaining frames,
-    /// waits for them to finish, then waits for all uploads to complete.
+    /// waits for them to finish, then waits for all file writes to complete.
     ///
     /// # Returns
     ///
@@ -443,13 +409,13 @@ impl ConcurrentVideoEncoder {
         // Wait for all pipelines to finish and collect results
         let mut results = Vec::new();
         for (camera, pipeline) in self.pipelines.drain() {
-            let dest_url = self.dest_urls.get(&camera).cloned().unwrap_or_default();
+            let output_path = self.output_paths.get(&camera).cloned().unwrap_or_default();
 
             match pipeline.join() {
                 Ok(pipeline_result) => {
                     results.push(ConcurrentEncoderResult {
                         camera: pipeline_result.camera,
-                        url: dest_url,
+                        output_path,
                         frames_encoded: pipeline_result.frames_encoded,
                         frames_skipped: pipeline_result.frames_skipped,
                     });
@@ -458,7 +424,7 @@ impl ConcurrentVideoEncoder {
                     tracing::error!(camera = %camera, error = %e, "Pipeline failed");
                     results.push(ConcurrentEncoderResult {
                         camera,
-                        url: dest_url,
+                        output_path,
                         frames_encoded: 0,
                         frames_skipped: 0,
                     });
@@ -466,10 +432,10 @@ impl ConcurrentVideoEncoder {
             }
         }
 
-        // Wait for all upload threads to complete
-        for (camera, upload_handle) in self.upload_handles.drain() {
-            if let Err(e) = upload_handle.join() {
-                tracing::warn!(camera = %camera, "Upload thread panicked: {:?}", e);
+        // Wait for all writer threads to complete
+        for (camera, writer_handle) in self.writer_handles.drain() {
+            if let Err(e) = writer_handle.join() {
+                tracing::warn!(camera = %camera, "File writer thread panicked: {:?}", e);
             }
         }
 
@@ -515,14 +481,15 @@ impl ConcurrentVideoEncoder {
 mod tests {
     use super::*;
     use crate::formats::common::ImageData;
+    use tempfile::tempdir;
 
-    fn test_s3_config() -> S3Config {
-        S3Config::new("test-bucket", "localhost:9000", "access_key", "secret_key")
+    fn test_output_dir() -> PathBuf {
+        tempdir().unwrap().path().to_path_buf()
     }
 
     #[test]
     fn test_config_new() {
-        let config = ConcurrentEncoderConfig::new(test_s3_config());
+        let config = ConcurrentEncoderConfig::new(test_output_dir());
         assert_eq!(config.chunk_size, 256 * 1024);
         assert_eq!(config.frame_channel_capacity, 64);
     }
@@ -537,7 +504,7 @@ mod tests {
             chunk_size: 128 * 1024,
             video_config: crate::formats::common::video::VideoEncoderConfig::default(),
             frame_channel_capacity: 32,
-            s3_config: test_s3_config(),
+            output_dir: test_output_dir(),
             path_scheme: None,
         };
 
@@ -549,7 +516,7 @@ mod tests {
 
     #[test]
     fn test_encoder_create() {
-        let config = ConcurrentEncoderConfig::new(test_s3_config());
+        let config = ConcurrentEncoderConfig::new(test_output_dir());
         let encoder = ConcurrentVideoEncoder::new(config);
         assert!(encoder.is_ok());
 
@@ -560,7 +527,7 @@ mod tests {
 
     #[test]
     fn test_encoder_cannot_add_after_finalize() {
-        let config = ConcurrentEncoderConfig::new(test_s3_config());
+        let config = ConcurrentEncoderConfig::new(test_output_dir());
         let encoder = ConcurrentVideoEncoder::new(config).unwrap();
 
         // Finalize without adding any frames
@@ -572,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_dest_url_format() {
+    fn test_build_output_path_format() {
         let config = ConcurrentEncoderConfig {
             use_parallel_pipeline: false,
             key_prefix: "dataset/episode_001".to_string(),
@@ -581,13 +548,13 @@ mod tests {
             chunk_size: 256 * 1024,
             video_config: crate::formats::common::video::VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
-            s3_config: test_s3_config(),
+            output_dir: test_output_dir(),
             path_scheme: None,
         };
 
         let encoder = ConcurrentVideoEncoder::new(config).unwrap();
-        // The build_dest_url method is private, but we can verify through add_frame
-        // which creates the URL internally
+        // The build_output_path method is private, but we can verify through add_frame
+        // which creates the path internally
 
         // This test verifies the encoder can be created with specific config
         assert!(!encoder.is_finalized());
@@ -595,6 +562,7 @@ mod tests {
 
     #[test]
     fn test_encoder_single_camera() {
+        let output_dir = test_output_dir();
         let config = ConcurrentEncoderConfig {
             use_parallel_pipeline: false,
             key_prefix: "test_single".to_string(),
@@ -603,7 +571,7 @@ mod tests {
             chunk_size: 256 * 1024,
             video_config: crate::formats::common::video::VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
-            s3_config: test_s3_config(),
+            output_dir: output_dir.clone(),
             path_scheme: None,
         };
 
@@ -625,10 +593,14 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].camera, "cam0");
         assert_eq!(results[0].frames_encoded, 3);
+
+        // Verify output file was created
+        assert!(results[0].output_path.exists());
     }
 
     #[test]
     fn test_encoder_multi_camera() {
+        let output_dir = test_output_dir();
         let config = ConcurrentEncoderConfig {
             use_parallel_pipeline: false,
             key_prefix: "test_multi".to_string(),
@@ -637,7 +609,7 @@ mod tests {
             chunk_size: 256 * 1024,
             video_config: crate::formats::common::video::VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
-            s3_config: test_s3_config(),
+            output_dir: output_dir.clone(),
             path_scheme: None,
         };
 
@@ -663,12 +635,15 @@ mod tests {
         // Each camera should have 5 frames
         for result in &results {
             assert_eq!(result.frames_encoded, 5);
+            // Verify output file was created
+            assert!(result.output_path.exists());
         }
     }
 
     #[test]
     fn test_encoder_non_square_dimensions() {
         // Regression test for non-square image dimensions
+        let output_dir = test_output_dir();
         let config = ConcurrentEncoderConfig {
             use_parallel_pipeline: false,
             key_prefix: "test_nonsquare".to_string(),
@@ -677,7 +652,7 @@ mod tests {
             chunk_size: 256 * 1024,
             video_config: crate::formats::common::video::VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
-            s3_config: test_s3_config(),
+            output_dir: output_dir.clone(),
             path_scheme: None,
         };
 
@@ -697,10 +672,12 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].frames_encoded, 5);
         assert_eq!(results[0].frames_skipped, 0);
+        assert!(results[0].output_path.exists());
     }
 
     #[test]
     fn test_encoder_skip_invalid_frames() {
+        let output_dir = test_output_dir();
         let config = ConcurrentEncoderConfig {
             use_parallel_pipeline: false,
             key_prefix: "test_skip".to_string(),
@@ -709,7 +686,7 @@ mod tests {
             chunk_size: 256 * 1024,
             video_config: crate::formats::common::video::VideoEncoderConfig::default(),
             frame_channel_capacity: 64,
-            s3_config: test_s3_config(),
+            output_dir: output_dir.clone(),
             path_scheme: None,
         };
 
@@ -739,7 +716,7 @@ mod tests {
     #[test]
     fn test_encoder_empty() {
         // Test encoder with no frames added
-        let config = ConcurrentEncoderConfig::new(test_s3_config());
+        let config = ConcurrentEncoderConfig::new(test_output_dir());
         let encoder = ConcurrentVideoEncoder::new(config).unwrap();
 
         let results = encoder.finalize().unwrap();

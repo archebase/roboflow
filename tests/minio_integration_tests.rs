@@ -98,6 +98,7 @@ impl MinioConfig {
     }
 
     /// Get the S3Config for use with ConcurrentVideoEncoder.
+    #[allow(dead_code)]
     pub fn s3_config(&self) -> S3Config {
         S3Config::new(
             &self.bucket,
@@ -115,6 +116,7 @@ impl MinioConfig {
     }
 
     /// Cleanup a test directory recursively.
+    #[allow(dead_code)]
     pub fn cleanup_dir(&self, runtime: &tokio::runtime::Runtime, path: &str) {
         let storage = match self.create_storage() {
             Ok(s) => s,
@@ -131,6 +133,7 @@ impl MinioConfig {
     }
 
     /// Recursively delete a directory and all its contents.
+    #[allow(dead_code)]
     fn cleanup_recursive(
         storage: &AsyncS3Storage,
         runtime: &tokio::runtime::Runtime,
@@ -267,17 +270,13 @@ fn test_minio_basic_connection() {
 }
 
 // =============================================================================
-// Test: RsmpegS3Encoder with MinIO
+// Test: RsmpegS3Encoder with local file output (no longer requires MinIO)
 // =============================================================================
 
 #[test]
-#[ignore = "requires MinIO service"]
-fn test_concurrent_encoder_with_minio() {
-    skip_if_no_minio!();
-
-    let config = MinioConfig::default();
-
-    // Test video encoding with S3 upload using ConcurrentVideoEncoder
+fn test_concurrent_encoder_with_local_output() {
+    // Test video encoding with local file output using ConcurrentVideoEncoder
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let key_prefix = "test_videos".to_string();
     let encoder_config = ConcurrentEncoderConfig {
         key_prefix,
@@ -286,7 +285,7 @@ fn test_concurrent_encoder_with_minio() {
         chunk_size: 256 * 1024,
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 64,
-        s3_config: config.s3_config(),
+        output_dir: temp_dir.path().to_path_buf(),
         use_parallel_pipeline: false,
         path_scheme: None,
     };
@@ -304,29 +303,35 @@ fn test_concurrent_encoder_with_minio() {
             .expect("Failed to add frame");
     }
 
-    // Finalize and upload
+    // Finalize and write
     let results = encoder.finalize().expect("Failed to finalize encoder");
 
     assert_eq!(results.len(), 1, "Should have 1 camera result");
     assert_eq!(results[0].frames_encoded, 10, "Should encode 10 frames");
+    // Path should contain camera name as directory and end with episode_000000.mp4
+    let path_str = results[0].output_path.to_string_lossy();
     assert!(
-        results[0].url.contains("encoder_test.mp4"),
-        "URL should contain camera name"
+        path_str.contains("encoder_test"),
+        "Output path '{}' should contain camera name 'encoder_test'",
+        path_str
     );
+    assert!(
+        path_str.contains("episode_000000.mp4"),
+        "Output path '{}' should contain 'episode_000000.mp4'",
+        path_str
+    );
+    assert!(results[0].output_path.exists(), "Output file should exist");
 
-    println!("✓ ConcurrentVideoEncoder with MinIO test passed");
+    println!("✓ ConcurrentVideoEncoder with local output test passed");
 }
 
 // =============================================================================
-// Test: ConcurrentVideoEncoder with MinIO (multi-camera)
+// Test: ConcurrentVideoEncoder with local output (multi-camera)
 // =============================================================================
 
 #[test]
-#[ignore = "requires MinIO service"]
-fn test_concurrent_encoder_multicam_with_minio() {
-    skip_if_no_minio!();
-
-    let config = MinioConfig::default();
+fn test_concurrent_encoder_multicam_with_local_output() {
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
     // Create concurrent encoder
     let key_prefix = "test_coordinator".to_string();
@@ -337,7 +342,7 @@ fn test_concurrent_encoder_multicam_with_minio() {
         chunk_size: 256 * 1024,
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 100,
-        s3_config: config.s3_config(),
+        output_dir: temp_dir.path().to_path_buf(),
         use_parallel_pipeline: false,
         path_scheme: None,
     };
@@ -380,15 +385,12 @@ fn test_concurrent_encoder_multicam_with_minio() {
 }
 
 // =============================================================================
-// Test: Compressed image handling with MinIO upload
+// Test: Compressed image handling with local file output
 // =============================================================================
 
 #[test]
-#[ignore = "requires MinIO service"]
-fn test_compressed_images_with_minio_upload() {
-    skip_if_no_minio!();
-
-    let config = MinioConfig::default();
+fn test_compressed_images_with_local_output() {
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
     // Create concurrent encoder
     let key_prefix = "test_compressed".to_string();
@@ -399,7 +401,7 @@ fn test_compressed_images_with_minio_upload() {
         chunk_size: 256 * 1024,
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 100,
-        s3_config: config.s3_config(),
+        output_dir: temp_dir.path().to_path_buf(),
         use_parallel_pipeline: false,
         path_scheme: None,
     };
@@ -442,12 +444,8 @@ fn test_compressed_images_with_minio_upload() {
 
     // Note: The minimal JPEG headers won't decode properly, so those frames may be skipped
     // The important thing is that the encoder doesn't crash
-    println!("✓ Compressed images with MinIO upload test passed");
+    println!("✓ Compressed images with local output test passed");
     println!("  - Cameras processed: {}", results.len());
-
-    // Cleanup test files
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    config.cleanup_dir(&runtime, "test_compressed");
 }
 
 // =============================================================================
@@ -485,24 +483,21 @@ fn test_minio_bucket_management() {
 }
 
 // =============================================================================
-// Test: Concurrent uploads with MinIO
+// Test: Concurrent local file writes
 // =============================================================================
 
 #[test]
-#[ignore = "requires MinIO service"]
-fn test_concurrent_minio_uploads() {
-    skip_if_no_minio!();
-
-    let config = MinioConfig::default();
-    let s3_config = config.s3_config();
-
+fn test_concurrent_local_writes() {
     // Create 3 encoders in parallel (simulating 3 workers)
     let handles: Vec<_> = (0..3)
         .map(|worker_id| {
-            let key_prefix = format!("test_concurrent/worker_{}", worker_id);
-            let s3_config_clone = s3_config.clone();
+            let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+            let output_dir = temp_dir.path().to_path_buf();
+            // Keep temp_dir alive for the thread duration
+            let _temp_dir = temp_dir.keep();
 
             std::thread::spawn(move || {
+                let key_prefix = format!("test_concurrent/worker_{}", worker_id);
                 let encoder_config = ConcurrentEncoderConfig {
                     key_prefix,
                     chunk_index: 0,
@@ -510,7 +505,7 @@ fn test_concurrent_minio_uploads() {
                     chunk_size: 256 * 1024,
                     video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
                     frame_channel_capacity: 50,
-                    s3_config: s3_config_clone,
+                    output_dir,
                     use_parallel_pipeline: false,
                     path_scheme: None,
                 };
@@ -549,11 +544,7 @@ fn test_concurrent_minio_uploads() {
         );
     }
 
-    // Cleanup test files
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    config.cleanup_dir(&runtime, "test_concurrent");
-
-    println!("✓ Concurrent MinIO uploads test passed (3 workers)");
+    println!("✓ Concurrent local writes test passed (3 workers)");
 }
 
 // =============================================================================
@@ -606,13 +597,12 @@ fn test_large_file_upload_to_minio() {
 /// Test that ConcurrentVideoEncoder produces LeRobot v2.1 compliant video paths.
 ///
 /// This test verifies:
-/// 1. Videos are uploaded to `{prefix}/videos/chunk-{chunk:03}/{camera}/episode_{episode:06}.mp4`
+/// 1. Videos are written to `{output_dir}/{prefix}/videos/chunk-{chunk:03}/{camera}/episode_{episode:06}.mp4`
 /// 2. Multiple cameras produce unique paths (no overwrites)
 /// 3. Files actually exist at the expected locations
 #[test]
-#[ignore = "requires MinIO service"]
 fn test_lerobot_v21_video_path_structure() {
-    let config = MinioConfig::default();
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
     // Test configuration
     let key_prefix = "test_lerobot_v21".to_string();
@@ -626,7 +616,7 @@ fn test_lerobot_v21_video_path_structure() {
         chunk_size: 256 * 1024,
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 64,
-        s3_config: config.s3_config(),
+        output_dir: temp_dir.path().to_path_buf(),
         use_parallel_pipeline: false,
         path_scheme: None,
     };
@@ -654,72 +644,55 @@ fn test_lerobot_v21_video_path_structure() {
     // Verify all cameras were processed
     assert_eq!(results.len(), 3, "Should have 3 camera results");
 
-    // Verify the URL format matches LeRobot v2.1 structure
+    // Verify the output path format matches LeRobot v2.1 structure
     for result in &results {
-        // Expected format: {prefix}/videos/chunk-{chunk:03}/{camera}/episode_{episode:06}.mp4
+        // Expected format: {output_dir}/{prefix}/videos/chunk-{chunk:03}/{camera}/episode_{episode:06}.mp4
+        let path_str = result.output_path.to_string_lossy();
         let expected_prefix = format!("{}/videos/chunk-{:03}/", key_prefix, chunk_index);
         assert!(
-            result.url.starts_with(&expected_prefix),
-            "URL '{}' should start with '{}'",
-            result.url,
+            path_str.contains(&expected_prefix),
+            "Output path '{}' should contain '{}'",
+            path_str,
             expected_prefix
         );
 
         // Verify episode number in filename
         assert!(
-            result
-                .url
-                .contains(&format!("episode_{:06}.mp4", episode_index)),
-            "URL '{}' should contain 'episode_{:06}.mp4'",
-            result.url,
+            path_str.contains(&format!("episode_{:06}.mp4", episode_index)),
+            "Output path '{}' should contain 'episode_{:06}.mp4'",
+            path_str,
             episode_index
         );
 
         // Verify camera name is in the path
         assert!(
-            result.url.contains(&result.camera),
-            "URL '{}' should contain camera name '{}'",
-            result.url,
+            path_str.contains(&result.camera),
+            "Output path '{}' should contain camera name '{}'",
+            path_str,
             result.camera
         );
 
-        println!("✓ Camera '{}' uploaded to: {}", result.camera, result.url);
+        // Verify file exists
+        assert!(
+            result.output_path.exists(),
+            "Output file should exist at '{}'",
+            result.output_path.display()
+        );
+
+        // Verify file has reasonable size (should be > 1KB for a video)
+        let metadata = std::fs::metadata(&result.output_path).expect("Failed to get metadata");
+        assert!(
+            metadata.len() > 1024,
+            "Video file should be > 1KB, got {} bytes",
+            metadata.len()
+        );
+
+        println!(
+            "✓ Camera '{}' written to: {}",
+            result.camera,
+            result.output_path.display()
+        );
     }
-
-    // Verify files actually exist in S3
-    let async_storage = config
-        .create_storage()
-        .expect("Failed to create async storage");
-
-    let runtime =
-        tokio::runtime::Runtime::new().expect("Failed to create runtime for verification");
-    runtime
-        .block_on(async {
-            for result in &results {
-                let path = std::path::Path::new(&result.url);
-                let exists = async_storage.exists(path).await;
-                assert!(exists, "Video file should exist at '{}'", result.url);
-
-                // Also verify file has reasonable size (should be > 1KB for a video)
-                let metadata = async_storage
-                    .metadata(path)
-                    .await
-                    .expect("Failed to get metadata");
-                assert!(
-                    metadata.size > 1024,
-                    "Video file '{}' should be larger than 1KB, got {} bytes",
-                    result.url,
-                    metadata.size
-                );
-            }
-
-            Ok::<(), Box<dyn std::error::Error>>(())
-        })
-        .unwrap();
-
-    // Cleanup test files
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    config.cleanup_dir(&runtime, "test_lerobot_v21");
 
     println!("✓ LeRobot v2.1 video path structure test passed");
 }
@@ -730,7 +703,7 @@ fn test_lerobot_v21_video_path_structure() {
 /// "cam_right" would overwrite each other's temp files.
 #[test]
 fn test_multi_camera_unique_temp_files() {
-    let config = MinioConfig::default();
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
     let encoder_config = ConcurrentEncoderConfig {
         key_prefix: "test_unique_temp".to_string(),
@@ -739,7 +712,7 @@ fn test_multi_camera_unique_temp_files() {
         chunk_size: 256 * 1024,
         video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
         frame_channel_capacity: 64,
-        s3_config: config.s3_config(),
+        output_dir: temp_dir.path().to_path_buf(),
         use_parallel_pipeline: false,
         path_scheme: None,
     };
@@ -778,11 +751,13 @@ fn test_multi_camera_unique_temp_files() {
             "Camera '{}' should have 0 skipped frames",
             result.camera
         );
+        // Verify output file exists
+        assert!(
+            result.output_path.exists(),
+            "Output file should exist at '{}'",
+            result.output_path.display()
+        );
     }
-
-    // Cleanup test files
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    config.cleanup_dir(&runtime, "test_unique_temp");
 
     println!("✓ Multi-camera unique temp files test passed (regression test)");
 }

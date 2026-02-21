@@ -21,7 +21,7 @@ use crate::formats::lerobot::config::LerobotConfig;
 use crate::formats::lerobot::metadata::MetadataCollector;
 use crate::formats::lerobot::trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 use crate::formats::lerobot::video_profiles::ResolvedConfig;
-use crate::media::video::RsmpegVideoComposer;
+use crate::media::video::{RsmpegVideoComposer, VideoComposer};
 use roboflow_core::Result;
 
 use super::camera::{CameraExtrinsic, CameraIntrinsic};
@@ -921,9 +921,9 @@ impl LerobotWriter {
     /// Encode videos using the concurrent video encoder for multi-camera parallel encoding.
     ///
     /// This method provides better performance for multi-camera setups by using
-    /// dedicated encoder threads for each camera with concurrent S3/OSS upload.
+    /// dedicated encoder threads for each camera with local file output.
     ///
-    /// Videos are uploaded to temp segment paths and tracked for later merging.
+    /// Videos are written to local temp paths and tracked for later merging.
     ///
     /// # Returns
     ///
@@ -949,25 +949,10 @@ impl LerobotWriter {
             "Encoding videos with concurrent encoder"
         );
 
-        // Get the S3 storage backend
-        let s3_storage = self
-            .storage
-            .as_any()
-            .downcast_ref::<roboflow_storage::S3Storage>()
-            .ok_or_else(|| {
-                roboflow_core::RoboflowError::encode(
-                    "LerobotWriter",
-                    "S3 storage not available for concurrent encoder",
-                )
-            })?;
-
-        // Get S3 config for the encoder
-        let s3_config = s3_storage.config().clone();
-
         // Resolve video configuration
         let resolved = ResolvedConfig::from_video_config(&self.config.video);
 
-        // Use temp path for segment uploads
+        // Use temp path for segment files
         // Format: temp/{session_id}/episode_{episode:06}/{camera}/segment_{segment:04}.mp4
         let key_prefix = format!("temp/{}/episode_{:06}", self.session_id, self.episode_index);
 
@@ -980,7 +965,7 @@ impl LerobotWriter {
             chunk_size: 256 * 1024,            // 256KB chunks for streaming
             video_config: resolved.to_encoder_config(self.config.dataset.fps),
             frame_channel_capacity: self.config.streaming.ring_buffer_size,
-            s3_config,
+            output_dir: self.output_dir.clone(),
             use_parallel_pipeline: false,
             path_scheme: None,
         };
@@ -1009,24 +994,27 @@ impl LerobotWriter {
         let camera_count = results.len();
         let images_encoded: usize = results.iter().map(|r| r.frames_encoded).sum();
 
-        // Track uploaded segment paths for later merging
+        // Track written segment paths for later merging
+        let mut video_files: Vec<(PathBuf, String)> = Vec::new();
         for result in &results {
-            let segment_path = PathBuf::from(&result.url);
+            let segment_path = result.output_path.clone();
+            video_files.push((segment_path.clone(), result.camera.clone()));
             self.pending_segments
                 .entry(result.camera.clone())
                 .or_default()
                 .push(segment_path);
         }
 
-        // When using ConcurrentVideoEncoder, videos are already uploaded to S3 directly.
-        // Return empty video_files so the upload coordinator won't try to upload non-existent local files.
-        let video_files: Vec<(PathBuf, String)> = Vec::new();
+        let output_bytes: u64 = video_files
+            .iter()
+            .filter_map(|(path, _)| std::fs::metadata(path).ok().map(|m| m.len()))
+            .sum();
 
         let encode_stats = EncodeStats {
             images_encoded,
             skipped_frames,
             failed_encodings: 0,
-            output_bytes: 0,
+            output_bytes,
         };
 
         tracing::info!(
@@ -1034,7 +1022,8 @@ impl LerobotWriter {
             segment_index = self.segment_index,
             cameras = camera_count,
             images_encoded = encode_stats.images_encoded,
-            "Completed encoding with concurrent encoder (videos uploaded to temp segment path)"
+            output_bytes = encode_stats.output_bytes,
+            "Completed encoding with concurrent encoder (videos written to local temp path)"
         );
 
         Ok((video_files, encode_stats))
@@ -1244,13 +1233,31 @@ impl LerobotWriter {
                 "Composing segments into final video"
             );
 
-            // Prepare source paths as slice of references
-            let source_refs: Vec<&Path> = segments.iter().map(|p| p.as_path()).collect();
+            // Download all segments to temp files (works for both local and cloud storage)
+            let temp_dir = tempfile::tempdir().map_err(|e| {
+                roboflow_core::RoboflowError::io(format!("Failed to create temp dir: {}", e))
+            })?;
+            let mut temp_segments: Vec<PathBuf> = Vec::new();
+            for (i, segment) in segments.iter().enumerate() {
+                let temp_path = temp_dir.path().join(format!("segment_{}.mp4", i));
+                self.storage
+                    .download_file(segment, &temp_path)
+                    .map_err(|e| {
+                        roboflow_core::RoboflowError::io(format!(
+                            "Failed to download segment {}: {}",
+                            segment.display(),
+                            e
+                        ))
+                    })?;
+                temp_segments.push(temp_path);
+            }
 
-            // Compose all segments into the final file
+            // Compose segments locally
+            let composed_path = temp_dir.path().join("composed.mp4");
+            let source_refs: Vec<&Path> = temp_segments.iter().map(|p| p.as_path()).collect();
             let composer = RsmpegVideoComposer::new();
-            self.storage
-                .compose_objects(&source_refs, &final_path, &composer)
+            composer
+                .compose(&source_refs, &composed_path)
                 .map_err(|e| {
                     roboflow_core::RoboflowError::encode(
                         "LerobotWriter",
@@ -1261,6 +1268,17 @@ impl LerobotWriter {
                             e
                         ),
                     )
+                })?;
+
+            // Upload the composed file to final destination
+            self.storage
+                .upload_file(&composed_path, &final_path)
+                .map_err(|e| {
+                    roboflow_core::RoboflowError::io(format!(
+                        "Failed to upload composed video to {}: {}",
+                        final_path.display(),
+                        e
+                    ))
                 })?;
 
             total_merged += 1;
