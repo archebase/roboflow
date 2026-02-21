@@ -17,7 +17,6 @@
 
 pub mod base;
 pub mod config;
-pub mod image_decode;
 pub mod message_utils;
 pub mod operation;
 pub mod parquet_base;
@@ -43,8 +42,8 @@ pub use progress::{ProgressReceiver, ProgressSender, ProgressUpdate};
 // Re-export image format detection from the image module (canonical location)
 pub use crate::media::image::{ImageFormat, can_passthrough, detect_image_format};
 
-// Re-export image decode utilities
-pub use image_decode::{decode_image_to_rgb, decode_to_rgb};
+// Re-export image decode utilities from media/image (canonical location)
+pub use crate::media::image::{decode_image_to_rgb, decode_to_rgb};
 
 // Re-export ring buffer for streaming frame processing
 pub use ring_buffer::{FrameRingBuffer, RingBufferError, RingBufferSnapshot};
