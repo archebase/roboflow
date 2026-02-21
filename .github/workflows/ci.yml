@@ -59,10 +59,11 @@ jobs:
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install hdf5@1.10 nasm
+          brew install hdf5@1.10 nasm ffmpeg
           echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
 
       - name: Setup vcpkg
+        if: runner.os == 'Linux'
         uses: johnwason/vcpkg-action@v7
         id: vcpkg
         with:
@@ -71,6 +72,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure vcpkg environment
+        if: runner.os == 'Linux'
         run: |
           echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=${{ github.workspace }}/vcpkg/installed/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
@@ -110,10 +112,11 @@ jobs:
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install hdf5@1.10 nasm
+          brew install hdf5@1.10 nasm ffmpeg
           echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
 
       - name: Setup vcpkg
+        if: runner.os == 'Linux'
         uses: johnwason/vcpkg-action@v7
         id: vcpkg
         with:
@@ -122,6 +125,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure vcpkg environment
+        if: runner.os == 'Linux'
         run: |
           echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=${{ github.workspace }}/vcpkg/installed/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
