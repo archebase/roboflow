@@ -1,4 +1,5 @@
 pub mod arena;
+pub mod codec;
 pub mod composer;
 pub mod config;
 pub mod convert;

@@ -19,12 +19,15 @@
 //! - 2-3x faster than FFmpeg CLI for CPU encoding
 //! - 5-10x faster with hardware encoders
 
-use std::ffi::{CStr, c_int};
+use std::ffi::c_int;
 use std::path::Path;
 use std::sync::mpsc::Sender;
 
 use roboflow_core::RoboflowError;
 
+use crate::media::video::codec::{
+    self, CodecContext, CodecParams, resolve_pixel_format, set_full_color_range_frame,
+};
 use crate::media::video::config::VideoEncoderConfig;
 use crate::media::video::frame::{VideoEncoderError, VideoFrameBuffer};
 
@@ -152,52 +155,33 @@ impl RsmpegEncoderConfig {
     /// This attempts to find hardware encoders first (NVENC, VideoToolbox)
     /// and falls back to libx264 if unavailable.
     pub fn detect_best_codec() -> Self {
-        #[cfg(target_os = "linux")]
-        {
-            // Try NVENC first on Linux
-            if Self::is_codec_available("h264_nvenc") {
-                tracing::info!("Detected NVENC encoder for hardware acceleration");
-                return Self {
-                    codec: "h264_nvenc".to_string(),
-                    pixel_format: "nv12".to_string(),
-                    preset: "p4".to_string(), // NVENC preset p1-p7 (p4 = medium)
-                    ..Default::default()
-                };
-            }
-        }
+        let (codec_name, pixel_format) = codec::detect_best_codec();
 
-        #[cfg(target_os = "macos")]
-        {
-            // Try VideoToolbox on macOS
-            if Self::is_codec_available("h264_videotoolbox") {
-                tracing::info!("Detected VideoToolbox encoder for hardware acceleration");
-                return Self {
-                    codec: "h264_videotoolbox".to_string(),
-                    pixel_format: "nv12".to_string(),
-                    preset: "medium".to_string(),
-                    ..Default::default()
-                };
-            }
-        }
+        // NVENC uses its own preset scheme (p1-p7)
+        let preset = if codec_name == "h264_nvenc" {
+            "p4"
+        } else {
+            "medium"
+        };
 
-        // Default to libx264
-        tracing::info!("Using libx264 CPU encoder");
         Self {
-            codec: "libx264".to_string(),
-            pixel_format: "yuv420p".to_string(),
-            preset: "medium".to_string(),
+            codec: codec_name.to_string(),
+            pixel_format: pixel_format.to_string(),
+            preset: preset.to_string(),
             ..Default::default()
         }
     }
 
     /// Check if a codec is available by name.
+    #[cfg(test)]
     fn is_codec_available(name: &str) -> bool {
         if name == "libx264" {
             return true;
         }
         // Try to find the encoder
         let name_with_nul = format!("{}\0", name);
-        let codec_name = CStr::from_bytes_with_nul(name_with_nul.as_bytes()).unwrap_or(c"libx264");
+        let codec_name =
+            std::ffi::CStr::from_bytes_with_nul(name_with_nul.as_bytes()).unwrap_or(c"libx264");
         AVCodec::find_encoder_by_name(codec_name).is_some()
     }
 }
@@ -254,106 +238,34 @@ impl RsmpegEncoder {
         config: RsmpegEncoderConfig,
         encoded_tx: Sender<Vec<u8>>,
     ) -> Result<Self, RoboflowError> {
-        // =============================================================
-        // STEP 1: Find and open codec
-        // =============================================================
+        let pix_fmt = resolve_pixel_format(&config.pixel_format);
 
-        let codec_name_with_nul = format!("{}\0", config.codec);
-        let codec_name = CStr::from_bytes_with_nul(codec_name_with_nul.as_bytes())
-            .map_err(|_| RoboflowError::encode("RsmpegEncoder", "Invalid codec name"))?;
-
-        let codec = AVCodec::find_encoder_by_name(codec_name)
-            .or_else(|| {
-                // Fallback to libx264 if requested codec not found
-                tracing::warn!(
-                    codec = %config.codec,
-                    "Codec not found, falling back to libx264"
-                );
-                AVCodec::find_encoder(ffi::AV_CODEC_ID_H264)
-            })
-            .ok_or_else(|| RoboflowError::encode("RsmpegEncoder", "No H.264 encoder available"))?;
-
-        tracing::info!(
-            codec = codec.name().to_str().unwrap_or("unknown"),
-            description = codec.long_name().to_str().unwrap_or(""),
-            "Found encoder"
-        );
-
-        // =============================================================
-        // STEP 2: Allocate and configure codec context
-        // =============================================================
-
-        let mut codec_context = AVCodecContext::new(&codec);
-
-        codec_context.set_width(config.width as i32);
-        codec_context.set_height(config.height as i32);
-        codec_context.set_bit_rate(config.bitrate as i64);
-        codec_context.set_time_base(AVRational {
-            num: 1,
-            den: config.fps as i32,
-        });
-        codec_context.set_framerate(AVRational {
-            num: config.fps as i32,
-            den: 1,
-        });
-        codec_context.set_gop_size(config.gop_size as i32);
-        codec_context.set_max_b_frames(config.max_b_frames as i32);
-
-        // Set pixel format based on codec
-        let pix_fmt = match config.pixel_format.as_str() {
-            "nv12" => ffi::AV_PIX_FMT_NV12,
-            _ => ffi::AV_PIX_FMT_YUV420P,
-        };
-
-        codec_context.set_pix_fmt(pix_fmt);
-        // Set color range to full (JPEG) - RGB from decoded images uses full range
-        // SAFETY: We have exclusive mutable access to codec_context via as_mut_ptr().
-        // The AVCodecContext is properly initialized and this field write is safe.
-        unsafe {
-            (*codec_context.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
-        }
-
-        // Open codec (libx264 requires preset option)
-        let codec_opts = if config.codec == "libx264" {
-            Some(AVDictionary::new(c"preset", c"ultrafast", 0))
-        } else {
-            None
-        };
-        codec_context.open(codec_opts).map_err(|e| {
-            RoboflowError::encode("RsmpegEncoder", format!("Failed to open codec: {}", e))
-        })?;
-
-        // =============================================================
-        // STEP 3: Create SWScale context for RGB → YUV conversion
-        // =============================================================
-
-        let sws_flags = ffi::SWS_BILINEAR;
-
-        let sws_context = SwsContext::get_context(
-            config.width as i32,
-            config.height as i32,
-            ffi::AV_PIX_FMT_RGB24,
-            config.width as i32,
-            config.height as i32,
+        let cc = CodecContext::new(
+            &config.codec,
             pix_fmt,
-            sws_flags,
-            None,
-            None,
-            None,
-        );
+            &CodecParams {
+                width: config.width,
+                height: config.height,
+                fps: config.fps,
+                bitrate: config.bitrate as i64,
+                gop_size: config.gop_size,
+                max_b_frames: config.max_b_frames,
+            },
+        )
+        .map_err(|e| RoboflowError::encode("RsmpegEncoder", e))?;
 
         tracing::info!(
             width = config.width,
             height = config.height,
             fps = config.fps,
             bitrate = config.bitrate,
-            codec = codec.name().to_str().unwrap_or("unknown"),
+            codec = %cc.codec_name,
             "RsmpegEncoder initialized"
         );
 
         Ok(Self {
-            codec_context: Some(codec_context),
-            sws_context,
+            codec_context: Some(cc.codec_ctx),
+            sws_context: cc.sws_ctx,
             encoded_tx: Some(encoded_tx),
             frame_count: 0,
             config,
@@ -455,11 +367,7 @@ impl RsmpegEncoder {
         // =============================================================
         // STEP 3: Set color range (full/JPEG) to avoid VideoToolbox warning
         // =============================================================
-        // SAFETY: We have exclusive mutable access to yuv_frame via as_mut_ptr().
-        // The AVFrame is properly allocated and this field write is safe.
-        unsafe {
-            (*yuv_frame.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
-        }
+        set_full_color_range_frame(&mut yuv_frame);
 
         // =============================================================
         // STEP 4: Set timestamp
@@ -694,11 +602,8 @@ impl RsmpegMp4Encoder {
             .ok_or_else(|| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
 
         // Detect best codec (hardware or software)
-        let (codec_name, pixel_format) = Self::detect_best_codec();
-        let pixel_format_enum = match pixel_format.as_str() {
-            "nv12" => ffi::AV_PIX_FMT_NV12,
-            _ => ffi::AV_PIX_FMT_YUV420P,
-        };
+        let (codec_name, pixel_format) = codec::detect_best_codec();
+        let pixel_format_enum = resolve_pixel_format(pixel_format);
 
         tracing::info!(
             codec = %codec_name,
@@ -709,81 +614,22 @@ impl RsmpegMp4Encoder {
             "Starting native MP4 encoding"
         );
 
-        // =============================================================
-        // STEP 1: Find codec
-        // =============================================================
-
-        let codec_name_with_nul = format!("{}\0", codec_name);
-        let codec_name_cstr = CStr::from_bytes_with_nul(codec_name_with_nul.as_bytes())
-            .map_err(|_| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
-
-        let codec = AVCodec::find_encoder_by_name(codec_name_cstr)
-            .or_else(|| {
-                tracing::warn!(
-                    codec = %codec_name,
-                    "Codec not found, falling back to libx264"
-                );
-                AVCodec::find_encoder(ffi::AV_CODEC_ID_H264)
-            })
-            .ok_or_else(|| {
-                VideoEncoderError::FfmpegFailed(-1, "No H.264 encoder available".to_string())
-            })?;
-
-        // =============================================================
-        // STEP 2: Allocate and configure codec context
-        // =============================================================
-
-        let mut codec_context = AVCodecContext::new(&codec);
-
-        codec_context.set_width(width as i32);
-        codec_context.set_height(height as i32);
-        codec_context.set_bit_rate(5_000_000); // 5 Mbps default
-        codec_context.set_time_base(AVRational {
-            num: 1,
-            den: self.config.fps as i32,
-        });
-        codec_context.set_framerate(AVRational {
-            num: self.config.fps as i32,
-            den: 1,
-        });
-        codec_context.set_gop_size(self.config.fps as i32); // 1 second keyframe interval
-        codec_context.set_max_b_frames(0); // Disable B-frames for simplicity
-        codec_context.set_pix_fmt(pixel_format_enum);
-        // Set color range to full (JPEG) - RGB from decoded images uses full range
-        // SAFETY: We have exclusive mutable access to codec_context via as_mut_ptr().
-        // The AVCodecContext is properly initialized and this field write is safe.
-        unsafe {
-            (*codec_context.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
-        }
-
-        // Open codec (libx264 requires preset option)
-        let codec_opts = if codec_name == "libx264" {
-            Some(AVDictionary::new(c"preset", c"ultrafast", 0))
-        } else {
-            None
-        };
-        codec_context.open(codec_opts).map_err(|e| {
-            VideoEncoderError::FfmpegFailed(-1, format!("Failed to open codec: {}", e))
-        })?;
-
-        // =============================================================
-        // STEP 3: Create SWScale context for RGB → YUV conversion
-        // =============================================================
-
-        let sws_flags = ffi::SWS_BILINEAR;
-        let sws_context = SwsContext::get_context(
-            width as i32,
-            height as i32,
-            ffi::AV_PIX_FMT_RGB24,
-            width as i32,
-            height as i32,
+        let codec_ctx = CodecContext::new(
+            codec_name,
             pixel_format_enum,
-            sws_flags,
-            None,
-            None,
-            None,
+            &CodecParams {
+                width,
+                height,
+                fps: self.config.fps,
+                bitrate: 5_000_000,
+                gop_size: self.config.fps,
+                max_b_frames: 0,
+            },
         )
-        .ok_or_else(|| {
+        .map_err(|e| VideoEncoderError::FfmpegFailed(-1, e))?;
+
+        let mut codec_context = codec_ctx.codec_ctx;
+        let sws_context = codec_ctx.sws_ctx.ok_or_else(|| {
             VideoEncoderError::FfmpegFailed(-1, "Failed to create SWScale context".to_string())
         })?;
 
@@ -884,10 +730,7 @@ impl RsmpegMp4Encoder {
                     }
                 }
 
-                // SAFETY: We have exclusive access to yuv_frame via as_mut_ptr()
-                unsafe {
-                    (*yuv_frame.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
-                }
+                set_full_color_range_frame(&mut yuv_frame);
             } else {
                 // RGB frame - use sws_scale for conversion (slower fallback)
                 let mut input_frame = AVFrame::new();
@@ -926,7 +769,7 @@ impl RsmpegMp4Encoder {
                         yuv_frame.linesize_mut().as_mut_ptr(),
                     );
                     // Set color range to full (JPEG) to avoid VideoToolbox warning
-                    (*yuv_frame.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
+                    set_full_color_range_frame(&mut yuv_frame);
                 }
             }
 
@@ -984,35 +827,6 @@ impl RsmpegMp4Encoder {
         Ok(())
     }
 
-    /// Detect the best available codec.
-    ///
-    /// Priority:
-    /// 1. NVENC (NVIDIA GPU)
-    /// 2. VideoToolbox (Apple)
-    /// 3. libx264 (CPU fallback)
-    fn detect_best_codec() -> (String, String) {
-        #[cfg(target_os = "linux")]
-        {
-            // Try NVENC first on Linux
-            if let Some(_codec) = AVCodec::find_encoder_by_name(c"h264_nvenc") {
-                tracing::info!("Using NVENC encoder (hardware acceleration)");
-                return ("h264_nvenc".to_string(), "nv12".to_string());
-            }
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            // Try VideoToolbox on macOS
-            if let Some(_codec) = AVCodec::find_encoder_by_name(c"h264_videotoolbox") {
-                tracing::info!("Using VideoToolbox encoder (hardware acceleration)");
-                return ("h264_videotoolbox".to_string(), "nv12".to_string());
-            }
-        }
-
-        // Default to libx264
-        tracing::info!("Using libx264 CPU encoder");
-        ("libx264".to_string(), "yuv420p".to_string())
-    }
 }
 
 impl Default for RsmpegMp4Encoder {
@@ -1285,70 +1099,31 @@ impl PersistentEncoder {
         self.reusable_frame = None;
         self.sws_ctx = None;
 
-        // Determine pixel format
-        self.pixel_format = match config.pixel_format.as_str() {
-            "nv12" => ffi::AV_PIX_FMT_NV12,
-            _ => ffi::AV_PIX_FMT_YUV420P,
-        };
+        self.pixel_format = resolve_pixel_format(&config.pixel_format);
 
-        // Find codec
-        let codec_name_with_nul = format!("{}\0", config.codec);
-        let codec_name_cstr = CStr::from_bytes_with_nul(codec_name_with_nul.as_bytes())
-            .map_err(|_| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
+        let codec_ctx = CodecContext::new_codec_only(
+            &config.codec,
+            self.pixel_format,
+            &CodecParams {
+                width,
+                height,
+                fps: config.fps,
+                bitrate: 5_000_000,
+                gop_size: config.fps,
+                max_b_frames: 0,
+            },
+        )
+        .map_err(|e| VideoEncoderError::FfmpegFailed(-1, e))?;
 
-        let codec = AVCodec::find_encoder_by_name(codec_name_cstr)
-            .or_else(|| {
-                tracing::warn!(codec = %config.codec, "Codec not found, falling back to libx264");
-                AVCodec::find_encoder(ffi::AV_CODEC_ID_H264)
-            })
-            .ok_or_else(|| {
-                VideoEncoderError::FfmpegFailed(-1, "No H.264 encoder available".to_string())
-            })?;
-
-        // Check if codec supports flush
-        let codec_caps = unsafe { (*codec.as_ptr()).capabilities };
-        self.supports_flush = (codec_caps & ffi::AV_CODEC_CAP_ENCODER_FLUSH as i32) != 0;
+        self.supports_flush = codec_ctx.supports_flush;
 
         tracing::info!(
-            codec = codec.name().to_str().unwrap_or("unknown"),
+            codec = %codec_ctx.codec_name,
             supports_flush = self.supports_flush,
             "Creating persistent encoder context"
         );
 
-        // Create and configure codec context
-        let mut codec_ctx = AVCodecContext::new(&codec);
-
-        codec_ctx.set_width(width as i32);
-        codec_ctx.set_height(height as i32);
-        codec_ctx.set_bit_rate(5_000_000); // 5 Mbps default
-        codec_ctx.set_time_base(AVRational {
-            num: 1,
-            den: config.fps as i32,
-        });
-        codec_ctx.set_framerate(AVRational {
-            num: config.fps as i32,
-            den: 1,
-        });
-        codec_ctx.set_gop_size(config.fps as i32); // 1 second keyframe interval
-        codec_ctx.set_max_b_frames(0); // Disable B-frames for simplicity
-        codec_ctx.set_pix_fmt(self.pixel_format);
-
-        // Set color range to full (JPEG)
-        unsafe {
-            (*codec_ctx.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
-        }
-
-        // Open codec (libx264 requires preset option)
-        let codec_opts = if config.codec == "libx264" {
-            Some(AVDictionary::new(c"preset", c"ultrafast", 0))
-        } else {
-            None
-        };
-        codec_ctx.open(codec_opts).map_err(|e| {
-            VideoEncoderError::FfmpegFailed(-1, format!("Failed to open codec: {}", e))
-        })?;
-
-        self.codec_ctx = Some(codec_ctx);
+        self.codec_ctx = Some(codec_ctx.codec_ctx);
         self.config_key = Some(EncoderConfigKey::from_config(config));
         self.width = width;
         self.height = height;
@@ -1452,10 +1227,7 @@ impl PersistentEncoder {
             }
         }
 
-        // Set color range
-        unsafe {
-            (*yuv_frame.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
-        }
+        set_full_color_range_frame(yuv_frame);
 
         Ok(())
     }
@@ -1497,7 +1269,7 @@ impl PersistentEncoder {
                 yuv_frame.data_mut().as_mut_ptr(),
                 yuv_frame.linesize_mut().as_mut_ptr(),
             );
-            (*yuv_frame.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
+            set_full_color_range_frame(yuv_frame);
         }
 
         Ok(())

@@ -14,11 +14,12 @@
 //! - Fragmented MP4 (fMP4) format for streaming compatibility
 //! - No temp files - direct to S3 multipart upload
 
-use std::ffi::{CStr, c_int};
+use std::ffi::c_int;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 use crate::media::video::config::VideoEncoderConfig;
+use crate::media::video::codec::{self, CodecContext, CodecParams, set_full_color_range_frame};
 use crate::media::video::frame::VideoEncoderError;
 use crate::media::video::rsmpeg::*;
 
@@ -98,21 +99,7 @@ impl StreamingEncoderConfig {
 
     /// Detect best available codec for the platform.
     pub fn detect_best_codec() -> String {
-        #[cfg(target_os = "macos")]
-        {
-            if AVCodec::find_encoder_by_name(c"h264_videotoolbox").is_some() {
-                return "h264_videotoolbox".to_string();
-            }
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            if AVCodec::find_encoder_by_name(c"h264_nvenc").is_some() {
-                return "h264_nvenc".to_string();
-            }
-        }
-
-        "libx264".to_string()
+        codec::detect_best_codec().0.to_string()
     }
 }
 
@@ -215,7 +202,6 @@ impl AvioWriteState {
 use rsmpeg::avformat::{
     AVFormatContextOutput, AVIOContextContainer, AVIOContextCustom, WritePacketCallback,
 };
-use rsmpeg::avutil::AVDictionary;
 
 /// Streaming MP4 encoder with channel output.
 ///
@@ -320,86 +306,32 @@ impl StreamingMp4Encoder {
             ));
         }
 
-        // Find codec
-        let codec_name_with_nul = format!("{}\0", self.config.codec);
-        let codec_name =
-            CStr::from_bytes_with_nul(codec_name_with_nul.as_bytes()).map_err(|_| {
-                VideoEncoderError::InitializationError("Invalid codec name".to_string())
-            })?;
-
-        let codec = AVCodec::find_encoder_by_name(codec_name)
-            .or_else(|| {
-                tracing::warn!(
-                    codec = %self.config.codec,
-                    "Codec not found, falling back to libx264"
-                );
-                AVCodec::find_encoder(ffi::AV_CODEC_ID_H264)
-            })
-            .ok_or_else(|| {
-                VideoEncoderError::InitializationError("No H.264 encoder available".to_string())
-            })?;
+        let target_pix_fmt = codec::pixel_format_for_codec(&self.config.codec);
+        let codec_ctx = CodecContext::new(
+            &self.config.codec,
+            target_pix_fmt,
+            &CodecParams {
+                width: self.width,
+                height: self.height,
+                fps: self.config.fps,
+                bitrate: self.config.bitrate as i64,
+                gop_size: self.config.gop_size,
+                max_b_frames: 0,
+            },
+        )
+        .map_err(VideoEncoderError::InitializationError)?;
 
         tracing::info!(
-            codec = codec.name().to_str().unwrap_or("unknown"),
+            codec = %codec_ctx.codec_name,
             width,
             height,
             fps = self.config.fps,
             "Initializing streaming encoder"
         );
 
-        // Determine pixel format
-        self.pix_fmt =
-            if self.config.codec.contains("nvenc") || self.config.codec.contains("videotoolbox") {
-                ffi::AV_PIX_FMT_NV12
-            } else {
-                ffi::AV_PIX_FMT_YUV420P
-            };
-
-        // Allocate codec context
-        let mut codec_context = AVCodecContext::new(&codec);
-
-        codec_context.set_width(width);
-        codec_context.set_height(height);
-        codec_context.set_bit_rate(self.config.bitrate as i64);
-        codec_context.set_time_base(AVRational {
-            num: 1,
-            den: self.config.fps as i32,
-        });
-        codec_context.set_framerate(AVRational {
-            num: self.config.fps as i32,
-            den: 1,
-        });
-        codec_context.set_gop_size(self.config.gop_size as i32);
-        codec_context.set_max_b_frames(0);
-        codec_context.set_pix_fmt(self.pix_fmt);
-
-        unsafe {
-            (*codec_context.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
-        }
-
-        // libx264 requires preset option to initialize properly
-        let codec_opts = if self.config.codec == "libx264" {
-            Some(AVDictionary::new(c"preset", c"ultrafast", 0))
-        } else {
-            None
-        };
-        codec_context.open(codec_opts).map_err(|e| {
-            VideoEncoderError::InitializationError(format!("Failed to open codec: {}", e))
-        })?;
-
-        // Create SWScale context
-        let sws_context = SwsContext::get_context(
-            width,
-            height,
-            ffi::AV_PIX_FMT_RGB24,
-            width,
-            height,
-            self.pix_fmt,
-            ffi::SWS_BILINEAR,
-            None,
-            None,
-            None,
-        );
+        self.pix_fmt = codec_ctx.pixel_format;
+        let codec_context = codec_ctx.codec_ctx;
+        let sws_context = codec_ctx.sws_ctx;
 
         // Create format context with custom AVIO
         let avio_context = Self::create_custom_avio(Arc::clone(&self.avio_state));
@@ -539,9 +471,7 @@ impl StreamingMp4Encoder {
             ));
         }
 
-        unsafe {
-            (*yuv_frame.as_mut_ptr()).color_range = ffi::AVCOL_RANGE_JPEG;
-        }
+        set_full_color_range_frame(&mut yuv_frame);
 
         yuv_frame.set_pts(self.frame_count as i64);
         self.frame_count += 1;
