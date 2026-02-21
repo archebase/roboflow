@@ -88,7 +88,7 @@ impl Default for BatchMetadata {
         Self {
             name: String::new(),
             display_name: None,
-            namespace: "default".to_string(),
+            namespace: "jobs".to_string(),
             submitted_by: None,
             labels: HashMap::new(),
             annotations: HashMap::new(),
@@ -142,6 +142,21 @@ pub struct BatchJobSpec {
     /// Work unit configuration.
     #[serde(default)]
     pub work_unit_config: WorkUnitConfig,
+
+    /// Number of episodes per chunk for LeRobot v2.1 format.
+    ///
+    /// When set, enables distributed episode allocation where each work unit
+    /// (file) is assigned a unique episode index. Chunk directories are
+    /// automatically created based on: `chunk_index = episode_index / episodes_per_chunk`
+    ///
+    /// Default is 500 (LeRobot v2.1 spec).
+    /// For 100K files with 500 episodes/chunk: 200 chunks (chunk-000 to chunk-199)
+    #[serde(default = "default_episodes_per_chunk")]
+    pub episodes_per_chunk: u32,
+}
+
+fn default_episodes_per_chunk() -> u32 {
+    500
 }
 
 fn default_parallelism() -> u32 {
@@ -177,6 +192,7 @@ impl Default for BatchJobSpec {
             ttl_seconds: default_ttl(),
             priority: default_priority(),
             work_unit_config: WorkUnitConfig::default(),
+            episodes_per_chunk: default_episodes_per_chunk(),
         }
     }
 }
@@ -248,7 +264,7 @@ impl BatchSpec {
             metadata: BatchMetadata {
                 name: name.into(),
                 display_name: None,
-                namespace: "default".to_string(),
+                namespace: "jobs".to_string(),
                 submitted_by: None,
                 labels: HashMap::new(),
                 annotations: HashMap::new(),
@@ -272,6 +288,7 @@ impl BatchSpec {
                 ttl_seconds: default_ttl(),
                 priority: default_priority(),
                 work_unit_config: WorkUnitConfig::default(),
+                episodes_per_chunk: default_episodes_per_chunk(),
             },
         }
     }
@@ -300,20 +317,20 @@ impl BatchSpec {
     }
 
     fn validate_source_url(&self, url: &str) -> Result<(), BatchSpecError> {
-        if !url.starts_with("s3://") && !url.starts_with("oss://") && !url.starts_with("file://") {
+        if !url.starts_with("s3://") && !url.starts_with("file://") {
             return Err(BatchSpecError::InvalidUrl {
                 url: url.to_string(),
-                reason: "invalid scheme (must be s3://, oss://, or file://)".to_string(),
+                reason: "invalid scheme (must be s3:// or file://)".to_string(),
             });
         }
         Ok(())
     }
 
     fn validate_output_url(&self, url: &str) -> Result<(), BatchSpecError> {
-        if !url.starts_with("s3://") && !url.starts_with("oss://") && !url.starts_with("file://") {
+        if !url.starts_with("s3://") && !url.starts_with("file://") {
             return Err(BatchSpecError::InvalidUrl {
                 url: url.to_string(),
-                reason: "invalid scheme (must be s3://, oss://, or file://)".to_string(),
+                reason: "invalid scheme (must be s3:// or file://)".to_string(),
             });
         }
         Ok(())
@@ -333,13 +350,13 @@ impl BatchSpec {
 
     /// Create from YAML.
     pub fn from_yaml(yaml: &str) -> Result<Self, BatchSpecError> {
-        serde_yaml::from_str(yaml)
+        serde_yaml_ng::from_str(yaml)
             .map_err(|e| BatchSpecError::Serialization(format!("failed to parse YAML: {}", e)))
     }
 
     /// Convert to YAML.
     pub fn to_yaml(&self) -> Result<String, BatchSpecError> {
-        serde_yaml::to_string(self)
+        serde_yaml_ng::to_string(self)
             .map_err(|e| BatchSpecError::Serialization(format!("failed to serialize: {}", e)))
     }
 
@@ -362,15 +379,24 @@ impl Default for WorkUnitConfig {
 /// Errors related to batch specification.
 #[derive(Debug, thiserror::Error)]
 pub enum BatchSpecError {
+    /// The batch name is invalid.
     #[error("invalid name: {0}")]
     InvalidName(String),
 
+    /// Validation of the batch spec failed.
     #[error("validation error: {0}")]
     Validation(String),
 
+    /// The URL is malformed or unsupported.
     #[error("invalid URL '{url}': {reason}")]
-    InvalidUrl { url: String, reason: String },
+    InvalidUrl {
+        /// The invalid URL.
+        url: String,
+        /// Reason why the URL is invalid.
+        reason: String,
+    },
 
+    /// Serialization or deserialization failed.
     #[error("serialization error: {0}")]
     Serialization(String),
 }
@@ -486,7 +512,7 @@ mod tests {
             "s3://out/".to_string(),
         );
 
-        assert_eq!(spec.key(), "default:my-batch");
+        assert_eq!(spec.key(), "jobs:my-batch");
     }
 
     #[test]
@@ -513,8 +539,8 @@ mod tests {
     fn test_batch_spec_json_roundtrip() {
         let spec = BatchSpec::new(
             "test-batch",
-            vec!["oss://bucket/*.bag".to_string()],
-            "oss://output/".to_string(),
+            vec!["s3://bucket/*.bag".to_string()],
+            "s3://output/".to_string(),
         );
 
         let json = spec.to_json().unwrap();
@@ -522,5 +548,32 @@ mod tests {
 
         assert_eq!(decoded.metadata.name, spec.metadata.name);
         assert_eq!(decoded.spec.output, spec.spec.output);
+    }
+
+    #[test]
+    fn test_batch_spec_episodes_per_chunk_default() {
+        let spec = BatchSpec::new(
+            "test-batch",
+            vec!["s3://bucket/*.bag".to_string()],
+            "s3://output/".to_string(),
+        );
+
+        // Default is 500 (LeRobot v2.1 spec)
+        assert_eq!(spec.spec.episodes_per_chunk, 500);
+    }
+
+    #[test]
+    fn test_batch_spec_episodes_per_chunk_serialization() {
+        let mut spec = BatchSpec::new(
+            "test-batch",
+            vec!["s3://bucket/*.bag".to_string()],
+            "s3://output/".to_string(),
+        );
+        spec.spec.episodes_per_chunk = 250;
+
+        let json = spec.to_json().unwrap();
+        let decoded = BatchSpec::from_json(&json).unwrap();
+
+        assert_eq!(decoded.spec.episodes_per_chunk, 250);
     }
 }

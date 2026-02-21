@@ -6,8 +6,7 @@
 //!
 //! Provides unified URL parsing for multiple storage schemes:
 //! - `file://` or plain paths for local filesystem
-//! - `s3://` for Amazon S3
-//! - `oss://` for Alibaba OSS (S3-compatible)
+//! - `s3://` for Amazon S3 and S3-compatible storage (Alibaba OSS, MinIO, etc.)
 //!
 //! # Example
 //!
@@ -15,7 +14,7 @@
 //! # use roboflow_storage::url::StorageUrl;
 //! # use std::str::FromStr;
 //! #
-//! let url = StorageUrl::from_str("oss://my-bucket/path/to/file.txt").unwrap();
+//! let url = StorageUrl::from_str("s3://my-bucket/path/to/file.txt").unwrap();
 //! ```
 
 use std::path::PathBuf;
@@ -39,7 +38,9 @@ pub enum StorageUrl {
         path: PathBuf,
     },
 
-    /// Amazon S3 URL.
+    /// S3-compatible storage URL (Amazon S3, Alibaba OSS, MinIO, etc.).
+    ///
+    /// Uses the S3 protocol which is compatible with most cloud storage providers.
     S3 {
         /// Bucket name.
         bucket: String,
@@ -49,18 +50,6 @@ pub enum StorageUrl {
         endpoint: Option<String>,
         /// Optional region.
         region: Option<String>,
-    },
-
-    /// Alibaba OSS URL (S3-compatible).
-    Oss {
-        /// Bucket name.
-        bucket: String,
-        /// Object key (path within bucket).
-        key: String,
-        /// OSS endpoint (e.g., oss-cn-hangzhou.aliyuncs.com).
-        endpoint: Option<String>,
-        /// Whether to use internal endpoint (for Alibaba Cloud VPC).
-        internal: bool,
     },
 }
 
@@ -78,12 +67,11 @@ impl StorageUrl {
     /// Get the path/key component of this URL.
     ///
     /// For local URLs, this is the filesystem path.
-    /// For S3/OSS URLs, this is the object key.
+    /// For S3 URLs, this is the object key.
     pub fn path(&self) -> &str {
         match self {
             Self::Local { path } => path.to_str().unwrap_or(""),
             Self::S3 { key, .. } => key,
-            Self::Oss { key, .. } => key,
         }
     }
 
@@ -94,7 +82,6 @@ impl StorageUrl {
         match self {
             Self::Local { .. } => None,
             Self::S3 { bucket, .. } => Some(bucket),
-            Self::Oss { bucket, .. } => Some(bucket),
         }
     }
 
@@ -110,16 +97,6 @@ impl StorageUrl {
             key: key.into(),
             endpoint: None,
             region: None,
-        }
-    }
-
-    /// Create an OSS storage URL.
-    pub fn oss(bucket: impl Into<String>, key: impl Into<String>) -> Self {
-        Self::Oss {
-            bucket: bucket.into(),
-            key: key.into(),
-            endpoint: None,
-            internal: false,
         }
     }
 }
@@ -156,19 +133,23 @@ impl FromStr for StorageUrl {
                     })
                 }
                 "s3" => {
-                    // s3://bucket/key/path
+                    // s3://bucket/key/path (compatible with S3, Alibaba OSS, MinIO, etc.)
                     parse_s3_url(rest)
-                }
-                "oss" => {
-                    // oss://bucket/key/path
-                    parse_oss_url(rest)
                 }
                 _ => Err(StorageError::invalid_path(format!(
                     "unsupported URL scheme: {scheme}"
                 ))),
             }
         } else {
-            // No scheme - treat as local path
+            // No scheme - treat as local path, but reject malformed S3 URLs
+            // (e.g. "s3:" or "s3:/bucket" missing "//") to avoid silently writing
+            // to a local directory named "s3:" instead of S3
+            if s.starts_with("s3:") {
+                return Err(StorageError::invalid_path(format!(
+                    "malformed cloud URL '{}': use s3://bucket/path (double slash required)",
+                    s
+                )));
+            }
             Ok(Self::Local {
                 path: PathBuf::from(s),
             })
@@ -221,51 +202,6 @@ fn parse_s3_url(rest: &str) -> Result<StorageUrl, StorageError> {
     })
 }
 
-/// Parse an OSS URL (after the `oss://` prefix).
-fn parse_oss_url(rest: &str) -> Result<StorageUrl, StorageError> {
-    // Format: oss://bucket/key/path
-    // Optional query params: ?endpoint=...&internal=true
-
-    let (path, query) = match rest.find('?') {
-        Some(q) => (&rest[..q], Some(&rest[q + 1..])),
-        None => (rest, None),
-    };
-
-    // Split bucket from key
-    let (bucket, key) = match path.find('/') {
-        Some(slash) => (&path[..slash], &path[slash + 1..]),
-        None => (path, ""),
-    };
-
-    if bucket.is_empty() {
-        return Err(StorageError::invalid_path("OSS URL missing bucket name"));
-    }
-
-    // Parse query parameters
-    let mut endpoint = None;
-    let mut internal = false;
-
-    if let Some(query) = query {
-        for param in query.split('&') {
-            let mut parts = param.splitn(2, '=');
-            if let (Some(key), Some(value)) = (parts.next(), parts.next()) {
-                match key {
-                    "endpoint" => endpoint = Some(value.to_string()),
-                    "internal" => internal = value == "true" || value == "1",
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    Ok(StorageUrl::Oss {
-        bucket: bucket.to_string(),
-        key: key.to_string(),
-        endpoint,
-        internal,
-    })
-}
-
 impl std::fmt::Display for StorageUrl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -291,29 +227,6 @@ impl std::fmt::Display for StorageUrl {
                             write!(f, "&")?;
                         }
                         write!(f, "region={}", r)?;
-                    }
-                }
-                Ok(())
-            }
-            Self::Oss {
-                bucket,
-                key,
-                endpoint,
-                internal,
-            } => {
-                write!(f, "oss://{}/{}", bucket, key)?;
-                if endpoint.is_some() || *internal {
-                    write!(f, "?")?;
-                    let mut first = true;
-                    if let Some(ep) = endpoint {
-                        write!(f, "endpoint={}", ep)?;
-                        first = false;
-                    }
-                    if *internal {
-                        if !first {
-                            write!(f, "&")?;
-                        }
-                        write!(f, "internal=true")?;
                     }
                 }
                 Ok(())
@@ -388,31 +301,6 @@ mod tests {
         let url = StorageUrl::from_str("s3://bucket/file.txt?region=us-west-2").unwrap();
         assert!(matches!(url, StorageUrl::S3 { region: Some(ref r), .. } if r == "us-west-2"));
     }
-
-    #[test]
-    fn test_parse_oss_url() {
-        let url = StorageUrl::from_str("oss://my-bucket/path/to/file.txt").unwrap();
-        assert!(matches!(url, StorageUrl::Oss { ref bucket, .. } if bucket == "my-bucket"));
-        assert_eq!(url.path(), "path/to/file.txt");
-        assert_eq!(url.bucket(), Some("my-bucket"));
-    }
-
-    #[test]
-    fn test_parse_oss_url_with_endpoint() {
-        let url =
-            StorageUrl::from_str("oss://bucket/file.txt?endpoint=oss-cn-hangzhou.aliyuncs.com")
-                .unwrap();
-        assert!(
-            matches!(url, StorageUrl::Oss { endpoint: Some(ref ep), .. } if ep == "oss-cn-hangzhou.aliyuncs.com")
-        );
-    }
-
-    #[test]
-    fn test_parse_oss_url_internal() {
-        let url = StorageUrl::from_str("oss://bucket/file.txt?internal=true").unwrap();
-        assert!(matches!(url, StorageUrl::Oss { internal: true, .. }));
-    }
-
     #[test]
     fn test_parse_invalid_scheme() {
         let result = StorageUrl::from_str("ftp://server/file.txt");
@@ -422,6 +310,22 @@ mod tests {
     #[test]
     fn test_parse_empty_bucket() {
         let result = StorageUrl::from_str("s3:///file.txt");
+        assert!(matches!(result, Err(StorageError::InvalidPath(_))));
+    }
+
+    #[test]
+    fn test_parse_malformed_s3_url_single_slash() {
+        // s3:/bucket (missing one /) was incorrectly treated as local path, creating dir "s3:"
+        let result = StorageUrl::from_str("s3:/roboflow-datasets");
+        assert!(matches!(result, Err(StorageError::InvalidPath(_))));
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("malformed"));
+        assert!(err_msg.contains("s3://"));
+    }
+
+    #[test]
+    fn test_parse_malformed_s3_url_scheme_only() {
+        let result = StorageUrl::from_str("s3:");
         assert!(matches!(result, Err(StorageError::InvalidPath(_))));
     }
 
@@ -444,15 +348,6 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_url_oss() {
-        let url = StorageUrl::oss("bucket", "key/file.txt");
-        assert!(!url.is_local());
-        assert!(url.is_remote());
-        assert_eq!(url.path(), "key/file.txt");
-        assert_eq!(url.bucket(), Some("bucket"));
-    }
-
-    #[test]
     fn test_display_local() {
         let url = StorageUrl::local("/tmp/file.txt");
         assert_eq!(url.to_string(), "file:///tmp/file.txt");
@@ -462,11 +357,5 @@ mod tests {
     fn test_display_s3() {
         let url = StorageUrl::s3("bucket", "file.txt");
         assert_eq!(url.to_string(), "s3://bucket/file.txt");
-    }
-
-    #[test]
-    fn test_display_oss() {
-        let url = StorageUrl::oss("bucket", "file.txt");
-        assert_eq!(url.to_string(), "oss://bucket/file.txt");
     }
 }

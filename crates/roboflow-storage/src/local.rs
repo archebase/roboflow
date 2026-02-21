@@ -296,6 +296,124 @@ impl Storage for LocalStorage {
         self
     }
 
+    fn compose_objects(
+        &self,
+        sources: &[&Path],
+        dest: &Path,
+        composer: &dyn roboflow_core::VideoComposer,
+    ) -> Result<()> {
+        if sources.is_empty() {
+            return Err(StorageError::Other(
+                "compose_objects requires at least one source".to_string(),
+            ));
+        }
+
+        // For a single source, just do a copy
+        if sources.len() == 1 {
+            return self.copy(sources[0], dest);
+        }
+
+        // For multiple sources, use the composer for proper remuxing
+        let dest_path = self.full_path(dest)?;
+        self.ensure_parent(&dest_path)?;
+
+        // Verify all sources exist first and convert to full paths
+        let source_paths: Vec<PathBuf> = sources
+            .iter()
+            .map(|&s| self.full_path(s))
+            .collect::<Result<Vec<_>>>()?;
+
+        for (i, path) in source_paths.iter().enumerate() {
+            if !path.exists() {
+                return Err(StorageError::not_found(format!(
+                    "source file {} not found: {}",
+                    i,
+                    path.display()
+                )));
+            }
+        }
+
+        // Use VideoComposer for proper MP4 composition (not byte concatenation)
+        let source_refs: Vec<&Path> = source_paths.iter().map(|p| p.as_path()).collect();
+        composer
+            .compose(&source_refs, &dest_path)
+            .map_err(|e| StorageError::Other(format!("video composition failed: {}", e)))?;
+
+        tracing::info!(
+            dest = %dest_path.display(),
+            sources = sources.len(),
+            "Composed {} video segments into {}",
+            sources.len(),
+            dest.display()
+        );
+
+        Ok(())
+    }
+
+    fn delete_prefix(&self, prefix: &Path) -> Result<usize> {
+        let full_prefix = self.full_path(prefix)?;
+        let mut deleted_count = 0;
+
+        if !full_prefix.exists() {
+            return Ok(0);
+        }
+
+        // Collect all files to delete first (to avoid iterator invalidation)
+        let mut files_to_delete: Vec<PathBuf> = Vec::new();
+
+        fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+            if dir.is_file() {
+                files.push(dir.to_path_buf());
+                return Ok(());
+            }
+
+            for entry in fs::read_dir(dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_files(&path, files)?;
+                } else {
+                    files.push(path);
+                }
+            }
+            Ok(())
+        }
+
+        collect_files(&full_prefix, &mut files_to_delete).map_err(|e| {
+            StorageError::Other(format!("failed to list files for deletion: {}", e))
+        })?;
+
+        // Delete all collected files
+        for file_path in &files_to_delete {
+            fs::remove_file(file_path).map_err(|e| {
+                StorageError::Other(format!("failed to delete {}: {}", file_path.display(), e))
+            })?;
+            deleted_count += 1;
+        }
+
+        // Try to remove empty directories (ignore errors)
+        fn remove_empty_dirs(dir: &Path) {
+            if dir.is_dir() {
+                if let Ok(entries) = fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        remove_empty_dirs(&entry.path());
+                    }
+                }
+                let _ = fs::remove_dir(dir);
+            }
+        }
+        remove_empty_dirs(&full_prefix);
+
+        tracing::info!(
+            prefix = %full_prefix.display(),
+            count = deleted_count,
+            "Deleted {} files under prefix",
+            deleted_count
+        );
+
+        Ok(deleted_count)
+    }
+
     fn read_range(
         &self,
         path: &Path,
@@ -306,12 +424,11 @@ impl Storage for LocalStorage {
 
         let full_path = self.full_path(path)?;
 
-        // Get file size if end not specified
-        // Get file size if end not specified
-        let file_size = if end.is_some() {
-            None
-        } else {
-            Some(
+        // Determine the end offset
+        let end = match end {
+            Some(e) => e,
+            None => {
+                // Get file size if end not specified
                 fs::metadata(&full_path)
                     .map_err(|e| {
                         if e.kind() == std::io::ErrorKind::NotFound {
@@ -320,11 +437,9 @@ impl Storage for LocalStorage {
                             StorageError::Io(e)
                         }
                     })?
-                    .len(),
-            )
+                    .len()
+            }
         };
-
-        let end = end.unwrap_or_else(|| file_size.unwrap());
 
         // Validate bounds
         if start > end {
@@ -376,6 +491,52 @@ impl Storage for LocalStorage {
 
         let reader = crate::streaming::StreamingLocalReader::new(file)?;
         Ok(Box::new(reader))
+    }
+}
+
+// =============================================================================
+// Streaming Upload Support
+// =============================================================================
+
+impl crate::streaming_upload::StorageStreamingExt for LocalStorage {
+    fn put_multipart_stream(
+        &self,
+        path: &Path,
+    ) -> crate::StorageResult<Box<dyn crate::streaming_upload::MultipartUpload>> {
+        use crate::streaming_upload::LocalMultipartUpload;
+        use std::io::BufWriter;
+
+        let target_path = self.full_path(path)?;
+
+        // Create a temporary file in the same directory as the target
+        let temp_dir = target_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let temp_file = tempfile::Builder::new()
+            .prefix(".tmp_upload_")
+            .tempfile_in(temp_dir)
+            .map_err(crate::StorageError::Io)?;
+
+        let temp_path = temp_file.path().to_path_buf();
+
+        // Use keep() to prevent auto-deletion, returns (File, PathBuf)
+        let (file, _kept_path) = temp_file
+            .keep()
+            .map_err(|e| crate::StorageError::Io(e.into()))?;
+        let writer = BufWriter::new(file);
+
+        tracing::debug!(
+            target = %target_path.display(),
+            temp = %temp_path.display(),
+            "Created local multipart upload"
+        );
+
+        Ok(Box::new(LocalMultipartUpload::new(
+            writer,
+            temp_path,
+            target_path,
+        )))
     }
 }
 
@@ -664,5 +825,241 @@ mod tests {
         // Leading ../ should fail
         let result = storage.full_path(Path::new("../escape.txt"));
         assert!(matches!(result, Err(StorageError::PermissionDenied(_))));
+    }
+
+    // =============================================================================
+    // compose_objects Tests
+    // =============================================================================
+
+    #[test]
+    fn test_compose_objects_single_source() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = LocalStorage::new(temp_dir.path());
+
+        // Create a source file
+        let src_path = Path::new("segment_0.mp4");
+        let mut writer = storage.writer(src_path).unwrap();
+        writer.write_all(b"fake mp4 content").unwrap();
+        writer.flush().unwrap();
+
+        // Compose single source (should just copy)
+        let dest_path = Path::new("episode_000000.mp4");
+        let composer = roboflow_core::MockVideoComposer::new();
+        storage
+            .compose_objects(&[src_path], dest_path, &composer)
+            .unwrap();
+
+        // Verify destination exists and has same content
+        assert!(storage.exists(dest_path));
+        let mut reader = storage.reader(dest_path).unwrap();
+        let mut content = Vec::new();
+        reader.read_to_end(&mut content).unwrap();
+        assert_eq!(content, b"fake mp4 content");
+    }
+
+    #[test]
+    fn test_compose_objects_multiple_sources() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = LocalStorage::new(temp_dir.path());
+
+        // Create multiple source files
+        let sources: Vec<&Path> = vec![
+            Path::new("segment_0.mp4"),
+            Path::new("segment_1.mp4"),
+            Path::new("segment_2.mp4"),
+        ];
+
+        for (i, &src) in sources.iter().enumerate() {
+            let mut writer = storage.writer(src).unwrap();
+            writer
+                .write_all(format!("segment_{} content; ", i).as_bytes())
+                .unwrap();
+            writer.flush().unwrap();
+        }
+
+        // Compose all sources using mock composer
+        let dest_path = Path::new("episode_000000.mp4");
+        let composer = roboflow_core::MockVideoComposer::new();
+        storage
+            .compose_objects(&sources, dest_path, &composer)
+            .unwrap();
+
+        // Verify composer was called with correct arguments
+        let ops = composer.get_operations();
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].sources.len(), 3);
+        assert!(ops[0].dest.to_string_lossy().contains("episode_000000.mp4"));
+    }
+
+    #[test]
+    fn test_compose_objects_empty_sources() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = LocalStorage::new(temp_dir.path());
+
+        let dest_path = Path::new("episode_000000.mp4");
+        let composer = roboflow_core::MockVideoComposer::new();
+        let result = storage.compose_objects(&[], dest_path, &composer);
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("at least one source")
+        );
+    }
+
+    #[test]
+    fn test_compose_objects_missing_source() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = LocalStorage::new(temp_dir.path());
+
+        // Create one source file
+        let src0 = Path::new("segment_0.mp4");
+        let mut writer = storage.writer(src0).unwrap();
+        writer.write_all(b"content").unwrap();
+        writer.flush().unwrap();
+
+        // Try to compose with a missing source
+        let src1 = Path::new("segment_1.mp4"); // This doesn't exist
+        let dest_path = Path::new("episode_000000.mp4");
+        let composer = roboflow_core::MockVideoComposer::new();
+        let result = storage.compose_objects(&[src0, src1], dest_path, &composer);
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(StorageError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_compose_objects_creates_parent_dirs() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = LocalStorage::new(temp_dir.path());
+
+        // Create source file
+        let src_path = Path::new("segment_0.mp4");
+        let mut writer = storage.writer(src_path).unwrap();
+        writer.write_all(b"content").unwrap();
+        writer.flush().unwrap();
+
+        // Compose to nested destination
+        let dest_path = Path::new("videos/chunk-000/camera/episode_000000.mp4");
+        let composer = roboflow_core::MockVideoComposer::new();
+        storage
+            .compose_objects(&[src_path], dest_path, &composer)
+            .unwrap();
+
+        // Verify destination exists with parent directories
+        assert!(storage.exists(dest_path));
+    }
+
+    // =============================================================================
+    // delete_prefix Tests
+    // =============================================================================
+
+    #[test]
+    fn test_delete_prefix_multiple_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = LocalStorage::new(temp_dir.path());
+
+        // Create multiple files in a prefix
+        storage
+            .create_dir_all(Path::new("temp/session123"))
+            .unwrap();
+        let files: Vec<&Path> = vec![
+            Path::new("temp/session123/segment_0.mp4"),
+            Path::new("temp/session123/segment_1.mp4"),
+            Path::new("temp/session123/segment_2.mp4"),
+        ];
+
+        for &file in &files {
+            let mut writer = storage.writer(file).unwrap();
+            writer.write_all(b"content").unwrap();
+            writer.flush().unwrap();
+        }
+
+        // Delete prefix
+        let count = storage.delete_prefix(Path::new("temp/session123")).unwrap();
+        assert_eq!(count, 3);
+
+        // Verify files are deleted
+        for &file in &files {
+            assert!(!storage.exists(file));
+        }
+    }
+
+    #[test]
+    fn test_delete_prefix_nonexistent() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = LocalStorage::new(temp_dir.path());
+
+        // Delete non-existent prefix should return 0
+        let count = storage.delete_prefix(Path::new("nonexistent")).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_delete_prefix_nested_directories() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = LocalStorage::new(temp_dir.path());
+
+        // Create nested directory structure
+        storage
+            .create_dir_all(Path::new("temp/session123/episode_0/camera"))
+            .unwrap();
+        storage
+            .create_dir_all(Path::new("temp/session123/episode_1/camera"))
+            .unwrap();
+
+        let files: Vec<&Path> = vec![
+            Path::new("temp/session123/episode_0/camera/segment_0.mp4"),
+            Path::new("temp/session123/episode_1/camera/segment_0.mp4"),
+        ];
+
+        for &file in &files {
+            let mut writer = storage.writer(file).unwrap();
+            writer.write_all(b"content").unwrap();
+            writer.flush().unwrap();
+        }
+
+        // Delete prefix
+        let count = storage.delete_prefix(Path::new("temp/session123")).unwrap();
+        assert_eq!(count, 2);
+
+        // Verify all files are deleted
+        for &file in &files {
+            assert!(!storage.exists(file));
+        }
+
+        // Verify directories are also removed (they should be empty now)
+        assert!(!storage.exists(Path::new("temp/session123")));
+    }
+
+    #[test]
+    fn test_delete_prefix_preserves_other_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = LocalStorage::new(temp_dir.path());
+
+        // Create files in different prefixes
+        let file_to_delete = Path::new("temp/session123/segment.mp4");
+        let file_to_keep = Path::new("videos/episode.mp4");
+
+        storage
+            .create_dir_all(Path::new("temp/session123"))
+            .unwrap();
+        storage.create_dir_all(Path::new("videos")).unwrap();
+
+        for &file in &[file_to_delete, file_to_keep] {
+            let mut writer = storage.writer(file).unwrap();
+            writer.write_all(b"content").unwrap();
+            writer.flush().unwrap();
+        }
+
+        // Delete only one prefix
+        let count = storage.delete_prefix(Path::new("temp/session123")).unwrap();
+        assert_eq!(count, 1);
+
+        // Verify correct file was deleted
+        assert!(!storage.exists(file_to_delete));
+        assert!(storage.exists(file_to_keep));
     }
 }

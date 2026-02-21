@@ -79,10 +79,12 @@ impl StreamingOssReader {
     /// Ensure we have data loaded at the current position.
     fn ensure_buffer(&mut self) -> IoResult<()> {
         // Check if we need to load a new buffer
-        if self.current_buffer.is_none()
-            || (self.buffer_offset + self.current_buffer.as_ref().unwrap().len() as u64)
-                <= self.position
-        {
+        let needs_fetch = match &self.current_buffer {
+            None => true,
+            Some(buffer) => (self.buffer_offset + buffer.len() as u64) <= self.position,
+        };
+
+        if needs_fetch {
             // Check if we're at EOF
             if self.position >= self.object_size {
                 return Ok(());

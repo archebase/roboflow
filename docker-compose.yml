@@ -123,7 +123,9 @@ services:
       mc mb myminio/roboflow-datasets --ignore-existing;
       mc mb myminio/roboflow-raw --ignore-existing;
       mc mb myminio/roboflow-temp --ignore-existing;
-      mc anonymous set download myminio/roboflow-datasets;
+      mc anonymous set public myminio/roboflow-datasets;
+      mc anonymous set public myminio/roboflow-raw;
+      mc anonymous set public myminio/roboflow-temp;
       exit 0;
       "
     networks:

@@ -105,6 +105,6 @@ pub trait AsyncStorage: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    // Tests for specific implementations (AsyncOssStorage, etc.)
+    // Tests for specific implementations (AsyncS3Storage, etc.)
     // will be in their respective modules.
 }

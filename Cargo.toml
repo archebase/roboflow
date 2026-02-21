@@ -3,10 +3,9 @@ members = [
     ".",
     "crates/roboflow-core",
     "crates/roboflow-storage",
-    "crates/roboflow-distributed",
+    "crates/roboflow-executor",
     "crates/roboflow-dataset",
-    "crates/roboflow-hdf5",
-    "crates/roboflow-pipeline",
+    "crates/roboflow-distributed",
 ]
 resolver = "2"
 
@@ -14,13 +13,21 @@ resolver = "2"
 # Internal crates
 roboflow-core = { path = "crates/roboflow-core", version = "0.2.0" }
 roboflow-storage = { path = "crates/roboflow-storage", version = "0.2.0" }
-roboflow-distributed = { path = "crates/roboflow-distributed", version = "0.2.0" }
 roboflow-dataset = { path = "crates/roboflow-dataset", version = "0.2.0" }
-roboflow-hdf5 = { path = "crates/roboflow-hdf5", version = "0.2.0" }
-roboflow-pipeline = { path = "crates/roboflow-pipeline", version = "0.2.0" }
+roboflow-distributed = { path = "crates/roboflow-distributed", version = "0.2.0" }
+roboflow-executor = { path = "crates/roboflow-executor", version = "0.2.0" }
 
 # External dependencies
-robocodec = { git = "https://github.com/archebase/robocodec", branch = "main" }
+# Pinned to specific commit for reproducible builds
+robocodec = { git = "https://github.com/archebase/robocodec", rev = "019baae541f1cb1d89439e9940d5fbef98f38898" }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+tokio = { version = "1.40", features = ["rt-multi-thread", "sync"] }
+num_cpus = "1.16"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+thiserror = "1.0"
 
 [package]
 name = "roboflow"
@@ -38,13 +45,12 @@ crate-type = ["rlib"]
 robocodec = { workspace = true }
 roboflow-core = { workspace = true }
 roboflow-storage = { workspace = true }
-roboflow-dataset = { workspace = true }
-roboflow-pipeline = { workspace = true }
 roboflow-distributed = { workspace = true }
+roboflow-dataset = { workspace = true }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_yaml = "0.9"
+serde_yaml_ng = "0.10"
 thiserror = "1.0"
 anyhow = "1.0"
 pest = "2.7"
@@ -92,21 +98,16 @@ chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Cloud storage support (optional, gated by "cloud-storage" feature)
-object_store = { version = "0.11", optional = true, features = ["aws"] }
 # Async runtime (always enabled for distributed processing)
 tokio = { version = "1.40", features = ["rt-multi-thread", "sync"] }
 tokio-util = "0.7"
-url = { version = "2.5", optional = true }
-bytes = { version = "1.7", optional = true }
 
 # TiKV distributed coordination (always enabled for distributed processing)
 tikv-client = { version = "0.3" }
 futures = { version = "0.3" }
 bincode = { version = "1.3" }
 
-# KPS support (optional dependencies)
-hdf5 = { git = "https://github.com/archebase/hdf5-rs", optional = true }
+# Dataset support (optional dependencies)
 polars = { version = "0.41", features = ["parquet"], optional = true }
 png = { version = "0.17", optional = true }
 uuid = { version = "1.10", features = ["v4", "serde"] }
@@ -124,84 +125,78 @@ pprof = { version = "0.14", features = ["flamegraph", "cpp", "prost-codec", "fra
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.7", optional = true }
 
-# Dataset features (optional, disabled by default)
+# Optional features
 [features]
-default = []
-dataset-hdf5 = ["dep:hdf5"]
-dataset-parquet = ["dep:polars"]
-dataset-depth = ["dep:png"]
-dataset-all = ["dataset-hdf5", "dataset-parquet", "dataset-depth"]
-# Cloud storage support for Alibaba OSS and S3-compatible backends
-cloud-storage = ["dep:object_store", "dep:url", "dep:bytes"]
-# GPU compression (experimental)
-# Enables GPU-accelerated compression via nvCOMP
-# Requires: NVIDIA GPU, CUDA toolkit, nvCOMP library (Linux)
-gpu = []
+# Note: Cloud storage (S3, OSS) is always available via roboflow-storage
+
 # Use jemalloc as global allocator on Linux (better for concurrent workloads)
 # On macOS, the default allocator is already excellent and jemalloc is not used
 jemalloc = ["dep:tikv-jemallocator", "robocodec/jemalloc"]
+
 # CLI support for binaries (profiler, etc.)
 cli = ["dep:clap"]
+
 # Profiling support for profiler binary (flamegraph generation)
 profiling = ["dep:pprof", "cli"]
+
 # CPU-aware WindowLog detection using CPUID (x86_64 only)
 cpuid = ["dep:raw-cpuid"]
+
 # io_uring support for Linux (high-performance async I/O)
 # Requires: Linux 5.6+ kernel
 io-uring-io = ["dep:io-uring"]
-# Distributed tests (distributed is always enabled)
-test-distributed = []
 
 [dev-dependencies]
 pretty_assertions = "1.4"
 paste = "1.0"
 criterion = "0.5"
 tempfile = "3.10"
-roboflow-hdf5 = { workspace = true }
 roboflow-distributed = { workspace = true }
+bytes = "1.7"
+futures = "0.3"
+object_store = "0.11"
 
 # Binaries
 [[bin]]
-name = "convert"
-path = "src/bin/convert.rs"
-
-[[bin]]
-name = "extract"
-path = "src/bin/extract.rs"
-
-[[bin]]
-name = "inspect"
-path = "src/bin/inspect.rs"
-
-[[bin]]
-name = "schema"
-path = "src/bin/schema.rs"
-
-[[bin]]
-name = "search"
-path = "src/bin/search.rs"
-
-[[bin]]
 name = "roboflow"
 path = "src/bin/roboflow.rs"
-
-# Benchmarks
-[[bench]]
-name = "profiler"
-path = "benches/profiler.rs"
-harness = false
-required-features = ["profiling"]
 
 # Examples
 [[example]]
 name = "lerobot_convert"
 path = "examples/rust/lerobot_convert.rs"
-required-features = ["dataset-parquet"]
-
-[[example]]
-name = "lerobot_bench"
-path = "examples/rust/lerobot_bench.rs"
-required-features = ["dataset-parquet"]
 
 [profile.release]
 debug = true
+
+# =============================================================================
+# Workspace Lints - Technical Debt Prevention
+# =============================================================================
+#
+# These lints are configured to prevent future technical debt while allowing
+# existing code patterns. More strict lints can be enabled incrementally as
+# debt is paid down.
+
+[workspace.lints.clippy]
+# Complexity - prevent cognitive complexity hotspots (key for maintainability)
+cognitive_complexity = "warn"
+
+# Code quality - encourage best practices
+# Note: unwrap_used and expect_used set to allow due to existing debt (~600 occurrences)
+unwrap_used = "allow"
+expect_used = "allow"
+
+# Allowed due to existing debt - can be enabled incrementally
+doc_markdown = "allow"
+items_after_statements = "allow"
+str_to_string = "allow"
+use_self = "allow"
+wildcard_imports = "allow"
+enum_glob_use = "allow"
+needless_continue = "allow"
+manual_assert = "allow"
+map_unwrap_or = "allow"
+
+# Inherit workspace lints in all workspace members
+[lints]
+workspace = true

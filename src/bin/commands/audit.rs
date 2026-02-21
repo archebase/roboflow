@@ -36,33 +36,11 @@ pub struct AuditEntry {
 }
 
 /// Types of audited operations.
-///
-/// This enum defines all possible operation types that can be recorded in the audit log.
-/// Some variants may not currently be used but are reserved for future API expansion.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
-#[allow(dead_code)] // Public API with variants reserved for future use
 pub enum AuditOperation {
-    /// Job was cancelled.
-    JobCancel,
-
-    /// Job was deleted.
-    JobDelete,
-
-    /// Job was retried.
-    JobRetry,
-
-    /// Multiple jobs were deleted.
-    BatchJobDelete,
-
-    /// Admin action performed.
-    AdminAction,
-
     /// Batch job was submitted.
     BatchSubmit,
-
-    /// Batch job was queried.
-    BatchQuery,
 
     /// Batch job was cancelled.
     BatchCancel,
@@ -166,27 +144,6 @@ impl AuditLogger {
             context: context.clone(),
             success: true,
             error: None,
-        };
-        Self::log(&entry);
-    }
-
-    /// Log a failed operation.
-    #[allow(dead_code)]
-    pub fn log_failure(
-        operation: AuditOperation,
-        actor: &str,
-        target: &str,
-        context: &AuditContext,
-        error: &str,
-    ) {
-        let entry = AuditEntry {
-            timestamp: Utc::now(),
-            operation,
-            actor: actor.to_string(),
-            target: target.to_string(),
-            context: context.clone(),
-            success: false,
-            error: Some(error.to_string()),
         };
         Self::log(&entry);
     }

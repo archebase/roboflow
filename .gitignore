@@ -31,3 +31,9 @@ profiles/
 # robot data
 *.bag
 *.mcap
+# allow normalized test fixtures tracked via git-lfs
+!tests/fixtures/roboflow_*.bag
+!tests/fixtures/roboflow_*.mcap
+output.mp4
+*.json.*
+crates/roboflow*/target

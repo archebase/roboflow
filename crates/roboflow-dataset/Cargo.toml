@@ -5,64 +5,62 @@ edition = "2024"
 authors = ["Strata Contributors"]
 license = "MulanPSL-2.0"
 repository = "https://github.com/archebase/roboflow"
-description = "Dataset writers for roboflow - LeRobot v2.1, Parquet (always available)"
+description = "Dataset formats and conversion for robotics training data"
 
 [dependencies]
-roboflow-core = { path = "../roboflow-core", version = "0.2.0" }
-roboflow-storage = { path = "../roboflow-storage", version = "0.2.0" }
-
-# Codec library (from workspace)
+roboflow-core = { workspace = true }
+roboflow-storage = { workspace = true }
+roboflow-executor = { workspace = true }
 robocodec = { workspace = true }
 
-# Parquet - ALWAYS AVAILABLE (no feature flag)
-polars = { version = "0.41", features = ["parquet"] }
-
-# Depth images
+polars = { version = "0.41", features = ["parquet", "lazy", "diagonal_concat"] }
 png = "0.17"
-
-# Image decoding (JPEG/PNG) - optional but always enabled by default
-image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png"] }
-
-# Video encoding (FFmpeg) - optional, requires system library
-ffmpeg-next = { version = "6.1", optional = true }
-
-# Error handling
-thiserror = "1.0"
-
-# Logging
-tracing = "0.1"
-
-# Serialization
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+zune-jpeg = "0.4"
+rsmpeg = { version = "0.18", features = ["link_system_ffmpeg", "link_vcpkg_ffmpeg"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml_ng = "0.10"
 toml = "0.8"
-
-# UUID for episode IDs
-uuid = { version = "1.10", features = ["v4", "serde"] }
-
-# Concurrency
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
 crossbeam-channel = "0.5"
+crossbeam-deque = "0.8"
 num_cpus = "1.16"
 rayon = "1.10"
-
-# Error handling
-anyhow = "1.0"
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = "0.3"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+mcap = "0.24"
+rosbag = "0.6"
+chrono = { workspace = true }
+zstd = "0.13"
+lz4_flex = "0.11"
+bzip2 = "0.4"
+bytes = "1"
+memmap2 = "0.9"
+hex = "0.4"
+regex = "1.10"
 
 [features]
-default = ["image-decode"]
-
-# Enable video encoding via FFmpeg (requires ffmpeg installed on system)
-video = ["dep:ffmpeg-next"]
-
-# Image decoding (CPU-based, always available but can be explicitly enabled)
-image-decode = ["dep:image"]
-
-# GPU-accelerated decoding (Linux nvJPEG, macOS Apple hardware)
-gpu-decode = ["image-decode"]
-
-# CUDA pinned memory for zero-copy GPU transfers (requires cudarc)
-cuda-pinned = ["gpu-decode"]
+default = []
 
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3.10"
+proptest = "1.5"
+criterion = "0.5"
+
+[[bench]]
+name = "frame_alignment"
+harness = false
+
+[[example]]
+name = "benchmark_large_bag"
+path = "examples/benchmark_large_bag.rs"
+
+[[test]]
+name = "lerobot"
+path = "tests/lerobot/mod.rs"

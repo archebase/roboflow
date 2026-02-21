@@ -49,6 +49,7 @@
 use std::env;
 use std::sync::Arc;
 
+use futures::future::join_all;
 use roboflow_distributed::{
     BatchController, Finalizer, FinalizerConfig, MergeCoordinator, ReaperConfig, Scanner,
     ScannerConfig, Worker, WorkerConfig, ZombieReaper,
@@ -278,7 +279,7 @@ fn usage() -> Result<Command, String> {
 /// Get help text.
 fn get_help() -> String {
     [
-        "Roboflow - Distributed data transformation pipeline",
+        "Roboflow - Distributed robot data transformation pipeline",
         "",
         "USAGE:",
         "    roboflow <COMMAND> [OPTIONS]",
@@ -441,10 +442,9 @@ async fn run_health_check() -> HealthCheckResult {
 async fn run_worker(
     pod_id: String,
     tikv: Arc<roboflow_distributed::TikvClient>,
-    storage: Arc<dyn roboflow_storage::Storage>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = WorkerConfig::new();
-    let mut worker = Worker::new(pod_id, tikv, storage, config)?;
+    let mut worker = Worker::new(pod_id, tikv, config)?;
 
     worker.run().await.map_err(|e| e.into())
 }
@@ -467,7 +467,6 @@ async fn run_finalizer(
 async fn run_unified(
     pod_id: String,
     tikv: Arc<roboflow_distributed::TikvClient>,
-    storage: Arc<dyn roboflow_storage::Storage>,
     cancel: CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let worker_config = WorkerConfig::new();
@@ -482,12 +481,7 @@ async fn run_unified(
     let cancel_clone = cancel.clone();
 
     // Create worker, finalizer, and reaper
-    let mut worker = Worker::new(
-        format!("{}-worker", pod_id),
-        tikv.clone(),
-        storage,
-        worker_config,
-    )?;
+    let mut worker = Worker::new(format!("{}-worker", pod_id), tikv.clone(), worker_config)?;
 
     let finalizer = Finalizer::new(
         format!("{}-finalizer", pod_id),
@@ -517,7 +511,7 @@ async fn run_unified(
     });
 
     // Spawn scanner task - runs its own leader election loop
-    let scanner_handle = tokio::spawn(async move {
+    let mut scanner_handle = tokio::spawn(async move {
         let mut scanner = match Scanner::new(
             scanner_pod_id,
             scanner_tikv,
@@ -545,7 +539,7 @@ async fn run_unified(
 
     // Spawn all three tasks with error logging
     let worker_pod_id = pod_id.clone();
-    let worker_handle = tokio::spawn(async move {
+    let mut worker_handle = tokio::spawn(async move {
         if let Err(e) = worker.run().await {
             tracing::error!(
                 pod_id = %worker_pod_id,
@@ -556,7 +550,7 @@ async fn run_unified(
     });
 
     let reaper_pod_id = pod_id.clone();
-    let reaper_handle = tokio::spawn(async move {
+    let mut reaper_handle = tokio::spawn(async move {
         if let Err(e) = reaper.run().await {
             tracing::error!(
                 pod_id = %reaper_pod_id,
@@ -567,7 +561,7 @@ async fn run_unified(
     });
 
     let finalizer_pod_id = pod_id.clone();
-    let finalizer_handle = tokio::spawn(async move {
+    let mut finalizer_handle = tokio::spawn(async move {
         if let Err(e) = finalizer.run(cancel_clone).await {
             tracing::error!(
                 pod_id = %finalizer_pod_id,
@@ -577,20 +571,76 @@ async fn run_unified(
         }
     });
 
-    // Wait for any task to complete (usually due to shutdown or error)
+    // Wait for any task to complete (usually due to shutdown or error).
+    // Track which handle completed so we don't poll it again (JoinHandle panics if polled after completion).
+    let mut worker_done = false;
+    let mut reaper_done = false;
+    let mut finalizer_done = false;
+    let mut scanner_done = false;
     tokio::select! {
-        _ = worker_handle => {
+        _ = &mut worker_handle => {
             cancel.cancel();
+            worker_done = true;
         }
-        _ = reaper_handle => {
+        _ = &mut reaper_handle => {
             cancel.cancel();
+            reaper_done = true;
         }
-        _ = finalizer_handle => {
+        _ = &mut finalizer_handle => {
             cancel.cancel();
+            finalizer_done = true;
         }
-        _ = scanner_handle => {
+        _ = &mut scanner_handle => {
             cancel.cancel();
+            scanner_done = true;
         }
+    }
+
+    // Build list of remaining handles and their abort handles so we can wait with a single
+    // join_all (each handle polled at most once) and still abort on timeout.
+    let mut remaining_handles = Vec::new();
+    let mut abort_handles = Vec::new();
+    if !worker_done {
+        abort_handles.push(worker_handle.abort_handle());
+        remaining_handles.push(worker_handle);
+    }
+    if !reaper_done {
+        abort_handles.push(reaper_handle.abort_handle());
+        remaining_handles.push(reaper_handle);
+    }
+    if !finalizer_done {
+        abort_handles.push(finalizer_handle.abort_handle());
+        remaining_handles.push(finalizer_handle);
+    }
+    if !scanner_done {
+        abort_handles.push(scanner_handle.abort_handle());
+        remaining_handles.push(scanner_handle);
+    }
+
+    if remaining_handles.is_empty() {
+        return Ok(());
+    }
+
+    // Wait for all remaining with a deadline; each handle is only awaited once (inside join_all).
+    const SHUTDOWN_TIMEOUT_SECS: u64 = 15;
+    tracing::info!(
+        timeout_secs = SHUTDOWN_TIMEOUT_SECS,
+        "Waiting for remaining tasks to shut down"
+    );
+    let deadline =
+        tokio::time::Instant::now() + std::time::Duration::from_secs(SHUTDOWN_TIMEOUT_SECS);
+    let mut join_fut = join_all(remaining_handles);
+    tokio::select! {
+        _ = tokio::time::sleep_until(deadline) => {
+            tracing::warn!(
+                "Shutdown timeout reached, aborting remaining tasks so process can exit"
+            );
+            for a in &abort_handles {
+                a.abort();
+            }
+            let _ = join_fut.await;
+        }
+        _ = &mut join_fut => {}
     }
 
     Ok(())
@@ -600,7 +650,12 @@ async fn run_unified(
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
-    let command = parse_args(&args)?;
+    let command = parse_args(&args).unwrap_or_else(|e| {
+        if !e.is_empty() {
+            eprintln!("{}", e);
+        }
+        std::process::exit(1);
+    });
 
     // Initialize tracing
     tracing_subscriber::fmt()
@@ -609,15 +664,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
+    // Register all built-in source types (bag, mcap, rrd)
+    roboflow_dataset::sources::register_builtin_sources();
+
     match command {
         Command::Submit { args } => {
-            commands::run_submit_command(&args).await?;
+            if let Err(e) = commands::run_submit_command(&args).await {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
         }
         Command::Jobs { args } => {
-            commands::run_jobs_command(&args).await?;
+            if let Err(e) = commands::run_jobs_command(&args).await {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
         }
         Command::Batch { args } => {
-            commands::run_batch_command(&args).await?;
+            if let Err(e) = commands::run_batch_command(&args).await {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
         }
         Command::Run { role, pod_id } => {
             let role = role
@@ -633,7 +700,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
 
             let tikv = Arc::new(create_tikv().await?);
-            let storage = create_storage()?;
             let cancel = CancellationToken::new();
             let cancel_clone = cancel.clone();
 
@@ -653,7 +719,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             match role {
                 Role::Worker => {
-                    run_worker(pod_id, tikv, storage).await?;
+                    run_worker(pod_id, tikv).await?;
                 }
                 Role::Finalizer => {
                     let batch_controller = Arc::new(BatchController::with_client(tikv.clone()));
@@ -662,7 +728,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .await?;
                 }
                 Role::Unified => {
-                    run_unified(pod_id, tikv, storage, cancel).await?;
+                    run_unified(pod_id, tikv, cancel).await?;
                 }
             }
         }

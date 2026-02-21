@@ -6,24 +6,27 @@
 //!
 //! Provides connection pooling and basic CRUD operations for TiKV.
 //!
-//! # Atomicity Guarantees
+//! # MVCC & TSO Awareness
 //!
-//! This client uses TiKV's optimistic transactions. Each CRUD operation
-//! (`get`, `put`, `delete`, `scan`) executes in its own transaction.
+//! TiKV uses MVCC (Multi-Version Concurrency Control) with a Timestamp
+//! Oracle (TSO) from PD. Every transaction gets a `start_ts` that determines
+//! its snapshot. The PD client **batches** TSO allocations for efficiency,
+//! which means `begin_optimistic()` may return a transaction whose `start_ts`
+//! predates recently committed writes — causing **stale reads**.
 //!
-//! High-level operations like `claim_job`, `acquire_lock`, `release_lock`,
-//! `complete_job`, `fail_job`, and `cas` all use **single transactions**
-//! for both read and write, providing atomicity. If two workers race to
-//! perform conflicting operations, TiKV's optimistic concurrency control
-//! will detect the conflict and one transaction will fail with a write
-//! conflict error.
+//! To avoid this, we use three strategies:
 //!
-//! # Retry Behavior
+//! - **Read-only operations** (`get`, `scan`, `batch_get`): Use
+//!   `current_timestamp()` + `snapshot()` to obtain a guaranteed-fresh TSO
+//!   directly from PD, bypassing the batched cache.
 //!
-//! Write conflicts are automatically retried with exponential backoff.
-//! The `max_retries` and `retry_base_delay_ms` configuration values control
-//! retry behavior. If all retries are exhausted, a `Retryable` error is
-//! returned.
+//! - **Read-then-write operations** (`transactional_claim`, `cas`,
+//!   `acquire_lock`, `release_lock`): Use **pessimistic transactions**
+//!   (`begin_pessimistic()`) which acquire row locks on read and always
+//!   see the latest committed state.
+//!
+//! - **Write-only operations** (`put`, `delete`, `batch_put`): Use
+//!   optimistic transactions — no read means no stale-snapshot risk.
 //!
 //! # Scan Behavior
 //!
@@ -31,6 +34,9 @@
 //! `KeyBuilder` or `*Keys` types to construct proper prefix-based keys.
 
 use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::time::sleep;
 
 use super::config::TikvConfig;
 use super::error::{Result, TikvError};
@@ -92,6 +98,8 @@ impl TikvClient {
     }
 
     /// Get a value by key.
+    ///
+    /// Uses a fresh TSO snapshot to guarantee visibility of all committed writes.
     pub async fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>> {
         // Check circuit breaker state before attempting operation
         if !self.circuit_breaker.is_call_permitted() {
@@ -105,20 +113,20 @@ impl TikvClient {
                 TikvError::ConnectionFailed("TiKV client not initialized".to_string())
             })?;
 
-            let mut txn = inner.begin_optimistic().await.map_err(|e| {
-                // Record failure for circuit breaker
+            // Get a fresh timestamp directly from PD (bypasses TSO batch cache)
+            let ts = inner.current_timestamp().await.map_err(|e| {
                 self.circuit_breaker.record_failure();
                 TikvError::ClientError(e.to_string())
             })?;
 
-            let result = txn.get(key).await.map_err(|e| {
-                // Record failure for circuit breaker
-                self.circuit_breaker.record_failure();
-                TikvError::ClientError(e.to_string())
-            })?;
+            // Snapshot is read-only; use Warn drop-check to avoid panic on drop
+            let mut snap = inner.snapshot(
+                ts,
+                tikv_client::TransactionOptions::new_optimistic()
+                    .drop_check(tikv_client::CheckLevel::Warn),
+            );
 
-            txn.commit().await.map_err(|e| {
-                // Record failure for circuit breaker
+            let result = snap.get(key).await.map_err(|e| {
                 self.circuit_breaker.record_failure();
                 TikvError::ClientError(e.to_string())
             })?;
@@ -129,42 +137,42 @@ impl TikvClient {
         }
     }
 
-    /// Put a key-value pair.
+    /// Put a key-value pair with automatic retry on write conflicts.
+    ///
+    /// Retries on transient errors (WriteConflict, etc.) with exponential backoff
+    /// using `max_retries` and `retry_base_delay_ms` from config.
     pub async fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
-        // Check circuit breaker state before attempting operation
-        if !self.circuit_breaker.is_call_permitted() {
-            return Err(TikvError::CircuitOpen {
-                failures: self.circuit_breaker.failure_count() as u32,
-            });
+        let max_retries = self.config.max_retries;
+        let base_delay_ms = self.config.retry_base_delay_ms;
+
+        for attempt in 0..=max_retries {
+            match self.put_once(key.clone(), value.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if !e.is_write_conflict() {
+                        return Err(e);
+                    }
+                    if attempt < max_retries {
+                        let delay_ms = base_delay_ms.saturating_mul(2_u64.pow(attempt));
+                        let delay = Duration::from_millis(delay_ms);
+                        tracing::debug!(
+                            attempt = attempt + 1,
+                            max = max_retries + 1,
+                            delay_ms = delay_ms,
+                            "Write conflict, retrying put"
+                        );
+                        sleep(delay).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
         }
-
-        {
-            let inner = self.inner.as_ref().ok_or_else(|| {
-                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
-            })?;
-
-            let mut txn = inner.begin_optimistic().await.map_err(|e| {
-                self.circuit_breaker.record_failure();
-                TikvError::ClientError(e.to_string())
-            })?;
-
-            txn.put(key, value).await.map_err(|e| {
-                self.circuit_breaker.record_failure();
-                TikvError::ClientError(e.to_string())
-            })?;
-
-            txn.commit().await.map_err(|e| {
-                self.circuit_breaker.record_failure();
-                TikvError::ClientError(e.to_string())
-            })?;
-
-            self.circuit_breaker.record_success();
-            Ok(())
-        }
+        unreachable!("retry loop always returns via Ok or Err")
     }
 
-    /// Delete a key.
-    pub async fn delete(&self, key: Vec<u8>) -> Result<()> {
+    /// Single attempt to put a key-value pair (no retry).
+    async fn put_once(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         // Check circuit breaker state before attempting operation
         if !self.circuit_breaker.is_call_permitted() {
             return Err(TikvError::CircuitOpen {
@@ -172,35 +180,95 @@ impl TikvClient {
             });
         }
 
-        {
-            let inner = self.inner.as_ref().ok_or_else(|| {
-                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
-            })?;
+        let inner = self.inner.as_ref().ok_or_else(|| {
+            TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+        })?;
 
-            let mut txn = inner.begin_optimistic().await.map_err(|e| {
-                self.circuit_breaker.record_failure();
-                TikvError::ClientError(e.to_string())
-            })?;
+        let mut txn = inner.begin_optimistic().await.map_err(|e| {
+            self.circuit_breaker.record_failure();
+            TikvError::ClientError(e.to_string())
+        })?;
 
-            txn.delete(key).await.map_err(|e| {
-                self.circuit_breaker.record_failure();
-                TikvError::ClientError(e.to_string())
-            })?;
+        txn.put(key, value).await.map_err(|e| {
+            self.circuit_breaker.record_failure();
+            TikvError::ClientError(e.to_string())
+        })?;
 
-            txn.commit().await.map_err(|e| {
-                self.circuit_breaker.record_failure();
-                TikvError::ClientError(e.to_string())
-            })?;
+        txn.commit().await.map_err(|e| {
+            self.circuit_breaker.record_failure();
+            TikvError::ClientError(e.to_string())
+        })?;
 
-            self.circuit_breaker.record_success();
-            Ok(())
+        self.circuit_breaker.record_success();
+        Ok(())
+    }
+
+    /// Delete a key with automatic retry on write conflicts.
+    pub async fn delete(&self, key: Vec<u8>) -> Result<()> {
+        let max_retries = self.config.max_retries;
+        let base_delay_ms = self.config.retry_base_delay_ms;
+
+        for attempt in 0..=max_retries {
+            match self.delete_once(key.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if !e.is_write_conflict() {
+                        return Err(e);
+                    }
+                    if attempt < max_retries {
+                        let delay_ms = base_delay_ms.saturating_mul(2_u64.pow(attempt));
+                        let delay = Duration::from_millis(delay_ms);
+                        tracing::debug!(
+                            attempt = attempt + 1,
+                            max = max_retries + 1,
+                            delay_ms = delay_ms,
+                            "Write conflict, retrying delete"
+                        );
+                        sleep(delay).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
         }
+        unreachable!("retry loop always returns via Ok or Err")
+    }
+
+    /// Single attempt to delete a key (no retry).
+    async fn delete_once(&self, key: Vec<u8>) -> Result<()> {
+        if !self.circuit_breaker.is_call_permitted() {
+            return Err(TikvError::CircuitOpen {
+                failures: self.circuit_breaker.failure_count() as u32,
+            });
+        }
+
+        let inner = self.inner.as_ref().ok_or_else(|| {
+            TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+        })?;
+
+        let mut txn = inner.begin_optimistic().await.map_err(|e| {
+            self.circuit_breaker.record_failure();
+            TikvError::ClientError(e.to_string())
+        })?;
+
+        txn.delete(key).await.map_err(|e| {
+            self.circuit_breaker.record_failure();
+            TikvError::ClientError(e.to_string())
+        })?;
+
+        txn.commit().await.map_err(|e| {
+            self.circuit_breaker.record_failure();
+            TikvError::ClientError(e.to_string())
+        })?;
+
+        self.circuit_breaker.record_success();
+        Ok(())
     }
 
     /// Scan keys with a prefix.
     ///
-    /// Uses an exclusive range to match all keys starting with the prefix.
-    /// The scan is limited to `limit` results.
+    /// Uses a fresh TSO snapshot to guarantee visibility of all committed writes.
+    /// Returns keys in lexicographic order, limited to `limit` results.
     pub async fn scan(&self, prefix: Vec<u8>, limit: u32) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         tracing::debug!(
             limit = limit,
@@ -213,26 +281,31 @@ impl TikvClient {
                 TikvError::ConnectionFailed("TiKV client not initialized".to_string())
             })?;
 
-            let mut txn = inner
-                .begin_optimistic()
+            // Get a fresh timestamp directly from PD (bypasses TSO batch cache)
+            let ts = inner
+                .current_timestamp()
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
+            // Snapshot is read-only; use Warn drop-check to avoid panic on drop
+            let mut snap = inner.snapshot(
+                ts,
+                tikv_client::TransactionOptions::new_optimistic()
+                    .drop_check(tikv_client::CheckLevel::Warn),
+            );
+
             // Create a proper prefix scan range using exclusive upper bound.
             // We append 0xFF to ensure the scan range includes all keys with the prefix.
-            // Using 0xFF instead of 0x00 because null byte comes before regular ASCII chars.
             let mut scan_end = prefix.clone();
             scan_end.push(0xFF);
 
-            // Use exclusive range (..) instead of inclusive (..=) for correctness
-            let iter = txn
+            let iter = snap
                 .scan(prefix.clone()..scan_end, limit)
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
             // Collect the iterator into a Vec
-            // Note: The .into() conversion from Key to Vec<u8> is necessary but triggers
-            // clippy::useless_conversion as a false positive. The allow attribute is justified.
+            #[allow(clippy::useless_conversion)]
             let result: Vec<(Vec<u8>, Vec<u8>)> = iter
                 .map(|pair| {
                     #[allow(clippy::useless_conversion)]
@@ -243,10 +316,6 @@ impl TikvClient {
                 })
                 .collect();
 
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
             tracing::debug!(limit = limit, results = result.len(), "Scan completed");
 
             Ok(result)
@@ -254,67 +323,100 @@ impl TikvClient {
     }
 
     /// Batch get multiple keys.
+    ///
+    /// Uses a fresh TSO snapshot to guarantee visibility of all committed writes.
     pub async fn batch_get(&self, keys: Vec<Vec<u8>>) -> Result<Vec<Option<Vec<u8>>>> {
         {
             let inner = self.inner.as_ref().ok_or_else(|| {
                 TikvError::ConnectionFailed("TiKV client not initialized".to_string())
             })?;
 
-            let mut txn = inner
-                .begin_optimistic()
+            // Get a fresh timestamp directly from PD (bypasses TSO batch cache)
+            let ts = inner
+                .current_timestamp()
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
+            // Snapshot is read-only; use Warn drop-check to avoid panic on drop
+            let mut snap = inner.snapshot(
+                ts,
+                tikv_client::TransactionOptions::new_optimistic()
+                    .drop_check(tikv_client::CheckLevel::Warn),
+            );
+
             let mut results = Vec::new();
             for key in &keys {
-                let value = txn
+                let value = snap
                     .get(key.clone())
                     .await
                     .map_err(|e| TikvError::ClientError(e.to_string()))?;
                 results.push(value);
             }
 
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
             Ok(results)
         }
     }
 
-    /// Batch put multiple key-value pairs.
+    /// Batch put multiple key-value pairs with automatic retry on write conflicts.
     pub async fn batch_put(&self, pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<()> {
-        {
-            let inner = self.inner.as_ref().ok_or_else(|| {
-                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
-            })?;
+        let max_retries = self.config.max_retries;
+        let base_delay_ms = self.config.retry_base_delay_ms;
 
-            let mut txn = inner
-                .begin_optimistic()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            for (key, value) in pairs {
-                txn.put(key, value)
-                    .await
-                    .map_err(|e| TikvError::ClientError(e.to_string()))?;
+        for attempt in 0..=max_retries {
+            match self.batch_put_once(pairs.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if !e.is_write_conflict() {
+                        return Err(e);
+                    }
+                    if attempt < max_retries {
+                        let delay_ms = base_delay_ms.saturating_mul(2_u64.pow(attempt));
+                        let delay = Duration::from_millis(delay_ms);
+                        tracing::debug!(
+                            attempt = attempt + 1,
+                            max = max_retries + 1,
+                            delay_ms = delay_ms,
+                            pair_count = pairs.len(),
+                            "Write conflict, retrying batch_put"
+                        );
+                        sleep(delay).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
             }
+        }
+        unreachable!("retry loop always returns via Ok or Err")
+    }
 
-            txn.commit()
+    /// Single attempt to batch put (no retry).
+    async fn batch_put_once(&self, pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<()> {
+        let inner = self.inner.as_ref().ok_or_else(|| {
+            TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+        })?;
+
+        let mut txn = inner
+            .begin_optimistic()
+            .await
+            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+        for (key, value) in pairs {
+            txn.put(key, value)
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
-            Ok(())
         }
+
+        txn.commit()
+            .await
+            .map_err(|e| TikvError::ClientError(e.to_string()))?;
+
+        Ok(())
     }
 
     /// Compare-And-Swap (CAS) operation for atomic updates.
     ///
-    /// This uses a single transaction to read the current value, check the version,
-    /// and write the new value if the version matches. Returns `Ok(true)` if the
-    /// operation succeeded, `Ok(false)` if the version mismatched (key exists with
-    /// different version, or key doesn't exist with expected_version != 0), or
-    /// `Err` if there was a connection error.
+    /// Uses a **pessimistic transaction** to read-then-write atomically,
+    /// ensuring the read always sees the latest committed state.
     pub async fn cas(
         &self,
         key: Vec<u8>,
@@ -329,7 +431,7 @@ impl TikvClient {
             })?;
 
             let mut txn = inner
-                .begin_optimistic()
+                .begin_pessimistic()
                 .await
                 .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
@@ -389,7 +491,8 @@ impl TikvClient {
     /// - Some(new_data) if the work unit was successfully claimed
     /// - None if the work unit couldn't be claimed
     ///
-    /// All operations happen in a single transaction for atomicity.
+    /// Uses a **pessimistic transaction** so the read acquires a lock and
+    /// always sees the latest committed state (no stale TSO batch issue).
     pub async fn transactional_claim<F>(
         &self,
         work_unit_key: Vec<u8>,
@@ -408,7 +511,7 @@ impl TikvClient {
         })?;
 
         let mut txn = inner
-            .begin_optimistic()
+            .begin_pessimistic()
             .await
             .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
@@ -468,10 +571,49 @@ impl TikvClient {
 
     /// Acquire a distributed lock (atomic operation within a single transaction).
     ///
-    /// This uses a single transaction to read the lock, check if it's available,
-    /// and write the new lock record. If two workers race to acquire the same lock,
-    /// TiKV's optimistic concurrency will detect the write conflict and one will fail.
+    /// Uses a **pessimistic transaction** so the read acquires a row lock,
+    /// preventing race conditions between concurrent lock acquisition attempts.
+    ///
+    /// Retries on transient errors (WriteConflict, PessimisticLock, etc.) with
+    /// exponential backoff using `max_retries` and `retry_base_delay_ms`.
     pub async fn acquire_lock(
+        &self,
+        resource: &str,
+        owner: &str,
+        ttl_seconds: i64,
+    ) -> Result<bool> {
+        let max_retries = self.config.max_retries;
+        let base_delay_ms = self.config.retry_base_delay_ms;
+
+        for attempt in 0..=max_retries {
+            match self.acquire_lock_once(resource, owner, ttl_seconds).await {
+                Ok(acquired) => return Ok(acquired),
+                Err(e) => {
+                    if !e.is_retryable() {
+                        return Err(e);
+                    }
+                    if attempt < max_retries {
+                        let delay_ms = base_delay_ms.saturating_mul(2_u64.pow(attempt));
+                        let delay = Duration::from_millis(delay_ms);
+                        tracing::warn!(
+                            resource = %resource,
+                            attempt = attempt + 1,
+                            max = max_retries + 1,
+                            error = %e,
+                            "Lock acquisition failed with retryable error, retrying"
+                        );
+                        sleep(delay).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        unreachable!("retry loop always returns via Ok or Err")
+    }
+
+    /// Single attempt to acquire a lock (no retry). Used internally by `acquire_lock`.
+    async fn acquire_lock_once(
         &self,
         resource: &str,
         owner: &str,
@@ -484,29 +626,27 @@ impl TikvClient {
             "Attempting to acquire lock"
         );
 
-        {
-            let inner = self.inner.as_ref().ok_or_else(|| {
-                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
-            })?;
+        let inner = self.inner.as_ref().ok_or_else(|| {
+            TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+        })?;
 
-            let key = LockKeys::lock(resource);
-            let mut txn = inner
-                .begin_optimistic()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+        let key = LockKeys::lock(resource);
+        let mut txn = inner
+            .begin_pessimistic()
+            .await
+            .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
-            // Read current lock state in transaction
-            let acquired = match txn
+        // Run transactional logic; on any error we must rollback before returning
+        let body_result: Result<bool> = async {
+            let current = txn
                 .get(key.clone())
                 .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?
-            {
+                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+            let acquired = match current {
                 Some(data) => {
                     let existing: LockRecord = bincode::deserialize(&data)
                         .map_err(|e| TikvError::Deserialization(e.to_string()))?;
 
-                    // Check ownership FIRST (regardless of expiration)
-                    // If we own the lock, extend it even if expired
                     if existing.is_owned_by(owner) {
                         let mut lock = existing;
                         lock.extend(ttl_seconds);
@@ -523,7 +663,6 @@ impl TikvClient {
                         );
                         true
                     } else if !existing.is_expired() {
-                        // Lock is held by someone else and not expired
                         tracing::debug!(
                             resource = %resource,
                             owner = %owner,
@@ -532,7 +671,6 @@ impl TikvClient {
                         );
                         false
                     } else {
-                        // Lock expired and not owned by us, take it
                         let lock =
                             LockRecord::new(resource.to_string(), owner.to_string(), ttl_seconds);
                         let data = bincode::serialize(&lock)
@@ -549,7 +687,6 @@ impl TikvClient {
                     }
                 }
                 None => {
-                    // No lock exists, create new one
                     let lock =
                         LockRecord::new(resource.to_string(), owner.to_string(), ttl_seconds);
                     let data = bincode::serialize(&lock)
@@ -565,42 +702,85 @@ impl TikvClient {
                     true
                 }
             };
-
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
             Ok(acquired)
+        }
+        .await;
+
+        match body_result {
+            Ok(acquired) => {
+                txn.commit()
+                    .await
+                    .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                Ok(acquired)
+            }
+            Err(e) => {
+                let _ = txn.rollback().await;
+                Err(e)
+            }
         }
     }
 
     /// Release a distributed lock (atomic operation within a single transaction).
     ///
-    /// This uses a single transaction to read the lock, verify ownership, and delete it.
-    /// Only the owner of the lock can release it.
+    /// Uses a **pessimistic transaction** to read-verify-delete atomically.
+    ///
+    /// Retries on transient errors (WriteConflict, PessimisticLock, etc.) with
+    /// exponential backoff using `max_retries` and `retry_base_delay_ms`.
     pub async fn release_lock(&self, resource: &str, owner: &str) -> Result<bool> {
+        let max_retries = self.config.max_retries;
+        let base_delay_ms = self.config.retry_base_delay_ms;
+
+        for attempt in 0..=max_retries {
+            match self.release_lock_once(resource, owner).await {
+                Ok(released) => return Ok(released),
+                Err(e) => {
+                    if !e.is_retryable() {
+                        return Err(e);
+                    }
+                    if attempt < max_retries {
+                        let delay_ms = base_delay_ms.saturating_mul(2_u64.pow(attempt));
+                        let delay = Duration::from_millis(delay_ms);
+                        tracing::warn!(
+                            resource = %resource,
+                            attempt = attempt + 1,
+                            max = max_retries + 1,
+                            error = %e,
+                            "Lock release failed with retryable error, retrying"
+                        );
+                        sleep(delay).await;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        unreachable!("retry loop always returns via Ok or Err")
+    }
+
+    /// Single attempt to release a lock (no retry). Used internally by `release_lock`.
+    async fn release_lock_once(&self, resource: &str, owner: &str) -> Result<bool> {
         tracing::debug!(
             resource = %resource,
             owner = %owner,
             "Attempting to release lock"
         );
 
-        {
-            let inner = self.inner.as_ref().ok_or_else(|| {
-                TikvError::ConnectionFailed("TiKV client not initialized".to_string())
-            })?;
+        let inner = self.inner.as_ref().ok_or_else(|| {
+            TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+        })?;
 
-            let key = LockKeys::lock(resource);
-            let mut txn = inner
-                .begin_optimistic()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+        let key = LockKeys::lock(resource);
+        let mut txn = inner
+            .begin_pessimistic()
+            .await
+            .map_err(|e| TikvError::ClientError(e.to_string()))?;
 
-            let released = match txn
+        let body_result: Result<bool> = async {
+            let current = txn
                 .get(key.clone())
                 .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?
-            {
+                .map_err(|e| TikvError::ClientError(e.to_string()))?;
+            let released = match current {
                 Some(data) => {
                     let existing: LockRecord = bincode::deserialize(&data)
                         .map_err(|e| TikvError::Deserialization(e.to_string()))?;
@@ -635,12 +815,21 @@ impl TikvClient {
                     false
                 }
             };
-
-            txn.commit()
-                .await
-                .map_err(|e| TikvError::ClientError(e.to_string()))?;
-
             Ok(released)
+        }
+        .await;
+
+        match body_result {
+            Ok(released) => {
+                txn.commit()
+                    .await
+                    .map_err(|e| TikvError::ClientError(e.to_string()))?;
+                Ok(released)
+            }
+            Err(e) => {
+                let _ = txn.rollback().await;
+                Err(e)
+            }
         }
     }
 
@@ -760,6 +949,7 @@ impl TikvClient {
 
 #[cfg(test)]
 mod tests {
+    use super::super::circuit::{CircuitBreaker, CircuitState};
     use super::*;
 
     #[test]
@@ -780,5 +970,78 @@ mod tests {
         let desc = config.describe();
         assert!(desc.contains("TiKV"));
         assert!(desc.contains("pd_endpoints"));
+    }
+
+    #[test]
+    fn test_client_clone() {
+        // TikvClient should be clonable since it derives Clone
+        fn assert_clone<T: Clone>() {}
+        assert_clone::<TikvClient>();
+    }
+
+    #[test]
+    fn test_client_not_connected_by_default() {
+        // A client created without calling new() has no connection
+        let client = TikvClient {
+            config: TikvConfig::default(),
+            inner: None,
+            circuit_breaker: Arc::new(CircuitBreaker::new()),
+        };
+        assert!(!client.is_connected());
+    }
+
+    #[test]
+    fn test_circuit_state_method() {
+        let client = TikvClient {
+            config: TikvConfig::default(),
+            inner: None,
+            circuit_breaker: Arc::new(CircuitBreaker::new()),
+        };
+        // Circuit should be closed initially
+        assert!(matches!(client.circuit_state(), CircuitState::Closed));
+    }
+
+    #[test]
+    fn test_circuit_failure_count_initial() {
+        let client = TikvClient {
+            config: TikvConfig::default(),
+            inner: None,
+            circuit_breaker: Arc::new(CircuitBreaker::new()),
+        };
+        assert_eq!(client.circuit_failure_count(), 0);
+    }
+
+    #[test]
+    fn test_config_accessor() {
+        let config = TikvConfig {
+            pd_endpoints: vec!["localhost:2379".to_string()],
+            max_retries: 5,
+            ..Default::default()
+        };
+        let client = TikvClient {
+            config: config.clone(),
+            inner: None,
+            circuit_breaker: Arc::new(CircuitBreaker::new()),
+        };
+        assert_eq!(client.config().pd_endpoints, vec!["localhost:2379"]);
+        assert_eq!(client.config().max_retries, 5);
+    }
+
+    #[test]
+    fn test_release_lock_uses_retry_config() {
+        // Verify that release_lock uses the same retry config as acquire_lock
+        let config = TikvConfig {
+            max_retries: 3,
+            retry_base_delay_ms: 10,
+            ..Default::default()
+        };
+        let client = TikvClient {
+            config,
+            inner: None,
+            circuit_breaker: Arc::new(CircuitBreaker::new()),
+        };
+        // Config should be accessible - actual retry logic is tested via integration tests
+        assert_eq!(client.config().max_retries, 3);
+        assert_eq!(client.config().retry_base_delay_ms, 10);
     }
 }

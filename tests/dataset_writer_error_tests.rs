@@ -14,11 +14,11 @@
 use std::fs;
 
 use roboflow::{
-    DatasetWriter, ImageData, LerobotConfig, LerobotDatasetConfig as DatasetConfig, LerobotWriter,
-    LerobotWriterTrait, VideoConfig,
+    DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig as DatasetConfig,
+    LerobotWriter, LerobotWriterTrait, VideoConfig,
 };
 
-use roboflow_dataset::AlignedFrame;
+use roboflow_dataset::{ImageData, common::AlignedFrame};
 
 /// Create a test output directory.
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
@@ -31,14 +31,18 @@ fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
 fn test_config() -> LerobotConfig {
     LerobotConfig {
         dataset: DatasetConfig {
-            name: "test_dataset".to_string(),
-            fps: 30,
-            robot_type: Some("test_robot".to_string()),
+            base: DatasetBaseConfig {
+                name: "test_dataset".to_string(),
+                fps: 30,
+                robot_type: Some("test_robot".to_string()),
+            },
             env_type: None,
         },
         mappings: vec![],
         video: VideoConfig::default(),
         annotation_file: None,
+        flushing: roboflow::lerobot::FlushingConfig::default(),
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     }
 }
 
@@ -51,7 +55,10 @@ fn create_test_image(width: u32, height: u32) -> ImageData {
 /// Create a test frame with state and action data.
 fn create_test_frame(frame_index: usize, image: ImageData) -> AlignedFrame {
     let mut images = std::collections::HashMap::new();
-    images.insert("observation.images.camera_0".to_string(), image);
+    images.insert(
+        "observation.images.camera_0".to_string(),
+        std::sync::Arc::new(image),
+    );
 
     // Add state observation (joint positions)
     let mut states = std::collections::HashMap::new();
@@ -115,7 +122,7 @@ fn test_lerobot_zero_fps() {
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
     // Should still allow writing with zero FPS (may result in NaN timestamps)
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
     writer.add_image(
         "observation.images.camera_0".to_string(),
         create_test_image(64, 48),
@@ -133,7 +140,7 @@ fn test_lerobot_empty_dataset_name() {
     config.dataset.name = "".to_string();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
 
     let stats = writer.finalize_with_config().unwrap();
@@ -148,7 +155,7 @@ fn test_lerobot_very_long_dataset_name() {
     config.dataset.name = "a".repeat(1000);
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
 
     let stats = writer.finalize_with_config().unwrap();
@@ -162,7 +169,7 @@ fn test_lerobot_invalid_image_dimensions() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add image with zero dimensions
     let zero_img = ImageData::new(0, 0, vec![]);
@@ -181,7 +188,7 @@ fn test_lerobot_inconsistent_image_dimensions() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add images with different dimensions for the same camera
     writer.add_image(
@@ -204,7 +211,7 @@ fn test_lerobot_duplicate_camera_names() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add same image twice to same camera
     let img = create_test_image(64, 48);
@@ -222,7 +229,7 @@ fn test_lerobot_many_cameras() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Add images for many cameras (stress test)
     for i in 0..20 {
@@ -245,7 +252,7 @@ fn test_lerobot_no_images_in_episode() {
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
     // Start episode without adding any images
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
     let result = writer.finish_episode(Some(0));
 
     // Should complete successfully with empty episode
@@ -272,7 +279,7 @@ fn test_lerobot_double_finalize() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
 
     // First finalize
@@ -293,7 +300,7 @@ fn test_lerobot_write_before_initialize() {
     // Don't call initialize
 
     // Try to start episode
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Should still work - initialize may be implicit
     let result = writer.finish_episode(Some(0));
@@ -308,7 +315,7 @@ fn test_lerobot_unmatched_start_finish() {
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
     // Start episode with one index, finish with another
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
     let result = writer.finish_episode(Some(1)); // Different index
 
     // Should handle gracefully - use the started index
@@ -324,7 +331,7 @@ fn test_lerobot_multiple_episodes_same_task() {
 
     // Multiple episodes with same task index
     for _ in 0..3 {
-        writer.start_episode(Some(0));
+        let _ = writer.start_episode(Some(0));
         writer.add_image(
             "observation.images.camera_0".to_string(),
             create_test_image(64, 48),
@@ -347,7 +354,7 @@ fn test_lerobot_empty_feature_names() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Try to add image with empty feature name
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -364,7 +371,7 @@ fn test_lerobot_special_characters_in_feature_names() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Feature names with special characters
     let special_names = vec![
@@ -393,7 +400,7 @@ fn test_lerobot_mismatched_image_data_size() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Create image data that doesn't match claimed dimensions
     let bad_data = vec![128u8; 100]; // Much smaller than expected
@@ -412,7 +419,7 @@ fn test_lerobot_single_pixel_image() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // 1x1 image
     let tiny_img = ImageData::new(1, 1, vec![128, 128, 128]);
@@ -429,7 +436,7 @@ fn test_lerobot_non_rgb_image_data() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Image data with size not divisible by 3 (not RGB)
     let non_rgb_data = vec![128u8; 100]; // 100 bytes, not divisible by 3
@@ -453,7 +460,7 @@ fn test_lerobot_metadata_files_created() {
     config.dataset.name = "metadata_validation".to_string();
 
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
     let _stats = writer.finalize_with_config().unwrap();
 
@@ -480,7 +487,7 @@ fn test_lerobot_episode_count_in_metadata() {
 
     // Create 3 episodes
     for i in 0..3 {
-        writer.start_episode(Some(i));
+        let _ = writer.start_episode(Some(i));
         if i == 1 {
             // Only episode 1 has images
             writer.add_image(
@@ -542,7 +549,7 @@ fn test_lerobot_nested_output_directory() {
     let config = test_config();
 
     let mut writer = LerobotWriter::new_local(&nested_dir, config.clone()).unwrap();
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
     writer.finish_episode(Some(0)).unwrap();
 
     let stats = writer.finalize_with_config().unwrap();
@@ -561,7 +568,7 @@ fn test_lerobot_writer_stats_accuracy() {
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
 
     let expected_frames = 5;
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     for _ in 0..expected_frames {
         writer.add_image(
@@ -573,9 +580,10 @@ fn test_lerobot_writer_stats_accuracy() {
     writer.finish_episode(Some(0)).unwrap();
     let stats = writer.finalize_with_config().unwrap();
 
-    // Stats should be valid (no data written without state/action frames)
+    // Stats should be valid (metadata written, but no frame data)
     assert!(stats.duration_sec >= 0.0);
-    assert_eq!(stats.output_bytes, 0); // No Parquet/video files without frames
+    assert!(stats.output_bytes > 0);
+    assert_eq!(stats.frames_written, 0);
 }
 
 #[test]
@@ -594,7 +602,7 @@ fn test_lerobot_frame_count_increment() {
     assert_eq!(writer.frame_count(), 0);
 
     // After starting episode
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
     assert_eq!(writer.frame_count(), 0);
 
     // After adding frames with state/action data
@@ -618,4 +626,68 @@ fn test_lerobot_frame_count_increment() {
             panic!("Unexpected error: {}", e);
         }
     }
+}
+
+// =============================================================================
+// Cloud Storage URL Validation Tests
+// =============================================================================
+
+#[test]
+fn test_lerobot_builder_rejects_s3_url_in_output_dir() {
+    let _output_dir = test_output_dir("test_s3_url_rejection");
+    let config = test_config();
+
+    // Try to build with s3:// URL in output_dir (without storage() method)
+    let result = LerobotWriter::builder()
+        .output_dir("s3://bucket-name/datasets")
+        .config(config)
+        .build();
+
+    // Should fail with helpful error message
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_lerobot_builder_rejects_oss_url_in_output_dir() {
+    let _output_dir = test_output_dir("test_oss_url_rejection");
+    let config = test_config();
+
+    // Try to build with oss:// URL in output_dir
+    let result = LerobotWriter::builder()
+        .output_dir("oss://bucket-name/datasets")
+        .config(config)
+        .build();
+
+    // Should fail
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_lerobot_builder_rejects_uppercase_s3_url() {
+    let _output_dir = test_output_dir("test_uppercase_s3_rejection");
+    let config = test_config();
+
+    // Try to build with S3:// (uppercase) URL
+    let result = LerobotWriter::builder()
+        .output_dir("S3://bucket-name/datasets")
+        .config(config)
+        .build();
+
+    // Should fail with helpful error message
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_lerobot_builder_rejects_uppercase_oss_url() {
+    let _output_dir = test_output_dir("test_uppercase_oss_rejection");
+    let config = test_config();
+
+    // Try to build with OSS:// (uppercase) URL
+    let result = LerobotWriter::builder()
+        .output_dir("OSS://bucket-name/datasets")
+        .config(config)
+        .build();
+
+    // Should fail with helpful error message
+    assert!(result.is_err());
 }

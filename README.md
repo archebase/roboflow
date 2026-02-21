@@ -74,9 +74,8 @@ Roboflow uses a **Kubernetes-inspired distributed control plane** for fault-tole
 | `roboflow-core` | Error types, registry, values |
 | `roboflow-storage` | S3, OSS, Local storage (always available) |
 | `roboflow-dataset` | KPS, LeRobot, streaming converters |
-| `roboflow-distributed` | TiKV client, catalog, controllers |
+| `roboflow-distributed` | TiKV client, catalog, circuit breaker |
 | `roboflow-hdf5` | Optional HDF5 format support |
-| `roboflow-pipeline` | Hyper pipeline, compression stages |
 
 ## Quick Start
 

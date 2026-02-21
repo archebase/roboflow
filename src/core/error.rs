@@ -162,7 +162,6 @@ pub enum RoboflowError {
     Timeout(String),
 
     /// Storage error (wrapped from storage layer)
-    #[cfg(feature = "cloud-storage")]
     Storage(crate::storage::StorageError),
 }
 
@@ -240,7 +239,6 @@ impl RoboflowError {
     }
 
     /// Create a storage error.
-    #[cfg(feature = "cloud-storage")]
     pub fn storage(err: crate::storage::StorageError) -> Self {
         RoboflowError::Storage(err)
     }
@@ -256,7 +254,6 @@ impl RoboflowError {
     pub fn is_retryable(&self) -> bool {
         match self {
             RoboflowError::Timeout(_) => true,
-            #[cfg(feature = "cloud-storage")]
             RoboflowError::Storage(e) => e.is_retryable(),
             _ => false,
         }
@@ -279,7 +276,6 @@ impl RoboflowError {
             RoboflowError::InvariantViolation { .. } => ErrorCategory::Runtime,
             RoboflowError::Other(_) => ErrorCategory::Runtime,
             RoboflowError::Timeout(_) => ErrorCategory::Runtime,
-            #[cfg(feature = "cloud-storage")]
             RoboflowError::Storage(_) => ErrorCategory::Runtime,
         }
     }
@@ -302,7 +298,6 @@ impl RoboflowError {
             RoboflowError::InvariantViolation { .. } => base + 5,
             RoboflowError::Other(_) => base + 99,
             RoboflowError::Timeout(_) => base + 98,
-            #[cfg(feature = "cloud-storage")]
             RoboflowError::Storage(_) => base + 97,
         }
     }
@@ -368,7 +363,6 @@ impl RoboflowError {
             }
             RoboflowError::Other(msg) => vec![("message", msg.clone())],
             RoboflowError::Timeout(msg) => vec![("timeout", msg.clone())],
-            #[cfg(feature = "cloud-storage")]
             RoboflowError::Storage(err) => vec![("storage", err.to_string())],
         }
     }
@@ -441,7 +435,6 @@ impl fmt::Display for RoboflowError {
             }
             RoboflowError::Other(msg) => write!(f, "{msg}"),
             RoboflowError::Timeout(msg) => write!(f, "Timeout: {msg}"),
-            #[cfg(feature = "cloud-storage")]
             RoboflowError::Storage(err) => write!(f, "Storage error: {}", err),
         }
     }
@@ -521,7 +514,6 @@ impl Clone for RoboflowError {
             },
             RoboflowError::Other(msg) => RoboflowError::Other(msg.clone()),
             RoboflowError::Timeout(msg) => RoboflowError::Timeout(msg.clone()),
-            #[cfg(feature = "cloud-storage")]
             RoboflowError::Storage(err) => {
                 // StorageError is not Clone, convert to string representation
                 RoboflowError::Other(err.to_string())
@@ -547,28 +539,16 @@ impl From<robocodec::CodecError> for RoboflowError {
     }
 }
 
-// Forward KPS writer errors to codec errors
-#[cfg(feature = "dataset-hdf5")]
-impl From<crate::dataset::kps::writers::KpsWriterError> for RoboflowError {
-    fn from(err: crate::dataset::kps::writers::KpsWriterError) -> Self {
+// Forward dataset writer errors to codec errors
+impl From<crate::dataset::common::DatasetWriterError> for RoboflowError {
+    fn from(err: crate::dataset::common::DatasetWriterError) -> Self {
         RoboflowError::EncodeError {
-            codec: "KpsWriter".to_string(),
+            codec: "DatasetWriter".to_string(),
             message: err.to_string(),
         }
     }
 }
 
-#[cfg(all(feature = "dataset-parquet", not(feature = "dataset-hdf5")))]
-impl From<crate::dataset::kps::writers::KpsWriterError> for RoboflowError {
-    fn from(err: crate::dataset::kps::writers::KpsWriterError) -> Self {
-        RoboflowError::EncodeError {
-            codec: "KpsWriter".to_string(),
-            message: err.to_string(),
-        }
-    }
-}
-
-#[cfg(feature = "cloud-storage")]
 impl From<crate::storage::StorageError> for RoboflowError {
     fn from(err: crate::storage::StorageError) -> Self {
         RoboflowError::Storage(err)

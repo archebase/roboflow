@@ -8,12 +8,11 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -C linker=cc
 
 jobs:
   license:
     name: License Compliance
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +22,19 @@ jobs:
       - name: Check REUSE compliance
         run: reuse lint
 
+  rust-fmt:
+    name: Rust Format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
   rust-lint:
     name: Rust Lint
     needs: license
@@ -30,74 +42,166 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-24.04
+            triplet: x64-linux
+          - os: macos-latest
+            triplet: arm64-osx
+    env:
+      RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C linker=cc' || '' }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
-          # Invalidate cache when robocodec git dependency changes
-          cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
+          key: "vcpkg-${{ matrix.triplet }}-${{ hashFiles('**/Cargo.lock') }}"
 
-      - name: Check formatting (Rust)
-        run: cargo fmt -- --check
-
-      - name: Install HDF5
+      - name: Install system dependencies (Ubuntu)
+        if: runner.os == 'Linux'
         run: |
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y libhdf5-dev
-          elif [ "$RUNNER_OS" == "macOS" ]; then
-            # Use HDF5 1.10 as hdf5-sys doesn't support HDF5 2.x yet
-            brew install hdf5@1.10
-            echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
-          fi
-        shell: bash
+          sudo apt-get update
+          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install hdf5@1.10 nasm ffmpeg
+          echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
+
+      - name: Cache vcpkg
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        id: cache-vcpkg
+        with:
+          path: ${{ github.workspace }}/vcpkg
+          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Clone and bootstrap vcpkg
+        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/microsoft/vcpkg --depth 1 ${{ github.workspace }}/vcpkg
+          BASELINE=$(jq -r '."builtin-baseline"' ${{ github.workspace }}/vcpkg.json)
+          git -C ${{ github.workspace }}/vcpkg fetch --depth 1 origin "$BASELINE"
+          git -C ${{ github.workspace }}/vcpkg checkout "$BASELINE"
+          ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Install vcpkg packages
+        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: |
+          ${{ github.workspace }}/vcpkg/vcpkg install --triplet ${{ matrix.triplet }} --x-manifest-root=${{ github.workspace }} --x-install-root=${{ github.workspace }}/vcpkg/installed
+
+      - name: Configure vcpkg environment
+        if: runner.os == 'Linux'
+        run: |
+          VCPKG_INSTALLED=${{ github.workspace }}/vcpkg/installed
+          # Export for current step and future steps
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
+          echo "FFMPEG_PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
+          echo "FFMPEG_INCLUDE_DIR=${VCPKG_INSTALLED}/${{ matrix.triplet }}/include" >> $GITHUB_ENV
+          echo "FFMPEG_LIBS_DIR=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib" >> $GITHUB_ENV
+          # Export for current step
+          export PKG_CONFIG_PATH="${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+          # Verify FFmpeg and x264 were installed correctly
+          ls ${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig/libav*.pc
+          ls ${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig/x264.pc
+          pkg-config --modversion libavcodec x264
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   rust-test:
     name: Rust Tests
-    needs: rust-lint
+    needs: license
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-24.04
+            triplet: x64-linux
+          - os: macos-latest
+            triplet: arm64-osx
+    env:
+      RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C linker=cc' || '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
         with:
-          # Invalidate cache when robocodec git dependency changes
-          cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
+          key: "vcpkg-${{ matrix.triplet }}-${{ hashFiles('**/Cargo.lock') }}"
 
-      - name: Install HDF5
+      - name: Install system dependencies (Ubuntu)
+        if: runner.os == 'Linux'
         run: |
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y libhdf5-dev
-          elif [ "$RUNNER_OS" == "macOS" ]; then
-            # Use HDF5 1.10 as hdf5-sys doesn't support HDF5 2.x yet
-            brew install hdf5@1.10
-            echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
-          fi
-        shell: bash
+          sudo apt-get update
+          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install hdf5@1.10 nasm ffmpeg
+          echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
+
+      - name: Cache vcpkg
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        id: cache-vcpkg
+        with:
+          path: ${{ github.workspace }}/vcpkg
+          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Clone and bootstrap vcpkg
+        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/microsoft/vcpkg --depth 1 ${{ github.workspace }}/vcpkg
+          BASELINE=$(jq -r '."builtin-baseline"' ${{ github.workspace }}/vcpkg.json)
+          git -C ${{ github.workspace }}/vcpkg fetch --depth 1 origin "$BASELINE"
+          git -C ${{ github.workspace }}/vcpkg checkout "$BASELINE"
+          ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Install vcpkg packages
+        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: |
+          ${{ github.workspace }}/vcpkg/vcpkg install --triplet ${{ matrix.triplet }} --x-manifest-root=${{ github.workspace }} --x-install-root=${{ github.workspace }}/vcpkg/installed
+
+      - name: Configure vcpkg environment
+        if: runner.os == 'Linux'
+        run: |
+          VCPKG_INSTALLED=${{ github.workspace }}/vcpkg/installed
+          # Export for current step and future steps
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
+          echo "FFMPEG_PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
+          echo "FFMPEG_INCLUDE_DIR=${VCPKG_INSTALLED}/${{ matrix.triplet }}/include" >> $GITHUB_ENV
+          echo "FFMPEG_LIBS_DIR=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib" >> $GITHUB_ENV
+          # Export for current step
+          export PKG_CONFIG_PATH="${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+          ls ${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig/libav*.pc
 
       - name: Run tests
-        run: cargo test --features dataset-all
+        run: cargo test --all-features
 
   coverage:
     name: Coverage
-    needs: rust-test
-    runs-on: ubuntu-latest
+    needs: [rust-lint, rust-test]
+    runs-on: ubuntu-24.04
+    env:
+      RUSTFLAGS: -C linker=cc
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -106,8 +210,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          # Invalidate cache when robocodec git dependency changes
-          cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
+          key: "vcpkg-x64-linux-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Cache cargo-llvm-cov
         uses: actions/cache@v4
@@ -120,11 +223,51 @@ jobs:
         if: steps.cache-llvm-cov.outputs.cache-hit != 'true'
         run: cargo install cargo-llvm-cov
 
-      - name: Install HDF5
-        run: sudo apt-get update && sudo apt-get install -y libhdf5-dev
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        id: cache-vcpkg
+        with:
+          path: ${{ github.workspace }}/vcpkg
+          key: vcpkg-x64-linux-${{ hashFiles('vcpkg.json') }}
+
+      - name: Clone and bootstrap vcpkg
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/microsoft/vcpkg --depth 1 ${{ github.workspace }}/vcpkg
+          BASELINE=$(jq -r '."builtin-baseline"' ${{ github.workspace }}/vcpkg.json)
+          git -C ${{ github.workspace }}/vcpkg fetch --depth 1 origin "$BASELINE"
+          git -C ${{ github.workspace }}/vcpkg checkout "$BASELINE"
+          ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Install vcpkg packages
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: |
+          ${{ github.workspace }}/vcpkg/vcpkg install --triplet x64-linux --x-manifest-root=${{ github.workspace }} --x-install-root=${{ github.workspace }}/vcpkg/installed
+
+      - name: Configure vcpkg environment
+        run: |
+          VCPKG_INSTALLED=${{ github.workspace }}/vcpkg/installed
+          # Export for current step and future steps
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=${VCPKG_INSTALLED}/x64-linux/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
+          echo "FFMPEG_PKG_CONFIG_PATH=${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig" >> $GITHUB_ENV
+          echo "FFMPEG_INCLUDE_DIR=${VCPKG_INSTALLED}/x64-linux/include" >> $GITHUB_ENV
+          echo "FFMPEG_LIBS_DIR=${VCPKG_INSTALLED}/x64-linux/lib" >> $GITHUB_ENV
+          # Export for current step
+          export PKG_CONFIG_PATH="${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+          # Verify FFmpeg and x264 were installed correctly
+          ls ${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig/libav*.pc
+          ls ${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig/x264.pc
+          pkg-config --modversion libavcodec x264
 
       - name: Generate Rust coverage
-        run: cargo llvm-cov --features dataset-all --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
@@ -133,3 +276,32 @@ jobs:
           files: ./lcov.info
           flags: rust
           name: codecov-umbrella
+
+  security:
+    name: Security Audit
+    needs: license
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo-deny
+        uses: actions/cache@v4
+        id: cache-deny
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-cargo-deny-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-deny
+        if: steps.cache-deny.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny
+
+      - name: Check dependencies for security advisories
+        run: cargo deny check advisories
+
+      - name: Check dependencies for license compliance
+        run: cargo deny check licenses
+
+      - name: Check for duplicate dependencies
+        run: cargo deny check bans

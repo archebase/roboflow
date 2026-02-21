@@ -223,7 +223,7 @@ mod tests {
         let config = LoggingConfig::default();
         assert_eq!(config.format, LogFormat::Pretty);
         assert_eq!(config.default_level, None);
-        assert_eq!(config.span_events, false);
+        assert!(!config.span_events);
     }
 
     #[test]

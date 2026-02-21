@@ -6,12 +6,24 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::stats::EpisodeStats;
+
 /// Processing result for a job.
 pub enum ProcessingResult {
-    /// Job completed successfully.
-    Success,
+    /// Job completed successfully with episode statistics.
+    Success {
+        /// Episode index that was processed.
+        episode_index: u64,
+        /// Number of frames processed.
+        frame_count: u64,
+        /// Episode statistics (if available).
+        episode_stats: Option<EpisodeStats>,
+    },
     /// Job failed with retryable error.
-    Failed { error: String },
+    Failed {
+        /// Error message describing the failure.
+        error: String,
+    },
     /// Job was cancelled by user request.
     Cancelled,
 }
@@ -124,4 +136,80 @@ pub struct WorkerMetricsSnapshot {
 
     /// Total heartbeat errors.
     pub heartbeat_errors: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_worker_metrics_new() {
+        let metrics = WorkerMetrics::new();
+        let snapshot = metrics.snapshot();
+
+        assert_eq!(snapshot.jobs_claimed, 0);
+        assert_eq!(snapshot.jobs_completed, 0);
+        assert_eq!(snapshot.jobs_failed, 0);
+        assert_eq!(snapshot.active_jobs, 0);
+    }
+
+    #[test]
+    fn test_worker_metrics_increment() {
+        let metrics = WorkerMetrics::new();
+
+        metrics.inc_jobs_claimed();
+        metrics.inc_jobs_claimed();
+        metrics.inc_jobs_completed();
+        metrics.inc_active_jobs();
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.jobs_claimed, 2);
+        assert_eq!(snapshot.jobs_completed, 1);
+        assert_eq!(snapshot.active_jobs, 1);
+    }
+
+    #[test]
+    fn test_worker_metrics_decrement() {
+        let metrics = WorkerMetrics::new();
+
+        metrics.inc_active_jobs();
+        metrics.inc_active_jobs();
+        metrics.dec_active_jobs();
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.active_jobs, 1);
+    }
+
+    #[test]
+    fn test_worker_metrics_all_counters() {
+        let metrics = WorkerMetrics::new();
+
+        metrics.inc_jobs_claimed();
+        metrics.inc_jobs_completed();
+        metrics.inc_jobs_failed();
+        metrics.inc_jobs_dead();
+        metrics.inc_processing_errors();
+        metrics.inc_heartbeat_errors();
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.jobs_claimed, 1);
+        assert_eq!(snapshot.jobs_completed, 1);
+        assert_eq!(snapshot.jobs_failed, 1);
+        assert_eq!(snapshot.jobs_dead, 1);
+        assert_eq!(snapshot.processing_errors, 1);
+        assert_eq!(snapshot.heartbeat_errors, 1);
+    }
+
+    #[test]
+    fn test_worker_metrics_snapshot_clone() {
+        let metrics = WorkerMetrics::new();
+        metrics.inc_jobs_claimed();
+        metrics.inc_jobs_completed();
+
+        let snapshot1 = metrics.snapshot();
+        let snapshot2 = snapshot1.clone();
+
+        assert_eq!(snapshot1.jobs_claimed, snapshot2.jobs_claimed);
+        assert_eq!(snapshot1.jobs_completed, snapshot2.jobs_completed);
+    }
 }

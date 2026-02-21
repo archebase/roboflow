@@ -11,7 +11,8 @@
 
 use std::fs;
 
-use roboflow::{ImageData, LerobotConfig, LerobotWriter, VideoConfig};
+use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig};
+use roboflow_dataset::ImageData;
 
 /// Create a test output directory using system temp.
 /// Using tempfile::tempdir() directly avoids:
@@ -34,14 +35,18 @@ fn test_lerobot_writer_basic_flow() {
     // Create a test LeRobot configuration
     let lerobot_config = LerobotConfig {
         dataset: roboflow::lerobot::DatasetConfig {
-            name: "test_dataset".to_string(),
-            fps: 30,
-            robot_type: Some("test_robot".to_string()),
+            base: DatasetBaseConfig {
+                name: "test_dataset".to_string(),
+                fps: 30,
+                robot_type: Some("test_robot".to_string()),
+            },
             env_type: None,
         },
         mappings: vec![],
         video: VideoConfig::default(),
         annotation_file: None,
+        flushing: roboflow::lerobot::FlushingConfig::default(),
+        streaming: roboflow::lerobot::StreamingConfig::default(),
     };
 
     // Create a LeRobot writer directly to verify output
@@ -52,7 +57,7 @@ fn test_lerobot_writer_basic_flow() {
     let img_data = ImageData::new(64, 48, vec![128u8; 64 * 48 * 3]);
 
     // Write a test episode
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
     writer.add_image("observation.images.camera_0".to_string(), img_data);
     writer.finish_episode(Some(0)).unwrap();
 
@@ -105,9 +110,21 @@ fn test_worker_config_builder() {
 fn test_processing_result_success() {
     use roboflow_distributed::worker::ProcessingResult;
 
-    let result = ProcessingResult::Success;
+    let result = ProcessingResult::Success {
+        episode_index: 0,
+        frame_count: 100,
+        episode_stats: None,
+    };
     match result {
-        ProcessingResult::Success => {}
+        ProcessingResult::Success {
+            episode_index,
+            frame_count,
+            episode_stats,
+        } => {
+            assert_eq!(episode_index, 0);
+            assert_eq!(frame_count, 100);
+            assert!(episode_stats.is_none());
+        }
         ProcessingResult::Failed { error } => {
             panic!("Unexpected failed result: {}", error);
         }
@@ -125,7 +142,7 @@ fn test_processing_result_failed() {
         error: "Test error".to_string(),
     };
     match result {
-        ProcessingResult::Success => {
+        ProcessingResult::Success { .. } => {
             panic!("Unexpected success result");
         }
         ProcessingResult::Failed { error } => {
@@ -580,7 +597,11 @@ fn test_worker_constants() {
 fn test_processing_result_all_variants() {
     use roboflow_distributed::worker::ProcessingResult;
 
-    let success = ProcessingResult::Success;
+    let success = ProcessingResult::Success {
+        episode_index: 42,
+        frame_count: 1000,
+        episode_stats: None,
+    };
     let failed = ProcessingResult::Failed {
         error: "test error".to_string(),
     };
@@ -588,7 +609,14 @@ fn test_processing_result_all_variants() {
 
     // Test matching
     match success {
-        ProcessingResult::Success => {}
+        ProcessingResult::Success {
+            episode_index,
+            frame_count,
+            ..
+        } => {
+            assert_eq!(episode_index, 42);
+            assert_eq!(frame_count, 1000);
+        }
         _ => panic!("Expected Success"),
     }
 
@@ -900,10 +928,13 @@ fn test_checkpoint_state_progress() {
 
     let checkpoint = CheckpointState {
         job_id: "job-123".to_string(),
+        batch_id: String::new(),
         pod_id: "pod-abc".to_string(),
         byte_offset: 5000,
         last_frame: 50,
         episode_idx: 0,
+        chunk_idx: 0,
+        episodes_per_chunk: 500,
         total_frames: 100,
         video_uploads: vec![],
         parquet_upload: None,
@@ -929,10 +960,13 @@ fn test_checkpoint_state_is_complete() {
 
     let mut checkpoint = CheckpointState {
         job_id: "job-123".to_string(),
+        batch_id: String::new(),
         pod_id: "pod-abc".to_string(),
         byte_offset: 10000,
         last_frame: 100,
         episode_idx: 0,
+        chunk_idx: 0,
+        episodes_per_chunk: 500,
         total_frames: 100,
         video_uploads: vec![],
         parquet_upload: None,

@@ -77,6 +77,9 @@ pub struct SubmitCommand {
 
     /// Verbose output.
     pub verbose: bool,
+
+    /// Episodes per chunk for LeRobot v2.1 format.
+    pub episodes_per_chunk: u32,
 }
 
 impl SubmitCommand {
@@ -91,6 +94,7 @@ impl SubmitCommand {
         let mut output_format = OutputFormat::Table;
         let mut tikv_endpoints = None;
         let mut verbose = false;
+        let mut episodes_per_chunk = 500u32; // Default LeRobot v2.1 spec
 
         let mut i = 0;
         while i < args.len() {
@@ -145,6 +149,19 @@ impl SubmitCommand {
                 "--verbose" | "-v" => {
                     verbose = true;
                 }
+                "--episodes-per-chunk" => {
+                    i += 1;
+                    if i >= args.len() {
+                        return Err("--episodes-per-chunk requires a value".to_string());
+                    }
+                    let val: u32 = args[i]
+                        .parse()
+                        .map_err(|_| format!("invalid episodes-per-chunk: {}", args[i]))?;
+                    if val == 0 {
+                        return Err("--episodes-per-chunk must be greater than 0".to_string());
+                    }
+                    episodes_per_chunk = val;
+                }
                 "--help" | "-h" => {
                     print_submit_help();
                     return Ok(None);
@@ -173,6 +190,7 @@ impl SubmitCommand {
             output_format,
             tikv_endpoints,
             verbose,
+            episodes_per_chunk,
         }))
     }
 
@@ -316,6 +334,7 @@ impl SubmitCommand {
             ttl_seconds: 86400, // 24 hours
             priority: 0,
             work_unit_config: WorkUnitConfig::default(),
+            episodes_per_chunk: self.episodes_per_chunk,
         };
 
         let batch_spec = BatchSpec {
@@ -568,6 +587,7 @@ impl SubmitCommand {
                 ttl_seconds: 86400,
                 priority: 0,
                 work_unit_config: WorkUnitConfig::default(),
+                episodes_per_chunk: self.episodes_per_chunk,
             };
 
             let batch_spec = BatchSpec {
@@ -732,7 +752,7 @@ impl SubmitCommand {
                 .map_err(|e| format!("TOML validation failed in '{}': {}", filename, e))?;
 
             // Validate as actual LeRobotConfig
-            if let Err(e) = roboflow_dataset::lerobot::LerobotConfig::from_toml(&content) {
+            if let Err(e) = roboflow_dataset::formats::lerobot::LerobotConfig::from_toml(&content) {
                 return Err(format!("Invalid LeRobot config in '{}': {}", filename, e));
             }
 
@@ -1033,6 +1053,10 @@ OPTIONS:
                             If a 64-char hex string: uses as hash directly
                             (default: "default")
         --max-attempts <N>  Maximum retry attempts per job (default: 3)
+        --episodes-per-chunk <N>
+                            Episodes per chunk for LeRobot v2.1 format
+                            Controls chunk directory structure: chunk_index = episode_index / N
+                            (default: 500)
         --dry-run           Show what would be submitted without submitting
         --json              Output in JSON format
         --csv               Output in CSV format
@@ -1227,5 +1251,94 @@ feature = "observation.images.cam_high"
 mapping_type = "image"
 "#;
         assert!(SafeTomlValidator::validate_toml_str(toml).is_ok());
+    }
+
+    // =========================================================================
+    // Episodes Per Chunk CLI Tests
+    // =========================================================================
+
+    #[test]
+    fn test_submit_command_episodes_per_chunk_default() {
+        let args = vec![
+            "submit".to_string(),
+            "s3://bucket/file.mcap".to_string(),
+            "--output".to_string(),
+            "s3://output/".to_string(),
+        ];
+        let cmd = SubmitCommand::parse(&args).unwrap().unwrap();
+        assert_eq!(cmd.episodes_per_chunk, 500); // Default LeRobot v2.1 spec
+    }
+
+    #[test]
+    fn test_submit_command_episodes_per_chunk_custom() {
+        let args = vec![
+            "submit".to_string(),
+            "s3://bucket/file.mcap".to_string(),
+            "--output".to_string(),
+            "s3://output/".to_string(),
+            "--episodes-per-chunk".to_string(),
+            "250".to_string(),
+        ];
+        let cmd = SubmitCommand::parse(&args).unwrap().unwrap();
+        assert_eq!(cmd.episodes_per_chunk, 250);
+    }
+
+    #[test]
+    fn test_submit_command_episodes_per_chunk_large() {
+        // Test with 1000 episodes per chunk (100 chunks for 100K files)
+        let args = vec![
+            "submit".to_string(),
+            "s3://bucket/file.mcap".to_string(),
+            "--output".to_string(),
+            "s3://output/".to_string(),
+            "--episodes-per-chunk".to_string(),
+            "1000".to_string(),
+        ];
+        let cmd = SubmitCommand::parse(&args).unwrap().unwrap();
+        assert_eq!(cmd.episodes_per_chunk, 1000);
+    }
+
+    #[test]
+    fn test_submit_command_episodes_per_chunk_zero_rejected() {
+        let args = vec![
+            "submit".to_string(),
+            "s3://bucket/file.mcap".to_string(),
+            "--output".to_string(),
+            "s3://output/".to_string(),
+            "--episodes-per-chunk".to_string(),
+            "0".to_string(),
+        ];
+        let result = SubmitCommand::parse(&args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must be greater than 0"));
+    }
+
+    #[test]
+    fn test_submit_command_episodes_per_chunk_invalid_rejected() {
+        let args = vec![
+            "submit".to_string(),
+            "s3://bucket/file.mcap".to_string(),
+            "--output".to_string(),
+            "s3://output/".to_string(),
+            "--episodes-per-chunk".to_string(),
+            "abc".to_string(),
+        ];
+        let result = SubmitCommand::parse(&args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid episodes-per-chunk"));
+    }
+
+    #[test]
+    fn test_submit_command_episodes_per_chunk_missing_value() {
+        let args = vec![
+            "submit".to_string(),
+            "s3://bucket/file.mcap".to_string(),
+            "--output".to_string(),
+            "s3://output/".to_string(),
+            "--episodes-per-chunk".to_string(),
+        ];
+        let result = SubmitCommand::parse(&args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("requires a value"));
     }
 }

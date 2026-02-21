@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "roboflow",
+  "version-semver": "0.2.0",
+  "description": "Distributed data transformation pipeline for robotics bag/MCAP files",
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "default-features": true,
+      "features": ["x264"]
+    }
+  ],
+  "builtin-baseline": "66c0373dc7fca549e5803087b9487edfe3aca0a1"
+}

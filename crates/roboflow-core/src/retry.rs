@@ -194,9 +194,9 @@ where
                     tracing::debug!(
                         "{} failed with non-retryable error: {}",
                         operation_name,
-                        last_error.as_ref().unwrap()
+                        last_error.as_ref().expect("error was just set above")
                     );
-                    return Err(last_error.unwrap());
+                    return Err(last_error.expect("error was just set above"));
                 }
 
                 // If this isn't the last attempt, wait and retry
@@ -208,7 +208,7 @@ where
                         attempt + 1,
                         config.max_retries + 1,
                         backoff,
-                        last_error.as_ref().unwrap()
+                        last_error.as_ref().expect("error was just set above")
                     );
                     std::thread::sleep(backoff);
                 }
@@ -221,7 +221,7 @@ where
         operation_name,
         config.max_retries + 1
     );
-    Err(last_error.unwrap())
+    Err(last_error.expect("at least one error must have occurred if we exhausted all retries"))
 }
 
 // =============================================================================

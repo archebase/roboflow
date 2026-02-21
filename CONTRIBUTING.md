@@ -43,7 +43,6 @@ roboflow/                              # Workspace root
 │   ├── roboflow-dataset/             # Dataset writers (KPS, LeRobot)
 │   ├── roboflow-distributed/         # TiKV distributed coordination
 │   ├── roboflow-hdf5/                # Optional HDF5 support
-│   ├── roboflow-pipeline/            # Pipeline implementations
 │   └── roboflow/                     # Main crate with CLI tools
 │       ├── src/
 │       │   ├── pipeline/             # Pipeline implementations

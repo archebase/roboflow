@@ -12,6 +12,7 @@ pub mod config;
 use super::batch::{BatchController, BatchKeys, BatchPhase, BatchSpec, BatchStatus, BatchSummary};
 use super::merge::MergeCoordinator;
 use super::tikv::TikvClient;
+use crate::stats::StatsCollector;
 use crate::tikv::TikvError;
 use std::sync::Arc;
 use tokio::time::sleep;
@@ -22,6 +23,7 @@ pub use config::FinalizerConfig;
 /// Finalizer for completing merged batches.
 ///
 /// Monitors batches and triggers merge operations when all work units are complete.
+/// Optionally aggregates episode statistics and writes them to LeRobot metadata.
 pub struct Finalizer {
     /// Pod ID for this finalizer.
     pod_id: String,
@@ -37,6 +39,9 @@ pub struct Finalizer {
 
     /// Finalizer configuration.
     config: FinalizerConfig,
+
+    /// Optional stats collector for aggregating episode statistics.
+    stats_collector: Option<Arc<dyn StatsCollector>>,
 }
 
 impl Finalizer {
@@ -54,6 +59,26 @@ impl Finalizer {
             batch_controller,
             merge_coordinator,
             config,
+            stats_collector: None,
+        })
+    }
+
+    /// Create a finalizer with stats collection enabled.
+    pub fn with_stats_collector(
+        pod_id: String,
+        tikv: Arc<TikvClient>,
+        batch_controller: Arc<BatchController>,
+        merge_coordinator: Arc<MergeCoordinator>,
+        config: FinalizerConfig,
+        stats_collector: Arc<dyn StatsCollector>,
+    ) -> Result<Self, TikvError> {
+        Ok(Self {
+            pod_id,
+            tikv,
+            batch_controller,
+            merge_coordinator,
+            config,
+            stats_collector: Some(stats_collector),
         })
     }
 
@@ -77,12 +102,15 @@ impl Finalizer {
                 );
 
                 match self.finalize_batch(&batch, &spec).await {
-                    Ok(_) => {
+                    Ok(true) => {
                         info!(
                             pod_id = %self.pod_id,
                             batch_id = %batch.id,
                             "Batch finalized successfully"
                         );
+                    }
+                    Ok(false) => {
+                        // NotReady / NotClaimed / NotFound - will retry next poll
                     }
                     Err(e) => {
                         error!(
@@ -141,6 +169,15 @@ impl Finalizer {
             // Check if all work units are complete
             // Calculate total from completed + failed
             let total_done = batch.files_completed + batch.files_failed;
+            tracing::debug!(
+                batch_id = %batch.id,
+                phase = ?batch.phase,
+                files_total = batch.files_total,
+                files_completed = batch.files_completed,
+                files_failed = batch.files_failed,
+                total_done = total_done,
+                "Finalizer: evaluating batch"
+            );
             if total_done >= batch.files_total && batch.files_total > 0 {
                 // Get the spec to get output path
                 match self.batch_controller.get_batch_spec(&batch.id).await {
@@ -166,11 +203,15 @@ impl Finalizer {
     }
 
     /// Finalize a batch by triggering merge and updating status.
+    ///
+    /// Returns `Ok(true)` if the batch was merged and marked complete,
+    /// `Ok(false)` if not ready / not claimed / not found (caller may retry),
+    /// `Err` on failure.
     async fn finalize_batch(
         &self,
         batch: &BatchSummary,
         spec: &BatchSpec,
-    ) -> Result<(), TikvError> {
+    ) -> Result<bool, TikvError> {
         info!(
             pod_id = %self.pod_id,
             batch_id = %batch.id,
@@ -179,6 +220,40 @@ impl Finalizer {
         );
 
         let output_path = &spec.spec.output;
+
+        // Aggregate episode stats if collector is configured
+        if let Some(collector) = &self.stats_collector {
+            match collector.get_batch_stats(&batch.id).await {
+                Ok(Some(summary)) => {
+                    info!(
+                        pod_id = %self.pod_id,
+                        batch_id = %batch.id,
+                        total_episodes = summary.total_episodes,
+                        total_frames = summary.total_frames,
+                        feature_count = summary.global_stats.len(),
+                        "Aggregated batch statistics"
+                    );
+                    // TODO: Write aggregated stats to LeRobot metadata files
+                    // This would update info.json with global stats
+                }
+                Ok(None) => {
+                    warn!(
+                        pod_id = %self.pod_id,
+                        batch_id = %batch.id,
+                        "No episode stats found for batch"
+                    );
+                }
+                Err(e) => {
+                    error!(
+                        pod_id = %self.pod_id,
+                        batch_id = %batch.id,
+                        error = %e,
+                        "Failed to get batch stats"
+                    );
+                    // Continue with finalization even if stats fail
+                }
+            }
+        }
 
         // Try to claim merge
         let merge_result = self
@@ -199,8 +274,21 @@ impl Finalizer {
                     "Merge completed successfully"
                 );
 
+                // Clean up stats after successful merge
+                if let Some(collector) = &self.stats_collector
+                    && let Err(e) = collector.delete_batch_stats(&batch.id).await
+                {
+                    warn!(
+                        pod_id = %self.pod_id,
+                        batch_id = %batch.id,
+                        error = %e,
+                        "Failed to delete batch stats after merge (non-fatal)"
+                    );
+                }
+
                 // Mark batch as complete
                 self.mark_batch_complete(&batch.id).await?;
+                Ok(true)
             }
             super::merge::MergeResult::NotFound => {
                 warn!(
@@ -208,6 +296,7 @@ impl Finalizer {
                     batch_id = %batch.id,
                     "Batch not found for merge"
                 );
+                Ok(false)
             }
             super::merge::MergeResult::NotClaimed => {
                 warn!(
@@ -215,6 +304,7 @@ impl Finalizer {
                     batch_id = %batch.id,
                     "Another finalizer claimed the merge"
                 );
+                Ok(false)
             }
             super::merge::MergeResult::NotReady => {
                 warn!(
@@ -222,13 +312,12 @@ impl Finalizer {
                     batch_id = %batch.id,
                     "Merge not ready, will retry"
                 );
+                Ok(false)
             }
             super::merge::MergeResult::Failed { error } => {
-                return Err(TikvError::Other(format!("Merge failed: {}", error)));
+                Err(TikvError::Other(format!("Merge failed: {}", error)))
             }
         }
-
-        Ok(())
     }
 
     /// Mark a batch as complete.
@@ -242,11 +331,16 @@ impl Finalizer {
             None => return Err(TikvError::Other("Batch status not found".to_string())),
         };
 
+        let old_phase = status.phase;
         status.transition_to(BatchPhase::Complete);
 
         let new_data =
             bincode::serialize(&status).map_err(|e| TikvError::Serialization(e.to_string()))?;
         self.tikv.put(key, new_data).await?;
+
+        // Update phase index
+        super::batch::update_phase_index(&self.tikv, batch_id, old_phase, BatchPhase::Complete)
+            .await?;
 
         info!(batch_id = %batch_id, "Batch marked complete");
 
@@ -264,12 +358,17 @@ impl Finalizer {
             None => return Err(TikvError::Other("Batch status not found".to_string())),
         };
 
+        let old_phase = status.phase;
         status.transition_to(BatchPhase::Failed);
         status.error = Some(error);
 
         let new_data =
             bincode::serialize(&status).map_err(|e| TikvError::Serialization(e.to_string()))?;
         self.tikv.put(key, new_data).await?;
+
+        // Update phase index
+        super::batch::update_phase_index(&self.tikv, batch_id, old_phase, BatchPhase::Failed)
+            .await?;
 
         info!(batch_id = %batch_id, "Batch marked failed");
 

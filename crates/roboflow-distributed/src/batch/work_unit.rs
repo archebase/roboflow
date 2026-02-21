@@ -311,23 +311,42 @@ impl WorkUnit {
 /// Summary of a work unit for display.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkUnitSummary {
+    /// Unique work unit identifier.
     pub id: String,
+    /// Parent batch identifier.
     pub batch_id: String,
+    /// Current status of the work unit.
     pub status: WorkUnitStatus,
+    /// Number of files in this work unit.
     pub file_count: usize,
+    /// Total size of all files in bytes.
     pub total_size: u64,
+    /// Number of processing attempts.
     pub attempts: u32,
 }
 
 /// Errors related to work units.
 #[derive(Debug, thiserror::Error)]
 pub enum WorkUnitError {
+    /// Work unit cannot be claimed in its current state.
     #[error("work unit {id} is not claimable (status: {status:?})")]
-    NotClaimable { id: String, status: WorkUnitStatus },
+    NotClaimable {
+        /// Work unit identifier.
+        id: String,
+        /// Current status preventing claim.
+        status: WorkUnitStatus,
+    },
 
+    /// Work unit has been retried too many times.
     #[error("work unit {id} exceeded max attempts ({max_attempts})")]
-    MaxAttemptsExceeded { id: String, max_attempts: u32 },
+    MaxAttemptsExceeded {
+        /// Work unit identifier.
+        id: String,
+        /// Maximum attempts allowed.
+        max_attempts: u32,
+    },
 
+    /// Serialization or deserialization failed.
     #[error("work unit serialization error: {0}")]
     Serialization(String),
 }

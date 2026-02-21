@@ -1,0 +1,90 @@
+# cargo-deny configuration
+# Install: cargo install cargo-deny
+# Run: cargo deny check
+
+[graph]
+# If true, metadata will be collected with `--all-features`
+all-features = true
+
+[advisories]
+# The database urls to use for advisories
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# The path where the advisory database is stored
+db-path = "~/.cargo/advisory-db"
+# The vulnerability ids to ignore (from RUSTSEC)
+ignore = [
+    # RUSTSEC-2025-0141: bincode is unmaintained
+    # Team ceased development due to harassment. v1.3.3 is considered complete.
+    # Used by: roboflow, roboflow-distributed (TiKV client)
+    # Migration needed: postcard or rkyv
+    "RUSTSEC-2025-0141",
+    
+    # RUSTSEC-2025-0003: fast-float segmentation fault on empty input
+    # Used by: polars 0.41 (core dependency)
+    # Fix available in fast-float2 fork, but polars hasn't migrated
+    "RUSTSEC-2025-0003",
+    
+    # RUSTSEC-2024-0436: paste crate no longer maintained
+    # Used by: mcap, rsmpeg (both via robocodec/roboflow-dataset)
+    # Migration needed: pastey or with_builtin_macros
+    "RUSTSEC-2024-0436",
+    
+    # RUSTSEC-2024-0437: protobuf crash due to uncontrolled recursion
+    # Used by: prometheus -> tikv-client
+    # Upgrade needed: protobuf >=3.7.2, but tikv-client depends on 2.x
+    "RUSTSEC-2024-0437",
+    
+    # RUSTSEC-2025-0134: rustls-pemfile is unmaintained
+    # Used by: tonic -> tikv-client
+    # Migration needed: Use rustls-pki-types directly
+    "RUSTSEC-2025-0134",
+]
+
+[licenses]
+# List of allowed licenses
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "MulanPSL-2.0",
+    "CC0-1.0",
+    "Unicode-3.0",
+    "BSL-1.0",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+    "CDDL-1.0",
+]
+# Confidence threshold for license detection
+confidence-threshold = 0.8
+
+[[licenses.exceptions]]
+# Allow Unicode-DFS-2016 for unicode-ident (common dependency)
+allow = ["Unicode-DFS-2016"]
+name = "unicode-ident"
+version = "*"
+
+[bans]
+# Lint level for when multiple versions of the same crate are detected
+multiple-versions = "warn"
+# Lint level for when a crate is used that is denied
+deny = []
+# Skip some crates that are known to have duplicate versions
+skip = [
+    # Common duplicate version sources
+    { name = "syn", version = "1.0" },
+]
+
+[sources]
+# Lint level for what kind of sources are allowed
+unknown-registry = "warn"
+unknown-git = "warn"
+# List of allowed registries
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# List of allowed git sources
+allow-git = [
+    "https://github.com/archebase/robocodec",
+]

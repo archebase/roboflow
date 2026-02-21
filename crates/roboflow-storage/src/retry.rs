@@ -13,10 +13,10 @@
 //! # Example
 //!
 //! ```ignore
-//! use roboflow::storage::{Storage, OssStorage};
+//! use roboflow::storage::{Storage, S3Storage};
 //! use roboflow::storage::retry::{RetryConfig, RetryingStorage};
 //!
-//! let storage = OssStorage::new(...)?;
+//! let storage = S3Storage::new(...)?;
 //! let retrying_storage = RetryingStorage::new(storage, RetryConfig::default());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```

@@ -12,21 +12,13 @@
 //!
 //! - [`roboflow_core::CodecValue`] - Core value types
 //! - [`roboflow_core::RoboflowError`] - Error handling
-//! - [`pipeline`] - Parallel processing pipeline
-//! - [`dataset::kps`] - KPS dataset format (experimental)
+//! - [`roboflow_dataset`] - Dataset writers and pipeline executor
+//! - [`roboflow_dataset`] - Data sources (MCAP, bag, etc.)
 //!
 //! ## Example
 //!
-//! ```no_run
-//! use roboflow::Robocodec;
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Convert between formats
-//! Robocodec::open(vec!["input.bag"])?
-//!     .write_to("output.mcap")
-//!     .run()?;
-//! # Ok(())
-//! # }
+//! ```rust
+//! // See examples/ directory for complete usage examples
 //! ```
 
 // =============================================================================
@@ -47,6 +39,11 @@ static GLOBAL: Jemalloc = Jemalloc;
 // Core modules (minimal public API - prefer crate::* imports)
 // =============================================================================
 pub mod config;
+pub mod convert;
+pub mod pipeline_config;
+
+// Re-export unified pipeline configuration
+pub use pipeline_config::{PipelineConfig, PipelineConfigBuilder, ProcessingConfig};
 
 // Re-export from roboflow-core
 pub use roboflow_core::{
@@ -68,14 +65,21 @@ pub mod core {
 }
 
 // =============================================================================
-// Parallel processing pipeline
+// Pipeline API: Source/Sink abstraction
 // =============================================================================
-// Pipeline is now provided by roboflow-pipeline crate
-pub use roboflow_pipeline::{
-    auto_config::PerformanceMode,
-    config::CompressionConfig,
-    fluent::{BatchReport, CompressionPreset, PipelineMode, ReadOptions, Robocodec},
-    hyper::{HyperPipeline, HyperPipelineConfig, HyperPipelineReport},
+pub use roboflow_dataset::sources::{
+    Source, SourceConfig, SourceError, SourceFactory, SourceMetadata, SourceResult,
+    TimestampedMessage, create_source, global_registry as source_registry, has_source,
+    register_source, registered_sources,
+};
+
+// Re-export sources module for test access
+pub use roboflow_dataset::sources;
+
+pub use roboflow_dataset::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
+pub use roboflow_dataset::formats::{
+    OutputConfig, OutputFormat,
+    common::{DatasetFrame, ImageData, ImageFormat},
 };
 
 // =============================================================================
@@ -87,36 +91,24 @@ pub use roboflow_pipeline::{
 // Dataset structures
 // =============================================================================
 // Dataset is now provided by roboflow-dataset crate
-pub use roboflow_dataset::{
-    DatasetConfig, DatasetFormat, DatasetWriter, ImageData,
-    kps::{
-        ParquetKpsWriter,
-        config::{KpsConfig, Mapping, MappingType, OutputFormat},
-        delivery_v12::{
-            SeriesDeliveryConfig, SeriesDeliveryConfigBuilder, StatisticsCollector, TaskInfo,
-            TaskStatistics, V12DeliveryBuilder,
-        },
-    },
+pub use roboflow_dataset::formats::{
+    DatasetConfig, DatasetFormat, DatasetWriter,
+    common::DatasetBaseConfig,
     lerobot::{
         LerobotConfig, LerobotWriter, LerobotWriterTrait,
-        config::{DatasetConfig as LerobotDatasetConfig, VideoConfig},
+        config::{DatasetConfig as LerobotDatasetConfig, StreamingConfig, VideoConfig},
     },
-    streaming::StreamingDatasetConverter,
 };
 
-// Re-export the full kps module for test access
-pub use roboflow_dataset::kps;
-
-// Re-export lerobot and streaming modules for test access
-pub use roboflow_dataset::lerobot;
-pub use roboflow_dataset::streaming;
+// Re-export lerobot module for test access
+pub use roboflow_dataset::formats::lerobot;
 
 // =============================================================================
 // Storage abstraction layer (always available via roboflow-storage)
 // =============================================================================
 pub use roboflow_storage::{
     CacheConfig, CacheStats, CachedStorage, EvictionPolicy, LocalStorage, MultipartConfig,
-    MultipartStats, ObjectMetadata, OssConfig, OssStorage, RetryConfig, RetryingStorage, SeekRead,
+    MultipartStats, ObjectMetadata, RetryConfig, RetryingStorage, S3Config, S3Storage, SeekRead,
     SeekableStorage, Storage, StorageConfig, StorageError, StorageFactory, StorageResult,
     StorageUrl,
 };
@@ -166,3 +158,8 @@ pub trait Decoder: Send + Sync {
     /// Decode data into a DecodedMessage.
     fn decode(&self, data: &[u8], schema: &str, type_name: Option<&str>) -> Result<DecodedMessage>;
 }
+
+// =============================================================================
+// High-level Conversion API
+// =============================================================================
+pub use convert::{ConversionReport, ConvertBuilder, convert, convert_with_defaults};

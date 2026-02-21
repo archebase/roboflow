@@ -1,4 +1,4 @@
-.PHONY: all build build-release test test-all coverage coverage-rust clippy fmt lint clean check-license dev-up dev-down dev-logs dev-ps dev-restart dev-clean help
+.PHONY: all build build-release test test-all coverage coverage-rust clippy fmt lint clean check-license dev-up dev-down dev-logs dev-ps dev-restart dev-clean help deny security pre-commit-install pre-commit
 
 # Default target
 all: build
@@ -24,12 +24,11 @@ build-release: ## Build Rust library (release)
 test: ## Run Rust tests
 	@echo "Running Rust tests..."
 	cargo test
-	@echo "✓ Rust tests passed (run 'make test-all' for dataset features)"
+	@echo "✓ Rust tests passed"
 
-test-all: ## Run all tests including dataset features (requires HDF5)
-	@echo "Running all tests with all features..."
-	@echo "  (features: dataset-all)"
-	cargo test --features dataset-all
+test-all: ## Run all tests (alias for test)
+	@echo "Running all tests..."
+	cargo test
 	@echo "✓ All tests passed"
 
 # ============================================================================
@@ -47,7 +46,7 @@ coverage-rust: ## Run Rust tests with coverage (requires cargo-llvm-cov)
 	cargo llvm-cov --workspace --html --output-dir target/llvm-cov/html
 	cargo llvm-cov --workspace --lcov --output-path lcov.info
 	@echo ""
-	@echo "✓ Rust coverage report: target/llvm-cov/html/index.html (add --features dataset-all for dataset coverage)"
+	@echo "✓ Rust coverage report: target/llvm-cov/html/index.html"
 
 # ============================================================================
 # Code quality
@@ -83,6 +82,40 @@ check-license: ## Check REUSE license compliance
 		echo "⚠ reuse tool not found. Install with: pip install reuse"; \
 		exit 1; \
 	fi
+
+deny: ## Check dependencies for security advisories and license issues
+	@echo "Checking dependencies with cargo-deny..."
+	@if command -v cargo-deny >/dev/null 2>&1; then \
+		cargo deny check; \
+	else \
+		echo "⚠ cargo-deny not found. Install with: cargo install cargo-deny"; \
+		exit 1; \
+	fi
+
+security: deny ## Run all security checks (alias for deny)
+
+pre-commit-install: ## Install pre-commit hooks
+	@echo "Installing pre-commit hooks..."
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit install; \
+		pre-commit install --hook-type commit-msg; \
+		echo "✓ Pre-commit hooks installed"; \
+	else \
+		echo "⚠ pre-commit not found. Install with: pip install pre-commit"; \
+		exit 1; \
+	fi
+
+pre-commit: ## Run pre-commit on all files
+	@echo "Running pre-commit on all files..."
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit run --all-files; \
+	else \
+		echo "⚠ pre-commit not found. Install with: pip install pre-commit"; \
+		exit 1; \
+	fi
+
+ci-local: fmt lint test check-license ## Run all CI checks locally (fmt, lint, test, license)
+	@echo "✓ All local CI checks passed"
 
 # ============================================================================
 # Development (docker-compose)

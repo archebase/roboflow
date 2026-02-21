@@ -8,32 +8,36 @@ repository = "https://github.com/archebase/roboflow"
 description = "Storage abstraction layer for roboflow - local filesystem, S3, OSS"
 
 [dependencies]
-roboflow-core = { path = "../roboflow-core", version = "0.2.0" }
+roboflow-core = { workspace = true }
 
-# Cloud storage - ALWAYS AVAILABLE (no feature flag)
+# Cloud storage (always available)
 object_store = { version = "0.11", features = ["aws"] }
-tokio = { version = "1.40", features = ["rt-multi-thread", "sync"] }
 url = "2.5"
 bytes = "1.7"
+
+# Async
+tokio = { workspace = true }
 async-trait = "0.1"
+futures = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
 
 # Error handling
 thiserror = "1.0"
 
-# Crossbeam channels for caching
-crossbeam-channel = "0.5"
-
-# Serde for serialization
-serde = { version = "1.0", features = ["derive"] }
-
-# TOML for config file parsing
-toml = "0.8"
-
-# Tracing for logging
+# Logging
 tracing = "0.1"
 
-# Chrono for datetime handling (cloud storage timestamps)
-chrono = { version = "0.4", features = ["serde"] }
+# Temp file creation (for streaming uploads)
+tempfile = "3.10"
+
+# Concurrency
+crossbeam-channel = "0.5"
+
+# Datetime (cloud storage timestamps)
+chrono = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = "1.4"

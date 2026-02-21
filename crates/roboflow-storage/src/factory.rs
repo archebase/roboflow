@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use crate::{
-    AsyncOssStorage, AsyncStorage, LocalStorage, OssConfig, OssStorage, RoboflowConfig,
+    AsyncS3Storage, AsyncStorage, LocalStorage, RoboflowConfig, S3Config, S3Storage,
     SeekableStorage, Storage, StorageError, StorageResult as Result, url::StorageUrl,
 };
 
@@ -93,16 +93,16 @@ impl StorageConfig {
         if let Some(cfg) = config {
             // Only use config file values if not already set (env vars take precedence)
             if self.oss_access_key_id.is_none() {
-                self.oss_access_key_id = cfg.oss_access_key_id().map(String::from);
+                self.oss_access_key_id = cfg.s3_access_key_id().map(String::from);
             }
             if self.oss_access_key_secret.is_none() {
-                self.oss_access_key_secret = cfg.oss_access_key_secret().map(String::from);
+                self.oss_access_key_secret = cfg.s3_access_key_secret().map(String::from);
             }
             if self.oss_endpoint.is_none() {
-                self.oss_endpoint = cfg.oss_endpoint().map(String::from);
+                self.oss_endpoint = cfg.s3_endpoint().map(String::from);
             }
             if self.aws_region.is_none() {
-                self.aws_region = cfg.oss_region().map(String::from);
+                self.aws_region = cfg.s3_region().map(String::from);
             }
         }
         self
@@ -228,8 +228,7 @@ impl StorageFactory {
     ///
     /// The URL scheme determines the backend:
     /// - `file://` or no scheme → `LocalStorage`
-    /// - `s3://` → Error (not yet implemented)
-    /// - `oss://` → `OssStorage` (stub)
+    /// - `s3://` → S3-compatible storage (Amazon S3, Alibaba OSS, MinIO, etc.)
     ///
     /// # Errors
     ///
@@ -266,7 +265,7 @@ impl StorageFactory {
                 ..
             } => {
                 // S3-compatible storage (including MinIO)
-                // We reuse OssStorage which uses AmazonS3Builder underneath
+                // We reuse S3Storage which uses AmazonS3Builder underneath
                 let key_id = self
                     .config
                     .aws_access_key_id
@@ -303,61 +302,14 @@ impl StorageFactory {
                     .or_else(|| self.config.aws_region.clone())
                     .unwrap_or_else(|| "us-east-1".to_string());
 
-                let mut oss_config = OssConfig::new(bucket, ep.clone(), key_id, key_secret);
-                oss_config = oss_config.with_region(region);
+                let mut s3_config = S3Config::new(bucket, ep.clone(), key_id, key_secret);
+                s3_config = s3_config.with_region(region);
                 // Enable HTTP if endpoint URL uses http:// (for MinIO, local testing)
                 if ep.starts_with("http://") {
-                    oss_config = oss_config.with_allow_http(true);
+                    s3_config = s3_config.with_allow_http(true);
                 }
 
-                Ok(Arc::new(OssStorage::with_config(oss_config)?))
-            }
-            StorageUrl::Oss {
-                bucket,
-                key: _,
-                endpoint,
-                internal: _,
-            } => {
-                let key_id = self
-                    .config
-                    .get_oss_key_id()
-                    .ok_or_else(|| {
-                        StorageError::other(
-                            "OSS credentials not found. Set OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET environment variables.".to_string(),
-                        )
-                    })?
-                    .to_string();
-
-                let key_secret = self
-                    .config
-                    .get_oss_key_secret()
-                    .ok_or_else(|| {
-                        StorageError::other(
-                            "OSS credentials not found. Set OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET environment variables.".to_string(),
-                        )
-                    })?
-                    .to_string();
-
-                let ep = endpoint
-                    .clone()
-                    .or_else(|| self.config.oss_endpoint.clone())
-                    .ok_or_else(|| {
-                        StorageError::other(
-                            "OSS endpoint not specified. Use ?endpoint= in URL or set OSS_ENDPOINT environment variable.".to_string(),
-                        )
-                    })?;
-
-                let mut oss_config = OssConfig::new(bucket, ep.clone(), key_id, key_secret);
-
-                if let Some(reg) = self.config.aws_region.clone() {
-                    oss_config = oss_config.with_region(reg);
-                }
-                // Enable HTTP if endpoint URL uses http:// (for MinIO, local testing)
-                if ep.starts_with("http://") {
-                    oss_config = oss_config.with_allow_http(true);
-                }
-
-                Ok(Arc::new(OssStorage::with_config(oss_config)?))
+                Ok(Arc::new(S3Storage::with_config(s3_config)?))
             }
         }
     }
@@ -365,11 +317,10 @@ impl StorageFactory {
     /// Create an async storage backend for the given URL.
     ///
     /// Use this in async contexts (workers, scanners) to avoid runtime conflicts.
-    /// Returns `AsyncOssStorage` for cloud URLs, which implements `AsyncStorage`.
+    /// Returns `AsyncS3Storage` for cloud URLs, which implements `AsyncStorage`.
     ///
     /// The URL scheme determines the backend:
-    /// - `s3://` → `AsyncOssStorage` (S3-compatible including MinIO)
-    /// - `oss://` → `AsyncOssStorage`
+    /// - `s3://` → `AsyncS3Storage` (S3-compatible: Amazon S3, Alibaba OSS, MinIO, etc.)
     ///
     /// # Errors
     ///
@@ -433,52 +384,10 @@ impl StorageFactory {
                     .or_else(|| self.config.aws_region.clone())
                     .unwrap_or_else(|| "us-east-1".to_string());
 
-                let mut oss_config = OssConfig::new(bucket, ep, key_id, key_secret);
-                oss_config = oss_config.with_region(region);
+                let mut s3_config = S3Config::new(bucket, ep, key_id, key_secret);
+                s3_config = s3_config.with_region(region);
 
-                Ok(Arc::new(AsyncOssStorage::with_config(oss_config)?))
-            }
-            StorageUrl::Oss {
-                bucket,
-                endpoint: url_endpoint,
-                ..
-            } => {
-                let key_id = self
-                    .config
-                    .get_oss_key_id()
-                    .ok_or_else(|| {
-                        StorageError::other(
-                            "OSS credentials not found. Set OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET environment variables.".to_string(),
-                        )
-                    })?
-                    .to_string();
-
-                let key_secret = self
-                    .config
-                    .get_oss_key_secret()
-                    .ok_or_else(|| {
-                        StorageError::other(
-                            "OSS credentials not found. Set OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET environment variables.".to_string(),
-                        )
-                    })?
-                    .to_string();
-
-                let ep = url_endpoint
-                    .clone()
-                    .or_else(|| self.config.oss_endpoint.clone())
-                    .ok_or_else(|| {
-                        StorageError::other(
-                            "OSS endpoint not specified. Use ?endpoint= in URL or set OSS_ENDPOINT environment variable.".to_string(),
-                        )
-                    })?;
-
-                let mut oss_config = OssConfig::new(bucket, ep, key_id, key_secret);
-
-                if let Some(reg) = self.config.aws_region.clone() {
-                    oss_config = oss_config.with_region(reg);
-                }
-
-                Ok(Arc::new(AsyncOssStorage::with_config(oss_config)?))
+                Ok(Arc::new(AsyncS3Storage::with_config(s3_config)?))
             }
             StorageUrl::Local { .. } => Err(StorageError::other(
                 "Local filesystem is not supported by async storage. Use the sync Storage trait instead.".to_string(),
@@ -575,23 +484,20 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_factory_oss_missing_credentials() {
+    fn test_storage_factory_oss_url_rejected() {
         let factory = StorageFactory::new();
+        // oss:// is no longer supported, should fail with invalid path error
         let result = factory.create("oss://bucket/file.txt");
-        assert!(matches!(
-            result,
-            Err(StorageError::Other(_)) | Err(StorageError::Cloud(_))
-        ));
+        assert!(matches!(result, Err(StorageError::InvalidPath(_))));
     }
 
     #[test]
-    #[ignore = "system_configuration crate requires specific environment setup for OSS tests"]
-    fn test_storage_factory_oss_with_endpoint_in_url() {
+    fn test_storage_factory_s3_with_endpoint_in_url() {
         let factory =
-            StorageFactory::with_config(StorageConfig::new().with_oss_credentials("key", "secret"));
+            StorageFactory::with_config(StorageConfig::new().with_aws_credentials("key", "secret"));
 
         // Endpoint in URL should work
-        let result = factory.create("oss://bucket/file.txt?endpoint=oss-cn-hangzhou.aliyuncs.com");
+        let result = factory.create("s3://bucket/file.txt?endpoint=oss-cn-hangzhou.aliyuncs.com");
         assert!(result.is_ok());
     }
 

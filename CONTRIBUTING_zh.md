@@ -96,7 +96,6 @@ roboflow/
 │   ├── roboflow-dataset/      # 数据集写入器（KPS、LeRobot）
 │   ├── roboflow-distributed/  # TiKV 分布式协调
 │   ├── roboflow-hdf5/         # 可选的 HDF5 支持
-│   ├── roboflow-pipeline/     # 流水线实现
 │   └── roboflow/              # 主包，包含 CLI 工具
 │       ├── src/
 │       │   ├── pipeline/       # 流水线实现

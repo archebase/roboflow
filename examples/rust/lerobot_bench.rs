@@ -270,7 +270,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Generating and writing frames...");
 
     // Start episode
-    writer.start_episode(Some(0));
+    let _ = writer.start_episode(Some(0));
 
     // Generate and write frames
     for frame_idx in 0..config.num_frames {

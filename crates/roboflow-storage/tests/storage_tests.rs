@@ -570,38 +570,23 @@ fn test_storage_url_s3_with_endpoint() {
 }
 
 #[test]
-fn test_storage_url_oss() {
-    let url =
-        StorageUrl::from_str("oss://my-bucket/path/to/file.txt").expect("Failed to parse URL");
-    assert!(url.is_remote());
-    assert_eq!(url.bucket(), Some("my-bucket"));
-    assert_eq!(url.path(), "path/to/file.txt");
+fn test_storage_url_oss_rejected() {
+    // oss:// scheme is no longer supported, should return error
+    let result = StorageUrl::from_str("oss://my-bucket/path/to/file.txt");
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("unsupported URL scheme") || err.contains("oss"));
 }
 
 #[test]
-fn test_storage_url_oss_with_endpoint() {
-    let url = StorageUrl::from_str(
+fn test_storage_url_oss_with_endpoint_rejected() {
+    // oss:// scheme with endpoint should also be rejected
+    let result = StorageUrl::from_str(
         "oss://my-bucket/path/to/file.txt?endpoint=https://oss-cn-hangzhou.aliyuncs.com",
-    )
-    .expect("Failed to parse URL");
-
-    // Use pattern matching to check OSS URL with endpoint
-    match &url {
-        roboflow_storage::StorageUrl::Oss {
-            bucket,
-            key,
-            endpoint,
-            ..
-        } => {
-            assert_eq!(bucket, "my-bucket");
-            assert_eq!(key, "path/to/file.txt");
-            assert_eq!(
-                endpoint.as_deref(),
-                Some("https://oss-cn-hangzhou.aliyuncs.com")
-            );
-        }
-        _ => panic!("Expected OSS URL"),
-    }
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("unsupported URL scheme") || err.contains("oss"));
 }
 
 #[test]
@@ -612,7 +597,7 @@ fn test_storage_factory_local() {
     let url_str = format!("file://{}", temp_dir.path().to_str().unwrap());
     let storage = factory.create(&url_str).expect("Failed to create storage");
     // We should get a storage implementation
-    assert!(storage.exists(Path::new(".")) || true);
+    let _ = storage.exists(Path::new("."));
 }
 
 // =============================================================================

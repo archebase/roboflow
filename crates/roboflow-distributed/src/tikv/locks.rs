@@ -172,7 +172,13 @@ impl LockManager {
     /// * `resource` - The resource key to lock
     /// * `ttl` - Time-to-live for the lock
     pub async fn try_acquire(&self, resource: &str, ttl: Duration) -> Result<Option<LockGuard>> {
-        let ttl_secs = ttl.as_secs().try_into().unwrap_or(i64::MAX);
+        // Convert Duration to seconds, with millisecond precision
+        // For values < 1 second, use at least 1 second to avoid immediate expiration
+        let ttl_secs = ttl
+            .as_secs()
+            .saturating_add(if ttl.subsec_millis() > 0 { 1 } else { 0 })
+            .try_into()
+            .unwrap_or(i64::MAX);
         let acquired = self
             .client
             .acquire_lock(resource, &self.owner, ttl_secs)
@@ -218,7 +224,12 @@ impl LockManager {
         ttl: Duration,
         timeout: Duration,
     ) -> Result<LockGuard> {
-        let ttl_secs = ttl.as_secs().try_into().unwrap_or(i64::MAX);
+        // Convert Duration to seconds, with millisecond precision
+        let ttl_secs = ttl
+            .as_secs()
+            .saturating_add(if ttl.subsec_millis() > 0 { 1 } else { 0 })
+            .try_into()
+            .unwrap_or(i64::MAX);
         let started = tokio::time::Instant::now();
         let mut attempt = 0u32;
 
@@ -298,7 +309,12 @@ impl LockManager {
     /// * `resource` - The resource key to lock
     /// * `ttl` - Time-to-live for the lock (also used for renewal)
     pub async fn acquire_with_renewal(&self, resource: &str, ttl: Duration) -> Result<LockGuard> {
-        let ttl_secs = ttl.as_secs().try_into().unwrap_or(i64::MAX);
+        // Convert Duration to seconds, with millisecond precision
+        let ttl_secs = ttl
+            .as_secs()
+            .saturating_add(if ttl.subsec_millis() > 0 { 1 } else { 0 })
+            .try_into()
+            .unwrap_or(i64::MAX);
         let acquired = self
             .client
             .acquire_lock(resource, &self.owner, ttl_secs)
@@ -387,7 +403,12 @@ impl LockManager {
     ///
     /// Returns `Ok(true)` if extended, `Ok(false)` if we don't own the lock.
     pub async fn renew(&self, resource: &str, ttl: Duration) -> Result<bool> {
-        let ttl_secs = ttl.as_secs().try_into().unwrap_or(i64::MAX);
+        // Convert Duration to seconds, with millisecond precision
+        let ttl_secs = ttl
+            .as_secs()
+            .saturating_add(if ttl.subsec_millis() > 0 { 1 } else { 0 })
+            .try_into()
+            .unwrap_or(i64::MAX);
         let acquired = self
             .client
             .acquire_lock(resource, &self.owner, ttl_secs)
@@ -411,7 +432,12 @@ impl LockManager {
         };
 
         if can_steal {
-            let ttl_secs = ttl.as_secs().try_into().unwrap_or(i64::MAX);
+            // Convert Duration to seconds, with millisecond precision
+            let ttl_secs = ttl
+                .as_secs()
+                .saturating_add(if ttl.subsec_millis() > 0 { 1 } else { 0 })
+                .try_into()
+                .unwrap_or(i64::MAX);
             self.client
                 .acquire_lock(resource, &self.owner, ttl_secs)
                 .await
@@ -705,5 +731,42 @@ mod tests {
         assert_eq!(DEFAULT_RENEWAL_INTERVAL_SECS, 120);
         assert_eq!(DEFAULT_BACKOFF_BASE_DELAY_MS, 50);
         assert_eq!(DEFAULT_MAX_ACQUIRE_ATTEMPTS, 20);
+    }
+
+    #[test]
+    fn test_config_clone() {
+        let config = LockManagerConfig::default()
+            .with_default_ttl(Duration::from_secs(200))
+            .with_max_acquire_attempts(30);
+        let cloned = config.clone();
+        assert_eq!(config.default_ttl, cloned.default_ttl);
+        assert_eq!(config.max_acquire_attempts, cloned.max_acquire_attempts);
+    }
+
+    #[test]
+    fn test_config_debug_impl() {
+        let config = LockManagerConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("LockManagerConfig"));
+        assert!(debug_str.contains("default_ttl"));
+        assert!(debug_str.contains("renewal_interval"));
+    }
+
+    #[test]
+    fn test_config_partial_builders() {
+        // Test that builder methods can be called independently
+        let config = LockManagerConfig::default().with_default_ttl(Duration::from_secs(600));
+        assert_eq!(config.default_ttl, Duration::from_secs(600));
+        // Other defaults should remain
+        assert_eq!(
+            config.renewal_interval,
+            Duration::from_secs(DEFAULT_RENEWAL_INTERVAL_SECS)
+        );
+    }
+
+    #[test]
+    fn test_backoff_delay_builder() {
+        let config = LockManagerConfig::default().with_backoff_delay(Duration::from_millis(200));
+        assert_eq!(config.backoff_base_delay, Duration::from_millis(200));
     }
 }

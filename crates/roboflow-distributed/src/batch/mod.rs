@@ -90,6 +90,61 @@ pub fn is_phase_active(phase: BatchPhase) -> bool {
     phase.is_active()
 }
 
+/// Update the phase index in TiKV during a batch phase transition.
+///
+/// Writes the new phase index key first, then deletes the old one.
+/// Safe under crash: stale index keys are tolerated because consumers
+/// verify actual status after index lookup.
+///
+/// ## Future: Full Scheduler Architecture
+///
+/// The phase index is a stepping stone toward a full SchedulerService that would:
+///
+/// - **Priority queue**: In-memory priority queue with fair scheduling across
+///   namespaces, avoiding starvation of low-priority batches
+/// - **Admission control**: Rate-limit batch submissions, enforce quotas per
+///   namespace/submitter, reject when cluster is overloaded
+/// - **Push-based dispatch**: Watch TiKV via CDC (Change Data Capture) instead
+///   of polling, eliminating scan intervals entirely
+/// - **Preemption**: Higher-priority batches can preempt lower-priority running
+///   work units (with checkpointing support)
+/// - **Backpressure**: Coordinate with workers to throttle discovery when the
+///   pending queue is deep, preventing memory pressure
+/// - **Observability**: Expose queue depth, wait times, throughput per namespace
+///   as Prometheus metrics for capacity planning
+///
+/// The phase index design (secondary index per phase) naturally extends to
+/// support these features — priority scheduling adds a composite key
+/// (phase + priority + timestamp), admission control checks index counts,
+/// and CDC watches the index prefixes for changes.
+pub async fn update_phase_index(
+    tikv: &crate::tikv::TikvClient,
+    batch_id: &str,
+    old_phase: BatchPhase,
+    new_phase: BatchPhase,
+) -> Result<(), crate::tikv::TikvError> {
+    if old_phase == new_phase {
+        return Ok(());
+    }
+
+    // Write new index key first (write-new-before-delete-old pattern)
+    let new_key = BatchIndexKeys::phase(new_phase, batch_id);
+    tikv.put(new_key, vec![]).await?;
+
+    // Delete old index key
+    let old_key = BatchIndexKeys::phase(old_phase, batch_id);
+    tikv.delete(old_key).await?;
+
+    tracing::debug!(
+        batch_id = %batch_id,
+        old_phase = ?old_phase,
+        new_phase = ?new_phase,
+        "Phase index updated"
+    );
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,7 +156,7 @@ mod tests {
             vec!["s3://bucket/*.bag".to_string()],
             "output/".to_string(),
         );
-        assert_eq!(batch_id_from_spec(&spec), "default:my-batch");
+        assert_eq!(batch_id_from_spec(&spec), "jobs:my-batch");
     }
 
     #[test]
