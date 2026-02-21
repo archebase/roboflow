@@ -90,9 +90,9 @@ jobs:
           ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
 
       - name: Install vcpkg packages
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
         run: |
-          ${{ github.workspace }}/vcpkg/vcpkg install --triplet ${{ matrix.triplet }}
+          ${{ github.workspace }}/vcpkg/vcpkg install --triplet ${{ matrix.triplet }} --x-manifest-root=${{ github.workspace }} --x-install-root=${{ github.workspace }}/vcpkg/installed
 
       - name: Configure vcpkg environment
         if: runner.os == 'Linux'
@@ -163,9 +163,9 @@ jobs:
           ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
 
       - name: Install vcpkg packages
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
         run: |
-          ${{ github.workspace }}/vcpkg/vcpkg install --triplet ${{ matrix.triplet }}
+          ${{ github.workspace }}/vcpkg/vcpkg install --triplet ${{ matrix.triplet }} --x-manifest-root=${{ github.workspace }} --x-install-root=${{ github.workspace }}/vcpkg/installed
 
       - name: Configure vcpkg environment
         if: runner.os == 'Linux'
@@ -233,8 +233,9 @@ jobs:
           ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
 
       - name: Install vcpkg packages
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
         run: |
-          ${{ github.workspace }}/vcpkg/vcpkg install --triplet x64-linux
+          ${{ github.workspace }}/vcpkg/vcpkg install --triplet x64-linux --x-manifest-root=${{ github.workspace }} --x-install-root=${{ github.workspace }}/vcpkg/installed
 
       - name: Configure vcpkg environment
         run: |
