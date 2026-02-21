@@ -16,11 +16,13 @@
 //! is implemented in `common/camera_streaming_pipeline.rs`.
 
 // Re-export all video types from roboflow-video crate (canonical location)
+#[cfg(target_os = "macos")]
+pub use crate::media::video::VideoToolboxEncoder;
 pub use crate::media::video::{
     DepthEncoderConfig, DepthFrame, DepthFrameBuffer, DepthMkvEncoder, EncodeFrame, EncoderChoice,
     Mp4Encoder, NvencEncoder, RsmpegEncoder, RsmpegEncoderConfig, RsmpegMp4Encoder,
-    VideoEncoderConfig, VideoEncoderError, VideoFrame, VideoFrameBuffer, VideoToolboxEncoder,
-    available_encoders, check_nvenc_available, check_videotoolbox_available, default_codec_name,
-    is_encoder_available, is_hardware_encoding_available, is_rsmpeg_available,
-    print_encoder_diagnostics, select_best_encoder,
+    VideoEncoderConfig, VideoEncoderError, VideoFrame, VideoFrameBuffer, available_encoders,
+    check_nvenc_available, check_videotoolbox_available, default_codec_name, is_encoder_available,
+    is_hardware_encoding_available, is_rsmpeg_available, print_encoder_diagnostics,
+    select_best_encoder,
 };

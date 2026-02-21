@@ -83,6 +83,19 @@ impl ImageDecoderBackend for GpuImageDecoder {
                     "RGB8 format requires explicit width/height from message metadata.".to_string(),
                 ))
             }
+            ImageFormat::Bgr8 => {
+                // BGR8 format requires explicit dimensions from message metadata
+                Err(ImageError::InvalidData(
+                    "BGR8 format requires explicit width/height from message metadata.".to_string(),
+                ))
+            }
+            ImageFormat::Gray8 => {
+                // Gray8 format requires explicit dimensions from message metadata
+                Err(ImageError::InvalidData(
+                    "Gray8 format requires explicit width/height from message metadata."
+                        .to_string(),
+                ))
+            }
             ImageFormat::Unknown => Err(ImageError::UnsupportedFormat(
                 "Unknown format (cannot detect from magic bytes)".to_string(),
             )),

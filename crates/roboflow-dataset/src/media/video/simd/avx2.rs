@@ -7,6 +7,9 @@
 //! This module provides 8-pixel-per-iteration conversion using
 //! 256-bit AVX2 SIMD instructions.
 
+// Rust 2024 requires explicit unsafe blocks inside unsafe functions
+#![allow(unsafe_op_in_unsafe_fn)]
+
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 

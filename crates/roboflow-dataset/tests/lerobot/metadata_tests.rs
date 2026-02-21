@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-use roboflow_dataset::formats::lerobot::config::LerobotConfig;
 use roboflow_dataset::formats::lerobot::metadata::MetadataCollector;
 
 use crate::helpers::*;
@@ -65,7 +64,7 @@ fn test_metadata_collector_update_state_dim() {
 
 #[test]
 fn test_info_json_generation() {
-    let (temp_dir, config) = build_metadata_with_episodes(2, 50);
+    let (temp_dir, _config) = build_metadata_with_episodes(2, 50);
 
     let info = read_info_json(&temp_dir);
 

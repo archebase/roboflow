@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 
 use roboflow_dataset::formats::common::DatasetWriter;
-use roboflow_dataset::formats::lerobot::LerobotWriterTrait;
 use roboflow_dataset::formats::lerobot::writer::LerobotWriter;
+use roboflow_dataset::formats::lerobot::LerobotWriterTrait;
 use roboflow_dataset::testing::FrameBuilder;
 use tempfile::tempdir;
 
@@ -16,7 +16,9 @@ fn test_writer_creates_directory_structure() {
     let mut writer = LerobotWriter::new_local(temp_dir.path(), default_lerobot_config())
         .expect("Failed to create writer");
 
-    writer.start_episode(Some(0));
+    writer
+        .start_episode(Some(0))
+        .expect("Failed to start episode");
     let frame = FrameBuilder::new(0)
         .add_state("observation.state", vec![0.0])
         .build();
@@ -32,7 +34,9 @@ fn test_writer_start_episode() {
     let mut writer = LerobotWriter::new_local(temp_dir.path(), default_lerobot_config())
         .expect("Failed to create writer");
 
-    writer.start_episode(Some(0));
+    writer
+        .start_episode(Some(0))
+        .expect("Failed to start episode");
     let frame = FrameBuilder::new(0)
         .add_state("observation.state", vec![0.0])
         .build();
@@ -51,7 +55,9 @@ fn test_writer_write_multiple_frames() {
     let mut writer = LerobotWriter::new_local(temp_dir.path(), default_lerobot_config())
         .expect("Failed to create writer");
 
-    writer.start_episode(Some(0));
+    writer
+        .start_episode(Some(0))
+        .expect("Failed to start episode");
 
     for i in 0..10 {
         let frame = FrameBuilder::new(i)
@@ -75,7 +81,9 @@ fn test_writer_multiple_episodes() {
         .expect("Failed to create writer");
 
     for ep in 0..3 {
-        writer.start_episode(Some(ep));
+        writer
+            .start_episode(Some(ep))
+            .expect("Failed to start episode");
 
         for i in 0..5 {
             let frame = FrameBuilder::new(i)
@@ -117,7 +125,9 @@ fn test_writer_handles_episode_gap() {
     let mut writer = LerobotWriter::new_local(temp_dir.path(), default_lerobot_config())
         .expect("Failed to create writer");
 
-    writer.start_episode(Some(0));
+    writer
+        .start_episode(Some(0))
+        .expect("Failed to start episode");
     let frame = FrameBuilder::new(0)
         .add_state("observation.state", vec![0.0])
         .build();
@@ -126,7 +136,9 @@ fn test_writer_handles_episode_gap() {
         .finish_episode(Some(0))
         .expect("Failed to finish episode");
 
-    writer.start_episode(Some(5));
+    writer
+        .start_episode(Some(5))
+        .expect("Failed to start episode");
     let frame = FrameBuilder::new(0)
         .add_state("observation.state", vec![1.0])
         .build();
@@ -137,12 +149,10 @@ fn test_writer_handles_episode_gap() {
 
     writer.finalize_with_config().expect("Failed to finalize");
 
-    assert!(
-        temp_dir
-            .path()
-            .join("data/chunk-000/episode_000000.parquet")
-            .exists()
-    );
+    assert!(temp_dir
+        .path()
+        .join("data/chunk-000/episode_000000.parquet")
+        .exists());
 }
 
 #[test]
@@ -177,7 +187,9 @@ fn test_writer_finalize_returns_stats() {
     let mut writer = LerobotWriter::new_local(temp_dir.path(), default_lerobot_config())
         .expect("Failed to create writer");
 
-    writer.start_episode(Some(0));
+    writer
+        .start_episode(Some(0))
+        .expect("Failed to start episode");
     for i in 0..5 {
         let frame = FrameBuilder::new(i)
             .add_state("observation.state", vec![i as f32])

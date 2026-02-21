@@ -28,9 +28,11 @@ pub use frame::{
     DepthFrame, DepthFrameBuffer, FrameBuffer, PixelFormat, VideoEncoderError, VideoFrame,
     VideoFrameBuffer,
 };
+#[cfg(target_os = "macos")]
+pub use hardware::VideoToolboxEncoder;
 pub use hardware::{
-    DepthMkvEncoder, EncoderChoice, Mp4Encoder, NvencEncoder, VideoToolboxEncoder,
-    available_encoders, check_nvenc_available, check_videotoolbox_available, is_encoder_available,
+    DepthMkvEncoder, EncoderChoice, Mp4Encoder, NvencEncoder, available_encoders,
+    check_nvenc_available, check_videotoolbox_available, is_encoder_available,
     print_encoder_diagnostics, select_best_encoder,
 };
 pub use hardware_config::{HardwareBackend, HardwareConfig, detect_hardware_backend};

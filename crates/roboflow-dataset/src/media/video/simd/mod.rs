@@ -75,7 +75,8 @@ impl ConversionStrategy {
             {
                 return Self::Sse2;
             }
-            Self::Scalar
+            #[cfg(not(target_feature = "sse2"))]
+            return Self::Scalar;
         }
 
         #[cfg(target_arch = "aarch64")]
