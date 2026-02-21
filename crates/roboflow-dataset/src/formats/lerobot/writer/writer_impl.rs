@@ -552,7 +552,9 @@ impl LerobotWriter {
             // Use RsmpegMp4Encoder to create a valid MP4 file
             use crate::media::video::RsmpegMp4Encoder;
 
-            match RsmpegMp4Encoder::with_config(encoder_config.clone()).encode_buffer(&buffer, &segment_path) {
+            match RsmpegMp4Encoder::with_config(encoder_config.clone())
+                .encode_buffer(&buffer, &segment_path)
+            {
                 Ok(()) => {
                     encode_stats.images_encoded += buffer.len();
                     let file_size = std::fs::metadata(&segment_path)

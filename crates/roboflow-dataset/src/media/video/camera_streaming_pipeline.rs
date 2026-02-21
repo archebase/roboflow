@@ -18,11 +18,10 @@
 use crossbeam_channel::{Receiver, Sender};
 use roboflow_core::{Result, RoboflowError};
 
-use crate::formats::common::video::VideoEncoderConfig;
+use super::streaming::{EncodedChunk, StreamingEncoderConfig};
+use super::pipeline::PipelineConfig;
+use super::{StreamingMp4Encoder, VideoEncoderConfig};
 use crate::formats::common::{ImageData, decode_to_rgb};
-use crate::media::video::StreamingMp4Encoder;
-use crate::media::video::pipeline::PipelineConfig;
-use crate::media::video::streaming::{EncodedChunk, StreamingEncoderConfig};
 
 // =============================================================================
 // Commands
@@ -538,7 +537,7 @@ impl PipelineAdapter {
             match cmd {
                 StreamingCommand::AddFrame { image } => {
                     // Convert roboflow-dataset ImageData to roboflow-video ImageData
-                    let video_image = crate::formats::common::ImageData {
+                    let video_image = ImageData {
                         is_depth: false,
                         original_timestamp: 0,
                         width: image.width,

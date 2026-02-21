@@ -16,7 +16,6 @@
 //! - [`ProgressSender`] - Channel-based progress reporting
 
 pub mod base;
-pub mod camera_streaming_pipeline;
 pub mod config;
 pub mod image_decode;
 pub mod message_utils;
@@ -72,10 +71,11 @@ pub use crate::media::video::streaming::{
     EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder,
 };
 
-// Re-export camera streaming pipeline
-pub use camera_streaming_pipeline::{
-    CameraStreamingPipeline, StreamingCommand, StreamingPipelineConfig, StreamingPipelineHandle,
-    StreamingPipelineResult, StreamingUploadCommand, spawn_streaming_pipeline,
+// Re-export camera streaming pipeline from media/video (canonical location)
+pub use crate::media::video::{
+    CameraStreamingPipeline, EitherPipeline, PipelineAdapter, StreamingCommand,
+    StreamingPipelineConfig, StreamingPipelineHandle, StreamingPipelineResult,
+    StreamingUploadCommand, spawn_streaming_pipeline,
 };
 
 // Re-export concurrent video encoder from media/video (canonical location)

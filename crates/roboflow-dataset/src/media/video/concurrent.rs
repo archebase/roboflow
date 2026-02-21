@@ -91,12 +91,12 @@ use crossbeam_channel::{Receiver, unbounded};
 use roboflow_core::{Result, RoboflowError};
 
 use crate::core::VideoPathScheme;
-use crate::formats::common::camera_streaming_pipeline::{
+use crate::formats::common::{ImageData, VideoEncoderConfig};
+use crate::media::video::pipeline::VideoPipelineConfig;
+use super::camera_streaming_pipeline::{
     EitherPipeline, PipelineAdapter, StreamingPipelineConfig, StreamingUploadCommand,
     spawn_streaming_pipeline,
 };
-use crate::formats::common::{ImageData, VideoEncoderConfig};
-use crate::media::video::pipeline::VideoPipelineConfig;
 
 /// Configuration for concurrent video encoder.
 #[derive(Clone)]

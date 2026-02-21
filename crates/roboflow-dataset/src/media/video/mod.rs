@@ -1,4 +1,5 @@
 pub mod arena;
+pub mod camera_streaming_pipeline;
 pub mod codec;
 pub mod composer;
 pub mod concurrent;
@@ -56,6 +57,13 @@ pub use pipeline::{
 
 // Re-export concurrent video encoder
 pub use concurrent::{ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder};
+
+// Re-export camera streaming pipeline
+pub use camera_streaming_pipeline::{
+    CameraStreamingPipeline, EitherPipeline, PipelineAdapter, StreamingCommand,
+    StreamingPipelineConfig, StreamingPipelineHandle, StreamingPipelineResult,
+    StreamingUploadCommand, spawn_streaming_pipeline,
+};
 
 // Re-export VideoPathScheme from core traits
 pub use crate::core::VideoPathScheme;
