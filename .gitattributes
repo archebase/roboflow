@@ -1,0 +1,2 @@
+tests/fixtures/*.mcap filter=lfs diff=lfs merge=lfs -text
+tests/fixtures/*.bag filter=lfs diff=lfs merge=lfs -text

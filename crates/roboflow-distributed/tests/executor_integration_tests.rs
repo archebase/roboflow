@@ -90,7 +90,7 @@ async fn test_stage_executor_lerobot_pipeline() {
         .unwrap()
         .join("tests/fixtures");
     let source_prefix = format!("{}/", fixture_dir.display());
-    let input_file = format!("{}/sample.bag", fixture_dir.display());
+    let input_file = format!("{}/roboflow_sample.bag", fixture_dir.display());
     let output_prefix = "/tmp/output";
 
     let pipeline = PipelineBuilder::new()
@@ -182,7 +182,7 @@ async fn test_stage_execution_error_handling() {
         .parent()
         .unwrap()
         .join("tests/fixtures");
-    let input_file = format!("file://{}/sample.bag", fixture_dir.display());
+    let input_file = format!("file://{}/roboflow_sample.bag", fixture_dir.display());
 
     let pipeline = PipelineBuilder::new()
         .stage(Arc::new(DiscoverStage::new(&format!(

@@ -332,7 +332,7 @@ async fn test_process_bag_with_compressed_images() {
     // Register built-in sources (bag, mcap, etc.)
     register_builtin_sources();
 
-    let bag_path = "tests/fixtures/extracted_messages.bag";
+    let bag_path = "tests/fixtures/roboflow_extracted.bag";
     if !std::path::Path::new(bag_path).exists() {
         println!("Skipping test: {} not found", bag_path);
         return;

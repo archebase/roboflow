@@ -18,8 +18,8 @@ const _LARGE_BAG_PATH_2: &str =
     "tests/fixtures/A02-A01-37-45-77-factory_07-P4_210-leju_claw-20260105142915-v001.bag";
 
 // Smaller fixture files (~120MB, ~4000 frames) - used for faster CI testing
-const TEST_BAG_PATH: &str = "tests/fixtures/test_4000_frames.bag";
-const TEST_BAG_PATH_2: &str = "tests/fixtures/test_4000_frames_2.bag";
+const TEST_BAG_PATH: &str = "tests/fixtures/roboflow_4000_frames.bag";
+const TEST_BAG_PATH_2: &str = "tests/fixtures/roboflow_4000_frames_2.bag";
 
 fn create_test_lerobot_config() -> LerobotConfig {
     LerobotConfig {

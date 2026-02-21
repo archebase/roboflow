@@ -4,14 +4,14 @@
 
 //! Bag-to-LeRobot integration tests.
 //!
-//! Uses `tests/fixtures/extracted_messages.bag` to validate the full conversion
+//! Uses `tests/fixtures/roboflow_extracted.bag` to validate the full conversion
 //! pipeline. Covers:
 //! - CompressedImage (JPEG) color decoding
 //! - compressedDepth (16-bit PNG) → RGB conversion
 //! - Topic mapping and frame alignment
 //! - LeRobot dataset structure output
 //!
-//! Requires `tests/fixtures/extracted_messages.bag` to exist. Fails with clear error if missing.
+//! Requires `tests/fixtures/roboflow_extracted.bag` to exist. Fails with clear error if missing.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -20,8 +20,8 @@ use roboflow::{LerobotConfig, LerobotWriter};
 use roboflow_dataset::formats::alignment::StreamingConfig;
 use roboflow_dataset::{PipelineConfig, PipelineExecutor};
 
-const BAG_PATH: &str = "tests/fixtures/extracted_messages.bag";
-const CONFIG_PATH: &str = "tests/fixtures/extracted_messages_lerobot.toml";
+const BAG_PATH: &str = "tests/fixtures/roboflow_extracted.bag";
+const CONFIG_PATH: &str = "tests/fixtures/roboflow_extracted_lerobot.toml";
 
 /// Assert that bag and config fixtures exist. Panics with clear error if missing.
 fn require_fixtures() {
@@ -29,7 +29,7 @@ fn require_fixtures() {
     let config_path = Path::new(CONFIG_PATH);
     if !bag_path.exists() {
         panic!(
-            "Bag fixture not found: {}\n  Place extracted_messages.bag at tests/fixtures/ to run integration tests.",
+            "Bag fixture not found: {}\n  Place roboflow_extracted.bag at tests/fixtures/ to run integration tests.",
             bag_path.display()
         );
     }
@@ -49,7 +49,7 @@ fn topic_mappings_from_config(config: &LerobotConfig) -> HashMap<String, String>
 
 /// Full bag-to-LeRobot conversion test.
 ///
-/// Processes extracted_messages.bag through the pipeline and validates:
+/// Processes roboflow_extracted.bag through the pipeline and validates:
 /// - No panics (covers L16 depth conversion fix)
 /// - Videos and metadata are produced
 /// - At least some frames/images encoded
