@@ -4433,6 +4433,7 @@ dependencies = [
  "camino",
  "once_cell",
  "pkg-config",
+ "vcpkg",
 ]
 
 [[package]]

@@ -17,7 +17,7 @@ polars = { version = "0.41", features = ["parquet", "lazy", "diagonal_concat"] }
 png = "0.17"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 zune-jpeg = "0.4"
-rsmpeg = { version = "0.18", features = ["link_system_ffmpeg"] }
+rsmpeg = { version = "0.18", default-features = false, features = ["link_vcpkg_ffmpeg"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml_ng = "0.10"

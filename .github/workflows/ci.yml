@@ -40,23 +40,29 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
+          cache-key: "robocodec-vcpkg-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Check formatting (Rust)
         run: cargo fmt -- --check
 
-      - name: Install system dependencies
+      - name: Install system dependencies (Ubuntu)
+        if: runner.os == 'Linux'
         run: |
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            sudo apt-get update
-            sudo apt-get install -y build-essential libhdf5-dev libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libswresample-dev libavdevice-dev pkg-config
-            echo "FFmpeg version found by pkg-config:"
-            pkg-config --modversion libavcodec
-          elif [ "$RUNNER_OS" == "macOS" ]; then
-            brew install hdf5@1.10 ffmpeg
-            echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
-          fi
-        shell: bash
+          sudo apt-get update
+          sudo apt-get install -y build-essential libhdf5-dev pkg-config
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install hdf5@1.10
+          echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
+
+      - name: Setup vcpkg
+        uses: johnwason/vcpkg-action@v7
+        with:
+          pkgs: ffmpeg
+          triplet: ${{ runner.os == 'Linux' && 'x64-linux' || 'x64-osx' }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
@@ -76,20 +82,26 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
+          cache-key: "robocodec-vcpkg-${{ hashFiles('**/Cargo.lock') }}"
 
-      - name: Install system dependencies
+      - name: Install system dependencies (Ubuntu)
+        if: runner.os == 'Linux'
         run: |
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            sudo apt-get update
-            sudo apt-get install -y build-essential libhdf5-dev libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libswresample-dev libavdevice-dev pkg-config
-            echo "FFmpeg version found by pkg-config:"
-            pkg-config --modversion libavcodec
-          elif [ "$RUNNER_OS" == "macOS" ]; then
-            brew install hdf5@1.10 ffmpeg
-            echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
-          fi
-        shell: bash
+          sudo apt-get update
+          sudo apt-get install -y build-essential libhdf5-dev pkg-config
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install hdf5@1.10
+          echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
+
+      - name: Setup vcpkg
+        uses: johnwason/vcpkg-action@v7
+        with:
+          pkgs: ffmpeg
+          triplet: ${{ runner.os == 'Linux' && 'x64-linux' || 'x64-osx' }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run tests
         run: cargo test --features dataset-all
@@ -108,7 +120,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-key: "robocodec-${{ hashFiles('**/Cargo.lock') }}"
+          cache-key: "robocodec-vcpkg-${{ hashFiles('**/Cargo.lock') }}"
 
       - name: Cache cargo-llvm-cov
         uses: actions/cache@v4
@@ -124,9 +136,14 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libhdf5-dev libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libswresample-dev libavdevice-dev pkg-config
-          echo "FFmpeg version found by pkg-config:"
-          pkg-config --modversion libavcodec
+          sudo apt-get install -y build-essential libhdf5-dev pkg-config
+
+      - name: Setup vcpkg
+        uses: johnwason/vcpkg-action@v7
+        with:
+          pkgs: ffmpeg
+          triplet: x64-linux
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate Rust coverage
         run: cargo llvm-cov --features dataset-all --workspace --lcov --output-path lcov.info
