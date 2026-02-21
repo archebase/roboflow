@@ -64,15 +64,46 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm \
-            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev \
-            libavdevice-dev libswscale-dev libswresample-dev
+          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm
 
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install hdf5@1.10 nasm ffmpeg
           echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
+
+      - name: Cache vcpkg
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        id: cache-vcpkg
+        with:
+          path: ${{ github.workspace }}/vcpkg
+          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Clone and bootstrap vcpkg
+        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/microsoft/vcpkg --depth 1 ${{ github.workspace }}/vcpkg
+          BASELINE=$(jq -r '."builtin-baseline"' ${{ github.workspace }}/vcpkg.json)
+          git -C ${{ github.workspace }}/vcpkg fetch --depth 1 origin "$BASELINE"
+          git -C ${{ github.workspace }}/vcpkg checkout "$BASELINE"
+          ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Install vcpkg packages
+        if: runner.os == 'Linux'
+        run: |
+          ${{ github.workspace }}/vcpkg/vcpkg install --triplet ${{ matrix.triplet }}
+
+      - name: Configure vcpkg environment
+        if: runner.os == 'Linux'
+        run: |
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
+          VCPKG_INSTALLED=${{ github.workspace }}/vcpkg/installed
+          echo "PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
+          echo "FFMPEG_PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
+          # Verify FFmpeg was installed correctly
+          ls ${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig/libav*.pc
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
@@ -93,6 +124,8 @@ jobs:
       RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C linker=cc' || '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -104,15 +137,45 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm \
-            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev \
-            libavdevice-dev libswscale-dev libswresample-dev
+          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm
 
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install hdf5@1.10 nasm ffmpeg
           echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
+
+      - name: Cache vcpkg
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        id: cache-vcpkg
+        with:
+          path: ${{ github.workspace }}/vcpkg
+          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Clone and bootstrap vcpkg
+        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/microsoft/vcpkg --depth 1 ${{ github.workspace }}/vcpkg
+          BASELINE=$(jq -r '."builtin-baseline"' ${{ github.workspace }}/vcpkg.json)
+          git -C ${{ github.workspace }}/vcpkg fetch --depth 1 origin "$BASELINE"
+          git -C ${{ github.workspace }}/vcpkg checkout "$BASELINE"
+          ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Install vcpkg packages
+        if: runner.os == 'Linux'
+        run: |
+          ${{ github.workspace }}/vcpkg/vcpkg install --triplet ${{ matrix.triplet }}
+
+      - name: Configure vcpkg environment
+        if: runner.os == 'Linux'
+        run: |
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
+          VCPKG_INSTALLED=${{ github.workspace }}/vcpkg/installed
+          echo "PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
+          echo "FFMPEG_PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
+          ls ${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig/libav*.pc
 
       - name: Run tests
         run: cargo test --all-features
@@ -125,6 +188,8 @@ jobs:
       RUSTFLAGS: -C linker=cc
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -149,9 +214,36 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm \
-            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev \
-            libavdevice-dev libswscale-dev libswresample-dev
+          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        id: cache-vcpkg
+        with:
+          path: ${{ github.workspace }}/vcpkg
+          key: vcpkg-x64-linux-${{ hashFiles('vcpkg.json') }}
+
+      - name: Clone and bootstrap vcpkg
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/microsoft/vcpkg --depth 1 ${{ github.workspace }}/vcpkg
+          BASELINE=$(jq -r '."builtin-baseline"' ${{ github.workspace }}/vcpkg.json)
+          git -C ${{ github.workspace }}/vcpkg fetch --depth 1 origin "$BASELINE"
+          git -C ${{ github.workspace }}/vcpkg checkout "$BASELINE"
+          ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Install vcpkg packages
+        run: |
+          ${{ github.workspace }}/vcpkg/vcpkg install --triplet x64-linux
+
+      - name: Configure vcpkg environment
+        run: |
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
+          VCPKG_INSTALLED=${{ github.workspace }}/vcpkg/installed
+          echo "PKG_CONFIG_PATH=${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=${VCPKG_INSTALLED}/x64-linux/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
+          echo "FFMPEG_PKG_CONFIG_PATH=${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig" >> $GITHUB_ENV
+          ls ${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig/libav*.pc
 
       - name: Generate Rust coverage
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
