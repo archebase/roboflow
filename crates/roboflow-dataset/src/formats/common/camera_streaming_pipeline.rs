@@ -19,10 +19,10 @@ use crossbeam_channel::{Receiver, Sender};
 use roboflow_core::{Result, RoboflowError};
 
 use crate::formats::common::video::VideoEncoderConfig;
-use crate::formats::common::{ImageData, decode_to_rgb};
-use crate::media::video::StreamingMp4Encoder;
+use crate::formats::common::{decode_to_rgb, ImageData};
 use crate::media::video::pipeline::PipelineConfig;
 use crate::media::video::streaming::{EncodedChunk, StreamingEncoderConfig};
+use crate::media::video::StreamingMp4Encoder;
 
 // =============================================================================
 // Commands
@@ -307,8 +307,7 @@ impl CameraStreamingPipeline {
         });
 
         let encoder_config = StreamingEncoderConfig::from_video_config(&self.config.video_config)
-            .with_dimensions(self.width, self.height)
-            .with_codec(StreamingEncoderConfig::detect_best_codec());
+            .with_dimensions(self.width, self.height);
 
         let encoder =
             StreamingMp4Encoder::with_dimensions(encoder_config, chunk_tx, self.width, self.height)
