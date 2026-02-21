@@ -80,13 +80,12 @@ jobs:
           path: ${{ github.workspace }}/vcpkg
           key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
 
-      - name: Clone vcpkg
-        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
-        run: git clone https://github.com/microsoft/vcpkg --depth 1 "${{ github.workspace }}/vcpkg"
-
-      - name: Bootstrap vcpkg
+      - name: Clone and bootstrap vcpkg
         if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
         run: |
+          git clone https://github.com/microsoft/vcpkg --depth 1 ${{ github.workspace }}/vcpkg
+          BASELINE=$(jq -r '."builtin-baseline"' ${{ github.workspace }}/vcpkg.json)
+          git -C ${{ github.workspace }}/vcpkg fetch --depth 1 origin "$BASELINE"
           ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
 
       - name: Install vcpkg packages
@@ -146,13 +145,12 @@ jobs:
           path: ${{ github.workspace }}/vcpkg
           key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
 
-      - name: Clone vcpkg
-        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
-        run: git clone https://github.com/microsoft/vcpkg --depth 1 "${{ github.workspace }}/vcpkg"
-
-      - name: Bootstrap vcpkg
+      - name: Clone and bootstrap vcpkg
         if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
         run: |
+          git clone https://github.com/microsoft/vcpkg --depth 1 ${{ github.workspace }}/vcpkg
+          BASELINE=$(jq -r '."builtin-baseline"' ${{ github.workspace }}/vcpkg.json)
+          git -C ${{ github.workspace }}/vcpkg fetch --depth 1 origin "$BASELINE"
           ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
 
       - name: Install vcpkg packages
@@ -210,13 +208,12 @@ jobs:
           path: ${{ github.workspace }}/vcpkg
           key: vcpkg-x64-linux-${{ hashFiles('vcpkg.json') }}
 
-      - name: Clone vcpkg
-        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
-        run: git clone https://github.com/microsoft/vcpkg --depth 1 "${{ github.workspace }}/vcpkg"
-
-      - name: Bootstrap vcpkg
+      - name: Clone and bootstrap vcpkg
         if: steps.cache-vcpkg.outputs.cache-hit != 'true'
         run: |
+          git clone https://github.com/microsoft/vcpkg --depth 1 ${{ github.workspace }}/vcpkg
+          BASELINE=$(jq -r '."builtin-baseline"' ${{ github.workspace }}/vcpkg.json)
+          git -C ${{ github.workspace }}/vcpkg fetch --depth 1 origin "$BASELINE"
           ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
 
       - name: Install vcpkg packages
