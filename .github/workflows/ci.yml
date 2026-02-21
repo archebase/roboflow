@@ -59,10 +59,17 @@ jobs:
 
       - name: Setup vcpkg
         uses: johnwason/vcpkg-action@v7
+        id: vcpkg
         with:
-          pkgs: ffmpeg
+          manifest-dir: ${{ github.workspace }}
           triplet: ${{ runner.os == 'Linux' && 'x64-linux' || 'x64-osx' }}
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure vcpkg environment
+        run: |
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
+          echo "FFMPEG_DIR=${{ github.workspace }}/vcpkg/installed/${{ runner.os == 'Linux' && 'x64-linux' || 'x64-osx' }}" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=${{ github.workspace }}/vcpkg/installed/${{ runner.os == 'Linux' && 'x64-linux' || 'x64-osx' }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
@@ -98,10 +105,17 @@ jobs:
 
       - name: Setup vcpkg
         uses: johnwason/vcpkg-action@v7
+        id: vcpkg
         with:
-          pkgs: ffmpeg
+          manifest-dir: ${{ github.workspace }}
           triplet: ${{ runner.os == 'Linux' && 'x64-linux' || 'x64-osx' }}
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure vcpkg environment
+        run: |
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
+          echo "FFMPEG_DIR=${{ github.workspace }}/vcpkg/installed/${{ runner.os == 'Linux' && 'x64-linux' || 'x64-osx' }}" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=${{ github.workspace }}/vcpkg/installed/${{ runner.os == 'Linux' && 'x64-linux' || 'x64-osx' }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
 
       - name: Run tests
         run: cargo test --features dataset-all
@@ -140,10 +154,17 @@ jobs:
 
       - name: Setup vcpkg
         uses: johnwason/vcpkg-action@v7
+        id: vcpkg
         with:
-          pkgs: ffmpeg
+          manifest-dir: ${{ github.workspace }}
           triplet: x64-linux
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure vcpkg environment
+        run: |
+          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
+          echo "FFMPEG_DIR=${{ github.workspace }}/vcpkg/installed/x64-linux" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=${{ github.workspace }}/vcpkg/installed/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
 
       - name: Generate Rust coverage
         run: cargo llvm-cov --features dataset-all --workspace --lcov --output-path lcov.info
