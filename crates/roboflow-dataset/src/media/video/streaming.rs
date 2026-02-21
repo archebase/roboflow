@@ -18,8 +18,8 @@ use std::ffi::c_int;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-use crate::media::video::config::VideoEncoderConfig;
 use crate::media::video::codec::{self, CodecContext, CodecParams, set_full_color_range_frame};
+use crate::media::video::config::VideoEncoderConfig;
 use crate::media::video::frame::VideoEncoderError;
 use crate::media::video::rsmpeg::*;
 

@@ -53,8 +53,7 @@ impl CodecContext {
     /// 4. Open codec (with libx264 preset)
     /// 5. Create SWScale context for RGB24 → target format
     pub fn new(codec_name: &str, pix_fmt: i32, params: &CodecParams) -> Result<Self, String> {
-        let (mut codec_ctx, actual_name, supports_flush) =
-            find_and_create_context(codec_name)?;
+        let (mut codec_ctx, actual_name, supports_flush) = find_and_create_context(codec_name)?;
         configure_codec_context(&mut codec_ctx, params, pix_fmt);
         set_full_color_range_ctx(&mut codec_ctx);
         open_codec(&mut codec_ctx, codec_name)?;
@@ -78,8 +77,7 @@ impl CodecContext {
         pix_fmt: i32,
         params: &CodecParams,
     ) -> Result<Self, String> {
-        let (mut codec_ctx, actual_name, supports_flush) =
-            find_and_create_context(codec_name)?;
+        let (mut codec_ctx, actual_name, supports_flush) = find_and_create_context(codec_name)?;
         configure_codec_context(&mut codec_ctx, params, pix_fmt);
         set_full_color_range_ctx(&mut codec_ctx);
         open_codec(&mut codec_ctx, codec_name)?;
@@ -133,9 +131,7 @@ pub fn detect_best_codec() -> (&'static str, &'static str) {
 ///
 /// This function keeps the `AVCodecRef` local so it doesn't escape
 /// the borrow on the codec name CStr.
-fn find_and_create_context(
-    name: &str,
-) -> Result<(AVCodecContext, String, bool), String> {
+fn find_and_create_context(name: &str) -> Result<(AVCodecContext, String, bool), String> {
     let name_with_nul = format!("{}\0", name);
     let codec_name = CStr::from_bytes_with_nul(name_with_nul.as_bytes())
         .map_err(|_| "Invalid codec name".to_string())?;

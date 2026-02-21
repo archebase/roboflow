@@ -826,7 +826,6 @@ impl RsmpegMp4Encoder {
 
         Ok(())
     }
-
 }
 
 impl Default for RsmpegMp4Encoder {
