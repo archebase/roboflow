@@ -9,12 +9,32 @@
 //!
 //! # Architecture
 //!
+//! - [`conversion`] - High-level conversion API (recommended entry point)
 //! - [`core`] - Core traits and types for format-agnostic writing
 //! - [`formats`] - Format-specific implementations (LeRobot, etc.)
 //! - [`media`] - Media handling (video encoding, image decoding)
 //! - [`sources`] - Data source abstractions (bag, MCAP)
 //!
-//! # Example
+//! # Quick Start
+//!
+//! ```rust,ignore
+//! use roboflow_dataset::conversion::{convert_file, ConversionConfig};
+//! use roboflow_dataset::formats::{DatasetConfig, DatasetFormat};
+//!
+//! let config = ConversionConfig::new(
+//!     DatasetConfig::new(DatasetFormat::Lerobot, "my_dataset", 30, None)
+//! );
+//!
+//! let result = convert_file(
+//!     Path::new("recording.bag"),
+//!     Path::new("./output"),
+//!     &config,
+//! )?;
+//! ```
+//!
+//! # Low-Level API
+//!
+//! For more control, you can use the lower-level APIs directly:
 //!
 //! ```rust,ignore
 //! use roboflow_dataset::core::{FormatWriter, AlignedFrame};
@@ -32,12 +52,15 @@
 //! let stats = writer.finalize()?;
 //! ```
 
+pub mod conversion;
 pub mod core;
 pub mod executor;
 pub mod formats;
 pub mod media;
 pub mod sources;
-pub mod storage_sink;
+
+// Internal module for local file operations
+mod storage_sink;
 
 pub mod testing;
 
@@ -70,4 +93,7 @@ pub use media::video::{
     StreamingMp4Encoder, VideoEncoderConfig, VideoFrame,
 };
 
-pub use storage_sink::StorageSink;
+// Re-export conversion API
+pub use conversion::{
+    convert_file, ConversionConfig, ConversionResult, ConversionStats, OutputFiles,
+};

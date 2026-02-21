@@ -1,71 +1,80 @@
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
+//! Local file sink for dataset output.
+//!
+//! This module provides [`LocalSink`] which writes all dataset files to the local filesystem.
+//! Upload to cloud storage is handled by the executor, not the dataset crate.
+
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use roboflow_core::{Result, RoboflowError};
-use roboflow_storage::{LocalStorage, Storage};
 
-use crate::formats::common::{
-    ImageData, Sink, VideoEncoderConfig, WriteOperation, decode_image_to_rgb,
+use crate::formats::common::{ImageData, VideoEncoderConfig, decode_image_to_rgb};
+use crate::formats::common::operation::{Sink, WriteOperation};
+use crate::media::video::{
+    RsmpegMp4Encoder, RsmpegVideoComposer, VideoComposer, VideoFrame, VideoFrameBuffer,
 };
-use crate::media::video::{RsmpegMp4Encoder, RsmpegVideoComposer, VideoFrame, VideoFrameBuffer};
 
-pub struct StorageSink {
-    storage: Arc<dyn Storage>,
-    temp_dir: PathBuf,
+/// Local filesystem sink for dataset output.
+///
+/// Writes all files to a local base directory. Upload to cloud storage
+/// should be handled by the executor after conversion completes.
+///
+/// Note: This is an internal implementation detail. External users should use
+/// the [`convert_file`] function or the writer types directly.
+#[allow(dead_code)]
+pub struct LocalSink {
+    base_path: PathBuf,
 }
 
-impl StorageSink {
-    pub fn new_local(base_path: impl Into<PathBuf>) -> Result<Self> {
+#[allow(dead_code)]
+impl LocalSink {
+    /// Create a new local sink writing to the given base directory.
+    ///
+    /// Creates the directory if it doesn't exist.
+    pub fn new(base_path: impl Into<PathBuf>) -> Result<Self> {
         let base = base_path.into();
         std::fs::create_dir_all(&base)?;
-
-        Ok(Self {
-            storage: Arc::new(LocalStorage::new(&base)),
-            temp_dir: base.join(".temp"),
-        })
+        Ok(Self { base_path: base })
     }
 
-    pub fn with_storage(storage: Arc<dyn Storage>, temp_dir: PathBuf) -> Self {
-        Self { storage, temp_dir }
-    }
-
-    fn is_local_storage(&self) -> bool {
-        self.storage.as_any().type_id() == std::any::TypeId::of::<LocalStorage>()
+    /// Get the base path for this sink.
+    pub fn base_path(&self) -> &std::path::Path {
+        &self.base_path
     }
 }
 
-impl Sink for StorageSink {
+impl Sink for LocalSink {
     fn execute(&self, op: WriteOperation) -> Result<()> {
         match op {
             WriteOperation::WriteFile { path, data } => {
-                let mut writer = self
-                    .storage
-                    .writer(&path)
-                    .map_err(|e| RoboflowError::other(format!("Storage error: {}", e)))?;
-                writer.write_all(&data)?;
-                writer.flush()?;
+                let full_path = self.base_path.join(&path);
+                if let Some(parent) = full_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&full_path, data)?;
                 Ok(())
             }
 
             WriteOperation::WriteParquet { path, data } => {
-                let mut writer = self
-                    .storage
-                    .writer(&path)
-                    .map_err(|e| RoboflowError::other(format!("Storage error: {}", e)))?;
-                writer.write_all(&data)?;
-                writer.flush()?;
+                let full_path = self.base_path.join(&path);
+                if let Some(parent) = full_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&full_path, data)?;
                 Ok(())
             }
 
             WriteOperation::WriteMetadata { path, content } => {
+                let full_path = self.base_path.join(&path);
+                if let Some(parent) = full_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
                 let data = serde_json::to_vec_pretty(&content)
                     .map_err(|e| RoboflowError::other(format!("JSON error: {}", e)))?;
-                let mut writer = self
-                    .storage
-                    .writer(&path)
-                    .map_err(|e| RoboflowError::other(format!("Storage error: {}", e)))?;
-                writer.write_all(&data)?;
-                writer.flush()?;
+                std::fs::write(&full_path, data)?;
                 Ok(())
             }
 
@@ -80,24 +89,52 @@ impl Sink for StorageSink {
                 sources,
                 destination,
             } => {
-                let source_refs: Vec<_> = sources.iter().map(|p| p.as_path()).collect();
+                let full_dest = self.base_path.join(&destination);
+
+                // All sources are local files
+                let source_paths: Vec<std::path::PathBuf> = sources
+                    .iter()
+                    .map(|s| self.base_path.join(s))
+                    .collect();
+
+                // Verify all sources exist
+                for src in &source_paths {
+                    if !src.exists() {
+                        return Err(RoboflowError::other(format!(
+                            "Source file not found: {}",
+                            src.display()
+                        )));
+                    }
+                }
+
+                // Create destination directory
+                if let Some(parent) = full_dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+
+                // Compose using RsmpegVideoComposer
+                let source_refs: Vec<_> = source_paths.iter().map(|p| p.as_path()).collect();
                 let composer = RsmpegVideoComposer::new();
-                self.storage
-                    .compose_objects(&source_refs, &destination, &composer)
-                    .map_err(|e| RoboflowError::other(format!("Storage error: {}", e)))?;
+                composer
+                    .compose(&source_refs, &full_dest)
+                    .map_err(|e| {
+                        RoboflowError::other(format!("Video composition failed: {}", e))
+                    })?;
+
+                tracing::info!(
+                    sources = sources.len(),
+                    dest = %destination.display(),
+                    "Video composition complete"
+                );
+
                 Ok(())
             }
-
-            WriteOperation::UploadDataset {
-                local_path,
-                cloud_prefix,
-                stats: _,
-            } => self.upload_dataset(&local_path, &cloud_prefix),
         }
     }
 }
 
-impl StorageSink {
+#[allow(dead_code)]
+impl LocalSink {
     fn encode_and_write_video(
         &self,
         frames: &[ImageData],
@@ -107,6 +144,11 @@ impl StorageSink {
         if frames.is_empty() {
             tracing::warn!("No frames to encode for video: {}", output_path.display());
             return Ok(());
+        }
+
+        let full_path = self.base_path.join(output_path);
+        if let Some(parent) = full_path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
 
         let mut buffer = VideoFrameBuffer::new();
@@ -141,106 +183,16 @@ impl StorageSink {
             return Ok(());
         }
 
-        let is_local = self.is_local_storage();
-
-        if is_local {
-            RsmpegMp4Encoder::with_config(config.clone())
-                .encode_buffer(&buffer, output_path)
-                .map_err(|e| RoboflowError::other(format!("Video encoding failed: {}", e)))?;
-        } else {
-            std::fs::create_dir_all(&self.temp_dir)?;
-            let temp_path = self
-                .temp_dir
-                .join(format!("video_{}.mp4", uuid::Uuid::new_v4()));
-
-            RsmpegMp4Encoder::with_config(config.clone())
-                .encode_buffer(&buffer, &temp_path)
-                .map_err(|e| RoboflowError::other(format!("Video encoding failed: {}", e)))?;
-
-            let data = std::fs::read(&temp_path)?;
-            let mut writer = self
-                .storage
-                .writer(output_path)
-                .map_err(|e| RoboflowError::other(format!("Storage error: {}", e)))?;
-            writer.write_all(&data)?;
-            writer.flush()?;
-
-            if let Err(e) = std::fs::remove_file(&temp_path) {
-                tracing::warn!("Failed to cleanup temp file: {}", e);
-            }
-        }
+        RsmpegMp4Encoder::with_config(config.clone())
+            .encode_buffer(&buffer, &full_path)
+            .map_err(|e| RoboflowError::other(format!("Video encoding failed: {}", e)))?;
 
         tracing::info!(
             path = %output_path.display(),
             frames = buffer.len(),
-            is_local,
             "Video encoded successfully"
         );
 
-        Ok(())
-    }
-
-    fn upload_dataset(&self, local_path: &std::path::Path, cloud_prefix: &str) -> Result<()> {
-        if !local_path.exists() {
-            return Err(RoboflowError::other(format!(
-                "Local dataset path does not exist: {}",
-                local_path.display()
-            )));
-        }
-
-        if self.is_local_storage() {
-            tracing::info!(
-                local_path = %local_path.display(),
-                "Local storage - dataset already in place"
-            );
-            return Ok(());
-        }
-
-        tracing::info!(
-            local_path = %local_path.display(),
-            cloud_prefix = %cloud_prefix,
-            "Uploading dataset to cloud storage"
-        );
-
-        self.upload_dir_recursive(local_path, local_path, cloud_prefix)?;
-
-        tracing::info!("Dataset upload complete");
-        Ok(())
-    }
-
-    fn upload_dir_recursive(
-        &self,
-        base_path: &std::path::Path,
-        current_dir: &std::path::Path,
-        cloud_prefix: &str,
-    ) -> Result<()> {
-        for entry in std::fs::read_dir(current_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_file() {
-                let relative = path
-                    .strip_prefix(base_path)
-                    .map_err(|e| RoboflowError::other(format!("Path strip error: {}", e)))?;
-                let cloud_path = format!(
-                    "{}/{}",
-                    cloud_prefix.trim_end_matches('/'),
-                    relative.display()
-                );
-
-                let data = std::fs::read(&path)?;
-                let mut writer = self
-                    .storage
-                    .writer(std::path::Path::new(&cloud_path))
-                    .map_err(|e| RoboflowError::other(format!("Storage writer error: {}", e)))?;
-                writer.write_all(&data)?;
-                writer.flush()?;
-
-                tracing::debug!("Uploaded: {} -> {}", path.display(), cloud_path);
-            } else if path.is_dir() {
-                self.upload_dir_recursive(base_path, &path, cloud_prefix)?;
-            }
-        }
         Ok(())
     }
 }
@@ -248,23 +200,19 @@ impl StorageSink {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::formats::common::operation::DatasetStats;
     use tempfile::tempdir;
 
     #[test]
-    fn test_storage_sink_new_local() {
+    fn test_local_sink_new() {
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path());
+        let sink = LocalSink::new(dir.path());
         assert!(sink.is_ok());
-
-        let sink = sink.unwrap();
-        assert!(sink.is_local_storage());
     }
 
     #[test]
-    fn test_storage_sink_local_write_file() {
+    fn test_local_sink_write_file() {
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let sink = LocalSink::new(dir.path()).unwrap();
 
         sink.execute(WriteOperation::WriteFile {
             path: PathBuf::from("test.txt"),
@@ -279,9 +227,9 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_sink_write_parquet() {
+    fn test_local_sink_write_parquet() {
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let sink = LocalSink::new(dir.path()).unwrap();
 
         let data = vec![0u8; 100];
         sink.execute(WriteOperation::WriteParquet {
@@ -297,9 +245,9 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_sink_write_metadata() {
+    fn test_local_sink_write_metadata() {
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let sink = LocalSink::new(dir.path()).unwrap();
 
         let mut metadata = serde_json::Map::new();
         metadata.insert("version".to_string(), serde_json::json!("1.0"));
@@ -322,91 +270,9 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_sink_compose_files() {
-        use roboflow_core::MockVideoComposer;
-        use roboflow_storage::Storage;
-
+    fn test_local_sink_nested_directories() {
         let dir = tempdir().unwrap();
-        let storage = Arc::new(roboflow_storage::LocalStorage::new(dir.path()));
-        let _sink = StorageSink::with_storage(storage.clone(), dir.path().join(".temp"));
-
-        // Create two dummy MP4 files (content doesn't matter for this test since we use MockVideoComposer)
-        let source1 = dir.path().join("source1.mp4");
-        let source2 = dir.path().join("source2.mp4");
-        std::fs::write(&source1, "dummy mp4 data 1").unwrap();
-        std::fs::write(&source2, "dummy mp4 data 2").unwrap();
-
-        // Verify source files exist
-        assert!(storage.exists(&source1));
-        assert!(storage.exists(&source2));
-
-        // Compose them using MockVideoComposer to verify the compose operation is called
-        let composer = MockVideoComposer::new();
-        storage
-            .compose_objects(
-                &[&source1, &source2],
-                &PathBuf::from("combined.mp4"),
-                &composer,
-            )
-            .unwrap();
-
-        // Verify composer was called
-        let ops = composer.get_operations();
-        assert_eq!(ops.len(), 1);
-        assert_eq!(ops[0].sources.len(), 2);
-        assert!(ops[0].dest.to_string_lossy().contains("combined.mp4"));
-    }
-
-    #[test]
-    fn test_storage_sink_upload_dataset_local() {
-        let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
-
-        let dataset_dir = dir.path().join("dataset");
-        std::fs::create_dir(&dataset_dir).unwrap();
-        std::fs::create_dir(dataset_dir.join("videos")).unwrap();
-        std::fs::write(dataset_dir.join("data.parquet"), "parquet data").unwrap();
-        std::fs::write(dataset_dir.join("videos/cam.mp4"), "video data").unwrap();
-
-        sink.execute(WriteOperation::UploadDataset {
-            local_path: dataset_dir.clone(),
-            cloud_prefix: dir.path().join("cloud").to_string_lossy().to_string(),
-            stats: DatasetStats::default(),
-        })
-        .unwrap();
-
-        assert!(dataset_dir.exists());
-        assert!(dataset_dir.join("data.parquet").exists());
-    }
-
-    #[test]
-    fn test_storage_sink_upload_dataset_nonexistent() {
-        let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
-
-        let result = sink.execute(WriteOperation::UploadDataset {
-            local_path: PathBuf::from("/nonexistent/path"),
-            cloud_prefix: "s3://bucket/prefix".to_string(),
-            stats: DatasetStats::default(),
-        });
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_storage_sink_with_storage() {
-        let dir = tempdir().unwrap();
-        let storage = Arc::new(LocalStorage::new(dir.path()));
-        let temp_dir = dir.path().join("temp");
-
-        let sink = StorageSink::with_storage(storage, temp_dir);
-        assert!(sink.is_local_storage());
-    }
-
-    #[test]
-    fn test_storage_sink_nested_directories() {
-        let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let sink = LocalSink::new(dir.path()).unwrap();
 
         sink.execute(WriteOperation::WriteFile {
             path: PathBuf::from("a/b/c/deep.txt"),
@@ -421,9 +287,9 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_sink_multiple_writes_same_file() {
+    fn test_local_sink_multiple_writes_same_file() {
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let sink = LocalSink::new(dir.path()).unwrap();
 
         sink.execute(WriteOperation::WriteFile {
             path: PathBuf::from("test.txt"),
@@ -442,9 +308,9 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_sink_empty_data() {
+    fn test_local_sink_empty_data() {
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let sink = LocalSink::new(dir.path()).unwrap();
 
         sink.execute(WriteOperation::WriteFile {
             path: PathBuf::from("empty.txt"),
@@ -458,9 +324,9 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_sink_large_data() {
+    fn test_local_sink_large_data() {
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let sink = LocalSink::new(dir.path()).unwrap();
 
         let large_data = vec![0u8; 1024 * 1024]; // 1MB
         sink.execute(WriteOperation::WriteFile {
@@ -475,9 +341,9 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_sink_batch_operations() {
+    fn test_local_sink_batch_operations() {
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let sink = LocalSink::new(dir.path()).unwrap();
 
         let ops = vec![
             WriteOperation::WriteFile {
@@ -502,9 +368,9 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_sink_special_characters_in_path() {
+    fn test_local_sink_special_characters_in_path() {
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let sink = LocalSink::new(dir.path()).unwrap();
 
         sink.execute(WriteOperation::WriteFile {
             path: PathBuf::from("file with spaces.txt"),
@@ -516,9 +382,9 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_sink_unicode_content() {
+    fn test_local_sink_unicode_content() {
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let sink = LocalSink::new(dir.path()).unwrap();
 
         let unicode_data = "Hello 世界 🌍".as_bytes().to_vec();
         sink.execute(WriteOperation::WriteFile {
@@ -534,7 +400,7 @@ mod tests {
     #[test]
     fn test_encode_and_write_video_empty_frames() {
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let sink = LocalSink::new(dir.path()).unwrap();
 
         // Test with empty frames vector
         let result = sink.encode_and_write_video(
@@ -550,7 +416,7 @@ mod tests {
     #[test]
     fn test_encode_and_write_video_zero_dimension_frames() {
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let sink = LocalSink::new(dir.path()).unwrap();
 
         // Create frame with zero dimensions
         let frames = vec![ImageData::new_rgb(0, 0, vec![]).unwrap_or_else(|_| {
@@ -574,7 +440,7 @@ mod tests {
     #[test]
     fn test_encode_and_write_video_with_valid_rgb_frame() {
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let sink = LocalSink::new(dir.path()).unwrap();
 
         // Create a valid RGB frame (64x48 = small but valid)
         let width = 64u32;
@@ -582,50 +448,25 @@ mod tests {
         let rgb_data = vec![128u8; (width * height * 3) as usize];
         let frame = ImageData::new_rgb(width, height, rgb_data).unwrap();
 
-        let output_path = dir.path().join("output.mp4");
+        let output_path = std::path::PathBuf::from("output.mp4");
         let result =
             sink.encode_and_write_video(&[frame], &output_path, &VideoEncoderConfig::default());
 
         assert!(result.is_ok());
         // Video file should be created
-        assert!(output_path.exists());
+        assert!(dir.path().join("output.mp4").exists());
     }
 
     #[test]
-    fn test_upload_dir_recursive_creates_nested_structure() {
-        let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
-
-        // Create nested directory structure
-        let dataset_dir = dir.path().join("dataset");
-        std::fs::create_dir(&dataset_dir).unwrap();
-        std::fs::create_dir(dataset_dir.join("episode_000")).unwrap();
-        std::fs::create_dir(dataset_dir.join("episode_000/videos")).unwrap();
-        std::fs::write(dataset_dir.join("episode_000/data.parquet"), "data").unwrap();
-        std::fs::write(dataset_dir.join("episode_000/videos/cam.mp4"), "video").unwrap();
-
-        // Upload dataset
-        sink.execute(WriteOperation::UploadDataset {
-            local_path: dataset_dir.clone(),
-            cloud_prefix: dir.path().join("cloud").to_string_lossy().to_string(),
-            stats: DatasetStats::default(),
-        })
-        .unwrap();
-
-        // Verify upload (for local storage, it's a no-op but should not error)
-        assert!(dataset_dir.exists());
-    }
-
-    #[test]
-    fn test_new_local_creates_directory() {
+    fn test_new_creates_directory() {
         let dir = tempdir().unwrap();
         let subdir = dir.path().join("nested/subdir");
 
         // Directory doesn't exist yet
         assert!(!subdir.exists());
 
-        // Creating StorageSink should create the directory
-        let sink = StorageSink::new_local(&subdir);
+        // Creating LocalSink should create the directory
+        let sink = LocalSink::new(&subdir);
         assert!(sink.is_ok());
         assert!(subdir.exists());
     }
@@ -633,7 +474,7 @@ mod tests {
     #[test]
     fn test_write_metadata_with_complex_json() {
         let dir = tempdir().unwrap();
-        let sink = StorageSink::new_local(dir.path()).unwrap();
+        let sink = LocalSink::new(dir.path()).unwrap();
 
         let metadata = serde_json::json!({
             "dataset": {

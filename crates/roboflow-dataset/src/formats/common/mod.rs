@@ -25,6 +25,8 @@ pub mod operation;
 pub mod parquet_base;
 pub mod progress;
 pub mod ring_buffer;
+
+// Internal modules for upload coordination (used by executor, not public API)
 pub mod streaming_uploader;
 pub mod upload_coordinator;
 pub mod video;
@@ -92,9 +94,10 @@ pub use concurrent_video_encoder::{
     ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder,
 };
 
-// Re-export upload coordinator trait
+// Re-export upload coordinator trait (internal - for executor use)
 pub use upload_coordinator::{UploadCoordinator, UploadProgress};
 
-pub use operation::{Sink, VecSink, WriteOperation};
+// Re-export DatasetStats for return values, but keep WriteOperation/Sink/VecSink internal
+pub use operation::DatasetStats;
 
 pub use message_utils::{extract_image_bytes, extract_u32, is_camera_info_topic};

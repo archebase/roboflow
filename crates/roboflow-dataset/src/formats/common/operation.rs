@@ -31,6 +31,8 @@ pub struct DatasetStats {
 /// - Testable writers (no storage dependency)
 /// - Reusable storage logic across formats
 /// - Clear boundaries between processing and I/O
+///
+/// Note: Upload operations are handled by the executor, not the dataset crate.
 #[derive(Debug, Clone)]
 pub enum WriteOperation {
     /// Write raw bytes to a file
@@ -68,21 +70,6 @@ pub enum WriteOperation {
         /// Destination path
         destination: PathBuf,
     },
-
-    /// Upload a complete local dataset to cloud storage.
-    ///
-    /// Used in the staging pattern where:
-    /// 1. Writer produces local dataset in temp directory
-    /// 2. Sink uploads from local temp to cloud storage
-    /// 3. Sink reports completion stats back to executor/TiKV
-    UploadDataset {
-        /// Local source directory containing complete dataset
-        local_path: PathBuf,
-        /// Cloud destination prefix (e.g., "s3://bucket/prefix/")
-        cloud_prefix: String,
-        /// Dataset statistics for reporting
-        stats: DatasetStats,
-    },
 }
 
 impl WriteOperation {
@@ -94,7 +81,6 @@ impl WriteOperation {
             WriteOperation::EncodeAndWriteVideo { output_path, .. } => output_path,
             WriteOperation::WriteMetadata { path, .. } => path,
             WriteOperation::ComposeFiles { destination, .. } => destination,
-            WriteOperation::UploadDataset { local_path, .. } => local_path,
         }
     }
 
@@ -106,7 +92,6 @@ impl WriteOperation {
             WriteOperation::EncodeAndWriteVideo { .. } => "EncodeAndWriteVideo",
             WriteOperation::WriteMetadata { .. } => "WriteMetadata",
             WriteOperation::ComposeFiles { .. } => "ComposeFiles",
-            WriteOperation::UploadDataset { .. } => "UploadDataset",
         }
     }
 }
@@ -253,18 +238,6 @@ mod tests {
 
         assert_eq!(op.target_path(), &PathBuf::from("merged.mp4"));
         assert_eq!(op.operation_type(), "ComposeFiles");
-    }
-
-    #[test]
-    fn test_upload_dataset_operation() {
-        let op = WriteOperation::UploadDataset {
-            local_path: PathBuf::from("/tmp/dataset"),
-            cloud_prefix: "s3://bucket/dataset".to_string(),
-            stats: DatasetStats::default(),
-        };
-
-        assert_eq!(op.target_path(), &PathBuf::from("/tmp/dataset"));
-        assert_eq!(op.operation_type(), "UploadDataset");
     }
 
     #[test]
@@ -418,20 +391,14 @@ mod tests {
                 sources: vec![],
                 destination: PathBuf::from("e"),
             },
-            WriteOperation::UploadDataset {
-                local_path: PathBuf::from("f"),
-                cloud_prefix: "s3".to_string(),
-                stats: DatasetStats::default(),
-            },
         ];
 
         let types: Vec<_> = operations.iter().map(|op| op.operation_type()).collect();
-        assert_eq!(types.len(), 6);
+        assert_eq!(types.len(), 5);
         assert!(types.contains(&"WriteFile"));
         assert!(types.contains(&"WriteParquet"));
         assert!(types.contains(&"EncodeAndWriteVideo"));
         assert!(types.contains(&"WriteMetadata"));
         assert!(types.contains(&"ComposeFiles"));
-        assert!(types.contains(&"UploadDataset"));
     }
 }
