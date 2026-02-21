@@ -601,9 +601,9 @@ impl RsmpegMp4Encoder {
             .dimensions()
             .ok_or_else(|| VideoEncoderError::InvalidFrameData("Invalid frame data".to_string()))?;
 
-        // Detect best codec (hardware or software)
-        let (codec_name, pixel_format) = codec::detect_best_codec();
-        let pixel_format_enum = resolve_pixel_format(pixel_format);
+        // Use configured codec (respects user settings, not hardware detection)
+        let codec_name = &self.config.codec;
+        let pixel_format_enum = resolve_pixel_format(&self.config.pixel_format);
 
         tracing::info!(
             codec = %codec_name,
