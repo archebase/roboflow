@@ -28,9 +28,7 @@ use super::{
 #[cfg(target_os = "linux")]
 #[derive(Debug)]
 pub struct GpuImageDecoder {
-    device_id: u32,
     memory_strategy: MemoryStrategy,
-    cuda_available: bool,
 }
 
 #[cfg(target_os = "linux")]
@@ -38,16 +36,8 @@ impl GpuImageDecoder {
     /// Try to create a new nvJPEG decoder.
     ///
     /// Returns error if CUDA device is not available or initialization fails.
-    pub fn try_new(device_id: u32, memory_strategy: MemoryStrategy) -> Result<Self> {
-        // CUDA pinned memory feature has been removed
-        // GPU decoding is not available without the feature
-        let cuda_available = false;
-
-        Ok(Self {
-            device_id,
-            memory_strategy,
-            cuda_available,
-        })
+    pub fn try_new(_device_id: u32, memory_strategy: MemoryStrategy) -> Result<Self> {
+        Ok(Self { memory_strategy })
     }
 
     /// Check if nvJPEG is available.
