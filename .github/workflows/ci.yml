@@ -125,10 +125,47 @@ jobs:
         include:
           - os: ubuntu-24.04
             triplet: x64-linux
+            tikv: true
           - os: macos-latest
             triplet: arm64-osx
+            tikv: false
     env:
       RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C linker=cc' || '' }}
+      TIKV_PD_ENDPOINTS: ${{ matrix.tikv && 'pd:2379' || '' }}
+    # Services only supported on Linux
+    services:
+      pd:
+        image: pingcap/pd:v8.5.5
+        options: >-
+          --name=pd
+          --hostname=pd
+        ports:
+          - 2379:2379
+        env:
+          # PD startup command
+          PD_NAME: pd1
+          PD_DATA_DIR: /data
+          PD_CLIENT_URLS: http://0.0.0.0:2379
+          PD_PEER_URLS: http://0.0.0.0:2380
+          PD_ADVERTISE_CLIENT_URLS: http://pd:2379
+          PD_ADVERTISE_PEER_URLS: http://pd:2380
+          PD_INITIAL_CLUSTER: pd1=http://pd:2380
+        if: ${{ matrix.tikv }}
+
+      tikv:
+        image: pingcap/tikv:v8.5.5
+        options: >-
+          --name=tikv
+          --hostname=tikv
+        ports:
+          - 20160:20160
+        env:
+          TIKV_ADDR: 0.0.0.0:20160
+          TIKV_ADVERTISE_ADDR: tikv:20160
+          TIKV_DATA_DIR: /data
+          TIKV_PD: http://pd:2379
+          TIKV_STATUS_ADDR: 0.0.0.0:20180
+        if: ${{ matrix.tikv }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -151,6 +188,27 @@ jobs:
         run: |
           brew install hdf5@1.10 nasm ffmpeg
           echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
+
+      - name: Wait for TiKV to be ready
+        if: ${{ matrix.tikv }}
+        run: |
+          echo "Waiting for TiKV cluster to be ready..."
+          for i in {1..30}; do
+            if curl -sf http://localhost:2379/health > /dev/null 2>&1; then
+              echo "PD is healthy"
+              break
+            fi
+            echo "Waiting for PD... ($i/30)"
+            sleep 2
+          done
+          for i in {1..30}; do
+            if curl -sf http://localhost:20180/status > /dev/null 2>&1; then
+              echo "TiKV is healthy"
+              break
+            fi
+            echo "Waiting for TiKV... ($i/30)"
+            sleep 2
+          done
 
       - name: Cache vcpkg
         if: runner.os == 'Linux'
@@ -198,6 +256,37 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       RUSTFLAGS: -C linker=cc
+      TIKV_PD_ENDPOINTS: pd:2379
+    services:
+      pd:
+        image: pingcap/pd:v8.5.5
+        options: >-
+          --name=pd
+          --hostname=pd
+        ports:
+          - 2379:2379
+        env:
+          PD_NAME: pd1
+          PD_DATA_DIR: /data
+          PD_CLIENT_URLS: http://0.0.0.0:2379
+          PD_PEER_URLS: http://0.0.0.0:2380
+          PD_ADVERTISE_CLIENT_URLS: http://pd:2379
+          PD_ADVERTISE_PEER_URLS: http://pd:2380
+          PD_INITIAL_CLUSTER: pd1=http://pd:2380
+
+      tikv:
+        image: pingcap/tikv:v8.5.5
+        options: >-
+          --name=tikv
+          --hostname=tikv
+        ports:
+          - 20160:20160
+        env:
+          TIKV_ADDR: 0.0.0.0:20160
+          TIKV_ADVERTISE_ADDR: tikv:20160
+          TIKV_DATA_DIR: /data
+          TIKV_PD: http://pd:2379
+          TIKV_STATUS_ADDR: 0.0.0.0:20180
     steps:
       - uses: actions/checkout@v4
         with:
@@ -227,6 +316,26 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm
+
+      - name: Wait for TiKV to be ready
+        run: |
+          echo "Waiting for TiKV cluster to be ready..."
+          for i in {1..30}; do
+            if curl -sf http://localhost:2379/health > /dev/null 2>&1; then
+              echo "PD is healthy"
+              break
+            fi
+            echo "Waiting for PD... ($i/30)"
+            sleep 2
+          done
+          for i in {1..30}; do
+            if curl -sf http://localhost:20180/status > /dev/null 2>&1; then
+              echo "TiKV is healthy"
+              break
+            fi
+            echo "Waiting for TiKV... ($i/30)"
+            sleep 2
+          done
 
       - name: Cache vcpkg
         uses: actions/cache@v4
