@@ -38,7 +38,7 @@ use roboflow_dataset::sources::{SourceConfig, create_source};
 
 use roboflow_dataset::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
 
-use roboflow_dataset::formats::unified_executor::{
+use roboflow_dataset::formats::dataset_executor::{
     DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats, SequentialPolicy,
 };
 use roboflow_dataset::formats::{

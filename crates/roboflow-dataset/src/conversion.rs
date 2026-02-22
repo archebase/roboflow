@@ -33,10 +33,10 @@ use std::path::{Path, PathBuf};
 
 use roboflow_core::{Result, RoboflowError};
 
-use crate::formats::lerobot::LerobotWriter;
-use crate::formats::unified_executor::{
+use crate::formats::dataset_executor::{
     DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats, SequentialPolicy,
 };
+use crate::formats::lerobot::LerobotWriter;
 use crate::sources::{SourceConfig, create_source, register_builtin_sources};
 
 /// Configuration for file conversion.

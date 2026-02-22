@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use roboflow::{LerobotConfig, LerobotWriter};
-use roboflow_dataset::formats::unified_executor::{
+use roboflow_dataset::formats::dataset_executor::{
     DatasetPipelineConfig, DatasetPipelineExecutor, SequentialPolicy,
 };
 

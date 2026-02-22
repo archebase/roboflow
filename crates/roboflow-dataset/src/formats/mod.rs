@@ -1,8 +1,8 @@
 pub mod alignment;
 pub mod common;
 pub mod config;
+pub mod dataset_executor;
 pub mod lerobot;
-pub mod unified_executor;
 
 // Format modules - always available (stubs for future formats)
 pub mod hdf5;
@@ -12,12 +12,12 @@ pub mod zarr;
 pub use common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats};
 pub use config::{OutputConfig, OutputFormat};
 // Re-export image types from media module for backward compatibility
+pub use dataset_executor::{
+    DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats, EpisodeStrategy,
+};
 pub use roboflow_media::image::{
     DecodedImage, ImageDecoderBackend, ImageDecoderConfig, ImageDecoderFactory, ImageError,
     ImageFormat, decode_compressed_image,
-};
-pub use unified_executor::{
-    DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats, EpisodeStrategy,
 };
 
 use roboflow_core::Result;

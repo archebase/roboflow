@@ -13,7 +13,7 @@ use roboflow::{
     DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig as DatasetConfig,
     LerobotWriter, LerobotWriterTrait, VideoConfig,
 };
-use roboflow_dataset::formats::unified_executor::{
+use roboflow_dataset::formats::dataset_executor::{
     DatasetPipelineConfig, DatasetPipelineExecutor, SequentialPolicy,
 };
 use roboflow_dataset::{ImageData, common::AlignedFrame};
