@@ -667,7 +667,8 @@ fn test_two_bags_to_lerobot_two_episodes() {
         // Create a new writer for each episode
         let writer = LerobotWriter::new_local(output_path, config.clone())
             .expect("Failed to create LeRobot writer");
-        let mut executor = DatasetPipelineExecutor::new(writer, pipeline_config.clone(), SequentialPolicy);
+        let mut executor =
+            DatasetPipelineExecutor::new(writer, pipeline_config.clone(), SequentialPolicy);
 
         let frame_count = rt.block_on(async {
             let mut count = 0usize;

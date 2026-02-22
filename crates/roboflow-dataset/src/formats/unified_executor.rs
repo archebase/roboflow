@@ -47,7 +47,7 @@ use tracing::{debug, info, trace, warn};
 
 use crate::core::traits::{AlignedFrame, FormatWriter};
 use crate::formats::alignment::config::StreamingConfig;
-use crate::formats::common::{extract_image_bytes, extract_u32, ImageData};
+use crate::formats::common::{ImageData, extract_image_bytes, extract_u32};
 
 /// Re-export execution policy types from roboflow_executor.
 pub use roboflow_executor::{ExecutionPolicy, ParallelPolicy, SequentialPolicy};
@@ -472,7 +472,8 @@ impl<W: FormatWriter, P: ExecutionPolicy> DatasetPipelineExecutor<W, P> {
                     }),
                     extract_image_bytes(map),
                 ) {
-                    let detected_format = roboflow_media::image::ImageFormat::from_magic_bytes(&image_bytes);
+                    let detected_format =
+                        roboflow_media::image::ImageFormat::from_magic_bytes(&image_bytes);
                     let (width, height) = detected_format
                         .extract_dimensions(&image_bytes)
                         .unwrap_or((0, 0));
@@ -495,7 +496,10 @@ impl<W: FormatWriter, P: ExecutionPolicy> DatasetPipelineExecutor<W, P> {
                         ImageData::encoded(width, height, image_bytes)
                     } else {
                         ImageData::new_rgb(width, height, image_bytes).map_err(|e| {
-                            roboflow_core::RoboflowError::other(format!("Invalid image data: {}", e))
+                            roboflow_core::RoboflowError::other(format!(
+                                "Invalid image data: {}",
+                                e
+                            ))
                         })?
                     };
                     frame.add_image(feature_name, image_data);

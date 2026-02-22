@@ -16,9 +16,7 @@ use roboflow_dataset::formats::lerobot::{
     StreamingConfig as LerobotStreamingConfig, VideoConfig, config::DatasetBaseConfig,
     config::DatasetConfig,
 };
-use roboflow_dataset::formats::unified_executor::{
-    DatasetPipelineConfig, DatasetPipelineExecutor,
-};
+use roboflow_dataset::formats::unified_executor::{DatasetPipelineConfig, DatasetPipelineExecutor};
 use roboflow_dataset::sources::SourceConfig;
 
 fn create_lerobot_config() -> LerobotConfig {

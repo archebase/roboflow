@@ -312,8 +312,8 @@ impl ConvertBuilder {
             .map(|m| (m.topic.clone(), m.feature.clone()))
             .collect();
 
-        let mut pipeline_config = DatasetPipelineConfig::with_fps(config.dataset.fps)
-            .with_topic_mappings(topic_mappings);
+        let mut pipeline_config =
+            DatasetPipelineConfig::with_fps(config.dataset.fps).with_topic_mappings(topic_mappings);
 
         if let Some(max) = self.max_frames {
             pipeline_config = pipeline_config.with_max_frames(max);

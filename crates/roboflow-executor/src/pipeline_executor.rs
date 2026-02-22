@@ -262,9 +262,8 @@ impl<P: ExecutionPolicy, T: FrameTransformer> PipelineExecutor<P, T> {
         }
 
         // Transform frames using the policy (can be parallel)
-        let transformed: Vec<(FrameForProcessing, Result<Vec<u8>>)> = self
-            .policy
-            .execute_batch(frames, |frame| {
+        let transformed: Vec<(FrameForProcessing, Result<Vec<u8>>)> =
+            self.policy.execute_batch(frames, |frame| {
                 let transformed_data = self.transformer.transform(&frame);
                 (frame, transformed_data)
             });
@@ -423,7 +422,8 @@ mod tests {
     fn test_pipeline_executor_sequential() {
         let processor = Box::new(TestProcessor::new());
         let config = PipelineExecutorConfig::with_fps(30);
-        let mut executor = PipelineExecutor::new(processor, config, crate::policy::SequentialPolicy);
+        let mut executor =
+            PipelineExecutor::new(processor, config, crate::policy::SequentialPolicy);
 
         let frames = vec![
             FrameForProcessing {
@@ -451,11 +451,8 @@ mod tests {
     fn test_pipeline_executor_parallel() {
         let processor = Box::new(TestProcessor::new());
         let config = PipelineExecutorConfig::with_fps(30);
-        let mut executor = PipelineExecutor::new(
-            processor,
-            config,
-            crate::policy::ParallelPolicy::new(2),
-        );
+        let mut executor =
+            PipelineExecutor::new(processor, config, crate::policy::ParallelPolicy::new(2));
 
         let frames: Vec<FrameForProcessing> = (0..10)
             .map(|i| FrameForProcessing {
@@ -477,7 +474,8 @@ mod tests {
     fn test_pipeline_executor_episode_management() {
         let processor = Box::new(TestProcessor::new());
         let config = PipelineExecutorConfig::default();
-        let mut executor = PipelineExecutor::new(processor, config, crate::policy::SequentialPolicy);
+        let mut executor =
+            PipelineExecutor::new(processor, config, crate::policy::SequentialPolicy);
 
         executor.start_episode(0).unwrap();
         executor.start_episode(1).unwrap();

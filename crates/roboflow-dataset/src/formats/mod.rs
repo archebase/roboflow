@@ -20,12 +20,12 @@ pub use parallel_pipeline::{ParallelPipelineExecutor, ParallelPipelineStats};
 #[allow(deprecated)]
 pub use pipeline::{PipelineConfig, PipelineExecutor, PipelineStats};
 // Re-export new unified executor types
-pub use unified_executor::{
-    DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats, EpisodeStrategy,
-};
 pub use roboflow_media::image::{
     DecodedImage, ImageDecoderBackend, ImageDecoderConfig, ImageDecoderFactory, ImageError,
     ImageFormat, decode_compressed_image,
+};
+pub use unified_executor::{
+    DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats, EpisodeStrategy,
 };
 
 use roboflow_core::Result;

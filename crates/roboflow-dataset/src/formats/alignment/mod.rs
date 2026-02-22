@@ -143,7 +143,11 @@ impl FrameAligner {
     }
 
     /// Add a single topic mapping.
-    pub fn with_topic_mapping(mut self, topic: impl Into<String>, feature: impl Into<String>) -> Self {
+    pub fn with_topic_mapping(
+        mut self,
+        topic: impl Into<String>,
+        feature: impl Into<String>,
+    ) -> Self {
         self.topic_mappings.insert(topic.into(), feature.into());
         self
     }
@@ -318,8 +322,11 @@ mod tests {
         assert_eq!(feature, "camera.image_raw");
 
         // Test with custom mapping
-        let aligner = FrameAligner::new(StreamingConfig::with_fps(30), Box::new(PassthroughProcessor::new()))
-            .with_topic_mapping("/camera/image_raw", "observation.images.cam_0");
+        let aligner = FrameAligner::new(
+            StreamingConfig::with_fps(30),
+            Box::new(PassthroughProcessor::new()),
+        )
+        .with_topic_mapping("/camera/image_raw", "observation.images.cam_0");
 
         let feature = aligner.get_feature_name("/camera/image_raw");
         assert_eq!(feature, "observation.images.cam_0");
