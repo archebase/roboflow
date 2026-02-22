@@ -2,11 +2,36 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
+#![deprecated(
+    since = "0.2.0",
+    note = "Use PipelineExecutor from roboflow_executor with ExecutionPolicy instead"
+)]
+#![allow(deprecated)]
+
 //! Parallel pipeline executor for high-throughput dataset writing.
+//!
+//! **DEPRECATED**: Use [`PipelineExecutor`] from `roboflow_executor` crate with
+//! an [`ExecutionPolicy`] instead. The unified executor supports both sequential
+//! and parallel execution through the policy pattern.
 //!
 //! This module provides a multi-threaded version of [`PipelineExecutor`] that uses
 //! rayon for parallel frame processing, significantly improving throughput on
 //! multi-core systems.
+//!
+//! # Migration Guide
+//!
+//! Replace:
+//! ```rust,ignore
+//! use roboflow_dataset::formats::ParallelPipelineExecutor;
+//! let executor = ParallelPipelineExecutor::new(writer, config)?;
+//! ```
+//!
+//! With:
+//! ```rust,ignore
+//! use roboflow_executor::{PipelineExecutor as UnifiedExecutor, ParallelPolicy};
+//! let policy = ParallelPolicy::new(num_cpus::get());
+//! let executor = UnifiedExecutor::new(processor, config, policy);
+//! ```
 //!
 //! # Architecture
 //!
@@ -21,6 +46,9 @@
 //!
 //! On multi-core systems, this executor can achieve 3-5x higher throughput
 //! compared to the single-threaded [`PipelineExecutor`].
+//!
+//! [`PipelineExecutor`]: crate::formats::pipeline::PipelineExecutor
+//! [`ExecutionPolicy`]: roboflow_executor::ExecutionPolicy
 
 use std::collections::HashMap;
 use std::time::Instant;

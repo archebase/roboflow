@@ -2,17 +2,23 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
+//! Benchmark example for large bag file conversion.
+//!
+//! Uses the new `DatasetPipelineExecutor` with parallel execution for
+//! maximum throughput on multi-core systems.
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
-use roboflow_dataset::formats::alignment::StreamingConfig;
 use roboflow_dataset::formats::lerobot::{
     FlushingConfig, LerobotConfig, LerobotWriter, Mapping, MappingType,
     StreamingConfig as LerobotStreamingConfig, VideoConfig, config::DatasetBaseConfig,
     config::DatasetConfig,
 };
-use roboflow_dataset::formats::{ParallelPipelineExecutor, PipelineConfig};
+use roboflow_dataset::formats::unified_executor::{
+    DatasetPipelineConfig, DatasetPipelineExecutor,
+};
 use roboflow_dataset::sources::SourceConfig;
 
 fn create_lerobot_config() -> LerobotConfig {
@@ -95,12 +101,16 @@ fn benchmark_bag_conversion(
         .map(|m| (m.topic.clone(), m.feature.clone()))
         .collect();
 
-    let pipeline_streaming = StreamingConfig::with_fps(config.dataset.base.fps);
-    let pipeline_config =
-        PipelineConfig::new(pipeline_streaming).with_topic_mappings(topic_mappings);
+    let pipeline_config = DatasetPipelineConfig::with_fps(config.dataset.base.fps)
+        .with_topic_mappings(topic_mappings);
 
     let writer = LerobotWriter::new_local(output_path, config.clone())?;
-    let mut executor = ParallelPipelineExecutor::new(writer, pipeline_config)?;
+
+    // Use parallel executor for maximum throughput
+    let num_threads = std::thread::available_parallelism()
+        .map(|p| p.get())
+        .unwrap_or(4);
+    let mut executor = DatasetPipelineExecutor::parallel(writer, pipeline_config, num_threads);
 
     let source_config = SourceConfig::bag(bag_path);
     let mut source = roboflow_dataset::sources::create_source(&source_config)?;
@@ -146,7 +156,7 @@ fn benchmark_bag_conversion(
     );
 
     let processing_start = Instant::now();
-    executor.process_messages_parallel(all_messages)?;
+    executor.process_messages(all_messages)?;
     let processing_time = processing_start.elapsed();
 
     let stats = executor.finalize()?;
@@ -165,7 +175,7 @@ fn benchmark_bag_conversion(
         total_time.as_secs_f64()
     );
     println!("Throughput: {:.1} fps", stats.fps);
-    println!("Parallel speedup: {:.1}x", stats.parallel_speedup);
+    println!("Policy: {}", stats.policy_name);
 
     // Calculate total output size (recursively)
     fn calculate_dir_size(path: &std::path::Path) -> u64 {

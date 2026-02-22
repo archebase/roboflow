@@ -2,6 +2,12 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
+#![deprecated(
+    since = "0.2.0",
+    note = "Use PipelineExecutor from roboflow_executor with ExecutionPolicy instead"
+)]
+#![allow(deprecated)]
+
 //! Unified pipeline executor for dataset writing.
 //!
 //! This module provides a streamlined pipeline orchestration that works

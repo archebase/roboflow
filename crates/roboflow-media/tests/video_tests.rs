@@ -17,12 +17,6 @@ fn create_test_rgb_image(width: u32, height: u32, value: u8) -> Vec<u8> {
     vec![value; width as usize * height as usize * 3]
 }
 
-/// Helper to create test ImageData.
-fn create_test_image_data(width: u32, height: u32, value: u8) -> ImageData {
-    let data = create_test_rgb_image(width, height, value);
-    ImageData::new(width, height, data)
-}
-
 // =============================================================================
 // VideoEncoder Tests (Simple API)
 // =============================================================================

@@ -3,11 +3,16 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 
 //! Convert stage for processing bag files to LeRobot format.
+//!
+//! This stage processes input files and converts them to the
+//! LeRobot v2.1 dataset format (Parquet + MP4 videos).
 
 use roboflow_core::Result;
 use roboflow_dataset::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
+use roboflow_dataset::formats::unified_executor::{
+    DatasetPipelineConfig, DatasetPipelineExecutor,
+};
 use roboflow_dataset::formats::{
-    ParallelPipelineExecutor, PipelineConfig,
     common::DatasetBaseConfig,
     lerobot::{DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig},
 };
@@ -158,27 +163,22 @@ impl Task for ConvertTask {
 
         let writer = writer_result.writer;
 
-        // Create pipeline config using the streaming config from lerobot_config
-        let streaming_config =
-            roboflow_dataset::formats::alignment::config::StreamingConfig::with_fps(
-                lerobot_config.dataset.base.fps,
-            );
-        let pipeline_config = PipelineConfig::new(streaming_config);
+        // Create pipeline config
+        let pipeline_config = DatasetPipelineConfig::with_fps(lerobot_config.dataset.base.fps);
 
         // Create parallel pipeline executor for maximum throughput
-        let mut executor = ParallelPipelineExecutor::new(writer, pipeline_config).map_err(|e| {
-            roboflow_core::RoboflowError::other(format!(
-                "Failed to create parallel executor: {}",
-                e
-            ))
-        })?;
+        let num_threads = std::thread::available_parallelism()
+            .map(|p| p.get())
+            .unwrap_or(4);
+        let mut executor = DatasetPipelineExecutor::parallel(writer, pipeline_config, num_threads);
 
-        // Collect all messages from source
-        let mut all_messages = Vec::new();
+        // Process messages in batches
         loop {
             match source.read_batch(100).await {
                 Ok(Some(messages)) => {
-                    all_messages.extend(messages);
+                    executor.process_messages(messages).map_err(|e| {
+                        roboflow_core::RoboflowError::other(format!("Pipeline error: {}", e))
+                    })?;
                 }
                 Ok(None) => break,
                 Err(e) => {
@@ -190,13 +190,6 @@ impl Task for ConvertTask {
             }
         }
 
-        // Process messages in parallel
-        executor
-            .process_messages_parallel(all_messages)
-            .map_err(|e| {
-                roboflow_core::RoboflowError::other(format!("Parallel pipeline error: {}", e))
-            })?;
-
         // Finalize and get stats
         let stats = executor.finalize().map_err(|e| {
             roboflow_core::RoboflowError::other(format!("Pipeline finalize error: {}", e))
@@ -207,6 +200,7 @@ impl Task for ConvertTask {
         tracing::info!(
             frames_written = frames_written,
             episodes_written = episodes_written,
+            policy = stats.policy_name,
             "Conversion complete"
         );
 
@@ -216,7 +210,7 @@ impl Task for ConvertTask {
         Ok(TaskResult {
             outputs: vec![obj_ref],
             metrics: roboflow_executor::task::TaskMetrics {
-                duration_secs: 0.0,
+                duration_secs: stats.duration_sec,
                 cpu_secs: 0.0,
                 memory_peak_bytes: 0,
                 bytes_read: 0,

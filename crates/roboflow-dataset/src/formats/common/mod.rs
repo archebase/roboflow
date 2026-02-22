@@ -20,7 +20,6 @@ pub mod base;
 pub mod config;
 pub mod frame_buffer;
 pub mod message_utils;
-pub mod operation;
 pub mod parquet_base;
 pub mod path_schemes;
 pub mod progress;
@@ -74,8 +73,5 @@ pub use roboflow_media::video::{
 // Re-export unified encoder types from roboflow_media
 pub use roboflow_media::video::OutputConfig as VideoOutputConfig;
 pub use roboflow_media::video::{EncodingResult, VideoEncoder};
-
-// Re-export DatasetStats for return values, but keep WriteOperation/Sink/VecSink internal
-pub use operation::DatasetStats;
 
 pub use message_utils::{extract_image_bytes, extract_u32, is_camera_info_topic};

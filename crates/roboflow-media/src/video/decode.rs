@@ -1199,11 +1199,11 @@ mod tests {
 
         let result = pool.recv().expect("recv");
         // The result should be ok (even if decoding might fail, it shouldn't crash)
-        if result.result.is_ok() {
-            if let Some(frame) = result.result.unwrap() {
-                assert_eq!(frame.width(), 8);
-                assert_eq!(frame.height(), 8);
-            }
+        if result.result.is_ok()
+            && let Some(frame) = result.result.unwrap()
+        {
+            assert_eq!(frame.width(), 8);
+            assert_eq!(frame.height(), 8);
         }
 
         pool.shutdown();

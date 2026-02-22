@@ -9,6 +9,7 @@
 //! - **Task**: Atomic work unit (like Ray tasks)
 //! - **Pipeline**: DAG of stages
 //! - **Executor**: Stage-aware scheduler with slot-based resource management
+//! - **Policy**: Execution strategy (sequential or parallel)
 //!
 //! # Architecture
 //!
@@ -26,12 +27,30 @@
 //! │  └─────────────┘  └─────────────┘  └─────────────┘             │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
+//!
+//! # Execution Policies
+//!
+//! The [`policy`] module provides execution policies for batch processing:
+//!
+//! ```rust,ignore
+//! use roboflow_executor::policy::{ExecutionPolicy, SequentialPolicy, ParallelPolicy};
+//!
+//! // Sequential execution
+//! let seq_policy = SequentialPolicy;
+//! let results = seq_policy.execute_batch(items, |x| process(x));
+//!
+//! // Parallel execution
+//! let par_policy = ParallelPolicy::new(4);
+//! let results = par_policy.execute_batch(items, |x| process(x));
+//! ```
 
 pub mod executor;
 pub mod format;
 pub mod lineage;
 pub mod object_store;
 pub mod pipeline;
+pub mod pipeline_executor;
+pub mod policy;
 pub mod resource;
 pub mod scheduler;
 pub mod stage;
@@ -50,6 +69,11 @@ pub use object_store::{
     WorkerId,
 };
 pub use pipeline::{Pipeline, PipelineBuilder, PipelineError};
+pub use pipeline_executor::{
+    EpisodeStrategy, FrameForProcessing, FrameProcessor, PipelineExecutor, PipelineExecutorConfig,
+    PipelineExecutorStats, ProcessedFrameOutput,
+};
+pub use policy::{ExecutionPolicy, ParallelPolicy, SequentialPolicy};
 pub use resource::{
     ResourceCapacity, ResourceRequest, Slot, SlotGuard, SlotId, SlotPool, SlotState,
 };

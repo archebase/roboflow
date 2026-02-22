@@ -71,9 +71,6 @@ pub mod sources;
 // Re-export media types from roboflow-media
 pub use roboflow_media::{image, video};
 
-// Internal module for local file operations
-mod storage_sink;
-
 pub mod testing;
 
 // Re-export format submodules for convenient access
@@ -93,6 +90,7 @@ pub use formats::lerobot::{LerobotWriterConfig, LerobotWriterResult, create_lero
 
 pub use formats::common::{CameraInfo, DatasetFrame, ImageData};
 
+#[allow(deprecated)]
 pub use formats::{DatasetWriter, PipelineConfig, PipelineExecutor, PipelineStats};
 
 pub use formats::lerobot::{

@@ -13,8 +13,10 @@ use roboflow::{
     DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig as DatasetConfig,
     LerobotWriter, LerobotWriterTrait, VideoConfig,
 };
-use roboflow_dataset::formats::alignment::StreamingConfig;
-use roboflow_dataset::{ImageData, PipelineConfig, PipelineExecutor, common::AlignedFrame};
+use roboflow_dataset::formats::unified_executor::{
+    DatasetPipelineConfig, DatasetPipelineExecutor, SequentialPolicy,
+};
+use roboflow_dataset::{ImageData, common::AlignedFrame};
 
 /// Test that ImageData correctly handles compressed vs raw images.
 #[test]
@@ -358,9 +360,8 @@ async fn test_process_bag_with_compressed_images() {
     let writer = LerobotWriter::new_local(output_dir.path(), config.clone())
         .expect("Failed to create writer");
 
-    let streaming_config = StreamingConfig::with_fps(30);
-    let pipeline_config = PipelineConfig::new(streaming_config);
-    let mut executor = PipelineExecutor::new(writer, pipeline_config);
+    let pipeline_config = DatasetPipelineConfig::with_fps(30);
+    let mut executor = DatasetPipelineExecutor::new(writer, pipeline_config, SequentialPolicy);
 
     // Process first 500 messages from the bag
     let source_config = SourceConfig::bag(bag_path);

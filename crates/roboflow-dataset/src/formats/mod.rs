@@ -5,6 +5,7 @@ pub mod lerobot;
 pub mod parallel_pipeline;
 pub mod pipeline;
 pub mod pipeline_common;
+pub mod unified_executor;
 
 // Format modules - always available (stubs for future formats)
 pub mod hdf5;
@@ -14,8 +15,14 @@ pub mod zarr;
 pub use common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats};
 pub use config::{OutputConfig, OutputFormat};
 // Re-export image types from media module for backward compatibility
+#[allow(deprecated)]
 pub use parallel_pipeline::{ParallelPipelineExecutor, ParallelPipelineStats};
+#[allow(deprecated)]
 pub use pipeline::{PipelineConfig, PipelineExecutor, PipelineStats};
+// Re-export new unified executor types
+pub use unified_executor::{
+    DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats, EpisodeStrategy,
+};
 pub use roboflow_media::image::{
     DecodedImage, ImageDecoderBackend, ImageDecoderConfig, ImageDecoderFactory, ImageError,
     ImageFormat, decode_compressed_image,

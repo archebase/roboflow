@@ -1239,7 +1239,7 @@ mod tests {
 
         // Note: This test may pass on systems without restrictive permissions
         // but it exercises the error handling path
-        if restricted_path.parent().map_or(false, |p| !p.exists()) {
+        if restricted_path.parent().is_some_and(|p| !p.exists()) {
             // If the parent doesn't exist, we expect an error
             assert!(result.is_err());
         }

@@ -4219,6 +4219,7 @@ dependencies = [
  "futures",
  "hex",
  "num_cpus",
+ "rayon",
  "roboflow-core",
  "serde",
  "serde_json",
