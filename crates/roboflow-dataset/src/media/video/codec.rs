@@ -52,13 +52,64 @@ impl CodecContext {
     /// 3. Set full color range (JPEG)
     /// 4. Open codec (with libx264 preset)
     /// 5. Create SWScale context for RGB24 → target format
+    ///
+    /// If the requested codec is a hardware encoder and fails to open,
+    /// automatically falls back to libx264 with YUV420P.
     pub fn new(codec_name: &str, pix_fmt: i32, params: &CodecParams) -> Result<Self, String> {
+        match Self::try_create(codec_name, pix_fmt, params, true) {
+            Ok(ctx) => Ok(ctx),
+            Err(err) if is_hardware_codec(codec_name) => {
+                tracing::warn!(
+                    codec = %codec_name,
+                    error = %err,
+                    "Hardware encoder failed, falling back to libx264"
+                );
+                Self::try_create("libx264", ffi::AV_PIX_FMT_YUV420P, params, true)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Create a codec context without SWScale.
+    ///
+    /// Used by encoders that create SWScale lazily (e.g., `PersistentEncoder`).
+    /// Falls back to libx264 if a hardware encoder fails.
+    pub fn new_codec_only(
+        codec_name: &str,
+        pix_fmt: i32,
+        params: &CodecParams,
+    ) -> Result<Self, String> {
+        match Self::try_create(codec_name, pix_fmt, params, false) {
+            Ok(ctx) => Ok(ctx),
+            Err(err) if is_hardware_codec(codec_name) => {
+                tracing::warn!(
+                    codec = %codec_name,
+                    error = %err,
+                    "Hardware encoder failed, falling back to libx264"
+                );
+                Self::try_create("libx264", ffi::AV_PIX_FMT_YUV420P, params, false)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Try to create a codec context with the given parameters.
+    fn try_create(
+        codec_name: &str,
+        pix_fmt: i32,
+        params: &CodecParams,
+        with_sws: bool,
+    ) -> Result<Self, String> {
         let (mut codec_ctx, actual_name, supports_flush) = find_and_create_context(codec_name)?;
         configure_codec_context(&mut codec_ctx, params, pix_fmt);
         set_full_color_range_ctx(&mut codec_ctx);
         open_codec(&mut codec_ctx, codec_name)?;
 
-        let sws_ctx = create_sws_context(params.width as i32, params.height as i32, pix_fmt);
+        let sws_ctx = if with_sws {
+            create_sws_context(params.width as i32, params.height as i32, pix_fmt)
+        } else {
+            None
+        };
 
         Ok(Self {
             codec_ctx,
@@ -68,28 +119,14 @@ impl CodecContext {
             supports_flush,
         })
     }
+}
 
-    /// Create a codec context without SWScale.
-    ///
-    /// Used by encoders that create SWScale lazily (e.g., `PersistentEncoder`).
-    pub fn new_codec_only(
-        codec_name: &str,
-        pix_fmt: i32,
-        params: &CodecParams,
-    ) -> Result<Self, String> {
-        let (mut codec_ctx, actual_name, supports_flush) = find_and_create_context(codec_name)?;
-        configure_codec_context(&mut codec_ctx, params, pix_fmt);
-        set_full_color_range_ctx(&mut codec_ctx);
-        open_codec(&mut codec_ctx, codec_name)?;
-
-        Ok(Self {
-            codec_ctx,
-            sws_ctx: None,
-            pixel_format: pix_fmt,
-            codec_name: actual_name,
-            supports_flush,
-        })
-    }
+/// Check if a codec name refers to a hardware encoder.
+fn is_hardware_codec(name: &str) -> bool {
+    name.contains("nvenc")
+        || name.contains("videotoolbox")
+        || name.contains("qsv")
+        || name.contains("vaapi")
 }
 
 // =============================================================================

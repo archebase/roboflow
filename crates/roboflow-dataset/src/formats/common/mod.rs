@@ -14,20 +14,16 @@
 //! - [`ImageData`], [`AudioData`] - Shared multimedia types
 //! - [`WriterStats`] - Common statistics structure
 //! - [`ProgressSender`] - Channel-based progress reporting
+//! - [`LeRobotVideoPathScheme`], [`RldsVideoPathScheme`], [`FlatVideoPathScheme`] - Video path schemes
 
 pub mod base;
-pub mod camera_streaming_pipeline;
-pub mod concurrent_video_encoder;
 pub mod config;
-pub mod image_decode;
 pub mod message_utils;
 pub mod operation;
 pub mod parquet_base;
+pub mod path_schemes;
 pub mod progress;
 pub mod ring_buffer;
-pub mod streaming_uploader;
-pub mod upload_coordinator;
-pub mod video;
 
 // Re-export core types (shared across all formats)
 pub use base::{
@@ -41,60 +37,39 @@ pub use config::{DatasetBaseConfig, Mapping, MappingType};
 // Re-export parquet utilities
 pub use parquet_base::{FeatureStats, ParquetWriterBase, calculate_stats};
 
+// Re-export path schemes for video organization
+pub use path_schemes::{FlatVideoPathScheme, LeRobotVideoPathScheme, RldsVideoPathScheme};
+// Re-export the VideoPathScheme trait from core for convenience
+pub use crate::core::VideoPathScheme;
+
 // Re-export progress utilities
 pub use progress::{ProgressReceiver, ProgressSender, ProgressUpdate};
 
 // Re-export image format detection from the image module (canonical location)
 pub use crate::media::image::{ImageFormat, can_passthrough, detect_image_format};
 
-// Re-export image decode utilities
-pub use image_decode::{decode_image_to_rgb, decode_to_rgb};
+// Re-export image decode utilities from media/image (canonical location)
+pub use crate::media::image::{decode_image_to_rgb, decode_to_rgb};
 
 // Re-export ring buffer for streaming frame processing
 pub use ring_buffer::{FrameRingBuffer, RingBufferError, RingBufferSnapshot};
 
-// Re-export video utilities from the video module (which re-exports from roboflow-video)
-#[cfg(target_os = "macos")]
-pub use video::VideoToolboxEncoder;
-pub use video::{
-    DepthEncoderConfig, DepthMkvEncoder, EncoderChoice, Mp4Encoder, NvencEncoder,
-    VideoEncoderConfig, VideoEncoderError, VideoFrame, VideoFrameBuffer, available_encoders,
-    check_nvenc_available, check_videotoolbox_available, is_encoder_available,
-    print_encoder_diagnostics, select_best_encoder,
-};
-
-// Re-export SIMD RGB to YUV conversion from roboflow-video (canonical location)
+// Re-export SIMD RGB to YUV conversion
 pub use crate::media::video::{ConversionStrategy, optimal_strategy, rgb_to_nv12, rgb_to_yuv420p};
 
-// Platform-specific re-exports
-#[cfg(target_os = "macos")]
-pub use video::VideoToolboxEncoder as AppleVideoEncoder;
-
-// Re-export streaming uploader
-pub use streaming_uploader::{
-    StreamingUploader, UploadConfig as StreamingUploadConfig,
-    UploadProgress as StreamingUploadProgress, UploadStats,
-};
-
-// Re-export streaming encoder from roboflow-video (canonical location)
-pub use crate::media::video::streaming::{
-    EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder,
-};
-
-// Re-export camera streaming pipeline
-pub use camera_streaming_pipeline::{
-    CameraStreamingPipeline, StreamingCommand, StreamingPipelineConfig, StreamingPipelineHandle,
-    StreamingPipelineResult, StreamingUploadCommand, spawn_streaming_pipeline,
-};
+// Re-export EncodedChunk (used for streaming output)
+pub use crate::media::video::EncodedChunk;
 
 // Re-export concurrent video encoder
-pub use concurrent_video_encoder::{
+pub use crate::media::video::{
     ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder,
 };
 
-// Re-export upload coordinator trait
-pub use upload_coordinator::{UploadCoordinator, UploadProgress};
+// Re-export unified encoder types
+pub use crate::media::video::OutputConfig as VideoOutputConfig;
+pub use crate::media::video::{EncodingResult, VideoEncoder};
 
-pub use operation::{Sink, VecSink, WriteOperation};
+// Re-export DatasetStats for return values, but keep WriteOperation/Sink/VecSink internal
+pub use operation::DatasetStats;
 
 pub use message_utils::{extract_image_bytes, extract_u32, is_camera_info_topic};

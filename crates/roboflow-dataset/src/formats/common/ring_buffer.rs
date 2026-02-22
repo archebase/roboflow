@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use crate::formats::common::video::VideoFrame;
+use crate::media::video::VideoFrame;
 
 /// Error type for ring buffer operations.
 #[derive(Debug, Clone, PartialEq)]
@@ -195,7 +195,7 @@ impl FrameRingBuffer {
     ///
     /// ```ignore
     /// use roboflow_dataset::formats::common::ring_buffer::FrameRingBuffer;
-    /// use roboflow_dataset::formats::common::video::VideoFrame;
+    /// use roboflow_dataset::media::video::VideoFrame;
     /// use std::time::Duration;
     /// let buffer = FrameRingBuffer::new(128);
     /// let frame = VideoFrame::new(640, 480, vec![0; 640 * 480 * 3]);

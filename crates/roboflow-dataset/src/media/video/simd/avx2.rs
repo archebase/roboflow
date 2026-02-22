@@ -84,54 +84,6 @@ unsafe fn rgb8_to_y_avx2(r: __m256i, g: __m256i, b: __m256i) -> __m256i {
     _mm256_srai_epi16(y_rounded, 8)
 }
 
-/// Convert 8 RGB pixels to 8 U values using AVX2.
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-#[inline]
-unsafe fn rgb8_to_u_avx2(r: __m256i, g: __m256i, b: __m256i) -> __m256i {
-    // U = -0.168736*R - 0.331264*G + 0.5*B + 128
-    let u_r = _mm256_set1_epi16(U_R);
-    let u_g = _mm256_set1_epi16(U_G);
-    let u_b = _mm256_set1_epi16(U_B);
-    let offset = _mm256_set1_epi16(128 * 256); // 128 scaled by 256
-
-    let r_contrib = _mm256_mullo_epi16(r, u_r);
-    let g_contrib = _mm256_mullo_epi16(g, u_g);
-    let b_contrib = _mm256_mullo_epi16(b, u_b);
-
-    let u_sum = _mm256_add_epi16(_mm256_add_epi16(r_contrib, g_contrib), b_contrib);
-    let u_offset = _mm256_add_epi16(u_sum, offset);
-
-    let rounding = _mm256_set1_epi16(128);
-    let u_rounded = _mm256_add_epi16(u_offset, rounding);
-
-    _mm256_srai_epi16(u_rounded, 8)
-}
-
-/// Convert 8 RGB pixels to 8 V values using AVX2.
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-#[inline]
-unsafe fn rgb8_to_v_avx2(r: __m256i, g: __m256i, b: __m256i) -> __m256i {
-    // V = 0.5*R - 0.418688*G - 0.081312*B + 128
-    let v_r = _mm256_set1_epi16(V_R);
-    let v_g = _mm256_set1_epi16(V_G);
-    let v_b = _mm256_set1_epi16(V_B);
-    let offset = _mm256_set1_epi16(128 * 256);
-
-    let r_contrib = _mm256_mullo_epi16(r, v_r);
-    let g_contrib = _mm256_mullo_epi16(g, v_g);
-    let b_contrib = _mm256_mullo_epi16(b, v_b);
-
-    let v_sum = _mm256_add_epi16(_mm256_add_epi16(r_contrib, g_contrib), b_contrib);
-    let v_offset = _mm256_add_epi16(v_sum, offset);
-
-    let rounding = _mm256_set1_epi16(128);
-    let v_rounded = _mm256_add_epi16(v_offset, rounding);
-
-    _mm256_srai_epi16(v_rounded, 8)
-}
-
 /// Pack 16-bit values to 8-bit with clamping.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
@@ -305,13 +257,13 @@ pub unsafe fn rgb_to_nv12_avx2(
 }
 
 /// Check if AVX2 is available at runtime.
-#[cfg(target_arch = "x86_64")]
-pub fn is_avx2_available() -> bool {
+#[cfg(all(test, target_arch = "x86_64"))]
+fn is_avx2_available() -> bool {
     is_x86_feature_detected!("avx2")
 }
 
-#[cfg(not(target_arch = "x86_64"))]
-pub fn is_avx2_available() -> bool {
+#[cfg(all(test, not(target_arch = "x86_64")))]
+fn is_avx2_available() -> bool {
     false
 }
 

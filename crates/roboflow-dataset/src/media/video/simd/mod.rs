@@ -73,7 +73,7 @@ impl ConversionStrategy {
             }
             #[cfg(target_feature = "sse2")]
             {
-                return Self::Sse2;
+                Self::Sse2
             }
             #[cfg(not(target_feature = "sse2"))]
             return Self::Scalar;

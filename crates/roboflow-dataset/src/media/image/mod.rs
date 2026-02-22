@@ -50,6 +50,7 @@
 pub mod apple;
 pub mod backend;
 pub mod config;
+pub mod decode;
 pub mod factory;
 pub mod format;
 pub mod gpu;
@@ -59,6 +60,7 @@ pub mod parallel;
 // Re-export commonly used types
 pub use backend::{DecodedImage, DecoderType, ImageDecoderBackend};
 pub use config::{DecoderBackendType as ImageDecoderBackendType, ImageDecoderConfig};
+pub use decode::{decode_image_to_rgb, decode_to_rgb};
 pub use factory::{DecodeStats, GpuDeviceInfo, ImageDecoderFactory};
 pub use format::{ImageFormat, can_passthrough, detect_image_format, detect_jpeg, detect_png};
 pub use memory::{AlignedImageBuffer, MemoryStrategy};

@@ -327,8 +327,8 @@ impl ResolvedConfig {
     }
 
     /// Create a VideoEncoderConfig from this resolved config.
-    pub fn to_encoder_config(&self, fps: u32) -> crate::formats::common::video::VideoEncoderConfig {
-        crate::formats::common::video::VideoEncoderConfig {
+    pub fn to_encoder_config(&self, fps: u32) -> crate::media::video::VideoEncoderConfig {
+        crate::media::video::VideoEncoderConfig {
             codec: self.codec.clone(),
             pixel_format: self.pixel_format.clone(),
             fps,

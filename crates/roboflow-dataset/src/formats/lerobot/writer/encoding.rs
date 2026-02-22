@@ -9,11 +9,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use crate::formats::common::video::VideoEncoderError;
-use crate::formats::common::video::{VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
 use crate::formats::common::{ImageData, decode_image_to_rgb};
 use crate::formats::lerobot::video_profiles::ResolvedConfig;
-use crate::media::video::RsmpegMp4Encoder;
+use crate::media::video::{OutputConfig, VideoEncoder};
+use crate::media::video::{VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
 use roboflow_core::Result;
 
 /// Encode videos for all cameras.
@@ -117,7 +116,7 @@ fn encode_videos_sequential(
     let mut stats = EncodeStats::default();
     let mut video_files = Vec::new();
 
-    tracing::info!("Using native rsmpeg encoder (in-process FFmpeg)");
+    tracing::info!("Using unified VideoEncoder (in-process FFmpeg)");
 
     for (camera, images) in camera_data {
         let (buffer, skipped) = build_frame_buffer_static(&images)?;
@@ -130,44 +129,59 @@ fn encode_videos_sequential(
 
             let video_path = camera_dir.join(format!("episode_{:06}.mp4", episode_index));
 
-            // Use native rsmpeg encoder
-            match RsmpegMp4Encoder::with_config(encoder_config.clone())
-                .encode_buffer(&buffer, &video_path)
-            {
-                Ok(()) => {
-                    stats.images_encoded += buffer.len();
-                    tracing::info!(
-                        camera = %camera,
-                        frames = buffer.len(),
-                        path = %video_path.display(),
-                        "Encoded MP4 video"
-                    );
-                }
-                Err(VideoEncoderError::FfmpegNotFound) => {
-                    tracing::error!(
-                        "Native FFmpeg encoder failed. Camera '{}' videos will not be available.",
-                        camera
-                    );
-                    return Err(roboflow_core::RoboflowError::unsupported(
-                        "Video encoding requires FFmpeg libraries. Ensure rsmpeg can find libavcodec.",
-                    ));
-                }
-                Err(e) => {
-                    tracing::error!(
-                        camera = %camera,
-                        error = %e,
-                        "Failed to encode video"
-                    );
-                    return Err(roboflow_core::RoboflowError::encode(
-                        "VideoEncoder",
-                        format!("Failed to encode video for camera '{}': {}", camera, e),
-                    ));
-                }
+            // Use unified VideoEncoder
+            let output = OutputConfig::file(&video_path);
+            let mut encoder = VideoEncoder::new(encoder_config.clone(), output).map_err(|e| {
+                tracing::error!(
+                    camera = %camera,
+                    error = %e,
+                    "Failed to create video encoder"
+                );
+                roboflow_core::RoboflowError::encode(
+                    "VideoEncoder",
+                    format!("Failed to create encoder for camera '{}': {}", camera, e),
+                )
+            })?;
+
+            // Encode frames from buffer
+            for frame in &buffer.frames {
+                encoder
+                    .encode_frame(frame.data(), frame.width, frame.height)
+                    .map_err(|e| {
+                        tracing::error!(
+                            camera = %camera,
+                            error = %e,
+                            "Failed to encode frame"
+                        );
+                        roboflow_core::RoboflowError::encode(
+                            "VideoEncoder",
+                            format!("Failed to encode frame for camera '{}': {}", camera, e),
+                        )
+                    })?;
             }
 
-            if let Ok(metadata) = fs::metadata(&video_path) {
-                stats.output_bytes += metadata.len();
-            }
+            let result = encoder.finalize().map_err(|e| {
+                tracing::error!(
+                    camera = %camera,
+                    error = %e,
+                    "Failed to finalize video encoder"
+                );
+                roboflow_core::RoboflowError::encode(
+                    "VideoEncoder",
+                    format!("Failed to finalize encoder for camera '{}': {}", camera, e),
+                )
+            })?;
+
+            stats.images_encoded += buffer.len();
+            tracing::info!(
+                camera = %camera,
+                frames = buffer.len(),
+                path = %video_path.display(),
+                bytes = result.bytes_written,
+                "Encoded MP4 video"
+            );
+
+            stats.output_bytes += result.bytes_written;
 
             if use_cloud_storage {
                 video_files.push((video_path.clone(), camera.clone()));
@@ -206,7 +220,7 @@ fn encode_videos_parallel(
         })?;
     }
 
-    tracing::info!("Using native rsmpeg encoder for parallel encoding");
+    tracing::info!("Using unified VideoEncoder for parallel encoding");
 
     // Shared counters for statistics
     let images_encoded = Arc::new(AtomicUsize::new(0));
@@ -216,73 +230,110 @@ fn encode_videos_parallel(
     let video_files = Arc::new(std::sync::Mutex::new(Vec::new()));
 
     let result: Result<Vec<()>> = pool.install(|| {
-        camera_data.par_iter().map(|(camera, images)| {
-            let (buffer, skipped) = build_frame_buffer_static(images).map_err(|e| {
-                roboflow_core::RoboflowError::encode(
-                    "VideoEncoder",
-                    format!("Failed to build frame buffer for camera '{}': {}", camera, e),
-                )
-            })?;
+        camera_data
+            .par_iter()
+            .map(|(camera, images)| {
+                let (buffer, skipped) = build_frame_buffer_static(images).map_err(|e| {
+                    roboflow_core::RoboflowError::encode(
+                        "VideoEncoder",
+                        format!(
+                            "Failed to build frame buffer for camera '{}': {}",
+                            camera, e
+                        ),
+                    )
+                })?;
 
-            if skipped > 0 {
-                skipped_frames.fetch_add(skipped, Ordering::Relaxed);
-            }
+                if skipped > 0 {
+                    skipped_frames.fetch_add(skipped, Ordering::Relaxed);
+                }
 
-            if !buffer.is_empty() {
-                let camera_dir = videos_dir.join(camera);
-                let video_path = camera_dir.join(format!("episode_{:06}.mp4", episode_index));
+                if !buffer.is_empty() {
+                    let camera_dir = videos_dir.join(camera);
+                    let video_path = camera_dir.join(format!("episode_{:06}.mp4", episode_index));
 
-                // Use native rsmpeg encoder
-                match RsmpegMp4Encoder::with_config(encoder_config.clone())
-                    .encode_buffer(&buffer, &video_path)
-                {
-                    Ok(()) => {
-                        images_encoded.fetch_add(buffer.len(), Ordering::Relaxed);
-                        tracing::debug!(
-                            camera = %camera,
-                            frames = buffer.len(),
-                            path = %video_path.display(),
-                            "Encoded MP4 video"
-                        );
+                    // Use unified VideoEncoder
+                    let output = OutputConfig::file(&video_path);
+                    let mut encoder =
+                        VideoEncoder::new(encoder_config.clone(), output).map_err(|e| {
+                            tracing::error!(
+                                camera = %camera,
+                                error = %e,
+                                "Failed to create video encoder"
+                            );
+                            failed_encodings.fetch_add(1, Ordering::Relaxed);
+                            roboflow_core::RoboflowError::encode(
+                                "VideoEncoder",
+                                format!("Failed to create encoder for camera '{}': {}", camera, e),
+                            )
+                        })?;
 
-                        if use_cloud_storage {
-                            let mut files = video_files.lock().map_err(|e| {
-                                roboflow_core::RoboflowError::encode(
-                                    "VideoEncoder",
-                                    format!("Video files mutex poisoned: {}", e),
-                                )
-                            })?;
-                            files.push((video_path.clone(), camera.clone()));
+                    // Encode frames from buffer
+                    let mut encode_error = None;
+                    for frame in &buffer.frames {
+                        if let Err(e) =
+                            encoder.encode_frame(frame.data(), frame.width, frame.height)
+                        {
+                            tracing::error!(
+                                camera = %camera,
+                                error = %e,
+                                "Failed to encode frame"
+                            );
+                            encode_error = Some(e);
+                            break;
                         }
                     }
-                    Err(VideoEncoderError::FfmpegNotFound) => {
-                        tracing::error!("Native FFmpeg encoder failed. Please ensure FFmpeg libraries are available.");
-                        failed_encodings.fetch_add(1, Ordering::Relaxed);
-                        return Err(roboflow_core::RoboflowError::unsupported(
-                            "Video encoding requires FFmpeg libraries. Ensure rsmpeg can find libavcodec."
-                        ));
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            camera = %camera,
-                            error = %e,
-                            "Failed to encode video"
-                        );
+
+                    if let Some(e) = encode_error {
                         failed_encodings.fetch_add(1, Ordering::Relaxed);
                         return Err(roboflow_core::RoboflowError::encode(
                             "VideoEncoder",
-                            format!("Failed to encode video for camera '{}': {}", camera, e)
+                            format!("Failed to encode frame for camera '{}': {}", camera, e),
                         ));
+                    }
+
+                    match encoder.finalize() {
+                        Ok(result) => {
+                            images_encoded.fetch_add(buffer.len(), Ordering::Relaxed);
+                            output_bytes.fetch_add(result.bytes_written, Ordering::Relaxed);
+                            tracing::debug!(
+                                camera = %camera,
+                                frames = buffer.len(),
+                                path = %video_path.display(),
+                                bytes = result.bytes_written,
+                                "Encoded MP4 video"
+                            );
+
+                            if use_cloud_storage {
+                                let mut files = video_files.lock().map_err(|e| {
+                                    roboflow_core::RoboflowError::encode(
+                                        "VideoEncoder",
+                                        format!("Video files mutex poisoned: {}", e),
+                                    )
+                                })?;
+                                files.push((video_path.clone(), camera.clone()));
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                camera = %camera,
+                                error = %e,
+                                "Failed to finalize video encoder"
+                            );
+                            failed_encodings.fetch_add(1, Ordering::Relaxed);
+                            return Err(roboflow_core::RoboflowError::encode(
+                                "VideoEncoder",
+                                format!(
+                                    "Failed to finalize encoder for camera '{}': {}",
+                                    camera, e
+                                ),
+                            ));
+                        }
                     }
                 }
 
-                if let Ok(metadata) = fs::metadata(&video_path) {
-                    output_bytes.fetch_add(metadata.len(), Ordering::Relaxed);
-                }
-            }
-
-            Ok(())
-        }).collect()
+                Ok(())
+            })
+            .collect()
     });
 
     result?;
