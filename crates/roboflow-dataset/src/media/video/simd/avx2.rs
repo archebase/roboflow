@@ -257,13 +257,13 @@ pub unsafe fn rgb_to_nv12_avx2(
 }
 
 /// Check if AVX2 is available at runtime.
-#[cfg(target_arch = "x86_64")]
-pub(crate) fn is_avx2_available() -> bool {
+#[cfg(all(test, target_arch = "x86_64"))]
+fn is_avx2_available() -> bool {
     is_x86_feature_detected!("avx2")
 }
 
-#[cfg(not(target_arch = "x86_64"))]
-pub(crate) fn is_avx2_available() -> bool {
+#[cfg(all(test, not(target_arch = "x86_64")))]
+fn is_avx2_available() -> bool {
     false
 }
 
