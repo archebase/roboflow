@@ -73,8 +73,8 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use roboflow_core::{Result, RoboflowError};
 
 use super::{OutputConfig, VideoEncoder, VideoEncoderConfig};
-use crate::image::decode_to_rgb;
 use crate::ImageData;
+use crate::image::decode_to_rgb;
 
 /// Configuration for concurrent video encoder.
 ///

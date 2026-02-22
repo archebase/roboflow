@@ -13,8 +13,8 @@ use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use crossbeam_channel::{Receiver, Sender, bounded};
 use crate::ImageData;
+use crossbeam_channel::{Receiver, Sender, bounded};
 use tracing::{debug, trace};
 
 use crate::video::arena::{ArcSlot, AtomicFramePool, FramePoolConfig, PoolStats};
