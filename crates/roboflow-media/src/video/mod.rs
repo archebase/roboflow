@@ -12,15 +12,16 @@
 //! ┌─────────────────────────────────────────────────────────────────┐
 //! │                      Public API                                  │
 //! ├─────────────────────────────────────────────────────────────────┤
-//! │  VideoEncoder - Single encoder (file or channel output)         │
-//! │  ConcurrentVideoEncoder - Multi-camera orchestration            │
+//! │  VideoEncoder - Single stream encoding                          │
+//! │  FragmentEncoder - Bounded memory encoding with flush control   │
+//! │  EncodingWorkload - Multi-stream parallel encoding (unified)    │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! # Example - Single Video
+//! # Example - Single Video (Simple)
 //!
 //! ```ignore
-//! use roboflow_dataset::media::video::{VideoEncoder, OutputConfig, VideoEncoderConfig};
+//! use roboflow_media::video::{VideoEncoder, OutputConfig, VideoEncoderConfig};
 //!
 //! let config = VideoEncoderConfig::default();
 //! let output = OutputConfig::file("/path/to/output.mp4");
@@ -33,115 +34,164 @@
 //! let result = encoder.finalize()?;
 //! ```
 //!
-//! # Example - Multi-Camera
+//! # Example - Fragment Encoding (Bounded Memory)
 //!
 //! ```ignore
-//! use roboflow_dataset::media::video::{ConcurrentVideoEncoder, ConcurrentEncoderConfig};
-//! use roboflow_dataset::formats::common::{LeRobotVideoPathScheme, VideoPathScheme};
-//! use std::path::PathBuf;
+//! use roboflow_media::video::{FragmentEncoder, FragmentConfig, FragmentOutputConfig};
 //!
-//! let config = ConcurrentEncoderConfig::new();
-//! let mut encoder = ConcurrentVideoEncoder::new(config)?;
+//! let config = FragmentConfig::by_frames(300); // Flush every 300 frames
+//! let output = FragmentOutputConfig::single_file("/path/to/output.mp4");
+//! let mut encoder = FragmentEncoder::new(video_config, output, config)?;
 //!
-//! // Register cameras with their output paths
-//! let output_dir = PathBuf::from("./output");
-//! let scheme = LeRobotVideoPathScheme::new("dataset/episode_001");
-//! let cam_path = output_dir.join(scheme.video_path(0, "cam_left", 0));
-//! encoder.add_camera("cam_left", cam_path)?;
+//! for frame in frames {
+//!     encoder.encode_frame(&rgb_data, 640, 480)?;
+//! }
 //!
-//! encoder.add_frame("cam_left", image1)?;
+//! let result = encoder.finalize()?;
+//! ```
 //!
-//! let results = encoder.finalize()?;
+//! # Example - Multi-Camera (Unified API)
+//!
+//! ```ignore
+//! use roboflow_media::video::{
+//!     EncodingWorkload, WorkloadConfig, StreamConfig, EncodingStrategy,
+//! };
+//!
+//! let mut workload = EncodingWorkload::new(WorkloadConfig::default())?;
+//!
+//! // Add streams with different strategies
+//! workload.add_stream(StreamConfig::file("cam_left", "left.mp4")
+//!     .with_strategy(EncodingStrategy::fragment_by_frames(300)))?;
+//! workload.add_stream(StreamConfig::file("cam_right", "right.mp4"))?;
+//!
+//! // Submit frames (thread-safe)
+//! workload.submit_frame("cam_left", &rgb_data, 640, 480)?;
+//!
+//! // Finalize all streams
+//! let results = workload.finalize()?;
 //! ```
 
-// Internal modules
-pub mod arena;
-pub mod codec;
-pub mod composer;
-pub mod concurrent;
-pub mod config;
-pub mod convert;
-pub mod decode;
-pub mod encoder;
-pub mod fragment;
-pub mod frame;
-pub mod hardware;
-pub mod hardware_config;
-pub mod rsmpeg;
-pub mod simd;
-pub mod test_utils;
-pub mod workload;
+// =============================================================================
+// Internal modules (not exposed publicly)
+// =============================================================================
 
-// Re-export core types
-pub use config::{DepthEncoderConfig, VideoEncoderConfig};
-pub use frame::{
-    DepthFrame, DepthFrameBuffer, FrameBuffer, PixelFormat, VideoEncoderError, VideoFrame,
-    VideoFrameBuffer,
-};
+#[allow(dead_code)]
+mod arena;
+#[allow(dead_code)]
+mod codec;
+#[allow(dead_code)]
+mod composer;
+#[allow(dead_code)]
+mod concurrent;
+#[allow(dead_code)]
+mod config;
+#[allow(dead_code, clippy::wrong_self_convention)]
+mod convert;
+#[allow(dead_code)]
+mod decode;
+mod encoder;
+mod fragment;
+#[allow(dead_code)]
+mod frame;
+#[allow(dead_code)]
+mod hardware;
+#[allow(dead_code)]
+mod hardware_config;
+#[allow(dead_code)]
+mod rsmpeg;
+#[allow(dead_code)]
+mod simd;
+#[allow(dead_code)]
+mod test_utils;
+mod workload;
 
-// Re-export hardware detection
-pub use hardware::{
-    EncoderChoice, available_encoders, check_nvenc_available, check_videotoolbox_available,
-    is_encoder_available, print_encoder_diagnostics, select_best_encoder,
-};
-pub use hardware_config::{HardwareBackend, HardwareConfig, detect_hardware_backend};
-
-// Re-export codec utilities
-pub use rsmpeg::{default_codec_name, is_hardware_encoding_available, is_rsmpeg_available};
-
-// Re-export SIMD conversion
-pub use simd::{
-    ConversionStrategy, optimal_strategy, rgb_batch_to_nv12, rgb_batch_to_yuv420p, rgb_to_nv12,
-    rgb_to_nv12_in_place, rgb_to_yuv420p,
-};
-
-// Re-export composer for video concatenation
-pub use composer::{RsmpegVideoComposer, VideoComposer};
-
-// Re-export arena types
-pub use arena::{FramePool, FramePoolConfig};
-
-// Re-export conversion pool
-pub use convert::{ConvertPool, ConvertPoolConfig, TargetFormat};
-
-// Re-export decode pool
-pub use decode::{DecodePool, DecodePoolConfig};
+// =============================================================================
+// Minimal Public API
+// =============================================================================
 
 // Re-export ImageData from crate root for convenience
 pub use crate::ImageData;
 
-// =============================================================================
-// VIDEO ENCODER API (Canonical Public API)
-// =============================================================================
+// -----------------------------------------------------------------------------
+// Core Types
+// -----------------------------------------------------------------------------
 
-/// Encoded chunk from video encoder.
-pub use encoder::EncodedChunk;
+/// Video encoder configuration.
+pub use config::VideoEncoderConfig;
 
-/// Result from video encoding finalization.
-pub use encoder::EncodingResult;
+/// Pixel format for video frames.
+pub use frame::PixelFormat;
+
+/// Video frame for encoding.
+pub use frame::VideoFrame;
+
+/// Frame buffer for zero-copy processing.
+pub use frame::FrameBuffer;
+
+/// Video encoder error type.
+pub use frame::VideoEncoderError;
+
+/// Video frame buffer (alias for FrameBuffer).
+pub use frame::VideoFrameBuffer;
+
+// -----------------------------------------------------------------------------
+// Simple Video Encoder API
+// -----------------------------------------------------------------------------
+
+/// Video encoder for single-stream encoding.
+pub use encoder::VideoEncoder;
 
 /// Output configuration for video encoder.
 pub use encoder::OutputConfig;
 
-/// Video encoder.
-pub use encoder::VideoEncoder;
+/// Result from video encoding finalization.
+pub use encoder::EncodingResult;
 
-// =============================================================================
-// MULTI-CAMERA ENCODER API
-// =============================================================================
+/// Encoded chunk from video encoder.
+pub use encoder::EncodedChunk;
 
-/// Configuration for concurrent encoder.
-pub use concurrent::ConcurrentEncoderConfig;
+// -----------------------------------------------------------------------------
+// Hardware Configuration
+// -----------------------------------------------------------------------------
 
-/// Result from concurrent encoder.
-pub use concurrent::ConcurrentEncoderResult;
+/// Hardware encoder backend.
+pub use hardware_config::HardwareBackend;
 
-/// Multi-camera concurrent video encoder.
-pub use concurrent::ConcurrentVideoEncoder;
+/// Hardware encoder configuration.
+pub use hardware_config::HardwareConfig;
 
-// =============================================================================
-// FRAGMENT ENCODER API
-// =============================================================================
+// -----------------------------------------------------------------------------
+// Video Composition
+// -----------------------------------------------------------------------------
+
+/// Video composer trait.
+pub use composer::VideoComposer;
+
+/// Rsmpeg-based video composer.
+pub use composer::RsmpegVideoComposer;
+
+// -----------------------------------------------------------------------------
+// SIMD Color Conversion
+// -----------------------------------------------------------------------------
+
+/// Conversion strategy for color space conversion.
+pub use simd::ConversionStrategy;
+
+/// Optimal conversion strategy.
+pub use simd::optimal_strategy;
+
+/// Convert RGB to NV12.
+pub use simd::rgb_to_nv12;
+
+/// Convert RGB to YUV420P.
+pub use simd::rgb_to_yuv420p;
+
+// -----------------------------------------------------------------------------
+// Fragment Encoder API (Bounded Memory)
+// -----------------------------------------------------------------------------
+
+/// Fragment encoder with explicit flush control.
+pub use fragment::FragmentEncoder;
 
 /// Configuration for fragment-based encoding.
 pub use fragment::FragmentConfig;
@@ -152,12 +202,22 @@ pub use fragment::FragmentOutputConfig;
 /// Result from fragment encoding.
 pub use fragment::FragmentEncodingResult;
 
-/// Fragment encoder with explicit flush control.
-pub use fragment::FragmentEncoder;
+// -----------------------------------------------------------------------------
+// Concurrent Encoder API (Legacy)
+// -----------------------------------------------------------------------------
 
-// =============================================================================
-// WORKLOAD ENCODER API
-// =============================================================================
+/// Configuration for concurrent video encoder.
+pub use concurrent::ConcurrentEncoderConfig;
+
+/// Result from concurrent encoding.
+pub use concurrent::ConcurrentEncoderResult;
+
+/// Concurrent video encoder for multi-camera encoding.
+pub use concurrent::ConcurrentVideoEncoder;
+
+// -----------------------------------------------------------------------------
+// Workload API (Unified Multi-Stream)
+// -----------------------------------------------------------------------------
 
 /// Encoding workload for multi-stream video encoding.
 pub use workload::EncodingWorkload;

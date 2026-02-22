@@ -6,8 +6,9 @@
 
 use roboflow_media::ImageData;
 use roboflow_media::video::{
-    ConcurrentEncoderConfig, ConcurrentVideoEncoder, EncodingResult, OutputConfig, PixelFormat,
-    VideoEncoder, VideoEncoderConfig,
+    EncodingResult, EncodingStrategy, EncodingWorkload, FragmentConfig, FragmentEncoder,
+    FragmentOutputConfig, FragmentTriggers, OutputConfig, PixelFormat, StreamConfig,
+    StreamOutput, VideoEncoder, VideoEncoderConfig, WorkloadConfig,
 };
 use std::path::PathBuf;
 
@@ -22,6 +23,10 @@ fn create_test_image_data(width: u32, height: u32, value: u8) -> ImageData {
     ImageData::new(width, height, data)
 }
 
+// =============================================================================
+// VideoEncoder Tests (Simple API)
+// =============================================================================
+
 #[test]
 fn test_video_encoder_config_default() {
     let config = VideoEncoderConfig::default();
@@ -29,81 +34,6 @@ fn test_video_encoder_config_default() {
     assert!(!config.pixel_format.is_empty());
     assert_eq!(config.fps, 30);
     assert_eq!(config.crf, 23);
-}
-
-#[test]
-fn test_concurrent_encoder_config_default() {
-    let config = ConcurrentEncoderConfig::new();
-    // Just verify it creates without panic
-    let _ = &config.video_config;
-}
-
-#[test]
-fn test_concurrent_encoder_config_with_video_config() {
-    let video_config = VideoEncoderConfig::default();
-    let config = ConcurrentEncoderConfig::with_video_config(video_config.clone());
-    assert_eq!(config.video_config.fps, video_config.fps);
-}
-
-#[test]
-fn test_concurrent_encoder_basic() {
-    let config = ConcurrentEncoderConfig::new();
-    let result = ConcurrentVideoEncoder::new(config);
-
-    assert!(result.is_ok(), "Should create concurrent encoder");
-}
-
-#[test]
-fn test_concurrent_encoder_single_camera() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let output_path = temp_dir.path().join("test.mp4");
-
-    let config = ConcurrentEncoderConfig::new();
-    let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
-
-    let result = encoder.add_camera("cam0", output_path.clone());
-    assert!(result.is_ok(), "Should add camera successfully");
-
-    // Add some frames
-    for i in 0..5 {
-        let image = create_test_image_data(64, 64, (i * 50) as u8);
-        let result = encoder.add_frame("cam0", image);
-        assert!(result.is_ok(), "Should add frame {}", i);
-    }
-
-    // Finalize
-    let results = encoder.finalize().unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].frames_encoded, 5);
-}
-
-#[test]
-fn test_concurrent_encoder_multiple_cameras() {
-    let temp_dir = tempfile::tempdir().unwrap();
-
-    let config = ConcurrentEncoderConfig::new();
-    let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
-
-    // Add multiple cameras
-    for cam in ["cam0", "cam1", "cam2"] {
-        let output_path = temp_dir.path().join(format!("{}.mp4", cam));
-        encoder.add_camera(cam, output_path).unwrap();
-    }
-
-    // Add frames to each camera
-    for cam in ["cam0", "cam1", "cam2"] {
-        for i in 0..3 {
-            let image = create_test_image_data(64, 64, (i * 50) as u8);
-            encoder.add_frame(cam, image).unwrap();
-        }
-    }
-
-    let results = encoder.finalize().unwrap();
-    assert_eq!(results.len(), 3);
-
-    for result in &results {
-        assert_eq!(result.frames_encoded, 3);
-    }
 }
 
 #[test]
@@ -165,129 +95,6 @@ fn test_pixel_format_exists() {
 }
 
 #[test]
-fn test_concurrent_encoder_invalid_camera() {
-    let _temp_dir = tempfile::tempdir().unwrap();
-    let config = ConcurrentEncoderConfig::new();
-    let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
-
-    // Add frame to non-existent camera
-    let image = create_test_image_data(64, 64, 128);
-    let result = encoder.add_frame("nonexistent", image);
-
-    assert!(
-        result.is_err(),
-        "Should fail to add frame to non-existent camera"
-    );
-}
-
-#[test]
-fn test_concurrent_encoder_add_camera_after_finalize() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let output_path = temp_dir.path().join("test.mp4");
-
-    let config = ConcurrentEncoderConfig::new();
-    let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
-    encoder.add_camera("cam0", output_path).unwrap();
-
-    // Add a frame so the encoder has work
-    let image = create_test_image_data(64, 64, 128);
-    encoder.add_frame("cam0", image).unwrap();
-
-    // Finalize consumes the encoder - this test verifies finalize works
-    let results = encoder.finalize().unwrap();
-    assert_eq!(results.len(), 1);
-
-    // After finalize, the encoder is gone - we can't test operations on it
-    // This is correct behavior - finalize takes ownership
-}
-
-#[test]
-fn test_concurrent_encoder_empty_frames() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let output_path = temp_dir.path().join("empty.mp4");
-
-    let config = ConcurrentEncoderConfig::new();
-    let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
-    encoder.add_camera("cam0", output_path).unwrap();
-
-    // Finalize without adding any frames
-    let results = encoder.finalize().unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].frames_encoded, 0);
-}
-
-#[test]
-fn test_concurrent_encoder_with_large_images() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let output_path = temp_dir.path().join("large.mp4");
-
-    let config = ConcurrentEncoderConfig::new();
-    let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
-    encoder.add_camera("cam0", output_path).unwrap();
-
-    // Add some 1080p frames
-    for i in 0..3 {
-        let data = create_test_rgb_image(1920, 1080, (i * 80) as u8);
-        let image = ImageData::new(1920, 1080, data);
-        encoder.add_frame("cam0", image).unwrap();
-    }
-
-    let results = encoder.finalize().unwrap();
-    assert_eq!(results[0].frames_encoded, 3);
-}
-
-#[test]
-fn test_concurrent_encoder_multiple_episodes() {
-    let temp_dir = tempfile::tempdir().unwrap();
-
-    for episode in 0..2 {
-        let output_path = temp_dir.path().join(format!("episode_{}.mp4", episode));
-
-        let config = ConcurrentEncoderConfig::new();
-        let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
-        encoder.add_camera("cam0", output_path).unwrap();
-
-        // Add frames
-        for i in 0..3 {
-            let image = create_test_image_data(64, 64, (episode * 100 + i * 20) as u8);
-            encoder.add_frame("cam0", image).unwrap();
-        }
-
-        let results = encoder.finalize().unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].frames_encoded, 3);
-    }
-}
-
-#[test]
-fn test_concurrent_encoder_result_fields() {
-    let result = roboflow_media::video::ConcurrentEncoderResult {
-        camera: "cam0".to_string(),
-        output_path: PathBuf::from("/test.mp4"),
-        frames_encoded: 100,
-        frames_skipped: 2,
-    };
-
-    assert_eq!(result.camera, "cam0");
-    assert_eq!(result.frames_encoded, 100);
-    assert_eq!(result.frames_skipped, 2);
-}
-
-#[test]
-fn test_image_data_for_video_encoding() {
-    // Test creating ImageData suitable for video encoding
-    let width = 640u32;
-    let height = 480u32;
-    let data = create_test_rgb_image(width, height, 128);
-
-    let image = ImageData::new(width, height, data);
-    assert_eq!(image.width, width);
-    assert_eq!(image.height, height);
-    assert_eq!(image.data.len(), (width * height * 3) as usize);
-    assert!(image.validate());
-}
-
-#[test]
 fn test_output_config_file() {
     let path = PathBuf::from("/tmp/test_output.mp4");
     let config = OutputConfig::file(&path);
@@ -333,40 +140,6 @@ fn test_encoding_result_structure() {
 }
 
 #[test]
-fn test_concurrent_encoder_result_ordering() {
-    let temp_dir = tempfile::tempdir().unwrap();
-
-    let config = ConcurrentEncoderConfig::new();
-    let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
-
-    // Add cameras in specific order
-    let cameras = vec!["cam2", "cam0", "cam1"];
-    for cam in &cameras {
-        let output_path = temp_dir.path().join(format!("{}.mp4", cam));
-        encoder.add_camera(cam, output_path).unwrap();
-    }
-
-    // Add frames
-    for cam in &cameras {
-        let image = create_test_image_data(64, 64, 128);
-        encoder.add_frame(cam, image).unwrap();
-    }
-
-    let results = encoder.finalize().unwrap();
-    assert_eq!(results.len(), 3);
-
-    // Results should be returned for all cameras
-    let camera_names: Vec<&str> = results.iter().map(|r| r.camera.as_str()).collect();
-    for cam in &cameras {
-        assert!(
-            camera_names.contains(cam),
-            "Camera {} should be in results",
-            cam
-        );
-    }
-}
-
-#[test]
 fn test_video_encoder_config_fields() {
     let config = VideoEncoderConfig::default();
 
@@ -376,16 +149,6 @@ fn test_video_encoder_config_fields() {
     assert!(config.fps > 0);
     assert!(config.crf <= 51); // CRF range is 0-51
     assert!(!config.preset.is_empty());
-}
-
-#[test]
-fn test_concurrent_encoder_config_clone() {
-    let config = ConcurrentEncoderConfig::new();
-    let cloned = config.clone();
-
-    // Both should have same video_config
-    assert_eq!(config.video_config.fps, cloned.video_config.fps);
-    assert_eq!(config.video_config.crf, cloned.video_config.crf);
 }
 
 #[test]
@@ -428,32 +191,6 @@ fn test_video_encoder_with_channel_output() {
 }
 
 #[test]
-fn test_concurrent_encoder_different_fps() {
-    let temp_dir = tempfile::tempdir().unwrap();
-
-    // Test with different FPS settings
-    for fps in [15, 30, 60] {
-        let output_path = temp_dir.path().join(format!("fps_{}.mp4", fps));
-        let video_config = VideoEncoderConfig {
-            fps,
-            ..Default::default()
-        };
-        let config = ConcurrentEncoderConfig::with_video_config(video_config);
-        let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
-        encoder.add_camera("cam0", output_path).unwrap();
-
-        // Add a few frames
-        for i in 0..3 {
-            let image = create_test_image_data(64, 64, i as u8);
-            encoder.add_frame("cam0", image).unwrap();
-        }
-
-        let results = encoder.finalize().unwrap();
-        assert_eq!(results[0].frames_encoded, 3);
-    }
-}
-
-#[test]
 fn test_video_encoder_with_high_crf() {
     let temp_dir = tempfile::tempdir().unwrap();
     let output_path = temp_dir.path().join("high_quality.mp4");
@@ -491,25 +228,6 @@ fn test_video_encoder_with_low_crf() {
 
     let result = encoder.finalize().unwrap();
     assert_eq!(result.frames_encoded, 1);
-}
-
-#[test]
-fn test_concurrent_encoder_with_rgba_data() {
-    // Test with RGB data (3 bytes per pixel)
-    let temp_dir = tempfile::tempdir().unwrap();
-    let output_path = temp_dir.path().join("rgb_test.mp4");
-
-    let config = ConcurrentEncoderConfig::new();
-    let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
-    encoder.add_camera("cam0", output_path).unwrap();
-
-    // Create proper RGB data
-    let rgb_data: Vec<u8> = (0..64 * 64 * 3).map(|i| (i % 256) as u8).collect();
-    let image = ImageData::new(64, 64, rgb_data);
-    encoder.add_frame("cam0", image).unwrap();
-
-    let results = encoder.finalize().unwrap();
-    assert_eq!(results[0].frames_encoded, 1);
 }
 
 #[test]
@@ -557,16 +275,285 @@ fn test_multiple_encoders_sequential() {
 }
 
 #[test]
-fn test_concurrent_encoder_skips_no_frames() {
+fn test_image_data_for_video_encoding() {
+    // Test creating ImageData suitable for video encoding
+    let width = 640u32;
+    let height = 480u32;
+    let data = create_test_rgb_image(width, height, 128);
+
+    let image = ImageData::new(width, height, data);
+    assert_eq!(image.width, width);
+    assert_eq!(image.height, height);
+    assert_eq!(image.data.len(), (width * height * 3) as usize);
+    assert!(image.validate());
+}
+
+// =============================================================================
+// FragmentEncoder Tests (Bounded Memory API)
+// =============================================================================
+
+#[test]
+fn test_fragment_config_default() {
+    let config = FragmentConfig::default();
+    assert!(config.max_frames.is_none());
+    assert!(config.max_memory_bytes.is_none());
+    assert!(config.max_duration_secs.is_none());
+}
+
+#[test]
+fn test_fragment_config_with_max_frames() {
+    let config = FragmentConfig::with_max_frames(300);
+    assert_eq!(config.max_frames, Some(300));
+}
+
+#[test]
+fn test_fragment_encoder_single_file() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let output_path = temp_dir.path().join("no_frames.mp4");
+    let output_path = temp_dir.path().join("fragment_output.mp4");
 
-    let config = ConcurrentEncoderConfig::new();
-    let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
-    encoder.add_camera("cam0", output_path).unwrap();
+    let config = FragmentConfig::with_max_frames(10);
+    let output = FragmentOutputConfig::SingleFile {
+        path: output_path.clone(),
+    };
 
-    // Don't add any frames, just finalize
-    let results = encoder.finalize().unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].frames_encoded, 0);
+    let mut encoder =
+        FragmentEncoder::new(VideoEncoderConfig::default(), output, config).unwrap();
+
+    // Add 5 frames (less than threshold)
+    for i in 0..5 {
+        let data = create_test_rgb_image(64, 64, (i * 50) as u8);
+        encoder.encode_frame(&data, 64, 64).unwrap();
+    }
+
+    let result = encoder.finalize().unwrap();
+    assert_eq!(result.frames_encoded, 5);
+    assert!(result.output_path.is_some());
+}
+
+#[test]
+fn test_fragment_encoder_auto_flush() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let output_path = temp_dir.path().join("auto_flush.mp4");
+
+    // Auto-flush every 5 frames
+    let config = FragmentConfig::with_max_frames(5);
+    let output = FragmentOutputConfig::SingleFile {
+        path: output_path.clone(),
+    };
+
+    let mut encoder =
+        FragmentEncoder::new(VideoEncoderConfig::default(), output, config).unwrap();
+
+    // Add 15 frames (should trigger 3 auto-flushes)
+    for i in 0..15 {
+        let data = create_test_rgb_image(64, 64, (i * 17) as u8);
+        encoder.encode_frame(&data, 64, 64).unwrap();
+    }
+
+    let result = encoder.finalize().unwrap();
+    assert_eq!(result.frames_encoded, 15);
+    assert_eq!(result.fragments, 3); // 15 frames / 5 per fragment = 3 fragments
+}
+
+#[test]
+fn test_fragment_encoder_explicit_flush() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let output_path = temp_dir.path().join("explicit_flush.mp4");
+
+    // No auto-flush
+    let config = FragmentConfig::default();
+    let output = FragmentOutputConfig::SingleFile {
+        path: output_path.clone(),
+    };
+
+    let mut encoder =
+        FragmentEncoder::new(VideoEncoderConfig::default(), output, config).unwrap();
+
+    // Add 3 frames
+    for i in 0..3 {
+        let data = create_test_rgb_image(64, 64, (i * 80) as u8);
+        encoder.encode_frame(&data, 64, 64).unwrap();
+    }
+
+    // Explicit flush
+    encoder.flush_fragment().unwrap();
+
+    // Add more frames
+    for i in 0..2 {
+        let data = create_test_rgb_image(64, 64, ((i + 3) * 50) as u8);
+        encoder.encode_frame(&data, 64, 64).unwrap();
+    }
+
+    let result = encoder.finalize().unwrap();
+    assert_eq!(result.frames_encoded, 5);
+    assert_eq!(result.fragments, 2);
+}
+
+// =============================================================================
+// EncodingWorkload Tests (Unified Multi-Stream API)
+// =============================================================================
+
+#[test]
+fn test_workload_config_default() {
+    let config = WorkloadConfig::default();
+    // Verify config exists
+    let _ = &config;
+}
+
+#[test]
+fn test_encoding_strategy_default() {
+    let strategy = EncodingStrategy::default();
+    assert!(matches!(strategy, EncodingStrategy::Standard));
+}
+
+#[test]
+fn test_encoding_workload_new() {
+    let workload = EncodingWorkload::new(WorkloadConfig::default());
+    assert!(workload.is_ok());
+}
+
+#[test]
+fn test_workload_single_stream() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let output_path = temp_dir.path().join("workload_single.mp4");
+
+    let mut workload = EncodingWorkload::new(WorkloadConfig::default()).unwrap();
+
+    // Add a stream
+    let stream_config =
+        StreamConfig::new("cam0", StreamOutput::file(output_path.clone()));
+    workload.add_stream(stream_config).unwrap();
+
+    // Submit frames
+    for i in 0..5 {
+        let data = create_test_rgb_image(64, 64, (i * 50) as u8);
+        workload.submit_frame("cam0", &data, 64, 64).unwrap();
+    }
+
+    // Finalize
+    let result = workload.finalize().unwrap();
+    assert_eq!(result.streams.len(), 1);
+    assert_eq!(result.total_frames, 5);
+}
+
+#[test]
+fn test_workload_multiple_streams() {
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    let mut workload = EncodingWorkload::new(WorkloadConfig::default()).unwrap();
+
+    // Add multiple streams
+    for cam in ["cam0", "cam1", "cam2"] {
+        let output_path = temp_dir.path().join(format!("{}.mp4", cam));
+        let stream_config = StreamConfig::new(cam, StreamOutput::file(output_path));
+        workload.add_stream(stream_config).unwrap();
+    }
+
+    // Submit frames to each stream
+    for cam in ["cam0", "cam1", "cam2"] {
+        for i in 0..3 {
+            let data = create_test_rgb_image(64, 64, (i * 50) as u8);
+            workload.submit_frame(cam, &data, 64, 64).unwrap();
+        }
+    }
+
+    // Finalize
+    let result = workload.finalize().unwrap();
+    assert_eq!(result.streams.len(), 3);
+    assert_eq!(result.total_frames, 9); // 3 streams * 3 frames each
+}
+
+#[test]
+fn test_workload_with_fragment_strategy() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let output_path = temp_dir.path().join("fragment_workload.mp4");
+
+    let mut workload = EncodingWorkload::new(WorkloadConfig::default()).unwrap();
+
+    // Add a stream with fragment strategy
+    let stream_config = StreamConfig::new("cam0", StreamOutput::file(output_path))
+        .with_strategy(EncodingStrategy::fragment_by_frames(5));
+    workload.add_stream(stream_config).unwrap();
+
+    // Submit frames
+    for i in 0..15 {
+        let data = create_test_rgb_image(64, 64, (i * 17) as u8);
+        workload.submit_frame("cam0", &data, 64, 64).unwrap();
+    }
+
+    // Finalize
+    let result = workload.finalize().unwrap();
+    assert_eq!(result.streams.len(), 1);
+    assert_eq!(result.total_frames, 15);
+}
+
+#[test]
+fn test_workload_invalid_stream() {
+    let workload = EncodingWorkload::new(WorkloadConfig::default()).unwrap();
+    let data = create_test_rgb_image(64, 64, 128);
+    let result = workload.submit_frame("nonexistent", &data, 64, 64);
+
+    assert!(result.is_err(), "Should fail to submit to non-existent stream");
+}
+
+#[test]
+fn test_stream_config_builder() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let output_path = temp_dir.path().join("builder_test.mp4");
+
+    // Test builder pattern
+    let config = StreamConfig::new("cam0", StreamOutput::file(output_path.clone()))
+        .with_strategy(EncodingStrategy::fragment_by_frames(100));
+
+    assert_eq!(config.id.as_str(), "cam0");
+    assert!(matches!(config.strategy, EncodingStrategy::Fragment { .. }));
+}
+
+#[test]
+fn test_fragment_triggers() {
+    let triggers = FragmentTriggers {
+        frame_count: Some(300),
+        memory_bytes: Some(100 * 1024 * 1024),
+        duration_secs: Some(10.0),
+    };
+
+    assert_eq!(triggers.frame_count, Some(300));
+    assert_eq!(triggers.memory_bytes, Some(100 * 1024 * 1024));
+    assert_eq!(triggers.duration_secs, Some(10.0));
+}
+
+#[test]
+fn test_workload_empty_finalize() {
+    let mut workload = EncodingWorkload::new(WorkloadConfig::default()).unwrap();
+
+    // Add a stream but don't submit any frames
+    let temp_dir = tempfile::tempdir().unwrap();
+    let output_path = temp_dir.path().join("empty.mp4");
+    let stream_config = StreamConfig::new("cam0", StreamOutput::file(output_path));
+    workload.add_stream(stream_config).unwrap();
+
+    // Finalize without frames
+    let result = workload.finalize().unwrap();
+    assert_eq!(result.streams.len(), 1);
+    assert_eq!(result.total_frames, 0);
+}
+
+#[test]
+fn test_workload_large_frames() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let output_path = temp_dir.path().join("large.mp4");
+
+    let mut workload = EncodingWorkload::new(WorkloadConfig::default()).unwrap();
+
+    let stream_config = StreamConfig::new("cam0", StreamOutput::file(output_path));
+    workload.add_stream(stream_config).unwrap();
+
+    // Submit 1080p frames
+    for i in 0..3 {
+        let data = create_test_rgb_image(1920, 1080, (i * 80) as u8);
+        workload.submit_frame("cam0", &data, 1920, 1080).unwrap();
+    }
+
+    let result = workload.finalize().unwrap();
+    assert_eq!(result.total_frames, 3);
 }

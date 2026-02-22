@@ -18,9 +18,7 @@
 
 // Re-export rsmpeg types selectively
 pub use rsmpeg::{
-    avcodec::{AVCodec, AVCodecContext, AVCodecID, AVPacket},
-    avformat::AVFormatContextOutput,
-    avutil::{AVDictionary, AVFrame, AVRational},
+    avcodec::{AVCodec, AVCodecContext},
     error::RsmpegError,
     swscale::SwsContext,
 };
