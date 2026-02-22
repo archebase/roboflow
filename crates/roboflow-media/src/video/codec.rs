@@ -469,7 +469,11 @@ mod tests {
         let is_valid = valid_combinations
             .iter()
             .any(|(c, p)| c == &codec && p == &pix_fmt);
-        assert!(is_valid, "Unexpected codec/pix_fmt: ({}, {})", codec, pix_fmt);
+        assert!(
+            is_valid,
+            "Unexpected codec/pix_fmt: ({}, {})",
+            codec, pix_fmt
+        );
     }
 
     #[test]

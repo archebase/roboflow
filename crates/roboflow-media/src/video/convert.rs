@@ -1113,8 +1113,12 @@ mod tests {
 
         impl ColorSpaceConverter for TestConverter {
             fn convert(&self, frame: &DecodedFrame) -> io::Result<ConvertedFrame> {
-                let (y_plane, uv_plane) = rgb_to_nv12(frame.data(), frame.width() as usize, frame.height() as usize)
-                    .map_err(|e| io::Error::other(e.to_string()))?;
+                let (y_plane, uv_plane) = rgb_to_nv12(
+                    frame.data(),
+                    frame.width() as usize,
+                    frame.height() as usize,
+                )
+                .map_err(|e| io::Error::other(e.to_string()))?;
                 Ok(ConvertedFrame {
                     width: frame.width(),
                     height: frame.height(),

@@ -1163,8 +1163,8 @@ mod tests {
     #[test]
     fn test_decode_pool_jpeg_decoding() {
         // This test verifies the JPEG decoding path by creating a proper JPEG
-        use image::codecs::jpeg::JpegEncoder;
         use image::ImageEncoder;
+        use image::codecs::jpeg::JpegEncoder;
 
         let config = DecodePoolConfig {
             worker_count: 1,
@@ -1187,7 +1187,7 @@ mod tests {
             .expect("Failed to encode JPEG");
 
         let img = ImageData {
-            width: 0,  // Will be determined by decoder
+            width: 0, // Will be determined by decoder
             height: 0,
             data: jpeg_data,
             is_encoded: true,

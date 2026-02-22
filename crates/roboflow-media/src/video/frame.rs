@@ -989,7 +989,8 @@ mod tests {
         let y_plane = vec![128u8; 4]; // 2x2
         let u_plane = vec![128u8; 1]; // 1x1
         let v_plane = vec![128u8; 1]; // 1x1
-        let frame = VideoFrame::from_yuv420p(2, 2, y_plane.clone(), u_plane.clone(), v_plane.clone());
+        let frame =
+            VideoFrame::from_yuv420p(2, 2, y_plane.clone(), u_plane.clone(), v_plane.clone());
 
         assert_eq!(frame.width, 2);
         assert_eq!(frame.height, 2);
@@ -1222,7 +1223,8 @@ mod tests {
         assert!(buffer.validate().is_err());
 
         // Invalid: wrong magic bytes
-        let buffer = FrameBuffer::from_owned(vec![0x00, 0x00, 0x00, 0x00], PixelFormat::Jpeg, 64, 48);
+        let buffer =
+            FrameBuffer::from_owned(vec![0x00, 0x00, 0x00, 0x00], PixelFormat::Jpeg, 64, 48);
         assert!(buffer.validate().is_err());
     }
 
