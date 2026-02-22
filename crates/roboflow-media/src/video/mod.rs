@@ -63,6 +63,7 @@ pub mod config;
 pub mod convert;
 pub mod decode;
 pub mod encoder;
+pub mod fragment;
 pub mod frame;
 pub mod hardware;
 pub mod hardware_config;
@@ -136,3 +137,19 @@ pub use concurrent::ConcurrentEncoderResult;
 
 /// Multi-camera concurrent video encoder.
 pub use concurrent::ConcurrentVideoEncoder;
+
+// =============================================================================
+// FRAGMENT ENCODER API
+// =============================================================================
+
+/// Configuration for fragment-based encoding.
+pub use fragment::FragmentConfig;
+
+/// Output configuration for fragment encoder.
+pub use fragment::FragmentOutputConfig;
+
+/// Result from fragment encoding.
+pub use fragment::FragmentEncodingResult;
+
+/// Fragment encoder with explicit flush control.
+pub use fragment::FragmentEncoder;
