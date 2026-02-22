@@ -13,6 +13,7 @@
 //! - Per-camera encoding threads
 //! - Direct file output (no separate writer threads)
 //! - Clean abort on errors
+//! - Format-agnostic: caller determines output paths
 //!
 //! # Architecture
 //!
@@ -35,55 +36,64 @@
 //! │                     └─────────────┘                          │
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
+//!
+//! # Usage
+//!
+//! The encoder is format-agnostic. The caller determines output paths
+//! using their own path scheme (e.g., `LeRobotVideoPathScheme`).
+//!
+//! ```rust,ignore
+//! use roboflow_dataset::media::video::{ConcurrentVideoEncoder, ConcurrentEncoderConfig, VideoEncoderConfig};
+//! use roboflow_dataset::formats::common::{LeRobotVideoPathScheme, VideoPathScheme};
+//!
+//! // Create encoder with just video config
+//! let config = ConcurrentEncoderConfig {
+//!     video_config: VideoEncoderConfig::default(),
+//! };
+//! let mut encoder = ConcurrentVideoEncoder::new(config)?;
+//!
+//! // Compute output path using your scheme
+//! let output_dir = PathBuf::from("./output");
+//! let scheme = LeRobotVideoPathScheme::new("dataset/episode_001");
+//! let cam_path = output_dir.join(scheme.video_path(0, "cam_left", 0));
+//!
+//! // Register camera with its output path
+//! encoder.add_camera("cam_left", cam_path)?;
+//!
+//! // Add frames
+//! encoder.add_frame("cam_left", image)?;
+//!
+//! let results = encoder.finalize()?;
+//! ```
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use roboflow_core::{Result, RoboflowError};
 
 use super::{OutputConfig, VideoEncoder, VideoEncoderConfig};
-use crate::core::VideoPathScheme;
 use crate::formats::common::{ImageData, decode_to_rgb};
 
 /// Configuration for concurrent video encoder.
-#[derive(Clone)]
+///
+/// This is a minimal configuration - the caller is responsible for
+/// determining output paths via `add_camera()`.
+#[derive(Clone, Default)]
 pub struct ConcurrentEncoderConfig {
-    /// Key prefix for output videos within the output directory.
-    /// This should be a relative path (e.g., "dataset/episode_001").
-    pub key_prefix: String,
-    /// Chunk index for video organization (0 = chunk-000).
-    /// Videos will be saved as "{prefix}/videos/chunk-{chunk:03d}/{camera}/episode_{episode:06d}.mp4".
-    pub chunk_index: u32,
-    /// Episode index for video filename (0 = episode_000000).
-    pub episode_index: u32,
     /// Video encoder configuration.
     pub video_config: VideoEncoderConfig,
-    /// Output directory for video files.
-    pub output_dir: PathBuf,
-    /// Optional video path scheme for generating output paths.
-    /// If None, uses the default LeRobot v2.1 format.
-    pub path_scheme: Option<Arc<dyn VideoPathScheme>>,
 }
 
 impl ConcurrentEncoderConfig {
-    /// Create a new encoder config with the given output directory.
-    pub fn new(output_dir: PathBuf) -> Self {
-        Self {
-            key_prefix: String::new(),
-            chunk_index: 0,
-            episode_index: 0,
-            video_config: VideoEncoderConfig::default(),
-            output_dir,
-            path_scheme: None,
-        }
+    /// Create a new encoder config with default video settings.
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// Set the video path scheme.
-    pub fn with_path_scheme(mut self, scheme: Arc<dyn VideoPathScheme>) -> Self {
-        self.path_scheme = Some(scheme);
-        self
+    /// Create a config with custom video settings.
+    pub fn with_video_config(video_config: VideoEncoderConfig) -> Self {
+        Self { video_config }
     }
 }
 
@@ -122,13 +132,18 @@ enum EncodeCommand {
 ///
 /// This orchestrates per-camera encoding threads that use `VideoEncoder`
 /// for local file output.
+///
+/// The encoder is format-agnostic. Callers must register cameras with
+/// their output paths using `add_camera()` before adding frames.
 pub struct ConcurrentVideoEncoder {
     /// Per-camera command senders.
     cmd_txs: HashMap<String, Sender<EncodeCommand>>,
     /// Per-camera thread handles.
     thread_handles: HashMap<String, std::thread::JoinHandle<Result<ConcurrentEncoderResult>>>,
-    /// Configuration.
-    config: ConcurrentEncoderConfig,
+    /// Per-camera output paths (for results).
+    camera_paths: HashMap<String, PathBuf>,
+    /// Video encoder configuration.
+    video_config: VideoEncoderConfig,
     /// Whether the encoder has been finalized.
     finalized: bool,
 }
@@ -138,43 +153,50 @@ impl ConcurrentVideoEncoder {
     ///
     /// # Arguments
     ///
-    /// * `config` - Encoder configuration including output directory
+    /// * `config` - Encoder configuration
     pub fn new(config: ConcurrentEncoderConfig) -> Result<Self> {
         Ok(Self {
             cmd_txs: HashMap::new(),
             thread_handles: HashMap::new(),
-            config,
+            camera_paths: HashMap::new(),
+            video_config: config.video_config,
             finalized: false,
         })
     }
 
-    /// Build the output path for a camera using the configured path scheme.
-    fn build_output_path(&self, camera: &str) -> PathBuf {
-        let relative_path = if let Some(ref scheme) = self.config.path_scheme {
-            scheme.video_path(
-                self.config.episode_index as usize,
-                camera,
-                self.config.chunk_index as usize,
-            )
-        } else {
-            let prefix = self.config.key_prefix.trim_end_matches('/');
-            PathBuf::from(format!(
-                "{}/videos/chunk-{:03}/{}/episode_{:06}.mp4",
-                prefix, self.config.chunk_index, camera, self.config.episode_index
-            ))
-        };
-
-        self.config.output_dir.join(relative_path)
-    }
-
-    /// Ensure an encoding thread exists for the given camera.
-    fn ensure_camera(&mut self, camera: &str) -> Result<()> {
-        if self.cmd_txs.contains_key(camera) {
-            return Ok(());
+    /// Register a camera with its output path.
+    ///
+    /// This must be called before `add_frame()` for each camera.
+    /// The output path is the full path where the video file will be written.
+    ///
+    /// # Arguments
+    ///
+    /// * `camera` - Camera name (e.g., "cam_0", "left", "right")
+    /// * `output_path` - Full output path for the video file
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Use a path scheme to compute the output path
+    /// let scheme = LeRobotVideoPathScheme::new("dataset/episode_001");
+    /// let output_dir = PathBuf::from("./output");
+    /// let cam_path = output_dir.join(scheme.video_path(0, "cam_left", 0));
+    ///
+    /// encoder.add_camera("cam_left", cam_path)?;
+    /// ```
+    pub fn add_camera(&mut self, camera: &str, output_path: PathBuf) -> Result<()> {
+        if self.finalized {
+            return Err(RoboflowError::other(
+                "Cannot add camera to finalized encoder".to_string(),
+            ));
         }
 
-        // Build output path
-        let output_path = self.build_output_path(camera);
+        if self.cmd_txs.contains_key(camera) {
+            return Err(RoboflowError::other(format!(
+                "Camera '{}' already registered",
+                camera
+            )));
+        }
 
         // Create parent directory
         if let Some(parent) = output_path.parent() {
@@ -191,7 +213,7 @@ impl ConcurrentVideoEncoder {
         let (cmd_tx, cmd_rx) = unbounded();
 
         // Clone config for the thread
-        let video_config = self.config.video_config.clone();
+        let video_config = self.video_config.clone();
         let camera_name = camera.to_string();
         let output_path_clone = output_path.clone();
 
@@ -205,6 +227,7 @@ impl ConcurrentVideoEncoder {
 
         self.cmd_txs.insert(camera.to_string(), cmd_tx);
         self.thread_handles.insert(camera.to_string(), handle);
+        self.camera_paths.insert(camera.to_string(), output_path);
 
         Ok(())
     }
@@ -348,11 +371,11 @@ impl ConcurrentVideoEncoder {
 
     /// Add a frame for a specific camera.
     ///
-    /// This will create a new encoder for the camera if it doesn't exist.
+    /// The camera must be registered with `add_camera()` before calling this.
     ///
     /// # Arguments
     ///
-    /// * `camera` - Camera name (e.g., "cam_0", "left", "right")
+    /// * `camera` - Camera name (must match a previously registered camera)
     /// * `image` - Image data to encode
     pub fn add_frame(&mut self, camera: &str, image: ImageData) -> Result<()> {
         if self.finalized {
@@ -361,12 +384,12 @@ impl ConcurrentVideoEncoder {
             ));
         }
 
-        self.ensure_camera(camera)?;
-
-        let cmd_tx = self
-            .cmd_txs
-            .get(camera)
-            .ok_or_else(|| RoboflowError::other(format!("No encoder for camera: {}", camera)))?;
+        let cmd_tx = self.cmd_txs.get(camera).ok_or_else(|| {
+            RoboflowError::other(format!(
+                "Camera '{}' not registered. Call add_camera() first.",
+                camera
+            ))
+        })?;
 
         cmd_tx
             .send(EncodeCommand::Frame(image))
@@ -391,15 +414,8 @@ impl ConcurrentVideoEncoder {
         // Wait for all threads to complete
         let mut results = Vec::new();
 
-        // First, build all output paths (before draining)
-        let output_paths: HashMap<String, PathBuf> = self
-            .thread_handles
-            .keys()
-            .map(|camera| (camera.clone(), self.build_output_path(camera)))
-            .collect();
-
         for (camera, handle) in self.thread_handles.drain() {
-            let output_path = output_paths.get(&camera).cloned().unwrap_or_default();
+            let output_path = self.camera_paths.get(&camera).cloned().unwrap_or_default();
             match handle.join() {
                 Ok(Ok(result)) => {
                     results.push(result);
@@ -452,7 +468,7 @@ impl ConcurrentVideoEncoder {
         Ok(())
     }
 
-    /// Get the list of active cameras.
+    /// Get the list of registered cameras.
     pub fn cameras(&self) -> Vec<&str> {
         self.cmd_txs.keys().map(|s| s.as_str()).collect()
     }
@@ -474,15 +490,14 @@ mod tests {
 
     #[test]
     fn test_config_new() {
-        let config = ConcurrentEncoderConfig::new(test_output_dir());
-        assert!(config.key_prefix.is_empty());
-        assert_eq!(config.chunk_index, 0);
-        assert_eq!(config.episode_index, 0);
+        let config = ConcurrentEncoderConfig::new();
+        // Just verify it creates without error
+        let _encoder = ConcurrentVideoEncoder::new(config).unwrap();
     }
 
     #[test]
     fn test_encoder_create() {
-        let config = ConcurrentEncoderConfig::new(test_output_dir());
+        let config = ConcurrentEncoderConfig::new();
         let encoder = ConcurrentVideoEncoder::new(config);
         assert!(encoder.is_ok());
 
@@ -494,16 +509,12 @@ mod tests {
     #[test]
     fn test_encoder_single_camera() {
         let output_dir = test_output_dir();
-        let config = ConcurrentEncoderConfig {
-            key_prefix: "test_single".to_string(),
-            chunk_index: 0,
-            episode_index: 0,
-            video_config: VideoEncoderConfig::default(),
-            output_dir: output_dir.clone(),
-            path_scheme: None,
-        };
-
+        let config = ConcurrentEncoderConfig::new();
         let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
+
+        // Register camera with output path
+        let output_path = output_dir.join("videos/cam0.mp4");
+        encoder.add_camera("cam0", output_path).unwrap();
 
         // Add 3 frames for one camera
         for i in 0..3 {
@@ -529,19 +540,17 @@ mod tests {
     #[test]
     fn test_encoder_multi_camera() {
         let output_dir = test_output_dir();
-        let config = ConcurrentEncoderConfig {
-            key_prefix: "test_multi".to_string(),
-            chunk_index: 0,
-            episode_index: 0,
-            video_config: VideoEncoderConfig::default(),
-            output_dir: output_dir.clone(),
-            path_scheme: None,
-        };
-
+        let config = ConcurrentEncoderConfig::new();
         let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
 
-        // Add frames for multiple cameras
+        // Register multiple cameras
         let cameras = vec!["left", "right", "center"];
+        for camera in &cameras {
+            let output_path = output_dir.join(format!("videos/{}.mp4", camera));
+            encoder.add_camera(camera, output_path).unwrap();
+        }
+
+        // Add frames for each camera
         for camera in &cameras {
             for i in 0..5 {
                 let image = ImageData::new(64, 64, vec![(i * 30) as u8; 64 * 64 * 3]);
@@ -567,16 +576,12 @@ mod tests {
     #[test]
     fn test_encoder_skip_invalid_frames() {
         let output_dir = test_output_dir();
-        let config = ConcurrentEncoderConfig {
-            key_prefix: "test_skip".to_string(),
-            chunk_index: 0,
-            episode_index: 0,
-            video_config: VideoEncoderConfig::default(),
-            output_dir: output_dir.clone(),
-            path_scheme: None,
-        };
-
+        let config = ConcurrentEncoderConfig::new();
         let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
+
+        // Register camera
+        let output_path = output_dir.join("videos/cam0.mp4");
+        encoder.add_camera("cam0", output_path).unwrap();
 
         // Add a valid frame first (sets dimensions)
         let valid_image = ImageData::new(64, 64, vec![128u8; 64 * 64 * 3]);
@@ -600,7 +605,7 @@ mod tests {
     #[test]
     fn test_encoder_empty() {
         // Test encoder with no frames added
-        let config = ConcurrentEncoderConfig::new(test_output_dir());
+        let config = ConcurrentEncoderConfig::new();
         let encoder = ConcurrentVideoEncoder::new(config).unwrap();
 
         let results = encoder.finalize().unwrap();
@@ -609,7 +614,7 @@ mod tests {
 
     #[test]
     fn test_encoder_cannot_add_after_finalize() {
-        let config = ConcurrentEncoderConfig::new(test_output_dir());
+        let config = ConcurrentEncoderConfig::new();
         let encoder = ConcurrentVideoEncoder::new(config).unwrap();
 
         // Finalize without adding any frames
@@ -622,16 +627,12 @@ mod tests {
     fn test_non_square_dimensions_encoding() {
         // Regression test for non-square image dimensions
         let output_dir = test_output_dir();
-        let config = ConcurrentEncoderConfig {
-            key_prefix: "test_nonsquare".to_string(),
-            chunk_index: 0,
-            episode_index: 0,
-            video_config: VideoEncoderConfig::default(),
-            output_dir: output_dir.clone(),
-            path_scheme: None,
-        };
-
+        let config = ConcurrentEncoderConfig::new();
         let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
+
+        // Register camera
+        let output_path = output_dir.join("videos/nonsquare_cam.mp4");
+        encoder.add_camera("nonsquare_cam", output_path).unwrap();
 
         // 160x120 is non-square - this used to fail!
         let width = 160u32;
@@ -648,5 +649,66 @@ mod tests {
         assert_eq!(results[0].frames_encoded, 5);
         assert_eq!(results[0].frames_skipped, 0);
         assert!(results[0].output_path.exists());
+    }
+
+    #[test]
+    fn test_add_camera_twice_fails() {
+        let output_dir = test_output_dir();
+        let config = ConcurrentEncoderConfig::new();
+        let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
+
+        let output_path = output_dir.join("videos/cam0.mp4");
+        encoder.add_camera("cam0", output_path.clone()).unwrap();
+
+        // Adding same camera again should fail
+        let result = encoder.add_camera("cam0", output_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_add_frame_before_add_camera_fails() {
+        let config = ConcurrentEncoderConfig::new();
+        let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
+
+        let image = ImageData::new(64, 64, vec![128u8; 64 * 64 * 3]);
+        let result = encoder.add_frame("cam0", image);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_with_lerobot_path_scheme() {
+        use crate::formats::common::{LeRobotVideoPathScheme, VideoPathScheme};
+
+        let output_dir = test_output_dir();
+        let config = ConcurrentEncoderConfig::new();
+        let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
+
+        // Use LeRobot path scheme to compute output path
+        let scheme = LeRobotVideoPathScheme::new("dataset/episode_001");
+        let cam_path = output_dir.join(scheme.video_path(0, "observation.images.cam_left", 0));
+
+        // Expected: output_dir/dataset/episode_001/videos/chunk-000/observation.images.cam_left/episode_000000.mp4
+        encoder
+            .add_camera("observation.images.cam_left", cam_path)
+            .unwrap();
+
+        // Add some frames
+        for i in 0..3 {
+            let image = ImageData::new(64, 64, vec![(i * 50) as u8; 64 * 64 * 3]);
+            encoder
+                .add_frame("observation.images.cam_left", image)
+                .unwrap();
+        }
+
+        let results = encoder.finalize().unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].frames_encoded, 3);
+        assert!(results[0].output_path.exists());
+
+        // Verify path follows LeRobot format
+        let path_str = results[0].output_path.to_str().unwrap();
+        assert!(path_str.contains("videos/chunk-000"));
+        assert!(path_str.contains("observation.images.cam_left"));
+        assert!(path_str.contains("episode_000000.mp4"));
     }
 }

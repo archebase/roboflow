@@ -37,12 +37,19 @@
 //!
 //! ```ignore
 //! use roboflow_dataset::media::video::{ConcurrentVideoEncoder, ConcurrentEncoderConfig};
+//! use roboflow_dataset::formats::common::{LeRobotVideoPathScheme, VideoPathScheme};
+//! use std::path::PathBuf;
 //!
-//! let config = ConcurrentEncoderConfig::new(PathBuf::from("./output"));
+//! let config = ConcurrentEncoderConfig::new();
 //! let mut encoder = ConcurrentVideoEncoder::new(config)?;
 //!
-//! encoder.add_frame("cam0", image1)?;
-//! encoder.add_frame("cam1", image2)?;
+//! // Register cameras with their output paths
+//! let output_dir = PathBuf::from("./output");
+//! let scheme = LeRobotVideoPathScheme::new("dataset/episode_001");
+//! let cam_path = output_dir.join(scheme.video_path(0, "cam_left", 0));
+//! encoder.add_camera("cam_left", cam_path)?;
+//!
+//! encoder.add_frame("cam_left", image1)?;
 //!
 //! let results = encoder.finalize()?;
 //! ```
@@ -59,7 +66,6 @@ pub mod encoder;
 pub mod frame;
 pub mod hardware;
 pub mod hardware_config;
-pub mod path;
 pub mod rsmpeg;
 pub mod simd;
 pub mod test_utils;
@@ -77,9 +83,6 @@ pub use hardware::{
     is_encoder_available, print_encoder_diagnostics, select_best_encoder,
 };
 pub use hardware_config::{HardwareBackend, HardwareConfig, detect_hardware_backend};
-
-// Re-export path schemes
-pub use path::{FlatVideoPathScheme, LeRobotVideoPathScheme, RldsVideoPathScheme};
 
 // Re-export codec utilities
 pub use rsmpeg::{default_codec_name, is_hardware_encoding_available, is_rsmpeg_available};

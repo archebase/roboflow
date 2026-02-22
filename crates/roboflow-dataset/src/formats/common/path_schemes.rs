@@ -5,7 +5,24 @@
 //! Video path schemes for different dataset formats.
 //!
 //! This module provides implementations of the `VideoPathScheme` trait
-//! for different dataset formats.
+//! for different dataset formats. These schemes define how video files
+//! are organized within a dataset.
+//!
+//! # Available Schemes
+//!
+//! - [`LeRobotVideoPathScheme`] - LeRobot v2.1 format: `videos/chunk-{chunk:03d}/{camera}/episode_{episode:06d}.mp4`
+//! - [`RldsVideoPathScheme`] - RLDS format: `episode_{episode}/videos/{camera}.mp4`
+//! - [`FlatVideoPathScheme`] - Simple flat format: `{camera}/episode_{episode:06d}.mp4`
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use roboflow_dataset::formats::common::{LeRobotVideoPathScheme, VideoPathScheme};
+//!
+//! let scheme = LeRobotVideoPathScheme::new("dataset/episode_001");
+//! let path = scheme.video_path(0, "observation.images.cam_left", 0);
+//! // Returns: "dataset/episode_001/videos/chunk-000/observation.images.cam_left/episode_000000.mp4"
+//! ```
 
 use crate::core::VideoPathScheme;
 use std::path::{Path, PathBuf};
@@ -20,7 +37,7 @@ use std::path::{Path, PathBuf};
 /// # Example
 ///
 /// ```rust,ignore
-/// use roboflow_dataset::video::LeRobotVideoPathScheme;
+/// use roboflow_dataset::formats::common::LeRobotVideoPathScheme;
 ///
 /// let scheme = LeRobotVideoPathScheme::new("dataset/episode_001");
 /// let path = scheme.video_path(0, "observation.images.cam_left", 0);

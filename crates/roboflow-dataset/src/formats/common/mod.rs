@@ -14,12 +14,14 @@
 //! - [`ImageData`], [`AudioData`] - Shared multimedia types
 //! - [`WriterStats`] - Common statistics structure
 //! - [`ProgressSender`] - Channel-based progress reporting
+//! - [`LeRobotVideoPathScheme`], [`RldsVideoPathScheme`], [`FlatVideoPathScheme`] - Video path schemes
 
 pub mod base;
 pub mod config;
 pub mod message_utils;
 pub mod operation;
 pub mod parquet_base;
+pub mod path_schemes;
 pub mod progress;
 pub mod ring_buffer;
 
@@ -34,6 +36,11 @@ pub use config::{DatasetBaseConfig, Mapping, MappingType};
 
 // Re-export parquet utilities
 pub use parquet_base::{FeatureStats, ParquetWriterBase, calculate_stats};
+
+// Re-export path schemes for video organization
+pub use path_schemes::{FlatVideoPathScheme, LeRobotVideoPathScheme, RldsVideoPathScheme};
+// Re-export the VideoPathScheme trait from core for convenience
+pub use crate::core::VideoPathScheme;
 
 // Re-export progress utilities
 pub use progress::{ProgressReceiver, ProgressSender, ProgressUpdate};

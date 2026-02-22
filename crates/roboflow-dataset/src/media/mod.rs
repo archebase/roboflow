@@ -6,15 +6,18 @@
 //!
 //! This module provides abstractions for video encoding and image decoding
 //! that are format-agnostic and can be used across different dataset formats.
+//!
+//! For video path schemes (LeRobot, RLDS, etc.), see `formats::common` module.
 
 pub mod image;
 pub mod video;
 
-// Re-export commonly used types
+// Re-export commonly used types from image module
 pub use image::{
     DecodedImage, ImageDecoderBackend, ImageDecoderConfig, ImageDecoderFactory, ImageError,
     ImageFormat, decode_compressed_image,
 };
-pub use video::{
-    FlatVideoPathScheme, LeRobotVideoPathScheme, RldsVideoPathScheme, VideoPathScheme,
-};
+
+// Re-export VideoPathScheme trait from core (for backward compatibility)
+// For path scheme implementations, use formats::common::{LeRobotVideoPathScheme, ...}
+pub use crate::core::VideoPathScheme;

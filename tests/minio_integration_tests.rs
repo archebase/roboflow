@@ -31,7 +31,8 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 use roboflow_dataset::{
-    ConcurrentEncoderConfig, ConcurrentVideoEncoder, ImageData, common::AlignedFrame,
+    ConcurrentEncoderConfig, ConcurrentVideoEncoder, ImageData,
+    common::{AlignedFrame, LeRobotVideoPathScheme, VideoPathScheme},
 };
 use roboflow_storage::{
     AsyncStorage,
@@ -276,18 +277,22 @@ fn test_minio_basic_connection() {
 fn test_concurrent_encoder_with_local_output() {
     // Test video encoding with local file output using ConcurrentVideoEncoder
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
-    let key_prefix = "test_videos".to_string();
-    let encoder_config = ConcurrentEncoderConfig {
-        key_prefix,
-        chunk_index: 0,
-        episode_index: 0,
-        video_config: roboflow_dataset::VideoEncoderConfig::default(),
-        output_dir: temp_dir.path().to_path_buf(),
-        path_scheme: None,
-    };
 
+    let encoder_config = ConcurrentEncoderConfig::new();
     let mut encoder =
         ConcurrentVideoEncoder::new(encoder_config).expect("Failed to create encoder");
+
+    // Use LeRobot path scheme to compute output path
+    let key_prefix = "test_videos";
+    let scheme = LeRobotVideoPathScheme::new(key_prefix);
+    let output_path = temp_dir
+        .path()
+        .join(scheme.video_path(0, "encoder_test", 0));
+
+    // Register camera
+    encoder
+        .add_camera("encoder_test", output_path)
+        .expect("Failed to add camera");
 
     // Add test frames
     let width = 160u32;
@@ -330,18 +335,23 @@ fn test_concurrent_encoder_multicam_with_local_output() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
     // Create concurrent encoder
-    let key_prefix = "test_coordinator".to_string();
-    let encoder_config = ConcurrentEncoderConfig {
-        key_prefix,
-        chunk_index: 0,
-        episode_index: 0,
-        video_config: roboflow_dataset::VideoEncoderConfig::default(),
-        output_dir: temp_dir.path().to_path_buf(),
-        path_scheme: None,
-    };
-
+    let encoder_config = ConcurrentEncoderConfig::new();
     let mut encoder =
         ConcurrentVideoEncoder::new(encoder_config).expect("Failed to create encoder");
+
+    // Use LeRobot path scheme
+    let key_prefix = "test_coordinator";
+    let scheme = LeRobotVideoPathScheme::new(key_prefix);
+
+    // Register cameras with output paths
+    let cam0_path = temp_dir.path().join(scheme.video_path(0, "camera_0", 0));
+    let cam1_path = temp_dir.path().join(scheme.video_path(0, "camera_1", 0));
+    encoder
+        .add_camera("camera_0", cam0_path)
+        .expect("Failed to add camera_0");
+    encoder
+        .add_camera("camera_1", cam1_path)
+        .expect("Failed to add camera_1");
 
     // Add frames for 2 cameras
     let width = 160u32;
@@ -386,18 +396,23 @@ fn test_compressed_images_with_local_output() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
     // Create concurrent encoder
-    let key_prefix = "test_compressed".to_string();
-    let encoder_config = ConcurrentEncoderConfig {
-        key_prefix,
-        chunk_index: 0,
-        episode_index: 0,
-        video_config: roboflow_dataset::VideoEncoderConfig::default(),
-        output_dir: temp_dir.path().to_path_buf(),
-        path_scheme: None,
-    };
-
+    let encoder_config = ConcurrentEncoderConfig::new();
     let mut encoder =
         ConcurrentVideoEncoder::new(encoder_config).expect("Failed to create encoder");
+
+    // Use LeRobot path scheme
+    let key_prefix = "test_compressed";
+    let scheme = LeRobotVideoPathScheme::new(key_prefix);
+
+    // Register cameras
+    let raw_path = temp_dir.path().join(scheme.video_path(0, "camera_raw", 0));
+    let jpeg_path = temp_dir.path().join(scheme.video_path(0, "camera_jpeg", 0));
+    encoder
+        .add_camera("camera_raw", raw_path)
+        .expect("Failed to add camera_raw");
+    encoder
+        .add_camera("camera_jpeg", jpeg_path)
+        .expect("Failed to add camera_jpeg");
 
     let width = 160u32;
     let height = 120u32;
@@ -487,18 +502,19 @@ fn test_concurrent_local_writes() {
             let _temp_dir = temp_dir.keep();
 
             std::thread::spawn(move || {
-                let key_prefix = format!("test_concurrent/worker_{}", worker_id);
-                let encoder_config = ConcurrentEncoderConfig {
-                    key_prefix,
-                    chunk_index: 0,
-                    episode_index: worker_id as u32,
-                    video_config: roboflow_dataset::VideoEncoderConfig::default(),
-                    output_dir,
-                    path_scheme: None,
-                };
-
+                let encoder_config = ConcurrentEncoderConfig::new();
                 let mut encoder =
                     ConcurrentVideoEncoder::new(encoder_config).expect("Failed to create encoder");
+
+                // Use LeRobot path scheme for this worker
+                let key_prefix = format!("test_concurrent/worker_{}", worker_id);
+                let scheme = LeRobotVideoPathScheme::new(key_prefix);
+                let output_path =
+                    output_dir.join(scheme.video_path(worker_id as usize, "camera", 0));
+
+                encoder
+                    .add_camera("camera", output_path)
+                    .expect("Failed to add camera");
 
                 // Add 5 frames
                 for i in 0..5 {
@@ -592,21 +608,16 @@ fn test_lerobot_v21_video_path_structure() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
     // Test configuration
-    let key_prefix = "test_lerobot_v21".to_string();
-    let chunk_index = 0u32;
-    let episode_index = 42u32; // Use non-zero to verify formatting
+    let key_prefix = "test_lerobot_v21";
+    let chunk_index = 0usize;
+    let episode_index = 42usize; // Use non-zero to verify formatting
 
-    let encoder_config = ConcurrentEncoderConfig {
-        key_prefix: key_prefix.clone(),
-        chunk_index,
-        episode_index,
-        video_config: roboflow_dataset::VideoEncoderConfig::default(),
-        output_dir: temp_dir.path().to_path_buf(),
-        path_scheme: None,
-    };
-
+    let encoder_config = ConcurrentEncoderConfig::new();
     let mut encoder =
         ConcurrentVideoEncoder::new(encoder_config).expect("Failed to create encoder");
+
+    // Use LeRobot path scheme to compute output paths
+    let scheme = LeRobotVideoPathScheme::new(key_prefix);
 
     // Add frames for multiple cameras (simulating multi-camera setup)
     let cameras = vec![
@@ -615,6 +626,18 @@ fn test_lerobot_v21_video_path_structure() {
         "observation.images.cam_high",
     ];
 
+    // Register cameras with their output paths
+    for camera in &cameras {
+        let output_path =
+            temp_dir
+                .path()
+                .join(scheme.video_path(episode_index, camera, chunk_index));
+        encoder
+            .add_camera(camera, output_path)
+            .expect("Failed to add camera");
+    }
+
+    // Add frames for each camera
     for camera in &cameras {
         for i in 0..10 {
             let img = create_test_image(160, 120, (i * 25) as u8);
@@ -689,17 +712,26 @@ fn test_lerobot_v21_video_path_structure() {
 fn test_multi_camera_unique_temp_files() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
-    let encoder_config = ConcurrentEncoderConfig {
-        key_prefix: "test_unique_temp".to_string(),
-        chunk_index: 0,
-        episode_index: 0,
-        video_config: roboflow_dataset::VideoEncoderConfig::default(),
-        output_dir: temp_dir.path().to_path_buf(),
-        path_scheme: None,
-    };
-
+    let encoder_config = ConcurrentEncoderConfig::new();
     let mut encoder =
         ConcurrentVideoEncoder::new(encoder_config).expect("Failed to create encoder");
+
+    // Use LeRobot path scheme
+    let scheme = LeRobotVideoPathScheme::new("test_unique_temp");
+
+    // Register cameras with their output paths
+    let left_path = temp_dir
+        .path()
+        .join(scheme.video_path(0, "observation.images.cam_left", 0));
+    let right_path = temp_dir
+        .path()
+        .join(scheme.video_path(0, "observation.images.cam_right", 0));
+    encoder
+        .add_camera("observation.images.cam_left", left_path)
+        .expect("Failed to add left camera");
+    encoder
+        .add_camera("observation.images.cam_right", right_path)
+        .expect("Failed to add right camera");
 
     // Add frames for cameras with similar names (simultaneously)
     // This would previously cause temp file collisions

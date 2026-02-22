@@ -33,3 +33,6 @@ pub use trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 pub use factory::{LerobotWriterConfig, LerobotWriterResult, create_lerobot_writer};
 pub use video_profiles::{Profile, QualityTier, ResolvedConfig, SpeedPreset, VideoEncodingProfile};
 pub use writer::{CameraExtrinsic, CameraIntrinsic, EpisodeWriter, LerobotFrame, LerobotWriter};
+
+// Re-export LeRobot video path scheme from common (canonical location for path schemes)
+pub use crate::formats::common::LeRobotVideoPathScheme;
