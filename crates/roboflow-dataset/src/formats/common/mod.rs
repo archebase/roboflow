@@ -18,6 +18,7 @@
 
 pub mod base;
 pub mod config;
+pub mod frame_buffer;
 pub mod message_utils;
 pub mod operation;
 pub mod parquet_base;
@@ -53,6 +54,9 @@ pub use roboflow_media::image::{decode_image_to_rgb, decode_to_rgb};
 
 // Re-export ring buffer for streaming frame processing
 pub use ring_buffer::{FrameRingBuffer, RingBufferError, RingBufferSnapshot};
+
+// Re-export frame buffer utilities for video encoding
+pub use frame_buffer::build_video_frame_buffer;
 
 // Re-export SIMD RGB to YUV conversion from roboflow_media
 pub use roboflow_media::video::{

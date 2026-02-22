@@ -12,10 +12,9 @@ use std::path::PathBuf;
 use roboflow_core::{Result, RoboflowError};
 
 use crate::formats::common::operation::{Sink, WriteOperation};
-use crate::formats::common::{ImageData, decode_image_to_rgb};
+use crate::formats::common::{ImageData, build_video_frame_buffer};
 use roboflow_media::video::{
-    OutputConfig, RsmpegVideoComposer, VideoComposer, VideoEncoder, VideoEncoderConfig, VideoFrame,
-    VideoFrameBuffer,
+    OutputConfig, RsmpegVideoComposer, VideoComposer, VideoEncoder, VideoEncoderConfig,
 };
 
 /// Local filesystem sink for dataset output.
@@ -148,28 +147,9 @@ impl LocalSink {
             std::fs::create_dir_all(parent)?;
         }
 
-        let mut buffer = VideoFrameBuffer::new();
-        for img in frames {
-            if img.width == 0 || img.height == 0 {
-                continue;
-            }
-
-            let (width, height, rgb_data) = if img.is_encoded {
-                match decode_image_to_rgb(img) {
-                    Some((w, h, data)) => (w, h, data),
-                    None => {
-                        tracing::debug!("Failed to decode image, skipping");
-                        continue;
-                    }
-                }
-            } else {
-                (img.width, img.height, img.data.clone())
-            };
-
-            let video_frame = VideoFrame::new(width, height, rgb_data);
-            if let Err(e) = buffer.add_frame(video_frame) {
-                tracing::warn!("Frame dimension mismatch: {}", e);
-            }
+        let (buffer, skipped) = build_video_frame_buffer(frames)?;
+        if skipped > 0 {
+            tracing::debug!(skipped, "Skipped frames during videoFrameBuffer build");
         }
 
         if buffer.is_empty() {

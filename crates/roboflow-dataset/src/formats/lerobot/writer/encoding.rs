@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use crate::formats::common::{ImageData, decode_image_to_rgb};
+use crate::formats::common::{ImageData, build_video_frame_buffer, decode_image_to_rgb};
 use crate::formats::lerobot::video_profiles::ResolvedConfig;
 use roboflow_core::Result;
 use roboflow_media::video::{OutputConfig, VideoEncoder};
@@ -364,16 +364,20 @@ fn encode_videos_parallel(
 /// that had dimension mismatches or failed to decode (when encoded).
 /// Compressed images (JPEG/PNG) are decoded to RGB before encoding to MP4.
 ///
+/// Uses parallel decoding when there are many encoded images (>10) and
+/// multiple threads are available. Falls back to the shared sequential
+/// utility otherwise.
 pub fn build_frame_buffer_static(images: &[ImageData]) -> Result<(VideoFrameBuffer, usize)> {
     use rayon::prelude::*;
-
-    let mut buffer = VideoFrameBuffer::new();
-    let mut skipped = 0usize;
 
     let encoded_count = images.iter().filter(|img| img.is_encoded).count();
     let use_parallel = encoded_count > 10 && rayon::current_num_threads() > 1;
 
     if use_parallel {
+        // Use parallel decoding for large batches of encoded images
+        let mut buffer = VideoFrameBuffer::new();
+        let mut skipped = 0usize;
+
         let decoded: Vec<_> = images
             .par_iter()
             .map(|img| {
@@ -398,13 +402,11 @@ pub fn build_frame_buffer_static(images: &[ImageData]) -> Result<(VideoFrameBuff
                     let video_frame = VideoFrame::new(width, height, rgb_data);
                     if let Err(e) = buffer.add_frame(video_frame) {
                         skipped += 1;
-                        tracing::warn!(
-                            expected_width = buffer.width.unwrap_or(0),
-                            expected_height = buffer.height.unwrap_or(0),
-                            actual_width = width,
-                            actual_height = height,
+                        tracing::debug!(
+                            width,
+                            height,
                             error = %e,
-                            "Frame dimension mismatch - skipping frame"
+                            "Frame skipped due to dimension mismatch"
                         );
                     }
                 }
@@ -413,49 +415,20 @@ pub fn build_frame_buffer_static(images: &[ImageData]) -> Result<(VideoFrameBuff
                 }
             }
         }
-    } else {
-        for img in images {
-            if img.width == 0 || img.height == 0 {
-                skipped += 1;
-                continue;
-            }
 
-            let (width, height, rgb_data) = if img.is_encoded {
-                match decode_image_to_rgb(img) {
-                    Some((w, h, data)) => (w, h, data),
-                    None => {
-                        skipped += 1;
-                        continue;
-                    }
-                }
-            } else {
-                (img.width, img.height, img.data.clone())
-            };
-
-            let video_frame = VideoFrame::new(width, height, rgb_data);
-            if let Err(e) = buffer.add_frame(video_frame) {
-                skipped += 1;
-                tracing::warn!(
-                    expected_width = buffer.width.unwrap_or(0),
-                    expected_height = buffer.height.unwrap_or(0),
-                    actual_width = width,
-                    actual_height = height,
-                    error = %e,
-                    "Frame dimension mismatch - skipping frame"
-                );
-            }
+        if !images.is_empty() && buffer.is_empty() {
+            tracing::warn!(
+                frame_count = images.len(),
+                skipped_frames = skipped,
+                "All frames skipped for video; Parquet and other cameras will still be written"
+            );
         }
-    }
 
-    if !images.is_empty() && buffer.is_empty() {
-        tracing::warn!(
-            frame_count = images.len(),
-            skipped_frames = skipped,
-            "All frames skipped for video; Parquet and other cameras will still be written"
-        );
+        Ok((buffer, skipped))
+    } else {
+        // Use shared sequential utility for smaller batches
+        build_video_frame_buffer(images)
     }
-
-    Ok((buffer, skipped))
 }
 
 #[cfg(test)]

@@ -15,6 +15,16 @@
 //! - [`media`] - Media handling (video encoding, image decoding)
 //! - [`sources`] - Data source abstractions (bag, MCAP)
 //!
+//! # Media Types
+//!
+//! This crate re-exports media types from `roboflow-media` for convenience:
+//! - [`image`] - Image decoding, format detection, and passthrough utilities
+//! - [`video`] - Video encoding with hardware acceleration support
+//! - [`ImageData`], [`CameraInfo`] - Core media data structures
+//!
+//! For direct media processing without dataset conversion, use the
+//! `roboflow-media` crate directly.
+//!
 //! # Quick Start
 //!
 //! ```rust,ignore
