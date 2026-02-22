@@ -38,9 +38,12 @@
 //!
 //! ```ignore
 //! use roboflow_media::video::{FragmentEncoder, FragmentConfig, FragmentOutputConfig};
+//! use std::path::PathBuf;
 //!
-//! let config = FragmentConfig::by_frames(300); // Flush every 300 frames
-//! let output = FragmentOutputConfig::single_file("/path/to/output.mp4");
+//! let config = FragmentConfig::with_max_frames(300); // Flush every 300 frames
+//! let output = FragmentOutputConfig::SingleFile {
+//!     path: PathBuf::from("/path/to/output.mp4"),
+//! };
 //! let mut encoder = FragmentEncoder::new(video_config, output, config)?;
 //!
 //! for frame in frames {

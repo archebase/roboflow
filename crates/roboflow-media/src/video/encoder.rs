@@ -26,7 +26,7 @@
 //! # Example - File Output
 //!
 //! ```ignore
-//! use roboflow_dataset::media::video::{
+//! use roboflow_media::video::{
 //!     VideoEncoder, VideoEncoderConfig, OutputConfig,
 //! };
 //!

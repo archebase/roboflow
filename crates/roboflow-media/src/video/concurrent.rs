@@ -43,7 +43,7 @@
 //! using their own path scheme (e.g., `LeRobotVideoPathScheme`).
 //!
 //! ```rust,ignore
-//! use roboflow_dataset::media::video::{ConcurrentVideoEncoder, ConcurrentEncoderConfig, VideoEncoderConfig};
+//! use roboflow_media::video::{ConcurrentVideoEncoder, ConcurrentEncoderConfig, VideoEncoderConfig};
 //! use roboflow_dataset::formats::common::{LeRobotVideoPathScheme, VideoPathScheme};
 //!
 //! // Create encoder with just video config
