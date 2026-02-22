@@ -7,8 +7,8 @@
 use roboflow_media::ImageData;
 use roboflow_media::video::{
     EncodingResult, EncodingStrategy, EncodingWorkload, FragmentConfig, FragmentEncoder,
-    FragmentOutputConfig, FragmentTriggers, OutputConfig, PixelFormat, StreamConfig,
-    StreamOutput, VideoEncoder, VideoEncoderConfig, WorkloadConfig,
+    FragmentOutputConfig, FragmentTriggers, OutputConfig, PixelFormat, StreamConfig, StreamOutput,
+    VideoEncoder, VideoEncoderConfig, WorkloadConfig,
 };
 use std::path::PathBuf;
 
@@ -316,8 +316,7 @@ fn test_fragment_encoder_single_file() {
         path: output_path.clone(),
     };
 
-    let mut encoder =
-        FragmentEncoder::new(VideoEncoderConfig::default(), output, config).unwrap();
+    let mut encoder = FragmentEncoder::new(VideoEncoderConfig::default(), output, config).unwrap();
 
     // Add 5 frames (less than threshold)
     for i in 0..5 {
@@ -341,8 +340,7 @@ fn test_fragment_encoder_auto_flush() {
         path: output_path.clone(),
     };
 
-    let mut encoder =
-        FragmentEncoder::new(VideoEncoderConfig::default(), output, config).unwrap();
+    let mut encoder = FragmentEncoder::new(VideoEncoderConfig::default(), output, config).unwrap();
 
     // Add 15 frames (should trigger 3 auto-flushes)
     for i in 0..15 {
@@ -366,8 +364,7 @@ fn test_fragment_encoder_explicit_flush() {
         path: output_path.clone(),
     };
 
-    let mut encoder =
-        FragmentEncoder::new(VideoEncoderConfig::default(), output, config).unwrap();
+    let mut encoder = FragmentEncoder::new(VideoEncoderConfig::default(), output, config).unwrap();
 
     // Add 3 frames
     for i in 0..3 {
@@ -420,8 +417,7 @@ fn test_workload_single_stream() {
     let mut workload = EncodingWorkload::new(WorkloadConfig::default()).unwrap();
 
     // Add a stream
-    let stream_config =
-        StreamConfig::new("cam0", StreamOutput::file(output_path.clone()));
+    let stream_config = StreamConfig::new("cam0", StreamOutput::file(output_path.clone()));
     workload.add_stream(stream_config).unwrap();
 
     // Submit frames
@@ -493,7 +489,10 @@ fn test_workload_invalid_stream() {
     let data = create_test_rgb_image(64, 64, 128);
     let result = workload.submit_frame("nonexistent", &data, 64, 64);
 
-    assert!(result.is_err(), "Should fail to submit to non-existent stream");
+    assert!(
+        result.is_err(),
+        "Should fail to submit to non-existent stream"
+    );
 }
 
 #[test]
