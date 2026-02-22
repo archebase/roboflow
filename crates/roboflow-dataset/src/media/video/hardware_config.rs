@@ -7,7 +7,9 @@
 //! This module provides automatic detection and configuration of hardware
 //! video encoders available on the current platform.
 
-use std::process::Command;
+use std::ffi::CStr;
+
+use rsmpeg::avcodec::{AVCodec, AVCodecContext};
 
 /// Hardware acceleration backend for video encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,20 +104,25 @@ pub fn detect_hardware_backend() -> HardwareBackend {
     HardwareBackend::None
 }
 
-/// Check if a specific ffmpeg encoder is available.
+/// Check if a specific encoder is available and can actually be initialized.
+///
+/// Uses in-process rsmpeg checks instead of shelling out to `ffmpeg -encoders`,
+/// which prevents false positives (e.g., VideoToolbox listed but no GPU access in CI).
 fn check_encoder_available(encoder: &str) -> bool {
-    let result = Command::new("ffmpeg")
-        .arg("-hide_banner")
-        .arg("-encoders")
-        .output();
+    let name_with_nul = format!("{}\0", encoder);
+    let codec_name = match CStr::from_bytes_with_nul(name_with_nul.as_bytes()) {
+        Ok(name) => name,
+        Err(_) => return false,
+    };
 
-    match result {
-        Ok(output) => {
-            let output_str = String::from_utf8_lossy(&output.stdout);
-            output_str.contains(encoder)
-        }
-        Err(_) => false,
-    }
+    // First check if the codec exists in FFmpeg
+    let codec = match AVCodec::find_encoder_by_name(codec_name) {
+        Some(c) => c,
+        None => return false,
+    };
+
+    // Then try to actually open the codec context to verify hardware works
+    matches!(AVCodecContext::new(&codec).open(None), Ok(Some(_)))
 }
 
 /// Hardware acceleration configuration.

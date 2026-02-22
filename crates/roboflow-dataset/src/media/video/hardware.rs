@@ -56,8 +56,18 @@ pub enum EncoderChoice {
 }
 
 impl EncoderChoice {
-    /// Get human-readable name.
+    /// Get the FFmpeg codec name (valid for `AVCodec::find_encoder_by_name`).
     pub fn name(&self) -> &'static str {
+        match self {
+            Self::Nvenc => "h264_nvenc",
+            Self::VideoToolbox => "h264_videotoolbox",
+            Self::RsmpegLibx264 => "libx264",
+            Self::FfmpegLibx264 => "libx264",
+        }
+    }
+
+    /// Get human-readable display name for diagnostics.
+    pub fn display_name(&self) -> &'static str {
         match self {
             Self::Nvenc => "h264_nvenc",
             Self::VideoToolbox => "h264_videotoolbox",
@@ -154,7 +164,7 @@ pub fn print_encoder_diagnostics() {
                 format!(
                     "  {}. {} - {}x speedup",
                     i + 1,
-                    encoder.name(),
+                    encoder.display_name(),
                     encoder.speedup_factor()
                 )
             })
@@ -163,7 +173,7 @@ pub fn print_encoder_diagnostics() {
         tracing::info!(
             "=== Video Encoder Diagnostics ===\nAvailable encoders:\n{}\n\nSelected: {}",
             encoder_list.join("\n"),
-            select_best_encoder().name()
+            select_best_encoder().display_name()
         );
     }
 }
@@ -210,12 +220,20 @@ mod tests {
 
     #[test]
     fn test_encoder_choice_rsmpeg_name() {
-        assert_eq!(EncoderChoice::RsmpegLibx264.name(), "libx264 (rsmpeg)");
+        assert_eq!(EncoderChoice::RsmpegLibx264.name(), "libx264");
+        assert_eq!(
+            EncoderChoice::RsmpegLibx264.display_name(),
+            "libx264 (rsmpeg)"
+        );
     }
 
     #[test]
     fn test_encoder_choice_ffmpeg_name() {
-        assert_eq!(EncoderChoice::FfmpegLibx264.name(), "libx264 (ffmpeg)");
+        assert_eq!(EncoderChoice::FfmpegLibx264.name(), "libx264");
+        assert_eq!(
+            EncoderChoice::FfmpegLibx264.display_name(),
+            "libx264 (ffmpeg)"
+        );
     }
 
     #[test]
