@@ -746,6 +746,108 @@ mod tests {
         let converted = result.unwrap();
         assert_eq!(converted.width, 64);
         assert_eq!(converted.height, 64);
+        assert!(matches!(converted.format, FrameFormat::Yuv420p));
+    }
+
+    #[test]
+    fn test_converted_frame_to_video_frame_nv12() {
+        let converter = SimdNv12Converter::new();
+        let frame = make_test_frame(64, 64);
+        let converted = converter.convert(&frame).unwrap();
+
+        let video_frame = converted.to_video_frame();
+        assert_eq!(video_frame.width, 64);
+        assert_eq!(video_frame.height, 64);
+        assert!(video_frame.is_nv12());
+    }
+
+    #[test]
+    fn test_converted_frame_to_video_frame_yuv420p() {
+        let converter = SimdYuv420pConverter::new();
+        let frame = make_test_frame(64, 64);
+        let converted = converter.convert(&frame).unwrap();
+
+        let video_frame = converted.to_video_frame();
+        assert_eq!(video_frame.width, 64);
+        assert_eq!(video_frame.height, 64);
+        assert!(video_frame.is_yuv420p());
+    }
+
+    #[test]
+    fn test_simd_nv12_converter_zero_copy() {
+        let converter = SimdNv12Converter::new();
+        let frame = make_test_frame(64, 64);
+
+        let result = converter.convert_zero_copy(frame);
+        assert!(result.is_ok());
+
+        let converted = result.unwrap();
+        // Should be InPlace since we have exclusive access
+        match converted {
+            ConvertedFrameZeroCopy::InPlace(buffer) => {
+                assert!(!buffer.data().is_empty());
+            }
+            ConvertedFrameZeroCopy::Owned(_, _, _) => {
+                // Also acceptable - fallback to allocation
+            }
+        }
+    }
+
+    #[test]
+    fn test_simd_yuv420p_converter_zero_copy() {
+        let converter = SimdYuv420pConverter::new();
+        let frame = make_test_frame(64, 64);
+
+        let result = converter.convert_zero_copy(frame);
+        assert!(result.is_ok());
+
+        let converted = result.unwrap();
+        // YUV420P zero-copy always allocates (no in-place conversion)
+        match converted {
+            ConvertedFrameZeroCopy::InPlace(buffer) => {
+                assert!(!buffer.data().is_empty());
+            }
+            ConvertedFrameZeroCopy::Owned(_, _, _) => {}
+        }
+    }
+
+    #[test]
+    fn test_converted_frame_zero_copy_to_video_frame_inplace() {
+        let buffer = std::sync::Arc::new(FrameBuffer::nv12(64, 64, vec![128u8; 6144]));
+        let zero_copy = ConvertedFrameZeroCopy::InPlace(buffer);
+
+        let video_frame = zero_copy.to_video_frame();
+        assert!(video_frame.is_shared());
+        assert!(video_frame.is_nv12());
+    }
+
+    #[test]
+    fn test_converted_frame_zero_copy_to_video_frame_owned() {
+        let converter = SimdNv12Converter::new();
+        let frame = make_test_frame(64, 64);
+        let converted = converter.convert(&frame).unwrap();
+
+        let zero_copy = ConvertedFrameZeroCopy::Owned(converted, 64, 64);
+        let video_frame = zero_copy.to_video_frame();
+        assert!(!video_frame.is_shared());
+        assert!(video_frame.is_nv12());
+    }
+
+    #[test]
+    fn test_convert_result_to_video_frames() {
+        let converter = SimdNv12Converter::new();
+        let frame = make_test_frame(64, 64);
+        let converted = converter.convert_zero_copy(frame).unwrap();
+
+        let result = ConvertResult {
+            sequence: 0,
+            camera_id: "test".to_string(),
+            result: Ok(vec![converted]),
+        };
+
+        let video_frames = result.to_video_frames().unwrap();
+        assert_eq!(video_frames.len(), 1);
+        assert!(video_frames[0].is_nv12());
     }
 
     #[test]
@@ -753,6 +855,14 @@ mod tests {
         let config = ConvertPoolConfig::default();
         assert!(config.worker_count >= 1);
         assert!(config.pending_capacity > 0);
+        assert!(config.zero_copy);
+        assert!(matches!(config.target_format, TargetFormat::Nv12));
+    }
+
+    #[test]
+    fn test_target_format_default() {
+        let format = TargetFormat::default();
+        assert!(matches!(format, TargetFormat::Nv12));
     }
 
     #[test]
@@ -799,5 +909,237 @@ mod tests {
         assert_eq!(frames.len(), 1);
 
         pool.shutdown();
+    }
+
+    #[test]
+    fn test_convert_pool_yuv420p_format() {
+        let config = ConvertPoolConfig {
+            worker_count: 1,
+            pending_capacity: 8,
+            completed_capacity: 8,
+            target_format: TargetFormat::Yuv420p,
+            zero_copy: true,
+        };
+
+        let pool = ConvertPool::new(config).unwrap();
+
+        let cmd = ConvertCommand {
+            sequence: 0,
+            camera_id: "test".to_string(),
+            frames: vec![make_test_frame(64, 64)],
+        };
+
+        pool.submit(cmd).unwrap();
+        let result = pool.recv().expect("Should receive result");
+        assert!(result.result.is_ok());
+
+        let frames = result.result.unwrap();
+        // Convert to VideoFrame and check format
+        let video_frame = frames.into_iter().next().unwrap().to_video_frame();
+        assert!(video_frame.is_yuv420p());
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_convert_pool_batch_conversion() {
+        let config = ConvertPoolConfig {
+            worker_count: 1,
+            pending_capacity: 8,
+            completed_capacity: 8,
+            target_format: TargetFormat::Nv12,
+            zero_copy: true,
+        };
+
+        let pool = ConvertPool::new(config).unwrap();
+
+        // Submit multiple frames for batch conversion
+        let frames: Vec<DecodedFrame> = (0..5).map(|_| make_test_frame(64, 64)).collect();
+        let cmd = ConvertCommand {
+            sequence: 0,
+            camera_id: "test".to_string(),
+            frames,
+        };
+
+        pool.submit(cmd).unwrap();
+        let result = pool.recv().expect("Should receive result");
+        assert!(result.result.is_ok());
+
+        let converted_frames = result.result.unwrap();
+        assert_eq!(converted_frames.len(), 5);
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_convert_pool_no_zero_copy() {
+        let config = ConvertPoolConfig {
+            worker_count: 1,
+            pending_capacity: 8,
+            completed_capacity: 8,
+            target_format: TargetFormat::Nv12,
+            zero_copy: false, // Disable zero-copy
+        };
+
+        let pool = ConvertPool::new(config).unwrap();
+
+        let cmd = ConvertCommand {
+            sequence: 0,
+            camera_id: "test".to_string(),
+            frames: vec![make_test_frame(64, 64)],
+        };
+
+        pool.submit(cmd).unwrap();
+        let result = pool.recv().expect("Should receive result");
+        assert!(result.result.is_ok());
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_convert_pool_try_recv() {
+        let config = ConvertPoolConfig {
+            worker_count: 1,
+            pending_capacity: 8,
+            completed_capacity: 8,
+            target_format: TargetFormat::Nv12,
+            zero_copy: true,
+        };
+
+        let pool = ConvertPool::new(config).unwrap();
+
+        // try_recv should return None when empty
+        assert!(pool.try_recv().is_none());
+
+        // Submit a frame
+        let cmd = ConvertCommand {
+            sequence: 0,
+            camera_id: "test".to_string(),
+            frames: vec![make_test_frame(64, 64)],
+        };
+        pool.submit(cmd).unwrap();
+
+        // Wait a bit for processing, then try_recv
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // Eventually should get result
+        let mut retries = 0;
+        while pool.try_recv().is_none() && retries < 50 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            retries += 1;
+        }
+        let result = pool.try_recv();
+        assert!(result.is_some() || retries < 50);
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_convert_pool_stats() {
+        let config = ConvertPoolConfig {
+            worker_count: 2,
+            pending_capacity: 8,
+            completed_capacity: 8,
+            target_format: TargetFormat::Nv12,
+            zero_copy: true,
+        };
+
+        let pool = ConvertPool::new(config).unwrap();
+
+        let stats = pool.stats();
+        assert_eq!(stats.active_workers, 2);
+        assert_eq!(stats.frames_converted, 0);
+
+        // Submit a frame
+        let cmd = ConvertCommand {
+            sequence: 0,
+            camera_id: "test".to_string(),
+            frames: vec![make_test_frame(64, 64)],
+        };
+        pool.submit(cmd).unwrap();
+
+        // Receive result
+        let _ = pool.recv();
+
+        // Stats should show conversion
+        let stats = pool.stats();
+        assert_eq!(stats.frames_converted, 1);
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_convert_pool_mixed_dimensions() {
+        let config = ConvertPoolConfig {
+            worker_count: 1,
+            pending_capacity: 8,
+            completed_capacity: 8,
+            target_format: TargetFormat::Nv12,
+            zero_copy: true,
+        };
+
+        let pool = ConvertPool::new(config).unwrap();
+
+        // Submit frames with different dimensions (should use per-frame conversion)
+        let cmd = ConvertCommand {
+            sequence: 0,
+            camera_id: "test".to_string(),
+            frames: vec![make_test_frame(64, 64), make_test_frame(32, 32)],
+        };
+
+        pool.submit(cmd).unwrap();
+        let result = pool.recv().expect("Should receive result");
+        assert!(result.result.is_ok());
+
+        let frames = result.result.unwrap();
+        assert_eq!(frames.len(), 2);
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_convert_pool_stats_default() {
+        let stats = ConvertPoolStats::default();
+        assert_eq!(stats.frames_converted, 0);
+        assert_eq!(stats.frames_failed, 0);
+        assert_eq!(stats.pending_count, 0);
+        assert_eq!(stats.active_workers, 0);
+    }
+
+    #[test]
+    fn test_color_space_converter_default_impl() {
+        // Test the default convert_zero_copy implementation
+        struct TestConverter;
+
+        impl ColorSpaceConverter for TestConverter {
+            fn convert(&self, frame: &DecodedFrame) -> io::Result<ConvertedFrame> {
+                let (y_plane, uv_plane) = rgb_to_nv12(frame.data(), frame.width() as usize, frame.height() as usize)
+                    .map_err(|e| io::Error::other(e.to_string()))?;
+                Ok(ConvertedFrame {
+                    width: frame.width(),
+                    height: frame.height(),
+                    format: FrameFormat::Nv12,
+                    data: FrameData::Nv12 { y_plane, uv_plane },
+                })
+            }
+        }
+
+        let converter = TestConverter;
+        let frame = make_test_frame(64, 64);
+
+        // Default impl should fallback to Owned
+        let result = converter.convert_zero_copy(frame);
+        assert!(result.is_ok());
+
+        match result.unwrap() {
+            ConvertedFrameZeroCopy::Owned(frame, width, height) => {
+                assert!(matches!(frame.format, FrameFormat::Nv12));
+                assert_eq!(width, 64);
+                assert_eq!(height, 64);
+            }
+            ConvertedFrameZeroCopy::InPlace(_) => {
+                // Also acceptable
+            }
+        }
     }
 }

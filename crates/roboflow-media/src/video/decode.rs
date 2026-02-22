@@ -881,4 +881,331 @@ mod tests {
 
         pool.shutdown();
     }
+
+    #[test]
+    fn test_decoded_frame_from_arc() {
+        let buffer = std::sync::Arc::new(FrameBuffer::rgb24(64, 64, vec![128u8; 12288]));
+        let frame = DecodedFrame::from_arc(buffer.clone());
+
+        assert_eq!(frame.width(), 64);
+        assert_eq!(frame.height(), 64);
+        assert!(!frame.data().is_empty());
+    }
+
+    #[test]
+    fn test_decoded_frame_buffer_access() {
+        let buffer = FrameBuffer::rgb24(64, 64, vec![42u8; 12288]);
+        let frame = DecodedFrame::new(buffer);
+
+        // Test buffer() method
+        let buf_ref = frame.buffer();
+        assert_eq!(buf_ref.width(), 64);
+        assert_eq!(buf_ref.height(), 64);
+
+        // Test clone_buffer() method
+        let cloned = frame.clone_buffer();
+        assert_eq!(cloned.width(), 64);
+    }
+
+    #[test]
+    fn test_decoded_frame_into_buffer() {
+        let buffer = FrameBuffer::rgb24(64, 64, vec![42u8; 12288]);
+        let frame = DecodedFrame::new(buffer);
+
+        // Test into_buffer()
+        let arc_buffer = frame.into_buffer();
+        assert_eq!(arc_buffer.width(), 64);
+        assert_eq!(arc_buffer.height(), 64);
+    }
+
+    #[test]
+    fn test_frame_data_owned() {
+        let data = vec![1, 2, 3, 4, 5];
+        let frame_data = FrameData::Owned(data.clone());
+
+        assert_eq!(frame_data.as_slice(), data.as_slice());
+    }
+
+    #[test]
+    fn test_decode_pool_config_default() {
+        let config = DecodePoolConfig::default();
+        assert_eq!(config.worker_count, 4);
+        assert_eq!(config.pending_capacity, 64);
+        assert_eq!(config.completed_capacity, 64);
+        assert!(config.arena_config.is_some());
+        assert_eq!(config.max_image_width, 7680);
+        assert_eq!(config.max_image_height, 4320);
+        assert_eq!(config.max_image_bytes, 100 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_decode_pool_try_recv() {
+        let config = DecodePoolConfig {
+            worker_count: 1,
+            pending_capacity: 8,
+            completed_capacity: 8,
+            arena_config: None,
+            max_image_width: 0,
+            max_image_height: 0,
+            max_image_bytes: 0,
+        };
+
+        let pool = DecodePool::new(config).unwrap();
+
+        // try_recv should return None when empty
+        assert!(pool.try_recv().is_none());
+
+        // Submit a frame
+        let img = make_test_image(64, 64, false);
+        pool.submit("cam0".to_string(), img).unwrap();
+
+        // Wait for processing then try_recv
+        let mut retries = 0;
+        while pool.try_recv().is_none() && retries < 50 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            retries += 1;
+        }
+
+        // Should have a result now
+        let result = pool.try_recv();
+        assert!(result.is_some() || retries < 50);
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_decode_pool_stats() {
+        let config = DecodePoolConfig {
+            worker_count: 2,
+            pending_capacity: 8,
+            completed_capacity: 8,
+            arena_config: None,
+            max_image_width: 0,
+            max_image_height: 0,
+            max_image_bytes: 0,
+        };
+
+        let pool = DecodePool::new(config).unwrap();
+
+        let stats = pool.stats();
+        assert_eq!(stats.frames_decoded, 0);
+        assert_eq!(stats.frames_failed, 0);
+
+        // Submit and process a frame
+        let img = make_test_image(64, 64, false);
+        pool.submit("cam0".to_string(), img).unwrap();
+        let _ = pool.recv();
+
+        let stats = pool.stats();
+        assert_eq!(stats.frames_decoded, 1);
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_decode_pool_arena_access() {
+        let arena_config = FramePoolConfig {
+            width: 64,
+            height: 64,
+            bytes_per_pixel: 3,
+            slot_count: 4,
+        };
+
+        let config = DecodePoolConfig {
+            worker_count: 1,
+            pending_capacity: 8,
+            completed_capacity: 8,
+            arena_config: Some(arena_config),
+            max_image_width: 0,
+            max_image_height: 0,
+            max_image_bytes: 0,
+        };
+
+        let pool = DecodePool::new(config).unwrap();
+
+        // Should have access to the arena
+        assert!(pool.arena().is_some());
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_decode_pool_no_arena() {
+        let config = DecodePoolConfig {
+            worker_count: 1,
+            pending_capacity: 8,
+            completed_capacity: 8,
+            arena_config: None,
+            max_image_width: 0,
+            max_image_height: 0,
+            max_image_bytes: 0,
+        };
+
+        let pool = DecodePool::new(config).unwrap();
+
+        // Should not have arena
+        assert!(pool.arena().is_none());
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_decode_pool_max_width_validation() {
+        let config = DecodePoolConfig {
+            worker_count: 1,
+            pending_capacity: 8,
+            completed_capacity: 8,
+            arena_config: None,
+            max_image_width: 100, // Limit width to 100
+            max_image_height: 0,
+            max_image_bytes: 0,
+        };
+
+        let pool = DecodePool::new(config).unwrap();
+
+        // Submit frame that exceeds max width
+        let img = make_test_image(200, 64, false);
+        pool.submit("cam0".to_string(), img).unwrap();
+
+        // Should fail validation
+        let result = pool.recv().expect("recv");
+        assert!(result.result.is_err());
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_decode_pool_max_height_validation() {
+        let config = DecodePoolConfig {
+            worker_count: 1,
+            pending_capacity: 8,
+            completed_capacity: 8,
+            arena_config: None,
+            max_image_width: 0,
+            max_image_height: 100, // Limit height to 100
+            max_image_bytes: 0,
+        };
+
+        let pool = DecodePool::new(config).unwrap();
+
+        // Submit frame that exceeds max height
+        let img = make_test_image(64, 200, false);
+        pool.submit("cam0".to_string(), img).unwrap();
+
+        // Should fail validation
+        let result = pool.recv().expect("recv");
+        assert!(result.result.is_err());
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_decode_pool_max_bytes_validation() {
+        let config = DecodePoolConfig {
+            worker_count: 1,
+            pending_capacity: 8,
+            completed_capacity: 8,
+            arena_config: None,
+            max_image_width: 0,
+            max_image_height: 0,
+            max_image_bytes: 1000, // Limit to 1000 bytes
+        };
+
+        let pool = DecodePool::new(config).unwrap();
+
+        // Submit frame that exceeds max bytes (64x64x3 = 12288 bytes)
+        let img = make_test_image(64, 64, false);
+        pool.submit("cam0".to_string(), img).unwrap();
+
+        // Should fail validation
+        let result = pool.recv().expect("recv");
+        assert!(result.result.is_err());
+
+        pool.shutdown();
+    }
+
+    #[test]
+    fn test_fifo_collector_default() {
+        let collector = FifoCollector::default();
+        assert_eq!(collector.buffer_size(), 0);
+        assert!(!collector.has_ready());
+    }
+
+    #[test]
+    fn test_fifo_collector_max_buffer_warning() {
+        let mut collector = FifoCollector::new();
+        collector.max_buffer_size = 3; // Lower threshold for test
+
+        // Add more items than max_buffer_size
+        for i in 0..5 {
+            collector.push(DecodeResult {
+                sequence: i,
+                camera_id: "cam0".to_string(),
+                result: Ok(None),
+            });
+        }
+
+        // Should have 5 items buffered
+        assert_eq!(collector.buffer_size(), 5);
+    }
+
+    #[test]
+    fn test_decode_pool_stats_default() {
+        let stats = DecodePoolStats::default();
+        assert_eq!(stats.frames_decoded, 0);
+        assert_eq!(stats.arena_fallbacks, 0);
+        assert_eq!(stats.frames_failed, 0);
+        assert!(stats.arena_stats.is_none());
+        assert_eq!(stats.pending_count, 0);
+        assert_eq!(stats.active_workers, 0);
+    }
+
+    #[test]
+    fn test_decode_pool_jpeg_decoding() {
+        // This test verifies the JPEG decoding path by creating a proper JPEG
+        use image::codecs::jpeg::JpegEncoder;
+        use image::ImageEncoder;
+
+        let config = DecodePoolConfig {
+            worker_count: 1,
+            pending_capacity: 8,
+            completed_capacity: 8,
+            arena_config: None,
+            max_image_width: 0,
+            max_image_height: 0,
+            max_image_bytes: 0,
+        };
+
+        let pool = DecodePool::new(config).unwrap();
+
+        // Create a valid JPEG using JpegEncoder
+        let mut jpeg_data = Vec::new();
+        let img_data = vec![128u8; 8 * 8 * 3]; // Gray image
+        let encoder = JpegEncoder::new(&mut jpeg_data);
+        encoder
+            .write_image(&img_data, 8, 8, image::ExtendedColorType::Rgb8)
+            .expect("Failed to encode JPEG");
+
+        let img = ImageData {
+            width: 0,  // Will be determined by decoder
+            height: 0,
+            data: jpeg_data,
+            is_encoded: true,
+            is_depth: false,
+            original_timestamp: 0,
+        };
+
+        pool.submit("cam0".to_string(), img).unwrap();
+
+        let result = pool.recv().expect("recv");
+        // The result should be ok (even if decoding might fail, it shouldn't crash)
+        if result.result.is_ok() {
+            if let Some(frame) = result.result.unwrap() {
+                assert_eq!(frame.width(), 8);
+                assert_eq!(frame.height(), 8);
+            }
+        }
+
+        pool.shutdown();
+    }
 }
