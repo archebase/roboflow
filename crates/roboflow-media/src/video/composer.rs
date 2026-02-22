@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_composer_default() {
-        let _composer = RsmpegVideoComposer::default();
+        let _composer = RsmpegVideoComposer::new();
     }
 
     #[test]

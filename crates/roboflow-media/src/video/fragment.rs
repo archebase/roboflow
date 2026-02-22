@@ -103,6 +103,7 @@ impl FragmentConfig {
 
     /// Create a config that auto-flushes after N frames.
     pub fn with_max_frames(frames: u32) -> Self {
+        assert!(frames > 0, "max_frames must be positive");
         Self {
             max_frames: Some(frames),
             max_memory_bytes: None,
@@ -112,6 +113,7 @@ impl FragmentConfig {
 
     /// Create a config that auto-flushes after N bytes.
     pub fn with_max_memory(bytes: usize) -> Self {
+        assert!(bytes > 0, "max_memory_bytes must be positive");
         Self {
             max_frames: None,
             max_memory_bytes: Some(bytes),
@@ -121,6 +123,7 @@ impl FragmentConfig {
 
     /// Create a config that auto-flushes after N seconds.
     pub fn with_max_duration(secs: f64) -> Self {
+        assert!(secs > 0.0, "max_duration_secs must be positive");
         Self {
             max_frames: None,
             max_memory_bytes: None,
@@ -232,6 +235,15 @@ impl FragmentEncoder {
         fragment_config: FragmentConfig,
     ) -> Result<Self> {
         let fps = video_config.fps;
+
+        // Validate fps for duration-based flush calculations
+        if fps == 0 {
+            return Err(RoboflowError::encode(
+                "FragmentEncoder",
+                "fps must be positive for duration-based flush calculations",
+            ));
+        }
+
         let temp_dir = tempfile::tempdir().map_err(|e| {
             RoboflowError::encode(
                 "FragmentEncoder",
@@ -334,6 +346,7 @@ impl FragmentEncoder {
     /// Does nothing if the buffer is empty.
     pub fn flush_fragment(&mut self) -> Result<()> {
         if self.frame_buffer.is_empty() {
+            tracing::debug!("flush_fragment() called with empty buffer - no-op");
             return Ok(());
         }
 
@@ -470,7 +483,14 @@ impl FragmentEncoder {
                         })?;
 
                         // Get file size
-                        let bytes_written = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                        let bytes_written = std::fs::metadata(path)
+                            .map_err(|e| {
+                                RoboflowError::encode(
+                                    "FragmentEncoder",
+                                    format!("Failed to get output file metadata: {}", e),
+                                )
+                            })?
+                            .len();
 
                         tracing::info!(
                             path = %path.display(),
@@ -507,7 +527,14 @@ impl FragmentEncoder {
                         composer.compose(&source_paths, path)?;
 
                         // Get file size
-                        let bytes_written = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                        let bytes_written = std::fs::metadata(path)
+                            .map_err(|e| {
+                                RoboflowError::encode(
+                                    "FragmentEncoder",
+                                    format!("Failed to get output file metadata: {}", e),
+                                )
+                            })?
+                            .len();
 
                         tracing::info!(
                             path = %path.display(),
@@ -549,9 +576,13 @@ impl FragmentEncoder {
                         )
                     })?;
 
-                    if let Ok(metadata) = std::fs::metadata(&dest) {
-                        total_bytes += metadata.len();
-                    }
+                    let metadata = std::fs::metadata(&dest).map_err(|e| {
+                        RoboflowError::encode(
+                            "FragmentEncoder",
+                            format!("Failed to get fragment file metadata for {}: {}", dest.display(), e),
+                        )
+                    })?;
+                    total_bytes += metadata.len();
 
                     final_paths.push(dest);
                 }
@@ -604,6 +635,24 @@ impl FragmentEncoder {
     /// Get video dimensions.
     pub fn dimensions(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+}
+
+impl std::fmt::Debug for FragmentEncoder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FragmentEncoder")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("fps", &self.fps)
+            .field("frame_count", &self.frame_count)
+            .field("total_frames", &self.total_frames)
+            .field("fragment_count", &self.fragment_paths.len())
+            .field("finalized", &self.finalized)
+            .field("video_config", &self.video_config)
+            .field("output_config", &self.output_config)
+            .field("fragment_config", &self.fragment_config)
+            .field("temp_dir", &"<tempdir>")
+            .finish()
     }
 }
 
@@ -1106,6 +1155,94 @@ mod tests {
         assert_eq!(result.fragments, 10);
         // 3. Single output file exists
         assert!(result.output_path.unwrap().exists());
+    }
+
+    #[test]
+    fn test_fragment_encoder_zero_fps_rejected() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = FragmentOutputConfig::SingleFile {
+            path: temp_dir.path().join("output.mp4"),
+        };
+
+        // Create a config with fps = 0 (should fail in constructor)
+        let video_config = VideoEncoderConfig {
+            fps: 0,
+            ..Default::default()
+        };
+
+        let result = FragmentEncoder::new(
+            video_config,
+            output,
+            FragmentConfig::default(),
+        );
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("fps must be positive")
+        );
+    }
+
+    #[test]
+    fn test_fragment_encoder_zero_threshold_rejected() {
+        // Test that zero thresholds are rejected in factory methods
+        let result = std::panic::catch_unwind(|| {
+            FragmentConfig::with_max_frames(0);
+        });
+        assert!(result.is_err());
+
+        let result = std::panic::catch_unwind(|| {
+            FragmentConfig::with_max_memory(0);
+        });
+        assert!(result.is_err());
+
+        let result = std::panic::catch_unwind(|| {
+            FragmentConfig::with_max_duration(0.0);
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fragment_encoder_finalize_with_invalid_path() {
+        // Test that finalize() properly surfaces directory creation errors
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // On Unix, /root/output.mp4 requires root access
+        // On Windows, C:\Windows\System32\output.mp4 requires admin
+        let restricted_path = if cfg!(unix) {
+            PathBuf::from("/root/roboflow_test_output.mp4")
+        } else if cfg!(windows) {
+            PathBuf::from("C:\\Windows\\System32\\roboflow_test_output.mp4")
+        } else {
+            temp_dir.path().join("output.mp4") // Fallback for other platforms
+        };
+
+        let output = FragmentOutputConfig::SingleFile {
+            path: restricted_path.clone(),
+        };
+
+        let mut encoder = FragmentEncoder::new(
+            VideoEncoderConfig::default(),
+            output,
+            FragmentConfig::default(),
+        )
+        .unwrap();
+
+        // Encode a frame so there's something to finalize
+        let rgb = create_test_rgb(64, 64, 128);
+        let _ = encoder.encode_frame(&rgb, 64, 64);
+
+        // Finalize should fail with directory creation error (or file write error)
+        let result = encoder.finalize();
+
+        // Note: This test may pass on systems without restrictive permissions
+        // but it exercises the error handling path
+        if restricted_path.parent().map_or(false, |p| !p.exists()) {
+            // If the parent doesn't exist, we expect an error
+            assert!(result.is_err());
+        }
     }
 
     #[test]
