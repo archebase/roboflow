@@ -84,7 +84,6 @@ unsafe fn rgb8_to_y_avx2(r: __m256i, g: __m256i, b: __m256i) -> __m256i {
     _mm256_srai_epi16(y_rounded, 8)
 }
 
-
 /// Pack 16-bit values to 8-bit with clamping.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
