@@ -37,3 +37,4 @@ profiles/
 output.mp4
 *.json.*
 crates/roboflow*/target
+lcov.info

@@ -115,20 +115,12 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-  rust-test:
-    name: Rust Tests
+  rust-test-macos:
+    name: Rust Tests (macOS)
     needs: license
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            triplet: x64-linux
-          - os: macos-latest
-            triplet: arm64-osx
+    runs-on: macos-latest
     env:
-      RUSTFLAGS: ${{ matrix.os == 'ubuntu-24.04' && '-C linker=cc' || '' }}
+      HDF5_DIR: /opt/homebrew/opt/hdf5@1.10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -138,30 +130,91 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: "vcpkg-${{ matrix.triplet }}-${{ hashFiles('**/Cargo.lock') }}"
+          key: "vcpkg-arm64-osx-${{ hashFiles('**/Cargo.lock') }}"
 
-      - name: Install system dependencies (Ubuntu)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm
-
-      - name: Install system dependencies (macOS)
-        if: runner.os == 'macOS'
+      - name: Install system dependencies
         run: |
           brew install hdf5@1.10 nasm ffmpeg
-          echo "HDF5_DIR=$(brew --prefix hdf5@1.10)" >> $GITHUB_ENV
+
+      - name: Run tests
+        run: cargo test --all-features
+
+  rust-test-linux:
+    name: Rust Tests (Linux)
+    needs: license
+    runs-on: ubuntu-24.04
+    env:
+      RUSTFLAGS: -C linker=cc
+      TIKV_PD_ENDPOINTS: pd:2379
+    services:
+      pd:
+        image: pingcap/pd:v8.5.5
+        ports:
+          - 2379:2379
+        env:
+          PD_NAME: pd1
+          PD_DATA_DIR: /data
+          PD_CLIENT_URLS: http://0.0.0.0:2379
+          PD_PEER_URLS: http://0.0.0.0:2380
+          PD_ADVERTISE_CLIENT_URLS: http://pd:2379
+          PD_ADVERTISE_PEER_URLS: http://pd:2380
+          PD_INITIAL_CLUSTER: pd1=http://pd:2380
+
+      tikv:
+        image: pingcap/tikv:v8.5.5
+        ports:
+          - 20160:20160
+        env:
+          TIKV_ADDR: 0.0.0.0:20160
+          TIKV_ADVERTISE_ADDR: tikv:20160
+          TIKV_DATA_DIR: /data
+          TIKV_PD: http://pd:2379
+          TIKV_STATUS_ADDR: 0.0.0.0:20180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: "vcpkg-x64-linux-${{ hashFiles('**/Cargo.lock') }}"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm curl
+
+      - name: Wait for TiKV to be ready
+        run: |
+          echo "Waiting for TiKV cluster to be ready..."
+          for i in {1..30}; do
+            if curl -sf http://localhost:2379/health > /dev/null 2>&1; then
+              echo "PD is healthy"
+              break
+            fi
+            echo "Waiting for PD... ($i/30)"
+            sleep 2
+          done
+          for i in {1..30}; do
+            if curl -sf http://localhost:20180/status > /dev/null 2>&1; then
+              echo "TiKV is healthy"
+              break
+            fi
+            echo "Waiting for TiKV... ($i/30)"
+            sleep 2
+          done
 
       - name: Cache vcpkg
-        if: runner.os == 'Linux'
         uses: actions/cache@v4
         id: cache-vcpkg
         with:
           path: ${{ github.workspace }}/vcpkg
-          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-x64-linux-${{ hashFiles('vcpkg.json') }}
 
       - name: Clone and bootstrap vcpkg
-        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
         run: |
           git clone https://github.com/microsoft/vcpkg --depth 1 ${{ github.workspace }}/vcpkg
           BASELINE=$(jq -r '."builtin-baseline"' ${{ github.workspace }}/vcpkg.json)
@@ -170,34 +223,58 @@ jobs:
           ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
 
       - name: Install vcpkg packages
-        if: runner.os == 'Linux' && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
         run: |
-          ${{ github.workspace }}/vcpkg/vcpkg install --triplet ${{ matrix.triplet }} --x-manifest-root=${{ github.workspace }} --x-install-root=${{ github.workspace }}/vcpkg/installed
+          ${{ github.workspace }}/vcpkg/vcpkg install --triplet x64-linux --x-manifest-root=${{ github.workspace }} --x-install-root=${{ github.workspace }}/vcpkg/installed
 
       - name: Configure vcpkg environment
-        if: runner.os == 'Linux'
         run: |
           VCPKG_INSTALLED=${{ github.workspace }}/vcpkg/installed
           # Export for current step and future steps
           echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
-          echo "FFMPEG_PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
-          echo "FFMPEG_INCLUDE_DIR=${VCPKG_INSTALLED}/${{ matrix.triplet }}/include" >> $GITHUB_ENV
-          echo "FFMPEG_LIBS_DIR=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=${VCPKG_INSTALLED}/x64-linux/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
+          echo "FFMPEG_PKG_CONFIG_PATH=${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig" >> $GITHUB_ENV
+          echo "FFMPEG_INCLUDE_DIR=${VCPKG_INSTALLED}/x64-linux/include" >> $GITHUB_ENV
+          echo "FFMPEG_LIBS_DIR=${VCPKG_INSTALLED}/x64-linux/lib" >> $GITHUB_ENV
           # Export for current step
-          export PKG_CONFIG_PATH="${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          ls ${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig/libav*.pc
+          export PKG_CONFIG_PATH="${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+          ls ${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig/libav*.pc
 
       - name: Run tests
         run: cargo test --all-features
 
   coverage:
     name: Coverage
-    needs: [rust-lint, rust-test]
+    needs: [rust-lint, rust-test-linux, rust-test-macos]
     runs-on: ubuntu-24.04
     env:
       RUSTFLAGS: -C linker=cc
+      TIKV_PD_ENDPOINTS: pd:2379
+    services:
+      pd:
+        image: pingcap/pd:v8.5.5
+        ports:
+          - 2379:2379
+        env:
+          PD_NAME: pd1
+          PD_DATA_DIR: /data
+          PD_CLIENT_URLS: http://0.0.0.0:2379
+          PD_PEER_URLS: http://0.0.0.0:2380
+          PD_ADVERTISE_CLIENT_URLS: http://pd:2379
+          PD_ADVERTISE_PEER_URLS: http://pd:2380
+          PD_INITIAL_CLUSTER: pd1=http://pd:2380
+
+      tikv:
+        image: pingcap/tikv:v8.5.5
+        ports:
+          - 20160:20160
+        env:
+          TIKV_ADDR: 0.0.0.0:20160
+          TIKV_ADVERTISE_ADDR: tikv:20160
+          TIKV_DATA_DIR: /data
+          TIKV_PD: http://pd:2379
+          TIKV_STATUS_ADDR: 0.0.0.0:20180
     steps:
       - uses: actions/checkout@v4
         with:
@@ -226,7 +303,27 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm
+          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm curl
+
+      - name: Wait for TiKV to be ready
+        run: |
+          echo "Waiting for TiKV cluster to be ready..."
+          for i in {1..30}; do
+            if curl -sf http://localhost:2379/health > /dev/null 2>&1; then
+              echo "PD is healthy"
+              break
+            fi
+            echo "Waiting for PD... ($i/30)"
+            sleep 2
+          done
+          for i in {1..30}; do
+            if curl -sf http://localhost:20180/status > /dev/null 2>&1; then
+              echo "TiKV is healthy"
+              break
+            fi
+            echo "Waiting for TiKV... ($i/30)"
+            sleep 2
+          done
 
       - name: Cache vcpkg
         uses: actions/cache@v4

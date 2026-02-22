@@ -361,3 +361,148 @@ pub fn create_sws_context(width: i32, height: i32, dst_pix_fmt: i32) -> Option<S
         None,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_hardware_codec_nvenc() {
+        assert!(is_hardware_codec("h264_nvenc"));
+        assert!(is_hardware_codec("hevc_nvenc"));
+        assert!(is_hardware_codec("nvenc"));
+    }
+
+    #[test]
+    fn test_is_hardware_codec_videotoolbox() {
+        assert!(is_hardware_codec("h264_videotoolbox"));
+        assert!(is_hardware_codec("hevc_videotoolbox"));
+        assert!(is_hardware_codec("videotoolbox"));
+    }
+
+    #[test]
+    fn test_is_hardware_codec_qsv() {
+        assert!(is_hardware_codec("h264_qsv"));
+        assert!(is_hardware_codec("hevc_qsv"));
+        assert!(is_hardware_codec("qsv"));
+    }
+
+    #[test]
+    fn test_is_hardware_codec_vaapi() {
+        assert!(is_hardware_codec("h264_vaapi"));
+        assert!(is_hardware_codec("hevc_vaapi"));
+        assert!(is_hardware_codec("vaapi"));
+    }
+
+    #[test]
+    fn test_is_hardware_codec_software() {
+        assert!(!is_hardware_codec("libx264"));
+        assert!(!is_hardware_codec("libx265"));
+        assert!(!is_hardware_codec("libvpx"));
+        assert!(!is_hardware_codec("mpeg4"));
+    }
+
+    #[test]
+    fn test_resolve_pixel_format_nv12() {
+        let fmt = resolve_pixel_format("nv12");
+        assert_eq!(fmt, ffi::AV_PIX_FMT_NV12);
+    }
+
+    #[test]
+    fn test_resolve_pixel_format_yuv420p() {
+        let fmt = resolve_pixel_format("yuv420p");
+        assert_eq!(fmt, ffi::AV_PIX_FMT_YUV420P);
+    }
+
+    #[test]
+    fn test_resolve_pixel_format_unknown() {
+        // Unknown formats default to YUV420P
+        let fmt = resolve_pixel_format("unknown");
+        assert_eq!(fmt, ffi::AV_PIX_FMT_YUV420P);
+
+        let fmt = resolve_pixel_format("rgb24");
+        assert_eq!(fmt, ffi::AV_PIX_FMT_YUV420P);
+    }
+
+    #[test]
+    fn test_pixel_format_for_codec_hardware() {
+        // Hardware encoders should get NV12
+        let fmt = pixel_format_for_codec("h264_nvenc");
+        assert_eq!(fmt, ffi::AV_PIX_FMT_NV12);
+
+        let fmt = pixel_format_for_codec("h264_videotoolbox");
+        assert_eq!(fmt, ffi::AV_PIX_FMT_NV12);
+
+        let fmt = pixel_format_for_codec("hevc_nvenc");
+        assert_eq!(fmt, ffi::AV_PIX_FMT_NV12);
+    }
+
+    #[test]
+    fn test_pixel_format_for_codec_software() {
+        // Software encoders should get YUV420P
+        let fmt = pixel_format_for_codec("libx264");
+        assert_eq!(fmt, ffi::AV_PIX_FMT_YUV420P);
+
+        let fmt = pixel_format_for_codec("libx265");
+        assert_eq!(fmt, ffi::AV_PIX_FMT_YUV420P);
+
+        let fmt = pixel_format_for_codec("mpeg4");
+        assert_eq!(fmt, ffi::AV_PIX_FMT_YUV420P);
+    }
+
+    #[test]
+    fn test_detect_best_codec_returns_valid() {
+        let (codec, pix_fmt) = detect_best_codec();
+
+        // Should return a valid codec name
+        assert!(!codec.is_empty());
+
+        // Should return a valid pixel format name
+        assert!(!pix_fmt.is_empty());
+
+        // The combination should be valid
+        let valid_combinations = [
+            ("h264_nvenc", "nv12"),
+            ("h264_videotoolbox", "nv12"),
+            ("libx264", "yuv420p"),
+        ];
+        let is_valid = valid_combinations
+            .iter()
+            .any(|(c, p)| c == &codec && p == &pix_fmt);
+        assert!(
+            is_valid,
+            "Unexpected codec/pix_fmt: ({}, {})",
+            codec, pix_fmt
+        );
+    }
+
+    #[test]
+    fn test_codec_params_defaults() {
+        // Test that CodecParams can be created with expected values
+        let params = CodecParams {
+            width: 1920,
+            height: 1080,
+            fps: 30,
+            bitrate: 5_000_000,
+            gop_size: 30,
+            max_b_frames: 2,
+        };
+
+        assert_eq!(params.width, 1920);
+        assert_eq!(params.height, 1080);
+        assert_eq!(params.fps, 30);
+        assert_eq!(params.bitrate, 5_000_000);
+        assert_eq!(params.gop_size, 30);
+        assert_eq!(params.max_b_frames, 2);
+    }
+
+    #[test]
+    fn test_create_sws_context_valid() {
+        // Create a valid SWScale context
+        let ctx = create_sws_context(640, 480, ffi::AV_PIX_FMT_YUV420P);
+        assert!(ctx.is_some());
+
+        let ctx = create_sws_context(640, 480, ffi::AV_PIX_FMT_NV12);
+        assert!(ctx.is_some());
+    }
+}

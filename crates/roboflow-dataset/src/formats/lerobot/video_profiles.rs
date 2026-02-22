@@ -8,7 +8,7 @@
 //! for different use cases (speed vs quality vs size).
 
 use crate::formats::lerobot::config::VideoConfig;
-use crate::media::video::HardwareConfig;
+use roboflow_media::video::HardwareConfig;
 
 /// Video encoding preset - trades encoding speed for compression efficiency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -327,8 +327,8 @@ impl ResolvedConfig {
     }
 
     /// Create a VideoEncoderConfig from this resolved config.
-    pub fn to_encoder_config(&self, fps: u32) -> crate::media::video::VideoEncoderConfig {
-        crate::media::video::VideoEncoderConfig {
+    pub fn to_encoder_config(&self, fps: u32) -> roboflow_media::video::VideoEncoderConfig {
+        roboflow_media::video::VideoEncoderConfig {
             codec: self.codec.clone(),
             pixel_format: self.pixel_format.clone(),
             fps,
@@ -341,7 +341,7 @@ impl ResolvedConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::video::{HardwareBackend, HardwareConfig};
+    use roboflow_media::video::{HardwareBackend, HardwareConfig};
 
     #[test]
     fn test_preset_names() {

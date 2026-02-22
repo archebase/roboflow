@@ -27,7 +27,7 @@ pub use episode::{
     convert_camera_calibration, convert_camera_extrinsic, convert_camera_intrinsic,
 };
 // Re-export hardware types from roboflow-video
-pub use crate::media::video::{HardwareBackend, HardwareConfig};
+pub use roboflow_media::video::{HardwareBackend, HardwareConfig};
 pub use trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 
 pub use factory::{LerobotWriterConfig, LerobotWriterResult, create_lerobot_writer};

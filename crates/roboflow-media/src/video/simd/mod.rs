@@ -38,8 +38,6 @@ mod neon;
 
 use roboflow_core::RoboflowError;
 
-pub use scalar::{rgb_to_nv12 as rgb_to_nv12_scalar, rgb_to_yuv420p as rgb_to_yuv420p_scalar};
-
 // =============================================================================
 // Conversion Strategy
 // =============================================================================

@@ -26,7 +26,7 @@ pub struct VideoEncoderConfig {
 impl Default for VideoEncoderConfig {
     fn default() -> Self {
         // Use hardware encoder when available for 5-10x speedup
-        let best_encoder = crate::media::video::hardware::select_best_encoder();
+        let best_encoder = crate::video::hardware::select_best_encoder();
         Self {
             codec: best_encoder.name().to_string(),
             pixel_format: "yuv420p".to_string(),

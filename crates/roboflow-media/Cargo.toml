@@ -1,0 +1,34 @@
+[package]
+name = "roboflow-media"
+version = "0.2.0"
+edition = "2024"
+authors = ["Strata Contributors"]
+license = "MulanPSL-2.0"
+repository = "https://github.com/archebase/roboflow"
+description = "Image and video encoding/decoding for robotics datasets"
+
+[dependencies]
+roboflow-core = { workspace = true }
+robocodec = { workspace = true }
+
+# Image decoding
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+zune-jpeg = "0.4"
+png = "0.17"
+
+# Video encoding
+rsmpeg = { version = "0.18", features = ["link_system_ffmpeg", "link_vcpkg_ffmpeg"] }
+
+# Concurrency
+crossbeam-channel = "0.5"
+rayon = "1.10"
+
+# System utilities
+num_cpus = "1.16"
+tempfile = "3.10"
+
+# Utilities
+thiserror = "1.0"
+tracing = "0.1"
+
+[dev-dependencies]

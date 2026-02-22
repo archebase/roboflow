@@ -8,7 +8,7 @@
 
 use std::io::Write;
 
-use crate::media::video::arena::ArcSlot;
+use crate::video::arena::ArcSlot;
 
 /// Errors that can occur during video encoding.
 #[derive(Debug, thiserror::Error)]
@@ -954,5 +954,334 @@ mod tests {
         // Header is ASCII, data is binary
         assert!(output.starts_with(b"P6\n"));
         assert!(output.len() > 12); // Has header + data
+    }
+
+    #[test]
+    fn test_video_frame_write_ppm_non_rgb24() {
+        // NV12 frame should fail write_ppm
+        let frame = VideoFrame::from_nv12(2, 2, vec![0u8; 4], vec![0u8; 2]);
+        let mut output = Vec::new();
+        let result = frame.write_ppm(&mut output);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_video_frame_from_nv12() {
+        let y_plane = vec![128u8; 4]; // 2x2
+        let uv_plane = vec![128u8; 2]; // 1x1x2
+        let frame = VideoFrame::from_nv12(2, 2, y_plane.clone(), uv_plane.clone());
+
+        assert_eq!(frame.width, 2);
+        assert_eq!(frame.height, 2);
+        assert!(frame.is_nv12());
+        assert!(!frame.is_rgb24());
+        assert!(!frame.is_yuv420p());
+        assert!(!frame.is_jpeg());
+
+        // Check data layout: Y plane followed by UV plane
+        assert_eq!(frame.data().len(), 6);
+        assert_eq!(&frame.data()[..4], y_plane.as_slice());
+        assert_eq!(&frame.data()[4..], uv_plane.as_slice());
+    }
+
+    #[test]
+    fn test_video_frame_from_yuv420p() {
+        let y_plane = vec![128u8; 4]; // 2x2
+        let u_plane = vec![128u8; 1]; // 1x1
+        let v_plane = vec![128u8; 1]; // 1x1
+        let frame =
+            VideoFrame::from_yuv420p(2, 2, y_plane.clone(), u_plane.clone(), v_plane.clone());
+
+        assert_eq!(frame.width, 2);
+        assert_eq!(frame.height, 2);
+        assert!(frame.is_yuv420p());
+        assert!(!frame.is_rgb24());
+        assert!(!frame.is_nv12());
+        assert!(!frame.is_jpeg());
+
+        // Check data layout: Y + U + V planes
+        assert_eq!(frame.data().len(), 6);
+        assert_eq!(&frame.data()[..4], y_plane.as_slice());
+        assert_eq!(&frame.data()[4..5], u_plane.as_slice());
+        assert_eq!(&frame.data()[5..], v_plane.as_slice());
+    }
+
+    #[test]
+    fn test_video_frame_nv12_planes() {
+        let y_plane = vec![16u8; 4];
+        let uv_plane = vec![128u8, 128u8];
+        let frame = VideoFrame::from_nv12(2, 2, y_plane.clone(), uv_plane.clone());
+
+        assert_eq!(frame.y_plane(), Some(y_plane.as_slice()));
+        assert_eq!(frame.uv_plane(), Some(uv_plane.as_slice()));
+    }
+
+    #[test]
+    fn test_video_frame_nv12_planes_wrong_format() {
+        // RGB24 frame should return None for y_plane/uv_plane
+        let frame = VideoFrame::new(2, 2, vec![0u8; 12]);
+        assert_eq!(frame.y_plane(), None);
+        assert_eq!(frame.uv_plane(), None);
+    }
+
+    #[test]
+    fn test_video_frame_validate_nv12() {
+        // Valid NV12 (even dimensions, correct size)
+        let frame = VideoFrame::from_nv12(2, 2, vec![0u8; 4], vec![0u8; 2]);
+        assert!(frame.validate().is_ok());
+
+        // Invalid: wrong size
+        let bad_frame = VideoFrame {
+            width: 2,
+            height: 2,
+            inner: VideoFrameInner::Owned(vec![0u8; 3]), // Too short
+            format: FrameFormat::Nv12,
+        };
+        assert!(bad_frame.validate().is_err());
+
+        // Invalid: odd dimensions
+        let odd_frame = VideoFrame {
+            width: 3,
+            height: 3,
+            inner: VideoFrameInner::Owned(vec![0u8; 16]),
+            format: FrameFormat::Nv12,
+        };
+        assert!(odd_frame.validate().is_err());
+    }
+
+    #[test]
+    fn test_video_frame_validate_yuv420p() {
+        // Valid YUV420P (even dimensions, correct size)
+        let frame = VideoFrame::from_yuv420p(2, 2, vec![0u8; 4], vec![0u8; 1], vec![0u8; 1]);
+        assert!(frame.validate().is_ok());
+
+        // Invalid: wrong size
+        let bad_frame = VideoFrame {
+            width: 2,
+            height: 2,
+            inner: VideoFrameInner::Owned(vec![0u8; 3]), // Too short
+            format: FrameFormat::Yuv420p,
+        };
+        assert!(bad_frame.validate().is_err());
+
+        // Invalid: odd dimensions
+        let odd_frame = VideoFrame {
+            width: 3,
+            height: 3,
+            inner: VideoFrameInner::Owned(vec![0u8; 16]),
+            format: FrameFormat::Yuv420p,
+        };
+        assert!(odd_frame.validate().is_err());
+    }
+
+    #[test]
+    fn test_video_frame_clone_owned() {
+        let frame = VideoFrame::new(4, 4, vec![42u8; 48]);
+        let cloned = frame.clone();
+
+        assert_eq!(frame.data(), cloned.data());
+        assert_eq!(frame.width, cloned.width);
+        assert_eq!(frame.height, cloned.height);
+        assert_eq!(frame.format, cloned.format);
+    }
+
+    #[test]
+    fn test_video_frame_clone_shared() {
+        let buffer = std::sync::Arc::new(FrameBuffer::rgb24(4, 4, vec![42u8; 48]));
+        let frame = VideoFrame::from_arc_frame_buffer(buffer);
+        assert!(frame.is_shared());
+
+        let cloned = frame.clone();
+        assert!(cloned.is_shared());
+        assert_eq!(frame.data(), cloned.data());
+    }
+
+    #[test]
+    fn test_video_frame_expected_size_nv12() {
+        let frame = VideoFrame::from_nv12(64, 48, vec![], vec![]);
+        let expected = 64 * 48 + (64 / 2) * (48 / 2) * 2; // Y + UV
+        assert_eq!(frame.expected_size(), expected);
+    }
+
+    #[test]
+    fn test_video_frame_expected_size_yuv420p() {
+        let frame = VideoFrame::from_yuv420p(64, 48, vec![], vec![], vec![]);
+        let y_size = 64 * 48;
+        let uv_size = (64 / 2) * (48 / 2);
+        assert_eq!(frame.expected_size(), y_size + uv_size * 2);
+    }
+
+    #[test]
+    fn test_frame_buffer_rgb24_factory() {
+        let buffer = FrameBuffer::rgb24(4, 4, vec![42u8; 48]);
+        assert_eq!(buffer.format(), PixelFormat::Rgb24);
+        assert_eq!(buffer.width(), 4);
+        assert_eq!(buffer.height(), 4);
+        assert_eq!(buffer.len(), 48);
+        assert!(!buffer.is_arena());
+    }
+
+    #[test]
+    fn test_frame_buffer_nv12_factory() {
+        let buffer = FrameBuffer::nv12(4, 4, vec![42u8; 30]);
+        assert_eq!(buffer.format(), PixelFormat::Nv12);
+        assert_eq!(buffer.width(), 4);
+        assert_eq!(buffer.height(), 4);
+    }
+
+    #[test]
+    fn test_frame_buffer_data_mut() {
+        let mut buffer = FrameBuffer::rgb24(2, 2, vec![0u8; 12]);
+        let data = buffer.data_mut();
+        data[0] = 255;
+        assert_eq!(buffer.data()[0], 255);
+    }
+
+    #[test]
+    fn test_frame_buffer_capacity() {
+        let buffer = FrameBuffer::rgb24(2, 2, vec![0u8; 12]);
+        assert_eq!(buffer.capacity(), 12);
+    }
+
+    #[test]
+    fn test_frame_buffer_set_format() {
+        let mut buffer = FrameBuffer::rgb24(2, 2, vec![0u8; 12]);
+        assert_eq!(buffer.format(), PixelFormat::Rgb24);
+
+        buffer.set_format(PixelFormat::Nv12);
+        assert_eq!(buffer.format(), PixelFormat::Nv12);
+    }
+
+    #[test]
+    fn test_frame_buffer_set_len() {
+        let mut buffer = FrameBuffer::rgb24(2, 2, vec![0u8; 12]);
+        assert_eq!(buffer.len(), 12);
+
+        buffer.set_len(6);
+        assert_eq!(buffer.len(), 6);
+        // data() should respect the new len
+        assert_eq!(buffer.data().len(), 6);
+
+        // Setting len larger than capacity should cap at capacity
+        buffer.set_len(100);
+        assert_eq!(buffer.len(), 12); // capped at capacity
+    }
+
+    #[test]
+    fn test_frame_buffer_is_empty_vs_not() {
+        let buffer = FrameBuffer::from_owned(vec![], PixelFormat::Rgb24, 0, 0);
+        assert!(buffer.is_empty());
+
+        let buffer = FrameBuffer::rgb24(2, 2, vec![0u8; 12]);
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn test_frame_buffer_expected_size() {
+        // RGB24
+        let buffer = FrameBuffer::rgb24(64, 48, vec![]);
+        assert_eq!(buffer.expected_size(), 64 * 48 * 3);
+
+        // NV12
+        let buffer = FrameBuffer::nv12(64, 48, vec![]);
+        let y_size = 64 * 48;
+        let uv_size = (64 / 2) * (48 / 2) * 2;
+        assert_eq!(buffer.expected_size(), y_size + uv_size);
+
+        // YUV420P
+        let buffer = FrameBuffer::from_owned(vec![], PixelFormat::Yuv420p, 64, 48);
+        let y_size = 64 * 48;
+        let uv_size = (64 / 2) * (48 / 2);
+        assert_eq!(buffer.expected_size(), y_size + uv_size * 2);
+
+        // JPEG - variable size, returns len
+        let buffer = FrameBuffer::from_owned(vec![0u8; 100], PixelFormat::Jpeg, 64, 48);
+        assert_eq!(buffer.expected_size(), 100);
+    }
+
+    #[test]
+    fn test_frame_buffer_validate_rgb24() {
+        // Valid
+        let buffer = FrameBuffer::rgb24(2, 2, vec![0u8; 12]);
+        assert!(buffer.validate().is_ok());
+
+        // Invalid size
+        let mut buffer = FrameBuffer::from_owned(vec![0u8; 10], PixelFormat::Rgb24, 2, 2);
+        buffer.set_len(10); // Ensure len is set
+        assert!(buffer.validate().is_err());
+    }
+
+    #[test]
+    fn test_frame_buffer_validate_jpeg() {
+        // Valid JPEG header
+        let jpeg_data = vec![0xFF, 0xD8, 0xFF, 0xE0];
+        let buffer = FrameBuffer::from_owned(jpeg_data, PixelFormat::Jpeg, 64, 48);
+        assert!(buffer.validate().is_ok());
+
+        // Invalid: too short
+        let buffer = FrameBuffer::from_owned(vec![0xFF, 0xD8], PixelFormat::Jpeg, 64, 48);
+        assert!(buffer.validate().is_err());
+
+        // Invalid: wrong magic bytes
+        let buffer =
+            FrameBuffer::from_owned(vec![0x00, 0x00, 0x00, 0x00], PixelFormat::Jpeg, 64, 48);
+        assert!(buffer.validate().is_err());
+    }
+
+    #[test]
+    fn test_frame_buffer_clone() {
+        let original = FrameBuffer::rgb24(2, 2, vec![42u8; 12]);
+        let cloned = original.clone();
+
+        assert_eq!(original.data(), cloned.data());
+        assert_eq!(original.format(), cloned.format());
+        assert_eq!(original.width(), cloned.width());
+        assert_eq!(original.height(), cloned.height());
+        // Clone creates owned copy, not arena
+        assert!(!cloned.is_arena());
+    }
+
+    #[test]
+    fn test_frame_buffer_to_video_frame() {
+        let buffer = FrameBuffer::rgb24(2, 2, vec![42u8; 12]);
+        let frame = buffer.to_video_frame();
+
+        assert_eq!(frame.width, 2);
+        assert_eq!(frame.height, 2);
+        assert!(frame.is_rgb24());
+        assert!(!frame.is_shared());
+        assert_eq!(frame.data(), buffer.data());
+    }
+
+    #[test]
+    fn test_video_frame_from_arc_frame_buffer() {
+        let buffer = std::sync::Arc::new(FrameBuffer::nv12(4, 4, vec![128u8; 30]));
+        let frame = VideoFrame::from_arc_frame_buffer(buffer);
+
+        assert!(frame.is_shared());
+        assert!(frame.is_nv12());
+        assert_eq!(frame.width, 4);
+        assert_eq!(frame.height, 4);
+
+        // Test with different formats
+        let yuv_buffer = std::sync::Arc::new(FrameBuffer::from_owned(
+            vec![128u8; 12],
+            PixelFormat::Yuv420p,
+            2,
+            2,
+        ));
+        let yuv_frame = VideoFrame::from_arc_frame_buffer(yuv_buffer);
+        assert!(yuv_frame.is_yuv420p());
+        assert!(yuv_frame.is_shared());
+
+        let jpeg_buffer = std::sync::Arc::new(FrameBuffer::from_owned(
+            vec![0xFF, 0xD8, 0xFF, 0xE0],
+            PixelFormat::Jpeg,
+            64,
+            48,
+        ));
+        let jpeg_frame = VideoFrame::from_arc_frame_buffer(jpeg_buffer);
+        assert!(jpeg_frame.is_jpeg());
+        assert!(jpeg_frame.is_shared());
     }
 }

@@ -14,12 +14,12 @@ pub mod zarr;
 pub use common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats};
 pub use config::{OutputConfig, OutputFormat};
 // Re-export image types from media module for backward compatibility
-pub use crate::media::image::{
+pub use parallel_pipeline::{ParallelPipelineExecutor, ParallelPipelineStats};
+pub use pipeline::{PipelineConfig, PipelineExecutor, PipelineStats};
+pub use roboflow_media::image::{
     DecodedImage, ImageDecoderBackend, ImageDecoderConfig, ImageDecoderFactory, ImageError,
     ImageFormat, decode_compressed_image,
 };
-pub use parallel_pipeline::{ParallelPipelineExecutor, ParallelPipelineStats};
-pub use pipeline::{PipelineConfig, PipelineExecutor, PipelineStats};
 
 use roboflow_core::Result;
 use std::path::Path;

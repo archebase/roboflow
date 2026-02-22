@@ -13,9 +13,6 @@ use serde::Serialize;
 
 use roboflow_core::Result;
 
-// Re-export common ImageData from base module
-pub use super::base::ImageData;
-
 /// Frame data for Parquet writing.
 pub trait FrameData {
     /// Get episode index.

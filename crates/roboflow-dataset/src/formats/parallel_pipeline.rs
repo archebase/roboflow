@@ -34,7 +34,7 @@ use crate::formats::common::ImageData;
 use crate::formats::common::{extract_image_bytes, extract_u32, is_camera_info_topic};
 use crate::formats::pipeline::{EpisodeManager, PipelineConfig};
 use crate::formats::pipeline_common::{ExecutorState, ExecutorStats};
-use crate::media::image::ImageFormat;
+use roboflow_media::image::ImageFormat;
 
 /// Statistics from parallel pipeline execution.
 #[derive(Debug, Clone)]

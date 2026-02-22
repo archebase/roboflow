@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use crate::media::video::VideoFrame;
+use roboflow_media::video::VideoFrame;
 
 /// Error type for ring buffer operations.
 #[derive(Debug, Clone, PartialEq)]
