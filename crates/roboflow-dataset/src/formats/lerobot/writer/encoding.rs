@@ -11,9 +11,9 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use crate::formats::common::{ImageData, decode_image_to_rgb};
 use crate::formats::lerobot::video_profiles::ResolvedConfig;
-use crate::media::video::{OutputConfig, VideoEncoder};
-use crate::media::video::{VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
 use roboflow_core::Result;
+use roboflow_media::video::{OutputConfig, VideoEncoder};
+use roboflow_media::video::{VideoEncoderConfig, VideoFrame, VideoFrameBuffer};
 
 /// Encode videos for all cameras.
 ///

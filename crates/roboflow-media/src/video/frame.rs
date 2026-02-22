@@ -8,7 +8,7 @@
 
 use std::io::Write;
 
-use crate::media::video::arena::ArcSlot;
+use crate::video::arena::ArcSlot;
 
 /// Errors that can occur during video encoding.
 #[derive(Debug, thiserror::Error)]

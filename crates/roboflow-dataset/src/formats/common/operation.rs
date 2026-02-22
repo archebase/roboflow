@@ -9,11 +9,11 @@
 //! backends (which execute them).
 
 use roboflow_core::Result;
+use roboflow_media::ImageData;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use super::ImageData;
-use crate::media::video::VideoEncoderConfig;
+use roboflow_media::video::VideoEncoderConfig;
 
 #[derive(Debug, Clone, Default)]
 pub struct DatasetStats {
@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn test_encode_video_operation() {
-        use crate::media::video::VideoEncoderConfig;
+        use roboflow_media::video::VideoEncoderConfig;
 
         let op = WriteOperation::EncodeAndWriteVideo {
             camera: "cam_0".to_string(),

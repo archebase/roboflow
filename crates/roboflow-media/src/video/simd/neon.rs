@@ -234,7 +234,7 @@ pub fn rgb_batch_to_yuv420p_neon(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::video::simd::scalar;
+    use crate::video::simd::scalar;
 
     #[test]
     #[cfg(target_arch = "aarch64")]

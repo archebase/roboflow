@@ -14,11 +14,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use crossbeam_channel::{Receiver, Sender, bounded};
+use crate::ImageData;
 use tracing::{debug, trace};
 
-use crate::ImageData;
-use crate::media::video::arena::{ArcSlot, AtomicFramePool, FramePoolConfig, PoolStats};
-use crate::media::video::frame::{FrameBuffer, PixelFormat};
+use crate::video::arena::{ArcSlot, AtomicFramePool, FramePoolConfig, PoolStats};
+use crate::video::frame::{FrameBuffer, PixelFormat};
 
 /// Command sent to decode workers.
 #[derive(Debug)]

@@ -300,7 +300,7 @@ impl DecodeStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::image::backend::DecoderType;
+    use crate::image::backend::DecoderType;
 
     #[test]
     fn test_factory_cpu_backend() {

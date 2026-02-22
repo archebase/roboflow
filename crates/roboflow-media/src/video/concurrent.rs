@@ -73,7 +73,8 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use roboflow_core::{Result, RoboflowError};
 
 use super::{OutputConfig, VideoEncoder, VideoEncoderConfig};
-use crate::formats::common::{ImageData, decode_to_rgb};
+use crate::image::decode_to_rgb;
+use crate::ImageData;
 
 /// Configuration for concurrent video encoder.
 ///
@@ -676,18 +677,17 @@ mod tests {
     }
 
     #[test]
-    fn test_with_lerobot_path_scheme() {
-        use crate::formats::common::{LeRobotVideoPathScheme, VideoPathScheme};
-
+    fn test_with_path_scheme() {
         let output_dir = test_output_dir();
         let config = ConcurrentEncoderConfig::new();
         let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
 
-        // Use LeRobot path scheme to compute output path
-        let scheme = LeRobotVideoPathScheme::new("dataset/episode_001");
-        let cam_path = output_dir.join(scheme.video_path(0, "observation.images.cam_left", 0));
+        // Direct path construction (VideoPathScheme is in roboflow-dataset)
+        let cam_path = output_dir.join(
+            "dataset/episode_001/videos/chunk-000/observation.images.cam_left/episode_000000.mp4",
+        );
+        std::fs::create_dir_all(cam_path.parent().unwrap()).unwrap();
 
-        // Expected: output_dir/dataset/episode_001/videos/chunk-000/observation.images.cam_left/episode_000000.mp4
         encoder
             .add_camera("observation.images.cam_left", cam_path)
             .unwrap();

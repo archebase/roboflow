@@ -15,9 +15,9 @@ use std::thread::JoinHandle;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use tracing::{debug, trace, warn};
 
-use crate::media::video::decode::DecodedFrame;
-use crate::media::video::frame::{FrameBuffer, FrameFormat, PixelFormat, VideoFrame};
-use crate::media::video::simd::{
+use crate::video::decode::DecodedFrame;
+use crate::video::frame::{FrameBuffer, FrameFormat, PixelFormat, VideoFrame};
+use crate::video::simd::{
     ConversionStrategy, rgb_batch_to_nv12, rgb_to_nv12, rgb_to_nv12_in_place, rgb_to_yuv420p,
 };
 
@@ -714,7 +714,7 @@ fn convert_worker_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::video::frame::FrameBuffer;
+    use crate::video::frame::FrameBuffer;
 
     fn make_test_frame(width: u32, height: u32) -> DecodedFrame {
         let data: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();

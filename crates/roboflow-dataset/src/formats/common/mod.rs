@@ -26,10 +26,10 @@ pub mod progress;
 pub mod ring_buffer;
 
 // Re-export core types (shared across all formats)
-pub use base::{
-    AlignedFrame, AudioData, CameraInfo, DatasetFrame, DatasetWriter, DatasetWriterError,
-    ImageData, WriterStats,
-};
+pub use base::{AlignedFrame, DatasetFrame, DatasetWriter, DatasetWriterError, WriterStats};
+
+// Re-export frame types from roboflow_media (they were moved from roboflow_core)
+pub use roboflow_media::{AudioData, CameraInfo, ImageData, ImageDataError};
 
 // Re-export shared config types
 pub use config::{DatasetBaseConfig, Mapping, MappingType};
@@ -45,29 +45,31 @@ pub use crate::core::VideoPathScheme;
 // Re-export progress utilities
 pub use progress::{ProgressReceiver, ProgressSender, ProgressUpdate};
 
-// Re-export image format detection from the image module (canonical location)
-pub use crate::media::image::{ImageFormat, can_passthrough, detect_image_format};
+// Re-export image format detection from roboflow_media
+pub use roboflow_media::image::{ImageFormat, can_passthrough, detect_image_format};
 
-// Re-export image decode utilities from media/image (canonical location)
-pub use crate::media::image::{decode_image_to_rgb, decode_to_rgb};
+// Re-export image decode utilities from roboflow_media
+pub use roboflow_media::image::{decode_image_to_rgb, decode_to_rgb};
 
 // Re-export ring buffer for streaming frame processing
 pub use ring_buffer::{FrameRingBuffer, RingBufferError, RingBufferSnapshot};
 
-// Re-export SIMD RGB to YUV conversion
-pub use crate::media::video::{ConversionStrategy, optimal_strategy, rgb_to_nv12, rgb_to_yuv420p};
+// Re-export SIMD RGB to YUV conversion from roboflow_media
+pub use roboflow_media::video::{
+    ConversionStrategy, optimal_strategy, rgb_to_nv12, rgb_to_yuv420p,
+};
 
 // Re-export EncodedChunk (used for streaming output)
-pub use crate::media::video::EncodedChunk;
+pub use roboflow_media::video::EncodedChunk;
 
-// Re-export concurrent video encoder
-pub use crate::media::video::{
+// Re-export concurrent video encoder from roboflow_media
+pub use roboflow_media::video::{
     ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder,
 };
 
-// Re-export unified encoder types
-pub use crate::media::video::OutputConfig as VideoOutputConfig;
-pub use crate::media::video::{EncodingResult, VideoEncoder};
+// Re-export unified encoder types from roboflow_media
+pub use roboflow_media::video::OutputConfig as VideoOutputConfig;
+pub use roboflow_media::video::{EncodingResult, VideoEncoder};
 
 // Re-export DatasetStats for return values, but keep WriteOperation/Sink/VecSink internal
 pub use operation::DatasetStats;

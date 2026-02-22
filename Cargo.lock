@@ -4104,6 +4104,7 @@ dependencies = [
  "roboflow-core",
  "roboflow-dataset",
  "roboflow-distributed",
+ "roboflow-media",
  "roboflow-storage",
  "rosbag",
  "serde",
@@ -4150,12 +4151,10 @@ dependencies = [
  "crossbeam-deque",
  "futures",
  "hex",
- "image",
  "lz4_flex",
  "mcap",
  "memmap2 0.9.9",
  "num_cpus",
- "png 0.17.16",
  "polars",
  "pretty_assertions",
  "proptest",
@@ -4164,9 +4163,9 @@ dependencies = [
  "robocodec",
  "roboflow-core",
  "roboflow-executor",
+ "roboflow-media",
  "roboflow-storage",
  "rosbag",
- "rsmpeg",
  "serde",
  "serde_json",
  "serde_yaml_ng",
@@ -4177,7 +4176,6 @@ dependencies = [
  "tracing",
  "uuid",
  "zstd",
- "zune-jpeg 0.4.21",
 ]
 
 [[package]]
@@ -4231,6 +4229,24 @@ dependencies = [
  "tokio-test",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "roboflow-media"
+version = "0.2.0"
+dependencies = [
+ "crossbeam-channel",
+ "image",
+ "num_cpus",
+ "png 0.17.16",
+ "rayon",
+ "robocodec",
+ "roboflow-core",
+ "rsmpeg",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+ "zune-jpeg 0.4.21",
 ]
 
 [[package]]

@@ -18,8 +18,8 @@ use crate::formats::lerobot::config::LerobotConfig;
 use crate::formats::lerobot::metadata::MetadataCollector;
 use crate::formats::lerobot::trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 use crate::formats::lerobot::video_profiles::ResolvedConfig;
-use crate::media::video::{RsmpegVideoComposer, VideoComposer};
 use roboflow_core::Result;
+use roboflow_media::video::{RsmpegVideoComposer, VideoComposer};
 
 use super::camera::{CameraExtrinsic, CameraIntrinsic};
 use super::camera_params::CameraParamsWriter;
@@ -550,7 +550,7 @@ impl LerobotWriter {
             let segment_path = camera_dir.join("segment.mp4");
 
             // Use unified VideoEncoder to create a valid MP4 file
-            use crate::media::video::{OutputConfig, VideoEncoder};
+            use roboflow_media::video::{OutputConfig, VideoEncoder};
 
             let output = OutputConfig::file(&segment_path);
             match VideoEncoder::new(encoder_config.clone(), output) {

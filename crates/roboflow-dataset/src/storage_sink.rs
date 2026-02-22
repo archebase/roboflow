@@ -13,7 +13,7 @@ use roboflow_core::{Result, RoboflowError};
 
 use crate::formats::common::operation::{Sink, WriteOperation};
 use crate::formats::common::{ImageData, decode_image_to_rgb};
-use crate::media::video::{
+use roboflow_media::video::{
     OutputConfig, RsmpegVideoComposer, VideoComposer, VideoEncoder, VideoEncoderConfig, VideoFrame,
     VideoFrameBuffer,
 };

@@ -105,11 +105,8 @@ pub use convert::{ConvertPool, ConvertPoolConfig, TargetFormat};
 // Re-export decode pool
 pub use decode::{DecodePool, DecodePoolConfig};
 
-// Re-export VideoPathScheme from core traits
-pub use crate::core::VideoPathScheme;
-
-// Re-export ImageData from formats::common for convenience
-pub use crate::formats::common::ImageData;
+// Re-export ImageData from crate root for convenience
+pub use crate::ImageData;
 
 // =============================================================================
 // VIDEO ENCODER API (Canonical Public API)

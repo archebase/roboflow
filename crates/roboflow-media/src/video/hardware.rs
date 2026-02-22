@@ -18,23 +18,23 @@
 
 /// Check if NVENC encoder is available.
 ///
-/// Delegates to [`crate::media::video::hardware_config::detect_hardware_backend()`] as the
+/// Delegates to [`crate::video::hardware_config::detect_hardware_backend()`] as the
 /// single source of truth for hardware detection.
 pub fn check_nvenc_available() -> bool {
     matches!(
-        crate::media::video::hardware_config::detect_hardware_backend(),
-        crate::media::video::hardware_config::HardwareBackend::Nvenc
+        crate::video::hardware_config::detect_hardware_backend(),
+        crate::video::hardware_config::HardwareBackend::Nvenc
     )
 }
 
 /// Check if VideoToolbox encoder is available (macOS).
 ///
-/// Delegates to [`crate::media::video::hardware_config::detect_hardware_backend()`] as the
+/// Delegates to [`crate::video::hardware_config::detect_hardware_backend()`] as the
 /// single source of truth for hardware detection.
 pub fn check_videotoolbox_available() -> bool {
     matches!(
-        crate::media::video::hardware_config::detect_hardware_backend(),
-        crate::media::video::hardware_config::HardwareBackend::VideoToolbox
+        crate::video::hardware_config::detect_hardware_backend(),
+        crate::video::hardware_config::HardwareBackend::VideoToolbox
     )
 }
 
@@ -89,10 +89,10 @@ impl EncoderChoice {
 
 /// Select the best available encoder.
 ///
-/// Delegates to [`crate::media::video::hardware_config::detect_hardware_backend()`] as the
+/// Delegates to [`crate::video::hardware_config::detect_hardware_backend()`] as the
 /// single source of truth for hardware detection.
 pub fn select_best_encoder() -> EncoderChoice {
-    use crate::media::video::hardware_config::{HardwareBackend, detect_hardware_backend};
+    use crate::video::hardware_config::{HardwareBackend, detect_hardware_backend};
 
     match detect_hardware_backend() {
         HardwareBackend::Nvenc => EncoderChoice::Nvenc,
@@ -289,10 +289,10 @@ mod tests {
             // check_videotoolbox_available now delegates to detect_hardware_backend,
             // so it depends on ffmpeg actually listing h264_videotoolbox
             let vt = check_videotoolbox_available();
-            let backend = crate::media::video::hardware_config::detect_hardware_backend();
+            let backend = crate::video::hardware_config::detect_hardware_backend();
             let expected = matches!(
                 backend,
-                crate::media::video::hardware_config::HardwareBackend::VideoToolbox
+                crate::video::hardware_config::HardwareBackend::VideoToolbox
             );
             assert_eq!(
                 vt, expected,
@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn test_select_best_encoder_consistent_with_detect_hardware_backend() {
-        use crate::media::video::hardware_config::{HardwareBackend, detect_hardware_backend};
+        use crate::video::hardware_config::{HardwareBackend, detect_hardware_backend};
 
         let backend = detect_hardware_backend();
         let encoder = select_best_encoder();
@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_check_nvenc_delegates_to_detect_hardware_backend() {
-        use crate::media::video::hardware_config::{HardwareBackend, detect_hardware_backend};
+        use crate::video::hardware_config::{HardwareBackend, detect_hardware_backend};
         let backend = detect_hardware_backend();
         let nvenc = check_nvenc_available();
         assert_eq!(
@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn test_check_videotoolbox_delegates_to_detect_hardware_backend() {
-        use crate::media::video::hardware_config::{HardwareBackend, detect_hardware_backend};
+        use crate::video::hardware_config::{HardwareBackend, detect_hardware_backend};
         let backend = detect_hardware_backend();
         let vt = check_videotoolbox_available();
         assert_eq!(

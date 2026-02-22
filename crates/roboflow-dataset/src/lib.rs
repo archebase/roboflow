@@ -56,8 +56,10 @@ pub mod conversion;
 pub mod core;
 pub mod executor;
 pub mod formats;
-pub mod media;
 pub mod sources;
+
+// Re-export media types from roboflow-media
+pub use roboflow_media::{image, video};
 
 // Internal module for local file operations
 mod storage_sink;
@@ -87,15 +89,15 @@ pub use formats::lerobot::{
     DatasetConfig, LerobotConfig, LerobotWriter, Mapping, MappingType, StreamingConfig, VideoConfig,
 };
 
-// Re-export video types from media::video
-pub use media::video::{
+// Re-export video types from roboflow_media
+pub use roboflow_media::video::{
     ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder, PixelFormat,
     VideoEncoderConfig, VideoFrame,
 };
 
 // Re-export unified encoder (OutputConfig aliased to avoid conflict with formats::OutputConfig)
-pub use media::video::OutputConfig as VideoOutputConfig;
-pub use media::video::{EncodingResult, VideoEncoder};
+pub use roboflow_media::video::OutputConfig as VideoOutputConfig;
+pub use roboflow_media::video::{EncodingResult, VideoEncoder};
 
 // Re-export conversion API
 pub use conversion::{

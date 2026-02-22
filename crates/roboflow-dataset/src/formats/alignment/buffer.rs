@@ -14,7 +14,7 @@ use crate::formats::alignment::completion::FrameCompletionCriteria;
 use crate::formats::alignment::config::StreamingConfig;
 use crate::formats::alignment::stats::AlignmentStats;
 use crate::formats::common::AlignedFrame;
-use crate::media::image::{ImageDecoderFactory, ImageFormat};
+use roboflow_media::image::{ImageDecoderFactory, ImageFormat};
 
 /// Extracted image data from a message.
 struct ExtractedImageData {
@@ -164,7 +164,7 @@ impl FrameAlignmentBuffer {
         timestamped_msg: &TimestampedMessage,
         feature_name: &str,
     ) -> Vec<AlignedFrame> {
-        use crate::formats::common::ImageData;
+        use roboflow_media::ImageData;
 
         // Update current timestamp
         self.current_timestamp = timestamped_msg.log_time;

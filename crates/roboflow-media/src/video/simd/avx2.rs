@@ -307,7 +307,7 @@ pub unsafe fn rgb_batch_to_yuv420p_avx2(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::video::simd::scalar;
+    use crate::video::simd::scalar;
 
     #[test]
     #[cfg(target_arch = "x86_64")]

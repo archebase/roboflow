@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use crate::media::image::ImageDecoderConfig;
+use roboflow_media::image::ImageDecoderConfig;
 
 /// Configuration for streaming frame alignment.
 #[derive(Debug, Clone)]

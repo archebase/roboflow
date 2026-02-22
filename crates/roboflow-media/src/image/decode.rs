@@ -9,7 +9,7 @@
 //! various image formats and encodings.
 
 use super::{ImageFormat, decode_compressed_image};
-use crate::formats::common::ImageData;
+use crate::ImageData;
 
 /// JPEG magic: FF D8 FF
 const JPEG_MAGIC: &[u8] = &[0xFF, 0xD8, 0xFF];
