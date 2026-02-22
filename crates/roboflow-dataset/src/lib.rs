@@ -90,8 +90,7 @@ pub use formats::lerobot::{LerobotWriterConfig, LerobotWriterResult, create_lero
 
 pub use formats::common::{CameraInfo, DatasetFrame, ImageData};
 
-#[allow(deprecated)]
-pub use formats::{DatasetWriter, PipelineConfig, PipelineExecutor, PipelineStats};
+pub use formats::{DatasetWriter, DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats};
 
 pub use formats::lerobot::{
     DatasetConfig, LerobotConfig, LerobotWriter, Mapping, MappingType, StreamingConfig, VideoConfig,
