@@ -579,7 +579,11 @@ impl FragmentEncoder {
                     let metadata = std::fs::metadata(&dest).map_err(|e| {
                         RoboflowError::encode(
                             "FragmentEncoder",
-                            format!("Failed to get fragment file metadata for {}: {}", dest.display(), e),
+                            format!(
+                                "Failed to get fragment file metadata for {}: {}",
+                                dest.display(),
+                                e
+                            ),
                         )
                     })?;
                     total_bytes += metadata.len();
@@ -1170,11 +1174,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = FragmentEncoder::new(
-            video_config,
-            output,
-            FragmentConfig::default(),
-        );
+        let result = FragmentEncoder::new(video_config, output, FragmentConfig::default());
 
         assert!(result.is_err());
         assert!(

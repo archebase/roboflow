@@ -70,6 +70,7 @@ pub mod hardware_config;
 pub mod rsmpeg;
 pub mod simd;
 pub mod test_utils;
+pub mod workload;
 
 // Re-export core types
 pub use config::{DepthEncoderConfig, VideoEncoderConfig};
@@ -153,3 +154,37 @@ pub use fragment::FragmentEncodingResult;
 
 /// Fragment encoder with explicit flush control.
 pub use fragment::FragmentEncoder;
+
+// =============================================================================
+// WORKLOAD ENCODER API
+// =============================================================================
+
+/// Encoding workload for multi-stream video encoding.
+pub use workload::EncodingWorkload;
+
+/// Configuration for encoding workload.
+pub use workload::WorkloadConfig;
+
+/// Result from encoding workload finalization.
+pub use workload::WorkloadResult;
+
+/// Configuration for a single stream in a workload.
+pub use workload::StreamConfig;
+
+/// Unique identifier for a stream.
+pub use workload::StreamId;
+
+/// Output destination for a stream.
+pub use workload::StreamOutput;
+
+/// Result from encoding a single stream.
+pub use workload::StreamResult;
+
+/// Frame data for submission to a stream.
+pub use workload::FrameData;
+
+/// Encoding strategy for a stream.
+pub use workload::EncodingStrategy;
+
+/// Fragment flush triggers.
+pub use workload::FragmentTriggers;
