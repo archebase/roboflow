@@ -197,12 +197,53 @@ impl VideoComposer for RsmpegVideoComposer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::video::{VideoEncoder, VideoEncoderConfig, OutputConfig};
+    use crate::ImageData;
+
+    /// Helper to create test RGB image data.
+    fn create_test_rgb_image(width: u32, height: u32, value: u8) -> Vec<u8> {
+        vec![value; width as usize * height as usize * 3]
+    }
+
+    /// Helper to create test ImageData.
+    fn create_test_image_data(width: u32, height: u32, value: u8) -> ImageData {
+        let data = create_test_rgb_image(width, height, value);
+        ImageData::new(width, height, data)
+    }
+
+    /// Helper to create a small test video file.
+    fn create_test_video(dir: &std::path::Path, name: &str, frames: usize, value_base: u8) -> std::path::PathBuf {
+        let output_path = dir.join(name);
+        let config = VideoEncoderConfig::default();
+        let output = OutputConfig::file(&output_path);
+        let mut encoder = VideoEncoder::new(config, output).expect("Failed to create encoder");
+
+        for i in 0..frames {
+            let value = value_base.wrapping_add((i * 10) as u8);
+            let image = create_test_image_data(64, 64, value);
+            encoder.encode_frame(&image.data, image.width, image.height).expect("Failed to encode frame");
+        }
+
+        encoder.finalize().expect("Failed to finalize encoder");
+        output_path
+    }
+
+    #[test]
+    fn test_composer_new() {
+        let _composer = RsmpegVideoComposer::new();
+    }
+
+    #[test]
+    fn test_composer_default() {
+        let _composer = RsmpegVideoComposer::default();
+    }
 
     #[test]
     fn test_can_compose_empty() {
         let composer = RsmpegVideoComposer::new();
         let result = composer.can_compose(&[]);
         assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no sources"));
     }
 
     #[test]
@@ -210,5 +251,145 @@ mod tests {
         let composer = RsmpegVideoComposer::new();
         let result = composer.can_compose(&[Path::new("/nonexistent/file.mp4")]);
         assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found") || err.contains("source"));
+    }
+
+    #[test]
+    fn test_can_compose_existing_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let video_path = create_test_video(temp_dir.path(), "test.mp4", 3, 100);
+
+        let composer = RsmpegVideoComposer::new();
+        let result = composer.can_compose(&[&video_path]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_can_compose_multiple_existing_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let video1 = create_test_video(temp_dir.path(), "test1.mp4", 2, 100);
+        let video2 = create_test_video(temp_dir.path(), "test2.mp4", 2, 150);
+
+        let composer = RsmpegVideoComposer::new();
+        let result = composer.can_compose(&[&video1, &video2]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_can_compose_mixed_existing_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let video1 = create_test_video(temp_dir.path(), "test1.mp4", 2, 100);
+        let missing = temp_dir.path().join("nonexistent.mp4");
+
+        let composer = RsmpegVideoComposer::new();
+        let result = composer.can_compose(&[&video1, &missing]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_compose_empty_sources() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir.path().join("output.mp4");
+
+        let composer = RsmpegVideoComposer::new();
+        let result = composer.compose(&[], &output);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("at least one source"));
+    }
+
+    #[test]
+    fn test_compose_single_source() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source = create_test_video(temp_dir.path(), "source.mp4", 5, 100);
+        let output = temp_dir.path().join("output.mp4");
+
+        let composer = RsmpegVideoComposer::new();
+        let result = composer.compose(&[&source], &output);
+        assert!(result.is_ok(), "compose should succeed: {:?}", result);
+        assert!(output.exists(), "output file should exist");
+
+        // Output should have similar size to source (single file copy)
+        let source_size = std::fs::metadata(&source).unwrap().len();
+        let output_size = std::fs::metadata(&output).unwrap().len();
+        assert!(output_size > 0);
+        // Allow some tolerance as exact copy may vary slightly
+        assert!(output_size >= source_size / 2 && output_size <= source_size * 2);
+    }
+
+    #[test]
+    fn test_compose_multiple_sources() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source1 = create_test_video(temp_dir.path(), "source1.mp4", 3, 100);
+        let source2 = create_test_video(temp_dir.path(), "source2.mp4", 3, 150);
+        let output = temp_dir.path().join("output.mp4");
+
+        let composer = RsmpegVideoComposer::new();
+        let result = composer.compose(&[&source1, &source2], &output);
+        assert!(result.is_ok(), "compose should succeed: {:?}", result);
+        assert!(output.exists(), "output file should exist");
+
+        // Output should exist and be non-empty
+        let output_size = std::fs::metadata(&output).unwrap().len();
+        assert!(output_size > 0, "output should not be empty");
+    }
+
+    #[test]
+    fn test_compose_three_sources() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source1 = create_test_video(temp_dir.path(), "source1.mp4", 2, 100);
+        let source2 = create_test_video(temp_dir.path(), "source2.mp4", 2, 150);
+        let source3 = create_test_video(temp_dir.path(), "source3.mp4", 2, 200);
+        let output = temp_dir.path().join("output.mp4");
+
+        let composer = RsmpegVideoComposer::new();
+        let result = composer.compose(&[&source1, &source2, &source3], &output);
+        assert!(result.is_ok(), "compose should succeed: {:?}", result);
+        assert!(output.exists(), "output file should exist");
+    }
+
+    #[test]
+    fn test_compose_missing_source() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source1 = create_test_video(temp_dir.path(), "source1.mp4", 2, 100);
+        let missing = temp_dir.path().join("nonexistent.mp4");
+        let output = temp_dir.path().join("output.mp4");
+
+        let composer = RsmpegVideoComposer::new();
+        let result = composer.compose(&[&source1, &missing], &output);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_compose_overwrites_existing_output() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source = create_test_video(temp_dir.path(), "source.mp4", 3, 100);
+        let output = temp_dir.path().join("output.mp4");
+
+        // Create an existing output file
+        std::fs::write(&output, b"old content").unwrap();
+        assert_eq!(std::fs::metadata(&output).unwrap().len(), 11);
+
+        let composer = RsmpegVideoComposer::new();
+        let result = composer.compose(&[&source], &output);
+        assert!(result.is_ok());
+
+        // Output should be overwritten with new content
+        let new_size = std::fs::metadata(&output).unwrap().len();
+        assert!(new_size > 11, "output should be overwritten");
+    }
+
+    #[test]
+    fn test_compose_different_frame_counts() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source1 = create_test_video(temp_dir.path(), "source1.mp4", 2, 100);
+        let source2 = create_test_video(temp_dir.path(), "source2.mp4", 5, 150);
+        let source3 = create_test_video(temp_dir.path(), "source3.mp4", 1, 200);
+        let output = temp_dir.path().join("output.mp4");
+
+        let composer = RsmpegVideoComposer::new();
+        let result = composer.compose(&[&source1, &source2, &source3], &output);
+        assert!(result.is_ok(), "compose should succeed: {:?}", result);
+        assert!(output.exists(), "output file should exist");
     }
 }
