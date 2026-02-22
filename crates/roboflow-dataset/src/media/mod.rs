@@ -16,6 +16,5 @@ pub use image::{
     ImageFormat, decode_compressed_image,
 };
 pub use video::{
-    EncoderResult, FlatVideoPathScheme, LeRobotVideoPathScheme, RldsVideoPathScheme,
-    VideoEncoderService, VideoPathScheme, VideoServiceConfig,
+    FlatVideoPathScheme, LeRobotVideoPathScheme, RldsVideoPathScheme, VideoPathScheme,
 };

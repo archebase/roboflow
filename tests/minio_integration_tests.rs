@@ -281,11 +281,8 @@ fn test_concurrent_encoder_with_local_output() {
         key_prefix,
         chunk_index: 0,
         episode_index: 0,
-        chunk_size: 256 * 1024,
-        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
-        frame_channel_capacity: 64,
+        video_config: roboflow_dataset::VideoEncoderConfig::default(),
         output_dir: temp_dir.path().to_path_buf(),
-        use_parallel_pipeline: false,
         path_scheme: None,
     };
 
@@ -338,11 +335,8 @@ fn test_concurrent_encoder_multicam_with_local_output() {
         key_prefix,
         chunk_index: 0,
         episode_index: 0,
-        chunk_size: 256 * 1024,
-        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
-        frame_channel_capacity: 100,
+        video_config: roboflow_dataset::VideoEncoderConfig::default(),
         output_dir: temp_dir.path().to_path_buf(),
-        use_parallel_pipeline: false,
         path_scheme: None,
     };
 
@@ -397,11 +391,8 @@ fn test_compressed_images_with_local_output() {
         key_prefix,
         chunk_index: 0,
         episode_index: 0,
-        chunk_size: 256 * 1024,
-        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
-        frame_channel_capacity: 100,
+        video_config: roboflow_dataset::VideoEncoderConfig::default(),
         output_dir: temp_dir.path().to_path_buf(),
-        use_parallel_pipeline: false,
         path_scheme: None,
     };
 
@@ -501,11 +492,8 @@ fn test_concurrent_local_writes() {
                     key_prefix,
                     chunk_index: 0,
                     episode_index: worker_id as u32,
-                    chunk_size: 256 * 1024,
-                    video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
-                    frame_channel_capacity: 50,
+                    video_config: roboflow_dataset::VideoEncoderConfig::default(),
                     output_dir,
-                    use_parallel_pipeline: false,
                     path_scheme: None,
                 };
 
@@ -612,11 +600,8 @@ fn test_lerobot_v21_video_path_structure() {
         key_prefix: key_prefix.clone(),
         chunk_index,
         episode_index,
-        chunk_size: 256 * 1024,
-        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
-        frame_channel_capacity: 64,
+        video_config: roboflow_dataset::VideoEncoderConfig::default(),
         output_dir: temp_dir.path().to_path_buf(),
-        use_parallel_pipeline: false,
         path_scheme: None,
     };
 
@@ -708,11 +693,8 @@ fn test_multi_camera_unique_temp_files() {
         key_prefix: "test_unique_temp".to_string(),
         chunk_index: 0,
         episode_index: 0,
-        chunk_size: 256 * 1024,
-        video_config: roboflow_dataset::common::video::VideoEncoderConfig::default(),
-        frame_channel_capacity: 64,
+        video_config: roboflow_dataset::VideoEncoderConfig::default(),
         output_dir: temp_dir.path().to_path_buf(),
-        use_parallel_pipeline: false,
         path_scheme: None,
     };
 

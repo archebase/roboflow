@@ -9,22 +9,10 @@
 //!
 //! # Design
 //!
-//! - Single encoder initialization per camera per episode
-//! - Streaming fMP4 output via channels (no temp files)
-//! - Per-camera pipeline threads with backpressure
-//! - Per-camera file writer threads for local file I/O
+//! - Uses `VideoEncoder` for all encoding
+//! - Per-camera encoding threads
+//! - Direct file output (no separate writer threads)
 //! - Clean abort on errors
-//! - **Configurable pipeline selection**: 2-stage (single-threaded) or 3-stage (parallel SIMD)
-//!
-//! # Pipeline Selection
-//!
-//! - **2-stage (default)**: Single-threaded decode + encode per camera
-//!   - Lower memory usage, simpler flow
-//!   - Best for: single camera or low-throughput scenarios
-//! - **3-stage**: Parallel decode + convert + encode
-//!   - SIMD-accelerated color conversion (8-12x faster than FFmpeg)
-//!   - Higher throughput for multi-camera scenarios
-//!   - Enable via `ConcurrentEncoderConfig::use_parallel_pipeline = true`
 //!
 //! # Architecture
 //!
@@ -34,17 +22,9 @@
 //! │                                                              │
 //! │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐      │
 //! │  │   Camera    │    │   Camera    │    │   Camera    │      │
-//! │  │  Streaming  │    │  Streaming  │    │  Streaming  │      │
-//! │  │  Pipeline   │    │  Pipeline   │    │  Pipeline   │      │
-//! │  │  (thread)   │    │  (thread)   │    │  (thread)   │      │
-//! │  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘      │
-//! │         │                  │                  │              │
-//! │         │ EncodedChunk     │ EncodedChunk     │ EncodedChunk │
-//! │         ▼                  ▼                  ▼              │
-//! │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐      │
-//! │  │   File      │    │   File      │    │   File      │      │
-//! │  │   Writer    │    │   Writer    │    │   Writer    │      │
-//! │  │   Thread    │    │   Thread    │    │   Thread    │      │
+//! │  │  Encoding   │    │  Encoding   │    │  Encoding   │      │
+//! │  │  Thread     │    │  Thread     │    │  Thread     │      │
+//! │  │ (VideoEncoder)│  │ (VideoEncoder)│  │ (VideoEncoder)│    │
 //! │  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘      │
 //! │         │                  │                  │              │
 //! │         └──────────────────┼──────────────────┘              │
@@ -55,48 +35,17 @@
 //! │                     └─────────────┘                          │
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
-//!
-//! # Example
-//!
-//! ```ignore
-//! use roboflow_dataset::media::video::{
-//!     ConcurrentVideoEncoder, ConcurrentEncoderConfig,
-//! };
-//! use std::path::PathBuf;
-//!
-//! let config = ConcurrentEncoderConfig {
-//!     key_prefix: "dataset/episode_001".to_string(),
-//!     output_dir: PathBuf::from("./output"),
-//!     ..Default::default()
-//! };
-//!
-//! let mut encoder = ConcurrentVideoEncoder::new(config)?;
-//!
-//! // Add frames for different cameras
-//! encoder.add_frame("cam0", image1)?;
-//! encoder.add_frame("cam1", image2)?;
-//!
-//! // Finalize and get results
-//! let results = encoder.finalize()?;
-//! for result in results {
-//!     println!("{}: {} frames -> {}", result.camera, result.frames_encoded, result.output_path.display());
-//! }
-//! ```
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crossbeam_channel::{Receiver, unbounded};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use roboflow_core::{Result, RoboflowError};
 
-use super::camera_streaming_pipeline::{
-    EitherPipeline, PipelineAdapter, StreamingPipelineConfig, StreamingUploadCommand,
-    spawn_streaming_pipeline,
-};
+use super::{OutputConfig, VideoEncoder, VideoEncoderConfig};
 use crate::core::VideoPathScheme;
-use crate::formats::common::{ImageData, VideoEncoderConfig};
-use crate::media::video::pipeline::VideoPipelineConfig;
+use crate::formats::common::{ImageData, decode_to_rgb};
 
 /// Configuration for concurrent video encoder.
 #[derive(Clone)]
@@ -109,18 +58,10 @@ pub struct ConcurrentEncoderConfig {
     pub chunk_index: u32,
     /// Episode index for video filename (0 = episode_000000).
     pub episode_index: u32,
-    /// Chunk size for streaming delivery (bytes).
-    pub chunk_size: usize,
     /// Video encoder configuration.
     pub video_config: VideoEncoderConfig,
-    /// Frame channel capacity (backpressure threshold).
-    pub frame_channel_capacity: usize,
     /// Output directory for video files.
     pub output_dir: PathBuf,
-    /// Whether to use the 3-stage parallel pipeline (DecodePool + ConvertPool + EncoderPool).
-    /// When true, uses SIMD-accelerated parallel processing for higher throughput.
-    /// When false, uses the 2-stage single-threaded pipeline (StreamingMp4Encoder).
-    pub use_parallel_pipeline: bool,
     /// Optional video path scheme for generating output paths.
     /// If None, uses the default LeRobot v2.1 format.
     pub path_scheme: Option<Arc<dyn VideoPathScheme>>,
@@ -133,11 +74,8 @@ impl ConcurrentEncoderConfig {
             key_prefix: String::new(),
             chunk_index: 0,
             episode_index: 0,
-            chunk_size: 256 * 1024, // 256KB chunks
             video_config: VideoEncoderConfig::default(),
-            frame_channel_capacity: 64,
             output_dir,
-            use_parallel_pipeline: false,
             path_scheme: None,
         }
     }
@@ -162,22 +100,37 @@ pub struct ConcurrentEncoderResult {
     pub frames_skipped: usize,
 }
 
+// =============================================================================
+// Internal Commands
+// =============================================================================
+
+/// Command for encoding threads.
+enum EncodeCommand {
+    /// Add a frame to encode.
+    Frame(ImageData),
+    /// Flush and finish encoding.
+    Flush,
+    /// Abort immediately.
+    Abort,
+}
+
+// =============================================================================
+// Concurrent Video Encoder
+// =============================================================================
+
 /// Concurrent video encoder for multiple cameras.
 ///
-/// This orchestrates per-camera streaming encoding pipelines with file writer threads.
-/// Each pipeline runs in a dedicated thread with single encoder initialization,
-/// while writer threads handle I/O-bound local file writes.
+/// This orchestrates per-camera encoding threads that use `VideoEncoder`
+/// for local file output.
 pub struct ConcurrentVideoEncoder {
-    /// Per-camera pipeline handles (either legacy or adapter).
-    pipelines: HashMap<String, EitherPipeline>,
-    /// Per-camera file writer thread handles.
-    writer_handles: HashMap<String, std::thread::JoinHandle<()>>,
+    /// Per-camera command senders.
+    cmd_txs: HashMap<String, Sender<EncodeCommand>>,
+    /// Per-camera thread handles.
+    thread_handles: HashMap<String, std::thread::JoinHandle<Result<ConcurrentEncoderResult>>>,
     /// Configuration.
     config: ConcurrentEncoderConfig,
     /// Whether the encoder has been finalized.
     finalized: bool,
-    /// Output paths per camera.
-    output_paths: HashMap<String, PathBuf>,
 }
 
 impl ConcurrentVideoEncoder {
@@ -188,26 +141,22 @@ impl ConcurrentVideoEncoder {
     /// * `config` - Encoder configuration including output directory
     pub fn new(config: ConcurrentEncoderConfig) -> Result<Self> {
         Ok(Self {
-            pipelines: HashMap::new(),
-            writer_handles: HashMap::new(),
+            cmd_txs: HashMap::new(),
+            thread_handles: HashMap::new(),
             config,
             finalized: false,
-            output_paths: HashMap::new(),
         })
     }
 
     /// Build the output path for a camera using the configured path scheme.
-    /// If no path scheme is configured, uses the default LeRobot v2.1 format.
     fn build_output_path(&self, camera: &str) -> PathBuf {
         let relative_path = if let Some(ref scheme) = self.config.path_scheme {
-            // Use the configured path scheme
             scheme.video_path(
                 self.config.episode_index as usize,
                 camera,
                 self.config.chunk_index as usize,
             )
         } else {
-            // Default LeRobot v2.1 format
             let prefix = self.config.key_prefix.trim_end_matches('/');
             PathBuf::from(format!(
                 "{}/videos/chunk-{:03}/{}/episode_{:06}.mp4",
@@ -218,157 +167,188 @@ impl ConcurrentVideoEncoder {
         self.config.output_dir.join(relative_path)
     }
 
-    /// Ensure a pipeline exists for the given camera.
-    fn ensure_pipeline(&mut self, camera: &str) -> Result<()> {
-        if self.pipelines.contains_key(camera) {
+    /// Ensure an encoding thread exists for the given camera.
+    fn ensure_camera(&mut self, camera: &str) -> Result<()> {
+        if self.cmd_txs.contains_key(camera) {
             return Ok(());
         }
 
         // Build output path
         let output_path = self.build_output_path(camera);
-        self.output_paths
-            .insert(camera.to_string(), output_path.clone());
 
-        // Create pipeline config
-        let pipeline_config = StreamingPipelineConfig {
-            camera: camera.to_string(),
-            video_config: self.config.video_config.clone(),
-            chunk_size: self.config.chunk_size,
-        };
+        // Create parent directory
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                RoboflowError::other(format!(
+                    "Failed to create directory '{}': {}",
+                    parent.display(),
+                    e
+                ))
+            })?;
+        }
 
-        // Create crossbeam channel for writer commands
-        let (writer_tx, writer_rx) = unbounded::<StreamingUploadCommand>();
+        // Create command channel
+        let (cmd_tx, cmd_rx) = unbounded();
 
-        // Clone output path for the writer thread
-        let camera_clone = camera.to_string();
+        // Clone config for the thread
+        let video_config = self.config.video_config.clone();
+        let camera_name = camera.to_string();
         let output_path_clone = output_path.clone();
 
-        // Spawn file writer thread
-        let writer_handle = std::thread::Builder::new()
-            .name(format!("file-writer-{}", camera))
+        // Spawn encoding thread
+        let handle = std::thread::Builder::new()
+            .name(format!("encoder-{}", camera))
             .spawn(move || {
-                Self::file_writer_thread(camera_clone, output_path_clone, writer_rx);
+                Self::encoding_thread(camera_name, output_path_clone, video_config, cmd_rx)
             })
-            .map_err(|e| {
-                RoboflowError::other(format!("Failed to spawn file writer thread: {}", e))
-            })?;
+            .map_err(|e| RoboflowError::other(format!("Failed to spawn encoder thread: {}", e)))?;
 
-        // Spawn streaming encoding pipeline
-        // Choose pipeline type based on use_parallel_pipeline flag
-        let pipeline: EitherPipeline = if self.config.use_parallel_pipeline {
-            // Create parallel video pipeline (decode + convert + encode)
-            let video_pipeline_config = VideoPipelineConfig {
-                camera: camera.to_string(),
-                video_config: self.config.video_config.clone(),
-                decode_workers: Some(num_cpus::get_physical()),
-                convert_workers: Some(num_cpus::get_physical()),
-                encode_workers: Some(1), // Hardware encoder only handles one at a time
-                pending_capacity: 512,
-                completed_capacity: 512,
-                frames_per_fragment: 30,
-                chunk_size: self.config.chunk_size,
-            };
-
-            EitherPipeline::Adapter(PipelineAdapter::new(
-                camera.to_string(),
-                video_pipeline_config,
-                writer_tx,
-            )?)
-        } else {
-            // Create 2-stage pipeline (single-threaded decode + encode)
-            let handle = spawn_streaming_pipeline(pipeline_config, writer_tx)?;
-            EitherPipeline::Legacy(handle)
-        };
-
-        let camera_string = camera.to_string();
-        self.pipelines.insert(camera_string.clone(), pipeline);
-        self.writer_handles.insert(camera_string, writer_handle);
+        self.cmd_txs.insert(camera.to_string(), cmd_tx);
+        self.thread_handles.insert(camera.to_string(), handle);
 
         Ok(())
     }
 
-    /// File writer thread for a single camera.
-    ///
-    /// This thread receives encoded chunks and writes them to a local file.
-    fn file_writer_thread(
+    /// Encoding thread for a single camera.
+    fn encoding_thread(
         camera: String,
         output_path: PathBuf,
-        writer_rx: Receiver<StreamingUploadCommand>,
-    ) {
-        // Ensure parent directory exists
-        if let Some(parent) = output_path.parent()
-            && let Err(e) = std::fs::create_dir_all(parent)
-        {
-            tracing::error!(camera = %camera, error = %e, "Failed to create output directory");
-            return;
-        }
+        video_config: VideoEncoderConfig,
+        cmd_rx: Receiver<EncodeCommand>,
+    ) -> Result<ConcurrentEncoderResult> {
+        let mut frames_encoded = 0usize;
+        let mut frames_skipped = 0usize;
 
-        // Output file
-        let mut file: Option<std::fs::File> = None;
-        let mut bytes_written: u64 = 0;
-        let mut chunks_count: usize = 0;
+        // Video dimensions (set from first frame)
+        let mut width = 0u32;
+        let mut height = 0u32;
 
-        // Process writer commands
-        for cmd in writer_rx {
+        // Encoder (lazy initialization)
+        let mut encoder: Option<VideoEncoder> = None;
+
+        // Process commands
+        while let Ok(cmd) = cmd_rx.recv() {
             match cmd {
-                StreamingUploadCommand::UploadChunk { chunk } => {
-                    // Create file if not exists
-                    if file.is_none() {
-                        match std::fs::File::create(&output_path) {
-                            Ok(f) => file = Some(f),
+                EncodeCommand::Frame(image) => {
+                    // Skip invalid frames
+                    if !image.is_encoded && (image.width == 0 || image.height == 0) {
+                        frames_skipped += 1;
+                        continue;
+                    }
+
+                    // Decode to RGB
+                    let (decoded_w, decoded_h, rgb_data) = match decode_to_rgb(&image) {
+                        Some(data) => data,
+                        None => {
+                            frames_skipped += 1;
+                            continue;
+                        }
+                    };
+
+                    // Initialize encoder on first frame
+                    if width == 0 {
+                        width = decoded_w;
+                        height = decoded_h;
+
+                        let output = OutputConfig::file(&output_path);
+                        match VideoEncoder::new(video_config.clone(), output) {
+                            Ok(enc) => {
+                                encoder = Some(enc);
+                                tracing::info!(
+                                    camera = %camera,
+                                    width = decoded_w,
+                                    height = decoded_h,
+                                    path = %output_path.display(),
+                                    "Encoder initialized"
+                                );
+                            }
                             Err(e) => {
-                                tracing::error!(camera = %camera, error = %e, "Failed to create output file");
-                                continue;
+                                tracing::error!(
+                                    camera = %camera,
+                                    error = %e,
+                                    "Failed to initialize encoder"
+                                );
+                                return Err(e);
                             }
                         }
                     }
 
-                    // Write chunk data
-                    if let Some(ref mut f) = file {
-                        use std::io::Write;
-                        match f.write_all(&chunk.data) {
+                    // Validate dimensions
+                    if decoded_w != width || decoded_h != height {
+                        tracing::debug!(
+                            camera = %camera,
+                            expected = format!("{}x{}", width, height),
+                            actual = format!("{}x{}", decoded_w, decoded_h),
+                            "Skipping frame due to dimension mismatch"
+                        );
+                        frames_skipped += 1;
+                        continue;
+                    }
+
+                    // Encode frame
+                    if let Some(ref mut enc) = encoder {
+                        match enc.encode_frame(&rgb_data, decoded_w, decoded_h) {
                             Ok(_) => {
-                                bytes_written += chunk.data.len() as u64;
-                                chunks_count += 1;
+                                frames_encoded += 1;
                             }
                             Err(e) => {
-                                tracing::error!(camera = %camera, error = %e, "Failed to write chunk");
+                                tracing::warn!(
+                                    camera = %camera,
+                                    error = %e,
+                                    "Failed to encode frame, skipping"
+                                );
+                                frames_skipped += 1;
                             }
                         }
                     }
                 }
-                StreamingUploadCommand::Finish { .. } => {
-                    // Flush and close file
-                    if let Some(mut f) = file.take() {
-                        use std::io::Write;
-                        if let Err(e) = f.flush() {
-                            tracing::error!(camera = %camera, error = %e, "Failed to flush file");
-                        }
-                    }
-
-                    tracing::info!(
-                        camera = %camera,
-                        path = %output_path.display(),
-                        bytes = bytes_written,
-                        chunks = chunks_count,
-                        "File write completed"
-                    );
+                EncodeCommand::Flush => {
                     break;
                 }
-                StreamingUploadCommand::AbortAll => {
-                    // Delete partial file if exists
-                    drop(file.take());
-                    let _ = std::fs::remove_file(&output_path);
-                    tracing::warn!(camera = %camera, "File write aborted");
-                    break;
+                EncodeCommand::Abort => {
+                    tracing::warn!(camera = %camera, "Encoding aborted");
+                    return Err(RoboflowError::other(format!(
+                        "Camera {} encoding aborted",
+                        camera
+                    )));
                 }
             }
         }
+
+        // Finalize encoder
+        if let Some(enc) = encoder {
+            match enc.finalize() {
+                Ok(result) => {
+                    tracing::info!(
+                        camera = %camera,
+                        frames = frames_encoded,
+                        bytes = result.bytes_written,
+                        path = %output_path.display(),
+                        "Encoding complete"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        camera = %camera,
+                        error = %e,
+                        "Failed to finalize encoder"
+                    );
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(ConcurrentEncoderResult {
+            camera,
+            output_path,
+            frames_encoded,
+            frames_skipped,
+        })
     }
 
     /// Add a frame for a specific camera.
     ///
-    /// This will create a new pipeline for the camera if it doesn't exist.
+    /// This will create a new encoder for the camera if it doesn't exist.
     ///
     /// # Arguments
     ///
@@ -381,19 +361,19 @@ impl ConcurrentVideoEncoder {
             ));
         }
 
-        self.ensure_pipeline(camera)?;
+        self.ensure_camera(camera)?;
 
-        let pipeline = self.pipelines.get(camera).ok_or_else(|| {
-            RoboflowError::other(format!("Pipeline not found for camera: {}", camera))
-        })?;
+        let cmd_tx = self
+            .cmd_txs
+            .get(camera)
+            .ok_or_else(|| RoboflowError::other(format!("No encoder for camera: {}", camera)))?;
 
-        pipeline.add_frame(image)
+        cmd_tx
+            .send(EncodeCommand::Frame(image))
+            .map_err(|e| RoboflowError::other(format!("Failed to send frame to encoder: {}", e)))
     }
 
-    /// Finalize encoding and wait for all file writes to complete.
-    ///
-    /// This signals all pipelines to flush remaining frames,
-    /// waits for them to finish, then waits for all file writes to complete.
+    /// Finalize encoding and wait for all encoders to complete.
     ///
     /// # Returns
     ///
@@ -401,29 +381,40 @@ impl ConcurrentVideoEncoder {
     pub fn finalize(mut self) -> Result<Vec<ConcurrentEncoderResult>> {
         self.finalized = true;
 
-        // Signal all pipelines to flush
-        for (camera, pipeline) in &self.pipelines {
-            if let Err(e) = pipeline.flush() {
-                tracing::error!(camera = %camera, error = %e, "Failed to flush pipeline");
+        // Signal all encoders to flush
+        for (camera, cmd_tx) in &self.cmd_txs {
+            if let Err(e) = cmd_tx.send(EncodeCommand::Flush) {
+                tracing::warn!(camera = %camera, error = %e, "Failed to send flush command");
             }
         }
 
-        // Wait for all pipelines to finish and collect results
+        // Wait for all threads to complete
         let mut results = Vec::new();
-        for (camera, pipeline) in self.pipelines.drain() {
-            let output_path = self.output_paths.get(&camera).cloned().unwrap_or_default();
 
-            match pipeline.join() {
-                Ok(pipeline_result) => {
+        // First, build all output paths (before draining)
+        let output_paths: HashMap<String, PathBuf> = self
+            .thread_handles
+            .keys()
+            .map(|camera| (camera.clone(), self.build_output_path(camera)))
+            .collect();
+
+        for (camera, handle) in self.thread_handles.drain() {
+            let output_path = output_paths.get(&camera).cloned().unwrap_or_default();
+            match handle.join() {
+                Ok(Ok(result)) => {
+                    results.push(result);
+                }
+                Ok(Err(e)) => {
+                    tracing::error!(camera = %camera, error = %e, "Encoding thread failed");
                     results.push(ConcurrentEncoderResult {
-                        camera: pipeline_result.camera,
+                        camera,
                         output_path,
-                        frames_encoded: pipeline_result.frames_encoded,
-                        frames_skipped: pipeline_result.frames_skipped,
+                        frames_encoded: 0,
+                        frames_skipped: 0,
                     });
                 }
                 Err(e) => {
-                    tracing::error!(camera = %camera, error = %e, "Pipeline failed");
+                    tracing::error!(camera = %camera, "Encoding thread panicked: {:?}", e);
                     results.push(ConcurrentEncoderResult {
                         camera,
                         output_path,
@@ -434,43 +425,36 @@ impl ConcurrentVideoEncoder {
             }
         }
 
-        // Wait for all writer threads to complete
-        for (camera, writer_handle) in self.writer_handles.drain() {
-            if let Err(e) = writer_handle.join() {
-                tracing::warn!(camera = %camera, "File writer thread panicked: {:?}", e);
-            }
-        }
-
         // Log summary
         let total_frames: usize = results.iter().map(|r| r.frames_encoded).sum();
         tracing::info!(
             cameras = results.len(),
             total_frames,
-            "Concurrent streaming encoding completed"
+            "Concurrent encoding completed"
         );
 
         Ok(results)
     }
 
-    /// Abort all encoding and uploads.
+    /// Abort all encoding.
     pub fn abort(mut self) -> Result<()> {
         self.finalized = true;
 
-        // Signal all pipelines to shutdown
-        for (camera, pipeline) in &self.pipelines {
-            if let Err(e) = pipeline.shutdown() {
-                tracing::warn!(camera = %camera, error = %e, "Failed to shutdown pipeline");
+        // Signal all encoders to abort
+        for (camera, cmd_tx) in &self.cmd_txs {
+            if let Err(e) = cmd_tx.send(EncodeCommand::Abort) {
+                tracing::warn!(camera = %camera, error = %e, "Failed to send abort command");
             }
         }
 
-        tracing::warn!("Concurrent streaming encoding aborted");
+        tracing::warn!("Concurrent encoding aborted");
 
         Ok(())
     }
 
     /// Get the list of active cameras.
     pub fn cameras(&self) -> Vec<&str> {
-        self.pipelines.keys().map(|s| s.as_str()).collect()
+        self.cmd_txs.keys().map(|s| s.as_str()).collect()
     }
 
     /// Check if the encoder has been finalized.
@@ -491,28 +475,9 @@ mod tests {
     #[test]
     fn test_config_new() {
         let config = ConcurrentEncoderConfig::new(test_output_dir());
-        assert_eq!(config.chunk_size, 256 * 1024);
-        assert_eq!(config.frame_channel_capacity, 64);
-    }
-
-    #[test]
-    fn test_config_fields() {
-        let config = ConcurrentEncoderConfig {
-            use_parallel_pipeline: false,
-            key_prefix: "test/prefix".to_string(),
-            chunk_index: 5,
-            episode_index: 42,
-            chunk_size: 128 * 1024,
-            video_config: VideoEncoderConfig::default(),
-            frame_channel_capacity: 32,
-            output_dir: test_output_dir(),
-            path_scheme: None,
-        };
-
-        assert_eq!(config.key_prefix, "test/prefix");
-        assert_eq!(config.chunk_index, 5);
-        assert_eq!(config.episode_index, 42);
-        assert_eq!(config.chunk_size, 128 * 1024);
+        assert!(config.key_prefix.is_empty());
+        assert_eq!(config.chunk_index, 0);
+        assert_eq!(config.episode_index, 0);
     }
 
     #[test]
@@ -527,51 +492,13 @@ mod tests {
     }
 
     #[test]
-    fn test_encoder_cannot_add_after_finalize() {
-        let config = ConcurrentEncoderConfig::new(test_output_dir());
-        let encoder = ConcurrentVideoEncoder::new(config).unwrap();
-
-        // Finalize without adding any frames
-        let results = encoder.finalize().unwrap();
-        assert!(results.is_empty());
-
-        // Note: encoder is consumed by finalize(), so we can't add frames after
-        // This is enforced at compile time
-    }
-
-    #[test]
-    fn test_build_output_path_format() {
-        let config = ConcurrentEncoderConfig {
-            use_parallel_pipeline: false,
-            key_prefix: "dataset/episode_001".to_string(),
-            chunk_index: 0,
-            episode_index: 42,
-            chunk_size: 256 * 1024,
-            video_config: VideoEncoderConfig::default(),
-            frame_channel_capacity: 64,
-            output_dir: test_output_dir(),
-            path_scheme: None,
-        };
-
-        let encoder = ConcurrentVideoEncoder::new(config).unwrap();
-        // The build_output_path method is private, but we can verify through add_frame
-        // which creates the path internally
-
-        // This test verifies the encoder can be created with specific config
-        assert!(!encoder.is_finalized());
-    }
-
-    #[test]
     fn test_encoder_single_camera() {
         let output_dir = test_output_dir();
         let config = ConcurrentEncoderConfig {
-            use_parallel_pipeline: false,
             key_prefix: "test_single".to_string(),
             chunk_index: 0,
             episode_index: 0,
-            chunk_size: 256 * 1024,
             video_config: VideoEncoderConfig::default(),
-            frame_channel_capacity: 64,
             output_dir: output_dir.clone(),
             path_scheme: None,
         };
@@ -603,13 +530,10 @@ mod tests {
     fn test_encoder_multi_camera() {
         let output_dir = test_output_dir();
         let config = ConcurrentEncoderConfig {
-            use_parallel_pipeline: false,
             key_prefix: "test_multi".to_string(),
             chunk_index: 0,
             episode_index: 0,
-            chunk_size: 256 * 1024,
             video_config: VideoEncoderConfig::default(),
-            frame_channel_capacity: 64,
             output_dir: output_dir.clone(),
             path_scheme: None,
         };
@@ -636,23 +560,73 @@ mod tests {
         // Each camera should have 5 frames
         for result in &results {
             assert_eq!(result.frames_encoded, 5);
-            // Verify output file was created
             assert!(result.output_path.exists());
         }
     }
 
     #[test]
-    fn test_encoder_non_square_dimensions() {
+    fn test_encoder_skip_invalid_frames() {
+        let output_dir = test_output_dir();
+        let config = ConcurrentEncoderConfig {
+            key_prefix: "test_skip".to_string(),
+            chunk_index: 0,
+            episode_index: 0,
+            video_config: VideoEncoderConfig::default(),
+            output_dir: output_dir.clone(),
+            path_scheme: None,
+        };
+
+        let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
+
+        // Add a valid frame first (sets dimensions)
+        let valid_image = ImageData::new(64, 64, vec![128u8; 64 * 64 * 3]);
+        encoder.add_frame("cam0", valid_image).unwrap();
+
+        // Add an invalid frame (zero dimensions - should be skipped)
+        let invalid_image = ImageData::new(0, 0, vec![]);
+        encoder.add_frame("cam0", invalid_image).unwrap();
+
+        // Add another valid frame
+        let valid_image2 = ImageData::new(64, 64, vec![200u8; 64 * 64 * 3]);
+        encoder.add_frame("cam0", valid_image2).unwrap();
+
+        let results = encoder.finalize().unwrap();
+        assert_eq!(results.len(), 1);
+        // 2 valid frames encoded, 1 skipped
+        assert_eq!(results[0].frames_encoded, 2);
+        assert_eq!(results[0].frames_skipped, 1);
+    }
+
+    #[test]
+    fn test_encoder_empty() {
+        // Test encoder with no frames added
+        let config = ConcurrentEncoderConfig::new(test_output_dir());
+        let encoder = ConcurrentVideoEncoder::new(config).unwrap();
+
+        let results = encoder.finalize().unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_encoder_cannot_add_after_finalize() {
+        let config = ConcurrentEncoderConfig::new(test_output_dir());
+        let encoder = ConcurrentVideoEncoder::new(config).unwrap();
+
+        // Finalize without adding any frames
+        let results = encoder.finalize().unwrap();
+        assert!(results.is_empty());
+        // Note: encoder is consumed by finalize(), so we can't add frames after
+    }
+
+    #[test]
+    fn test_non_square_dimensions_encoding() {
         // Regression test for non-square image dimensions
         let output_dir = test_output_dir();
         let config = ConcurrentEncoderConfig {
-            use_parallel_pipeline: false,
             key_prefix: "test_nonsquare".to_string(),
             chunk_index: 0,
             episode_index: 0,
-            chunk_size: 256 * 1024,
             video_config: VideoEncoderConfig::default(),
-            frame_channel_capacity: 64,
             output_dir: output_dir.clone(),
             path_scheme: None,
         };
@@ -674,53 +648,5 @@ mod tests {
         assert_eq!(results[0].frames_encoded, 5);
         assert_eq!(results[0].frames_skipped, 0);
         assert!(results[0].output_path.exists());
-    }
-
-    #[test]
-    fn test_encoder_skip_invalid_frames() {
-        let output_dir = test_output_dir();
-        let config = ConcurrentEncoderConfig {
-            use_parallel_pipeline: false,
-            key_prefix: "test_skip".to_string(),
-            chunk_index: 0,
-            episode_index: 0,
-            chunk_size: 256 * 1024,
-            video_config: VideoEncoderConfig::default(),
-            frame_channel_capacity: 64,
-            output_dir: output_dir.clone(),
-            path_scheme: None,
-        };
-
-        let mut encoder = ConcurrentVideoEncoder::new(config).unwrap();
-
-        // Add a valid frame first (sets dimensions)
-        let valid_image = ImageData::new(64, 64, vec![128u8; 64 * 64 * 3]);
-        encoder.add_frame("cam0", valid_image).unwrap();
-
-        // Add an invalid frame (zero dimensions - should be skipped)
-        let invalid_image = ImageData::new(0, 0, vec![]);
-        // This should still succeed - invalid frames are skipped gracefully
-        let result = encoder.add_frame("cam0", invalid_image);
-        assert!(result.is_ok());
-
-        // Add another valid frame
-        let valid_image2 = ImageData::new(64, 64, vec![200u8; 64 * 64 * 3]);
-        encoder.add_frame("cam0", valid_image2).unwrap();
-
-        let results = encoder.finalize().unwrap();
-        assert_eq!(results.len(), 1);
-        // 2 valid frames encoded, 1 skipped
-        assert_eq!(results[0].frames_encoded, 2);
-        assert_eq!(results[0].frames_skipped, 1);
-    }
-
-    #[test]
-    fn test_encoder_empty() {
-        // Test encoder with no frames added
-        let config = ConcurrentEncoderConfig::new(test_output_dir());
-        let encoder = ConcurrentVideoEncoder::new(config).unwrap();
-
-        let results = encoder.finalize().unwrap();
-        assert!(results.is_empty());
     }
 }

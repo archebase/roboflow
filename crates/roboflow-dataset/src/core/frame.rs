@@ -20,6 +20,3 @@ pub use crate::formats::common::{AlignedFrame, AudioData, CameraInfo, DatasetFra
 
 // Re-export error types that exist
 pub use crate::formats::common::DatasetWriterError;
-
-// UploadState is in formats::common::base, re-export from there
-pub use crate::formats::common::base::UploadState;

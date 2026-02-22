@@ -87,12 +87,15 @@ pub use formats::lerobot::{
     DatasetConfig, LerobotConfig, LerobotWriter, Mapping, MappingType, StreamingConfig, VideoConfig,
 };
 
-// Re-export video types from media::video for backward compatibility
+// Re-export video types from media::video
 pub use media::video::{
-    ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder, FragmentEncoder,
-    FragmentEncoderConfig, PixelFormat, StreamingEncoderConfig, StreamingMp4Encoder,
+    ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder, PixelFormat,
     VideoEncoderConfig, VideoFrame,
 };
+
+// Re-export unified encoder (OutputConfig aliased to avoid conflict with formats::OutputConfig)
+pub use media::video::OutputConfig as VideoOutputConfig;
+pub use media::video::{EncodingResult, VideoEncoder};
 
 // Re-export conversion API
 pub use conversion::{

@@ -12,9 +12,10 @@ use std::path::PathBuf;
 use roboflow_core::{Result, RoboflowError};
 
 use crate::formats::common::operation::{Sink, WriteOperation};
-use crate::formats::common::{ImageData, VideoEncoderConfig, decode_image_to_rgb};
+use crate::formats::common::{ImageData, decode_image_to_rgb};
 use crate::media::video::{
-    RsmpegMp4Encoder, RsmpegVideoComposer, VideoComposer, VideoFrame, VideoFrameBuffer,
+    OutputConfig, RsmpegVideoComposer, VideoComposer, VideoEncoder, VideoEncoderConfig, VideoFrame,
+    VideoFrameBuffer,
 };
 
 /// Local filesystem sink for dataset output.
@@ -179,13 +180,26 @@ impl LocalSink {
             return Ok(());
         }
 
-        RsmpegMp4Encoder::with_config(config.clone())
-            .encode_buffer(&buffer, &full_path)
-            .map_err(|e| RoboflowError::other(format!("Video encoding failed: {}", e)))?;
+        // Use unified VideoEncoder for encoding
+        let output = OutputConfig::file(&full_path);
+        let mut encoder = VideoEncoder::new(config.clone(), output)
+            .map_err(|e| RoboflowError::other(format!("Failed to create encoder: {}", e)))?;
+
+        // Encode frames from buffer
+        for frame in &buffer.frames {
+            encoder
+                .encode_frame(frame.data(), frame.width, frame.height)
+                .map_err(|e| RoboflowError::other(format!("Failed to encode frame: {}", e)))?;
+        }
+
+        let result = encoder
+            .finalize()
+            .map_err(|e| RoboflowError::other(format!("Failed to finalize encoder: {}", e)))?;
 
         tracing::info!(
             path = %output_path.display(),
-            frames = buffer.len(),
+            frames = result.frames_encoded,
+            bytes = result.bytes_written,
             "Video encoded successfully"
         );
 

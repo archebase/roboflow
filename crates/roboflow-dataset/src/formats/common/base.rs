@@ -19,10 +19,6 @@ use roboflow_core::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Upload state for checkpointing.
-/// Maps episode_index -> (completed_video_cameras, parquet_completed).
-pub type UploadState = HashMap<u64, (Vec<String>, bool)>;
-
 /// Aligned frame data ready for writing to dataset formats.
 ///
 /// This is the universal data transfer object for all dataset writers.
@@ -213,18 +209,6 @@ pub trait DatasetWriter: Send + std::any::Any {
 
     /// Return `self` as `&dyn Any` for downcasting.
     fn as_any(&self) -> &dyn std::any::Any;
-
-    /// Get upload state for checkpointing.
-    ///
-    /// Returns upload completion state for fault-tolerant resume.
-    /// Maps episode_index -> (completed_video_cameras, parquet_completed).
-    /// Returns None for writers that don't support cloud uploads or have no upload state.
-    ///
-    /// This is used during checkpoint saves to track which files have been
-    /// uploaded, enabling resume after failures.
-    fn get_upload_state(&self) -> Option<UploadState> {
-        None
-    }
 }
 
 /// Error type for dataset writer operations.

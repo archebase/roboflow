@@ -1,72 +1,138 @@
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
+//! Video encoding module.
+//!
+//! This module provides video encoding capabilities for dataset creation.
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │                      Public API                                  │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │  VideoEncoder - Single encoder (file or channel output)         │
+//! │  ConcurrentVideoEncoder - Multi-camera orchestration            │
+//! └─────────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! # Example - Single Video
+//!
+//! ```ignore
+//! use roboflow_dataset::media::video::{VideoEncoder, OutputConfig, VideoEncoderConfig};
+//!
+//! let config = VideoEncoderConfig::default();
+//! let output = OutputConfig::file("/path/to/output.mp4");
+//! let mut encoder = VideoEncoder::new(config, output)?;
+//!
+//! for frame in frames {
+//!     encoder.encode_frame(&rgb_data, 640, 480)?;
+//! }
+//!
+//! let result = encoder.finalize()?;
+//! ```
+//!
+//! # Example - Multi-Camera
+//!
+//! ```ignore
+//! use roboflow_dataset::media::video::{ConcurrentVideoEncoder, ConcurrentEncoderConfig};
+//!
+//! let config = ConcurrentEncoderConfig::new(PathBuf::from("./output"));
+//! let mut encoder = ConcurrentVideoEncoder::new(config)?;
+//!
+//! encoder.add_frame("cam0", image1)?;
+//! encoder.add_frame("cam1", image2)?;
+//!
+//! let results = encoder.finalize()?;
+//! ```
+
+// Internal modules
 pub mod arena;
-pub mod camera_streaming_pipeline;
 pub mod codec;
 pub mod composer;
 pub mod concurrent;
 pub mod config;
 pub mod convert;
 pub mod decode;
-pub mod encoder_pool;
-pub mod fragment;
+pub mod encoder;
 pub mod frame;
 pub mod hardware;
 pub mod hardware_config;
 pub mod path;
-pub mod pipeline;
-pub mod reorder;
 pub mod rsmpeg;
-pub mod service;
 pub mod simd;
-pub mod streaming;
 pub mod test_utils;
 
-pub use arena::{FramePool, FramePoolConfig};
-pub use composer::{RsmpegVideoComposer, VideoComposer};
+// Re-export core types
 pub use config::{DepthEncoderConfig, VideoEncoderConfig};
-pub use convert::{ConvertPool, ConvertPoolConfig, TargetFormat};
-pub use decode::{DecodePool, DecodePoolConfig};
-pub use encoder_pool::{EncoderPool, EncoderPoolConfig};
-pub use fragment::{FragmentEncoder, FragmentEncoderConfig, FragmentInfo};
 pub use frame::{
     DepthFrame, DepthFrameBuffer, FrameBuffer, PixelFormat, VideoEncoderError, VideoFrame,
     VideoFrameBuffer,
 };
-#[cfg(target_os = "macos")]
-pub use hardware::VideoToolboxEncoder;
+
+// Re-export hardware detection
 pub use hardware::{
-    DepthMkvEncoder, EncoderChoice, Mp4Encoder, NvencEncoder, available_encoders,
-    check_nvenc_available, check_videotoolbox_available, is_encoder_available,
-    print_encoder_diagnostics, select_best_encoder,
+    EncoderChoice, available_encoders, check_nvenc_available, check_videotoolbox_available,
+    is_encoder_available, print_encoder_diagnostics, select_best_encoder,
 };
 pub use hardware_config::{HardwareBackend, HardwareConfig, detect_hardware_backend};
+
+// Re-export path schemes
 pub use path::{FlatVideoPathScheme, LeRobotVideoPathScheme, RldsVideoPathScheme};
-pub use rsmpeg::{
-    EncodeFrame, RsmpegEncoder, RsmpegEncoderConfig, RsmpegMp4Encoder, default_codec_name,
-    is_hardware_encoding_available, is_rsmpeg_available,
-};
-pub use service::{EncoderResult, VideoEncoderService, VideoServiceConfig};
+
+// Re-export codec utilities
+pub use rsmpeg::{default_codec_name, is_hardware_encoding_available, is_rsmpeg_available};
+
+// Re-export SIMD conversion
 pub use simd::{
     ConversionStrategy, optimal_strategy, rgb_batch_to_nv12, rgb_batch_to_yuv420p, rgb_to_nv12,
     rgb_to_nv12_in_place, rgb_to_yuv420p,
 };
-pub use streaming::{EncodedChunk, StreamingEncoderConfig, StreamingMp4Encoder};
 
-pub use pipeline::{
-    PipelineConfig, PipelineHandle, PipelineResult, VideoPipeline, VideoPipelineConfig,
-};
+// Re-export composer for video concatenation
+pub use composer::{RsmpegVideoComposer, VideoComposer};
 
-// Re-export concurrent video encoder
-pub use concurrent::{ConcurrentEncoderConfig, ConcurrentEncoderResult, ConcurrentVideoEncoder};
+// Re-export arena types
+pub use arena::{FramePool, FramePoolConfig};
 
-// Re-export camera streaming pipeline
-pub use camera_streaming_pipeline::{
-    CameraStreamingPipeline, EitherPipeline, PipelineAdapter, StreamingCommand,
-    StreamingPipelineConfig, StreamingPipelineHandle, StreamingPipelineResult,
-    StreamingUploadCommand, spawn_streaming_pipeline,
-};
+// Re-export conversion pool
+pub use convert::{ConvertPool, ConvertPoolConfig, TargetFormat};
+
+// Re-export decode pool
+pub use decode::{DecodePool, DecodePoolConfig};
 
 // Re-export VideoPathScheme from core traits
 pub use crate::core::VideoPathScheme;
 
 // Re-export ImageData from formats::common for convenience
 pub use crate::formats::common::ImageData;
+
+// =============================================================================
+// VIDEO ENCODER API (Canonical Public API)
+// =============================================================================
+
+/// Encoded chunk from video encoder.
+pub use encoder::EncodedChunk;
+
+/// Result from video encoding finalization.
+pub use encoder::EncodingResult;
+
+/// Output configuration for video encoder.
+pub use encoder::OutputConfig;
+
+/// Video encoder.
+pub use encoder::VideoEncoder;
+
+// =============================================================================
+// MULTI-CAMERA ENCODER API
+// =============================================================================
+
+/// Configuration for concurrent encoder.
+pub use concurrent::ConcurrentEncoderConfig;
+
+/// Result from concurrent encoder.
+pub use concurrent::ConcurrentEncoderResult;
+
+/// Multi-camera concurrent video encoder.
+pub use concurrent::ConcurrentVideoEncoder;

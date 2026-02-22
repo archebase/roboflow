@@ -549,34 +549,61 @@ impl LerobotWriter {
             fs::create_dir_all(&camera_dir)?;
             let segment_path = camera_dir.join("segment.mp4");
 
-            // Use RsmpegMp4Encoder to create a valid MP4 file
-            use crate::media::video::RsmpegMp4Encoder;
+            // Use unified VideoEncoder to create a valid MP4 file
+            use crate::media::video::{OutputConfig, VideoEncoder};
 
-            match RsmpegMp4Encoder::with_config(encoder_config.clone())
-                .encode_buffer(&buffer, &segment_path)
-            {
-                Ok(()) => {
-                    encode_stats.images_encoded += buffer.len();
-                    let file_size = std::fs::metadata(&segment_path)
-                        .map(|m| m.len())
-                        .unwrap_or(0);
-                    encode_stats.output_bytes += file_size;
+            let output = OutputConfig::file(&segment_path);
+            match VideoEncoder::new(encoder_config.clone(), output) {
+                Ok(mut encoder) => {
+                    let mut encode_error = None;
+                    for frame in &buffer.frames {
+                        if let Err(e) =
+                            encoder.encode_frame(frame.data(), frame.width, frame.height)
+                        {
+                            encode_error = Some(e);
+                            break;
+                        }
+                    }
 
-                    segment_paths.push((segment_path.clone(), camera.clone()));
+                    if let Some(e) = encode_error {
+                        tracing::error!(
+                            camera = %camera,
+                            error = %e,
+                            "Failed to encode frame"
+                        );
+                        encode_stats.failed_encodings += 1;
+                    } else {
+                        match encoder.finalize() {
+                            Ok(result) => {
+                                encode_stats.images_encoded += buffer.len();
+                                encode_stats.output_bytes += result.bytes_written;
 
-                    tracing::debug!(
-                        camera = %camera,
-                        segment_index = self.segment_index,
-                        frames = buffer.len(),
-                        path = %segment_path.display(),
-                        "Encoded video segment"
-                    );
+                                segment_paths.push((segment_path.clone(), camera.clone()));
+
+                                tracing::debug!(
+                                    camera = %camera,
+                                    segment_index = self.segment_index,
+                                    frames = buffer.len(),
+                                    path = %segment_path.display(),
+                                    "Encoded video segment"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    camera = %camera,
+                                    error = %e,
+                                    "Failed to finalize video encoder"
+                                );
+                                encode_stats.failed_encodings += 1;
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::error!(
                         camera = %camera,
                         error = %e,
-                        "Failed to encode video segment"
+                        "Failed to create video encoder"
                     );
                     encode_stats.failed_encodings += 1;
                 }
