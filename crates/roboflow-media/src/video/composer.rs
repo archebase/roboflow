@@ -197,8 +197,8 @@ impl VideoComposer for RsmpegVideoComposer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::video::{VideoEncoder, VideoEncoderConfig, OutputConfig};
     use crate::ImageData;
+    use crate::video::{OutputConfig, VideoEncoder, VideoEncoderConfig};
 
     /// Helper to create test RGB image data.
     fn create_test_rgb_image(width: u32, height: u32, value: u8) -> Vec<u8> {
@@ -212,7 +212,12 @@ mod tests {
     }
 
     /// Helper to create a small test video file.
-    fn create_test_video(dir: &std::path::Path, name: &str, frames: usize, value_base: u8) -> std::path::PathBuf {
+    fn create_test_video(
+        dir: &std::path::Path,
+        name: &str,
+        frames: usize,
+        value_base: u8,
+    ) -> std::path::PathBuf {
         let output_path = dir.join(name);
         let config = VideoEncoderConfig::default();
         let output = OutputConfig::file(&output_path);
@@ -221,7 +226,9 @@ mod tests {
         for i in 0..frames {
             let value = value_base.wrapping_add((i * 10) as u8);
             let image = create_test_image_data(64, 64, value);
-            encoder.encode_frame(&image.data, image.width, image.height).expect("Failed to encode frame");
+            encoder
+                .encode_frame(&image.data, image.width, image.height)
+                .expect("Failed to encode frame");
         }
 
         encoder.finalize().expect("Failed to finalize encoder");
@@ -295,7 +302,12 @@ mod tests {
         let composer = RsmpegVideoComposer::new();
         let result = composer.compose(&[], &output);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("at least one source"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("at least one source")
+        );
     }
 
     #[test]
