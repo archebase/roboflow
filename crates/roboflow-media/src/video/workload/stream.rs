@@ -93,9 +93,12 @@ impl StreamConfig {
     }
 
     /// Create a stream configuration with fragment encoding.
-    pub fn fragment(id: impl Into<StreamId>, path: impl Into<PathBuf>, triggers: super::strategy::FragmentTriggers) -> Self {
-        Self::new(id, StreamOutput::file(path))
-            .with_strategy(EncodingStrategy::fragment(triggers))
+    pub fn fragment(
+        id: impl Into<StreamId>,
+        path: impl Into<PathBuf>,
+        triggers: super::strategy::FragmentTriggers,
+    ) -> Self {
+        Self::new(id, StreamOutput::file(path)).with_strategy(EncodingStrategy::fragment(triggers))
     }
 }
 

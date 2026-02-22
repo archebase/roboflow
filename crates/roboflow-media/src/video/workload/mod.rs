@@ -49,8 +49,8 @@
 //! let results = workload.finalize()?;
 //! ```
 
-mod stream;
 mod strategy;
+mod stream;
 
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -63,9 +63,9 @@ use crate::video::config::VideoEncoderConfig;
 use crate::video::encoder::{OutputConfig, VideoEncoder};
 use crate::video::fragment::{FragmentConfig, FragmentEncoder, FragmentOutputConfig};
 
-pub use stream::{FrameData, StreamConfig, StreamId, StreamOutput, StreamResult};
-pub(crate) use stream::EncoderCommand;
 pub use strategy::{EncodingStrategy, FragmentTriggers};
+pub(crate) use stream::EncoderCommand;
+pub use stream::{FrameData, StreamConfig, StreamId, StreamOutput, StreamResult};
 
 /// Global encoder defaults for a workload.
 #[derive(Debug, Clone, Default)]
@@ -353,10 +353,8 @@ impl EncodingWorkload {
                     Ok(Err(e)) => {
                         warn!(stream = %id, error = %e, "Stream encoding failed");
                         all_success = false;
-                        results.insert(
-                            id.clone(),
-                            StreamResult::failure(id.clone(), e.to_string()),
-                        );
+                        results
+                            .insert(id.clone(), StreamResult::failure(id.clone(), e.to_string()));
                     }
                     Err(e) => {
                         warn!(stream = %id, error = ?e, "Stream thread panicked");
@@ -461,7 +459,8 @@ impl EncodingWorkload {
 
                 let output_config = FragmentOutputConfig::SingleFile { path: path.clone() };
 
-                let mut encoder = FragmentEncoder::new(video_config.clone(), output_config, fragment_config)?;
+                let mut encoder =
+                    FragmentEncoder::new(video_config.clone(), output_config, fragment_config)?;
                 let mut dimensions: Option<(u32, u32)> = None;
 
                 while let Ok(cmd) = cmd_rx.recv() {
@@ -510,7 +509,10 @@ impl EncodingWorkload {
             }
             (StreamOutput::Channel { .. }, _) => {
                 // TODO: Implement streaming mode
-                Ok(StreamResult::failure(stream_id, "Streaming mode not yet implemented"))
+                Ok(StreamResult::failure(
+                    stream_id,
+                    "Streaming mode not yet implemented",
+                ))
             }
             _ => Ok(StreamResult::failure(
                 stream_id,
@@ -542,8 +544,7 @@ mod tests {
 
     #[test]
     fn test_workload_config_builder() {
-        let config = WorkloadConfig::new()
-            .with_thread_pool_size(4);
+        let config = WorkloadConfig::new().with_thread_pool_size(4);
         assert_eq!(config.thread_pool_size, Some(4));
     }
 
