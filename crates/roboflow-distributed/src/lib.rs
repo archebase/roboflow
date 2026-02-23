@@ -133,10 +133,12 @@ pub use lerobot_executor::LeRobotExecutor;
 
 // Re-export public types from metadata (dataset metadata management)
 pub use metadata::{
-    DatasetMetadataRegistry, EpisodeInfo, EpisodeStatsEntry, FeatureInfo, FeatureShape,
-    FeatureSpec, GlobalMetadataAssembler, LerobotInfo, MetadataAssemblyError, MetadataKeys,
-    MetadataSubmitter, PartialEpisodeMetadata, SubmissionResult, TaskEntry, TaskInfo,
-    VideoFeatureInfo, VideoInfo, extract_feature_shapes,
+    DatasetInspector, DatasetMetadataRegistry, EpisodeInfo, EpisodeStatsEntry, FeatureInfo,
+    FeatureShape, FeatureSpec, GlobalMetadataAssembler, LerobotInfo, MetadataAssemblyError,
+    MetadataKeys, MetadataMetrics, MetadataMetricsSnapshot, MetadataSubmitter, MetadataValidator,
+    PartialEpisodeMetadata, SubmissionResult, TaskEntry, TaskInfo, ValidationError,
+    ValidationResult, ValidationSummary, ValidationWarning, VideoFeatureInfo, VideoInfo,
+    extract_feature_shapes,
 };
 
 // =============================================================================
