@@ -193,9 +193,14 @@ fn test_e2e_multi_episode_lerobot_dataset() {
     let mut writer =
         LerobotWriter::new_local(temp_dir.path(), config).expect("Failed to create writer");
 
+    // Set 1 episode per chunk to get separate parquet files per episode
+    writer.set_episodes_per_chunk(1);
+
     let episode_counts = vec![10, 20, 15];
 
     for (ep_idx, &frame_count) in episode_counts.iter().enumerate() {
+        // Set episode index before starting episode
+        writer.set_episode_index(ep_idx);
         writer
             .start_episode(Some(ep_idx))
             .expect("Failed to start episode");
@@ -216,24 +221,31 @@ fn test_e2e_multi_episode_lerobot_dataset() {
 
     writer.finalize_with_config().expect("Failed to finalize");
 
-    // Verify episodes exist by checking the data directory for parquet files
-    let data_chunk_dir = temp_dir.path().join("data/chunk-000");
+    // Verify episodes exist by checking all chunk directories for parquet files
+    let data_dir = temp_dir.path().join("data");
 
-    // Check that parquet files exist
-    let entries: Vec<_> = std::fs::read_dir(&data_chunk_dir)
-        .expect("Failed to read data chunk dir")
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext == "parquet")
-                .unwrap_or(false)
-        })
-        .collect();
+    // Collect all parquet files across all chunk directories
+    let mut all_parquet_files = Vec::new();
+    for chunk_dir in std::fs::read_dir(&data_dir).expect("Failed to read data dir") {
+        let chunk_dir = chunk_dir.expect("Failed to read chunk dir entry");
+        if chunk_dir.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            let parquet_files: Vec<_> = std::fs::read_dir(chunk_dir.path())
+                .expect("Failed to read chunk dir")
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .map(|ext| ext == "parquet")
+                        .unwrap_or(false)
+                })
+                .collect();
+            all_parquet_files.extend(parquet_files);
+        }
+    }
 
     // Should have parquet files for each episode
     assert_eq!(
-        entries.len(),
+        all_parquet_files.len(),
         episode_counts.len(),
         "Should have {} parquet files (one per episode)",
         episode_counts.len()
