@@ -25,6 +25,7 @@ pub mod finalizer;
 pub mod heartbeat;
 pub mod lerobot_executor;
 pub mod merge;
+pub mod metadata;
 pub mod providers;
 pub mod reaper;
 pub mod scanner;
@@ -129,6 +130,13 @@ pub use executor::Executor;
 
 // Re-export public types from lerobot_executor (stage-based executor integration)
 pub use lerobot_executor::LeRobotExecutor;
+
+// Re-export public types from metadata (dataset metadata management)
+pub use metadata::{
+    DatasetMetadataRegistry, EpisodeInfo, EpisodeStatsEntry, FeatureInfo, FeatureShape,
+    FeatureSpec, GlobalMetadataAssembler, LerobotInfo, MetadataAssemblyError, MetadataKeys,
+    PartialEpisodeMetadata, TaskEntry, TaskInfo, VideoFeatureInfo, VideoInfo,
+};
 
 // =============================================================================
 // Coordinator Traits

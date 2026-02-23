@@ -2,7 +2,7 @@
 
 **Author**: Sisyphus (AI Agent)
 **Date**: 2026-02-23
-**Status**: Proposed
+**Status**: Accepted
 **Related**: [executor-architecture.md](./executor-architecture.md), [data-pipeline-design.md](./data-pipeline-design.md)
 
 ## Context

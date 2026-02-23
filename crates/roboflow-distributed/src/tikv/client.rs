@@ -97,6 +97,24 @@ impl TikvClient {
         self.circuit_breaker.failure_count()
     }
 
+    /// Begin an optimistic transaction.
+    ///
+    /// This is a low-level API for operations that need custom transaction logic.
+    /// Most users should use `put`, `get`, etc. instead.
+    ///
+    /// # Returns
+    /// A new optimistic transaction. The caller is responsible for committing or rolling back.
+    pub async fn begin_optimistic(&self) -> Result<tikv_client::Transaction> {
+        let inner = self.inner.as_ref().ok_or_else(|| {
+            TikvError::ConnectionFailed("TiKV client not initialized".to_string())
+        })?;
+
+        inner
+            .begin_optimistic()
+            .await
+            .map_err(|e| TikvError::ClientError(e.to_string()))
+    }
+
     /// Get a value by key.
     ///
     /// Uses a fresh TSO snapshot to guarantee visibility of all committed writes.
