@@ -611,3 +611,151 @@ pub async fn send_heartbeat_inner(
     tikv.update_heartbeat(pod_id, &heartbeat).await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_worker_config_default() {
+        let config = WorkerConfig::default();
+        assert!(config.max_concurrent_jobs > 0);
+        assert!(config.poll_interval.as_secs() > 0);
+        assert!(config.heartbeat_interval.as_secs() > 0);
+    }
+
+    #[test]
+    fn test_worker_config_clone() {
+        let config = WorkerConfig::default();
+        let cloned = config.clone();
+        assert_eq!(config.max_concurrent_jobs, cloned.max_concurrent_jobs);
+        assert_eq!(config.poll_interval, cloned.poll_interval);
+    }
+
+    #[test]
+    fn test_worker_config_debug() {
+        let config = WorkerConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("WorkerConfig"));
+        assert!(debug_str.contains("max_concurrent_jobs"));
+    }
+
+    #[test]
+    fn test_worker_metrics_new() {
+        let metrics = WorkerMetrics::new();
+        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.jobs_claimed.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.jobs_completed.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.jobs_failed.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.heartbeat_errors.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.processing_errors.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_worker_metrics_increment_operations() {
+        let metrics = WorkerMetrics::new();
+
+        metrics.inc_jobs_claimed();
+        metrics.inc_jobs_claimed();
+        assert_eq!(metrics.jobs_claimed.load(Ordering::Relaxed), 2);
+
+        metrics.inc_jobs_completed();
+        assert_eq!(metrics.jobs_completed.load(Ordering::Relaxed), 1);
+
+        metrics.inc_jobs_failed();
+        assert_eq!(metrics.jobs_failed.load(Ordering::Relaxed), 1);
+
+        metrics.inc_active_jobs();
+        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 1);
+
+        metrics.inc_active_jobs();
+        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 2);
+
+        metrics.dec_active_jobs();
+        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 1);
+
+        metrics.inc_heartbeat_errors();
+        assert_eq!(metrics.heartbeat_errors.load(Ordering::Relaxed), 1);
+
+        metrics.inc_processing_errors();
+        assert_eq!(metrics.processing_errors.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_worker_metrics_concurrent_operations() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let metrics = Arc::new(WorkerMetrics::new());
+        let mut handles = vec![];
+
+        for _ in 0..10 {
+            let m = Arc::clone(&metrics);
+            handles.push(thread::spawn(move || {
+                m.inc_jobs_claimed();
+                m.inc_jobs_completed();
+                m.inc_active_jobs();
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(metrics.jobs_claimed.load(Ordering::Relaxed), 10);
+        assert_eq!(metrics.jobs_completed.load(Ordering::Relaxed), 10);
+        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 10);
+    }
+
+    #[test]
+    fn test_processing_result_success() {
+        let result = ProcessingResult::Success {
+            episode_index: 5,
+            frame_count: 1000,
+            episode_stats: None,
+        };
+
+        match result {
+            ProcessingResult::Success {
+                episode_index,
+                frame_count,
+                ..
+            } => {
+                assert_eq!(episode_index, 5);
+                assert_eq!(frame_count, 1000);
+            }
+            _ => panic!("Expected Success variant"),
+        }
+    }
+
+    #[test]
+    fn test_processing_result_failed() {
+        let result = ProcessingResult::Failed {
+            error: "Test error".to_string(),
+        };
+
+        match result {
+            ProcessingResult::Failed { error } => {
+                assert_eq!(error, "Test error");
+            }
+            _ => panic!("Expected Failed variant"),
+        }
+    }
+
+    #[test]
+    fn test_processing_result_cancelled() {
+        let result = ProcessingResult::Cancelled;
+        assert!(matches!(result, ProcessingResult::Cancelled));
+    }
+
+    #[test]
+    fn test_processing_result_debug() {
+        let result = ProcessingResult::Success {
+            episode_index: 0,
+            frame_count: 100,
+            episode_stats: None,
+        };
+        let debug_str = format!("{:?}", result);
+        assert!(debug_str.contains("Success"));
+    }
+}

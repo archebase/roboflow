@@ -42,6 +42,7 @@ pub struct MergeSemaphoreMetrics {
 /// RAII permit for merge operations.
 ///
 /// When dropped, the permit is automatically returned to the semaphore.
+#[derive(Debug)]
 pub struct MergePermit {
     semaphore: Arc<MergeSemaphoreInner>,
 }
@@ -59,6 +60,7 @@ impl Drop for MergePermit {
 }
 
 /// Inner state of the merge semaphore (shared via Arc).
+#[derive(Debug)]
 struct MergeSemaphoreInner {
     /// Maximum permits allowed.
     max_permits: usize,
@@ -871,5 +873,193 @@ mod tests {
     #[test]
     fn test_default_max_concurrent_merges() {
         assert_eq!(DEFAULT_MAX_CONCURRENT_MERGES, 3);
+    }
+
+    #[test]
+    fn test_merge_semaphore_new() {
+        let semaphore = MergeSemaphore::new(5);
+        assert_eq!(semaphore.available_permits(), 5);
+    }
+
+    #[test]
+    fn test_merge_semaphore_with_defaults() {
+        let semaphore = MergeSemaphore::with_defaults();
+        assert_eq!(semaphore.available_permits(), DEFAULT_MAX_CONCURRENT_MERGES);
+    }
+
+    #[test]
+    fn test_merge_semaphore_acquire_release() {
+        let semaphore = MergeSemaphore::new(2);
+
+        // First acquire should succeed
+        let permit1 = semaphore.try_acquire();
+        assert!(permit1.is_some());
+        assert_eq!(semaphore.available_permits(), 1);
+
+        // Second acquire should succeed
+        let permit2 = semaphore.try_acquire();
+        assert!(permit2.is_some());
+        assert_eq!(semaphore.available_permits(), 0);
+
+        // Third acquire should fail (no permits left)
+        let permit3 = semaphore.try_acquire();
+        assert!(permit3.is_none());
+
+        // Release first permit
+        drop(permit1);
+        assert_eq!(semaphore.available_permits(), 1);
+
+        // Now acquire should succeed again
+        let permit4 = semaphore.try_acquire();
+        assert!(permit4.is_some());
+        assert_eq!(semaphore.available_permits(), 0);
+    }
+
+    #[test]
+    fn test_merge_semaphore_clone() {
+        let semaphore1 = MergeSemaphore::new(3);
+        let semaphore2 = semaphore1.clone();
+
+        // Both should share the same inner state
+        assert_eq!(
+            semaphore1.available_permits(),
+            semaphore2.available_permits()
+        );
+
+        // Acquiring from one affects the other
+        let _permit = semaphore1.try_acquire();
+        assert_eq!(semaphore2.available_permits(), 2);
+    }
+
+    #[test]
+    fn test_merge_semaphore_metrics() {
+        let semaphore = MergeSemaphore::new(3);
+
+        let metrics = semaphore.metrics();
+        assert_eq!(metrics.available_permits, 3);
+        assert_eq!(metrics.queue_depth, 0);
+        assert_eq!(metrics.total_attempts, 0);
+        assert_eq!(metrics.successful_merges, 0);
+    }
+
+    #[test]
+    fn test_merge_semaphore_record_success() {
+        let semaphore = MergeSemaphore::new(3);
+
+        semaphore.record_success();
+        semaphore.record_success();
+        semaphore.record_success();
+
+        let metrics = semaphore.metrics();
+        assert_eq!(metrics.successful_merges, 3);
+    }
+
+    #[test]
+    fn test_merge_semaphore_enqueue_dequeue_pending() {
+        let semaphore = MergeSemaphore::new(1);
+
+        // Enqueue some pending requests
+        semaphore.enqueue_pending("batch-1".to_string());
+        semaphore.enqueue_pending("batch-2".to_string());
+
+        let metrics = semaphore.metrics();
+        assert_eq!(metrics.queue_depth, 2);
+
+        // Dequeue one
+        semaphore.dequeue_pending("batch-1");
+        let metrics = semaphore.metrics();
+        assert_eq!(metrics.queue_depth, 1);
+
+        // Dequeue the other
+        semaphore.dequeue_pending("batch-2");
+        let metrics = semaphore.metrics();
+        assert_eq!(metrics.queue_depth, 0);
+    }
+
+    #[test]
+    fn test_merge_permit_debug() {
+        let semaphore = MergeSemaphore::new(1);
+        let permit = semaphore.try_acquire().unwrap();
+        // Just verify we can debug format the permit without panicking
+        let _ = format!("{:?}", permit);
+    }
+
+    #[test]
+    fn test_merge_result_variants() {
+        let not_found = MergeResult::NotFound;
+        let not_claimed = MergeResult::NotClaimed;
+        let not_ready = MergeResult::NotReady;
+        let success = MergeResult::Success {
+            output_path: "s3://bucket/output".to_string(),
+            total_frames: 1000,
+        };
+        let failed = MergeResult::Failed {
+            error: "Test error".to_string(),
+        };
+
+        // Just verify we can create and match all variants
+        match not_found {
+            MergeResult::NotFound => {}
+            _ => panic!("Expected NotFound"),
+        }
+
+        match not_claimed {
+            MergeResult::NotClaimed => {}
+            _ => panic!("Expected NotClaimed"),
+        }
+
+        match not_ready {
+            MergeResult::NotReady => {}
+            _ => panic!("Expected NotReady"),
+        }
+
+        match success {
+            MergeResult::Success {
+                output_path,
+                total_frames,
+            } => {
+                assert_eq!(output_path, "s3://bucket/output");
+                assert_eq!(total_frames, 1000);
+            }
+            _ => panic!("Expected Success"),
+        }
+
+        match failed {
+            MergeResult::Failed { error } => {
+                assert_eq!(error, "Test error");
+            }
+            _ => panic!("Expected Failed"),
+        }
+    }
+
+    #[test]
+    fn test_merge_result_clone() {
+        let result = MergeResult::Success {
+            output_path: "test/path".to_string(),
+            total_frames: 500,
+        };
+        let cloned = result.clone();
+
+        match cloned {
+            MergeResult::Success {
+                output_path,
+                total_frames,
+            } => {
+                assert_eq!(output_path, "test/path");
+                assert_eq!(total_frames, 500);
+            }
+            _ => panic!("Expected Success"),
+        }
+    }
+
+    #[test]
+    fn test_merge_result_debug() {
+        let result = MergeResult::Success {
+            output_path: "test/path".to_string(),
+            total_frames: 100,
+        };
+        let debug_str = format!("{:?}", result);
+        assert!(debug_str.contains("Success"));
+        assert!(debug_str.contains("output_path"));
     }
 }

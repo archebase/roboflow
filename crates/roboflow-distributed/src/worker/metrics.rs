@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::stats::EpisodeStats;
 
 /// Processing result for a job.
+#[derive(Debug)]
 pub enum ProcessingResult {
     /// Job completed successfully with episode statistics.
     Success {
