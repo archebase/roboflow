@@ -42,7 +42,9 @@ pub use config::TiKVConfig;
 pub use schema::{EpisodeMetadata, SegmentMetaData, UploadStatus};
 
 /// Default PD endpoints for local development.
-pub const DEFAULT_PD_ENDPOINTS: &str = "127.0.0.1:2379";
+/// Uses host.docker.internal to work with Docker Desktop on macOS/Windows
+/// and Docker with host-gateway on Linux.
+pub const DEFAULT_PD_ENDPOINTS: &str = "host.docker.internal:2379";
 
 /// Default connection timeout in seconds.
 pub const DEFAULT_CONNECTION_TIMEOUT_SECS: u64 = 10;

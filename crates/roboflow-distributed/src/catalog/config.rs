@@ -8,7 +8,9 @@ use std::env;
 use std::time::Duration;
 
 // Default constants - these should match tikv::config
-const DEFAULT_PD_ENDPOINTS: &str = "127.0.0.1:2379";
+// Uses host.docker.internal to work with Docker Desktop on macOS/Windows
+// and Docker with host-gateway on Linux.
+const DEFAULT_PD_ENDPOINTS: &str = "host.docker.internal:2379";
 const DEFAULT_CONNECTION_TIMEOUT_SECS: u64 = 5;
 
 /// Configuration for TiKV catalog connection.

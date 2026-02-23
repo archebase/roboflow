@@ -144,15 +144,12 @@ async fn upload_file(
 /// This test creates a LeRobot dataset locally and uploads it to MinIO
 /// to verify the storage layer works correctly.
 #[tokio::test]
-#[ignore = "Requires MinIO service"]
 async fn test_e2e_lerobot_dataset_to_minio() {
     let _ = tracing_subscriber::fmt::try_init();
 
     let config = MinioConfig::default();
     if !config.is_available().await {
-        println!("Skipping test: MinIO not available");
-        println!("Hint: Start with 'docker compose up -d minio minio-init'");
-        return;
+        panic!("Required service MinIO is not available.");
     }
 
     println!("✓ MinIO is available");
@@ -291,20 +288,17 @@ async fn test_e2e_lerobot_dataset_to_minio() {
 
 /// Test bag file upload to MinIO and verify integrity.
 #[tokio::test]
-#[ignore = "Requires MinIO service"]
 async fn test_e2e_bag_file_upload_to_minio() {
     let _ = tracing_subscriber::fmt::try_init();
 
     let config = MinioConfig::default();
     if !config.is_available().await {
-        println!("Skipping test: MinIO not available");
-        return;
+        panic!("Required service MinIO is not available");
     }
 
     let bag_files = get_available_bag_files();
     if bag_files.is_empty() {
-        println!("No bag files found");
-        return;
+        panic!("No bag files found in tests/fixtures/");
     }
 
     let input_storage = config
@@ -346,20 +340,17 @@ async fn test_e2e_bag_file_upload_to_minio() {
 /// This test simulates the batch processing workflow using local state
 /// instead of distributed coordination.
 #[tokio::test]
-#[ignore = "Requires MinIO service"]
 async fn test_e2e_batch_workflow_local_coordination() {
     let _ = tracing_subscriber::fmt::try_init();
 
     let config = MinioConfig::default();
     if !config.is_available().await {
-        println!("Skipping test: MinIO not available");
-        return;
+        panic!("Required service MinIO is not available");
     }
 
     let bag_files = get_available_bag_files();
     if bag_files.is_empty() {
-        println!("No bag files found");
-        return;
+        panic!("No bag files found in tests/fixtures/");
     }
 
     println!(
@@ -439,14 +430,12 @@ async fn test_e2e_batch_workflow_local_coordination() {
 
 /// Test dataset integrity after MinIO round-trip.
 #[tokio::test]
-#[ignore = "Requires MinIO service"]
 async fn test_e2e_dataset_minio_roundtrip() {
     let _ = tracing_subscriber::fmt::try_init();
 
     let config = MinioConfig::default();
     if !config.is_available().await {
-        println!("Skipping test: MinIO not available");
-        return;
+        panic!("Required service MinIO is not available");
     }
 
     let output_storage = config

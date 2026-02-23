@@ -198,22 +198,19 @@ async fn cleanup_batch(tikv: &TikvClient, batch_id: &str) {
 /// 4. Processes work units with LeRobotExecutor
 /// 5. Verifies output dataset structure
 #[tokio::test]
-#[ignore = "Requires MinIO and TiKV infrastructure - run with 'make dev-up'"]
 async fn test_e2e_batch_with_real_bag_file() {
     let _ = tracing_subscriber::fmt::try_init();
 
     let config = TestConfig::default();
 
     if !config.is_available().await {
-        println!("Skipping test: infrastructure not available");
-        return;
+        panic!("Required infrastructure (MinIO and/or TiKV) is not available.");
     }
 
     // Check if bag file exists
     let bag_file = small_bag_file();
     if !bag_file.exists() {
-        println!("Skipping test: bag file not found at {:?}", bag_file);
-        return;
+        panic!("Required bag file not found at {:?}", bag_file);
     }
 
     println!("Using bag file: {:?}", bag_file);
@@ -366,15 +363,13 @@ async fn test_e2e_batch_with_real_bag_file() {
 /// This test verifies that multiple bag files are correctly processed
 /// with the episodes_per_chunk=1 configuration.
 #[tokio::test]
-#[ignore = "Requires MinIO and TiKV infrastructure - run with 'make dev-up'"]
 async fn test_e2e_multiple_bags_one_episode_per_chunk() {
     let _ = tracing_subscriber::fmt::try_init();
 
     let config = TestConfig::default();
 
     if !config.is_available().await {
-        println!("Skipping test: infrastructure not available");
-        return;
+        panic!("Required infrastructure (MinIO and/or TiKV) is not available.");
     }
 
     // Use roboflow_extracted.bag (smaller than the 4000 frame versions)
@@ -386,8 +381,7 @@ async fn test_e2e_multiple_bags_one_episode_per_chunk() {
     // Verify files exist
     for bag in &bag_files {
         if !bag.exists() {
-            println!("Skipping test: bag file not found at {:?}", bag);
-            return;
+            panic!("Required bag file not found at {:?}", bag);
         }
     }
 
@@ -535,7 +529,6 @@ async fn test_e2e_multiple_bags_one_episode_per_chunk() {
 /// This test creates a minimal LeRobot dataset with 1 episode per chunk
 /// to verify the chunk directory structure.
 #[test]
-#[ignore = "Requires MinIO and TiKV infrastructure - run with 'make dev-up'"]
 fn test_e2e_lerobot_dataset_structure() {
     use roboflow_dataset::formats::common::DatasetWriter;
 
@@ -545,8 +538,7 @@ fn test_e2e_lerobot_dataset_structure() {
         let config = TestConfig::default();
 
         if !config.is_available().await {
-            println!("Skipping test: infrastructure not available");
-            return;
+            panic!("Required infrastructure (MinIO and/or TiKV) is not available.");
         }
 
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");

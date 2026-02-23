@@ -219,14 +219,12 @@ fn create_test_frame(
     }
 }
 
-/// Skip the test if MinIO is not available.
-macro_rules! skip_if_no_minio {
+/// Panic if MinIO is not available.
+macro_rules! require_minio {
     () => {
         let config = MinioConfig::default();
         if !config.is_available() {
-            eprintln!("Skipping test: MinIO not available at {}", config.endpoint);
-            eprintln!("Start MinIO with: docker compose up -d minio minio-init");
-            return;
+            panic!("Required service MinIO is not available at {}. Start MinIO with: docker compose up -d minio minio-init", config.endpoint);
         }
     };
 }
@@ -236,9 +234,8 @@ macro_rules! skip_if_no_minio {
 // =============================================================================
 
 #[test]
-#[ignore = "requires MinIO service"]
 fn test_minio_basic_connection() {
-    skip_if_no_minio!();
+    require_minio!();
 
     let config = MinioConfig::default();
     println!("Testing MinIO connection at: {}", config.endpoint);
@@ -458,9 +455,8 @@ fn test_compressed_images_with_local_output() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires MinIO service"]
 fn test_minio_bucket_management() {
-    skip_if_no_minio!();
+    require_minio!();
 
     let config = MinioConfig::default();
     let test_bucket = format!("test-bucket-{}", std::process::id());
@@ -555,9 +551,8 @@ fn test_concurrent_local_writes() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires MinIO service"]
 fn test_large_file_upload_to_minio() {
-    skip_if_no_minio!();
+    require_minio!();
 
     let config = MinioConfig::default();
     let runtime = tokio::runtime::Runtime::new().unwrap();

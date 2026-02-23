@@ -79,8 +79,7 @@ fn create_test_lerobot_config() -> LerobotConfig {
 #[test]
 fn test_bag_to_lerobot_e2e() {
     if !Path::new(TEST_BAG_PATH).exists() {
-        eprintln!("Skipping test: bag file not found at {}", TEST_BAG_PATH);
-        return;
+        panic!("Required bag file not found at {}", TEST_BAG_PATH);
     }
 
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -177,11 +176,9 @@ fn test_bag_to_lerobot_e2e() {
 }
 
 #[test]
-#[ignore = "Requires S3/MinIO and real bag file - run manually"]
 fn test_bag_to_lerobot_s3_upload() {
     if !Path::new(TEST_BAG_PATH).exists() {
-        eprintln!("Skipping test: bag file not found at {}", TEST_BAG_PATH);
-        return;
+        panic!("Required bag file not found at {}", TEST_BAG_PATH);
     }
 
     unsafe {
@@ -623,8 +620,7 @@ fn test_two_bags_to_lerobot_two_episodes() {
 
     for (i, bag_path) in bag_files.iter().enumerate() {
         if !Path::new(bag_path).exists() {
-            eprintln!("Skipping test: bag file {} not found at {}", i, bag_path);
-            return;
+            panic!("Required bag file {} not found at {}", i, bag_path);
         }
     }
 

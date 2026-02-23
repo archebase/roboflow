@@ -314,7 +314,6 @@ async fn cleanup_minio_dir(
 /// 4. Processes work units with LeRobotExecutor
 /// 5. Verifies output dataset structure in MinIO
 #[tokio::test]
-#[ignore = "Requires MinIO and TiKV infrastructure"]
 async fn test_e2e_complete_batch_workflow() {
     let _ = tracing_subscriber::fmt::try_init();
 
@@ -323,8 +322,7 @@ async fn test_e2e_complete_batch_workflow() {
     status.print_diagnostics();
 
     if !status.all_available() {
-        println!("Skipping test: infrastructure not fully available");
-        return;
+        panic!("Required infrastructure (MinIO and/or TiKV) is not available.");
     }
 
     // Get available bag files
@@ -542,7 +540,6 @@ async fn test_e2e_complete_batch_workflow() {
 /// Verifies that the chunk directory structure is correct when
 /// episodes_per_chunk=1.
 #[tokio::test]
-#[ignore = "Requires MinIO and TiKV infrastructure"]
 async fn test_e2e_one_episode_per_chunk_structure() {
     use roboflow_dataset::formats::common::DatasetWriter;
 
@@ -552,8 +549,7 @@ async fn test_e2e_one_episode_per_chunk_structure() {
     let status = config.check_infrastructure().await;
 
     if !status.all_available() {
-        println!("Skipping test: infrastructure not fully available");
-        return;
+        panic!("Required infrastructure (MinIO and/or TiKV) is not available.");
     }
 
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -651,7 +647,6 @@ async fn test_e2e_one_episode_per_chunk_structure() {
 /// This test acts as a smoke test to ensure all components are properly
 /// integrated. It uses minimal data and quick operations.
 #[tokio::test]
-#[ignore = "Requires MinIO and TiKV infrastructure"]
 async fn test_e2e_smoke_test() {
     let _ = tracing_subscriber::fmt::try_init();
 

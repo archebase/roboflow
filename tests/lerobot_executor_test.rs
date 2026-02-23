@@ -51,11 +51,9 @@ fn create_work_unit(bag_path: &str, output_path: &str) -> WorkUnit {
 
 /// Verify LeRobotExecutor correctly processes a bag file with video encoding.
 #[tokio::test]
-#[ignore = "Requires real bag file - run manually"]
 async fn test_lerobot_executor_correctness() {
     if !Path::new(TEST_BAG_PATH).exists() {
-        eprintln!("Skipping test: bag file not found at {}", TEST_BAG_PATH);
-        return;
+        panic!("Required bag file not found at {}", TEST_BAG_PATH);
     }
 
     println!("\n=== LeRobotExecutor Correctness Test ===\n");
@@ -151,11 +149,9 @@ async fn test_lerobot_executor_correctness() {
 
 /// Benchmark test for LeRobotExecutor speed.
 #[tokio::test]
-#[ignore = "Requires real bag file - run manually"]
 async fn test_lerobot_executor_speed() {
     if !Path::new(TEST_BAG_PATH).exists() {
-        eprintln!("Skipping test: bag file not found at {}", TEST_BAG_PATH);
-        return;
+        panic!("Required bag file not found at {}", TEST_BAG_PATH);
     }
 
     println!("\n=== LeRobotExecutor Speed Test ===\n");

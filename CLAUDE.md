@@ -212,6 +212,31 @@ docker compose down        # Stop all services
 
 **Pre-created buckets:** `roboflow-datasets`, `roboflow-raw`, `roboflow-temp`
 
+**TiKV Host Configuration:**
+For TiKV tests to work from the host (not inside Docker), PD advertises its client URL as `http://pd:2379`. You must add this hostname to your `/etc/hosts`:
+
+```bash
+# Add to /etc/hosts
+127.0.0.1 pd
+```
+
+Or use the provided script:
+```bash
+./scripts/setup-hosts.sh  # Requires sudo
+```
+
+**Running E2E Tests:**
+```bash
+# Start infrastructure
+make dev-up
+
+# Run all e2e tests (requires TiKV + MinIO)
+cargo test --test batch_submission_e2e_test -- --ignored --nocapture
+
+# Run MinIO-only tests (no TiKV required)
+cargo test --test batch_minio_only_e2e_test -- --ignored --nocapture
+```
+
 ## LeRobot v2.1 Format
 
 Video files follow the LeRobot v2.1 directory structure:

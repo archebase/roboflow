@@ -105,6 +105,9 @@ impl BatchController {
             BatchPhase::Merging,
             BatchPhase::Suspending,
             BatchPhase::Suspended,
+            // Include Failed to allow reconciliation of batches where work units
+            // may have been manually retried and completed outside normal flow
+            BatchPhase::Failed,
         ];
 
         let mut batch_ids = Vec::new();
@@ -194,10 +197,9 @@ impl BatchController {
         };
 
         // Skip terminal phases — nothing to reconcile, avoid unnecessary writes
-        if matches!(
-            status.phase,
-            BatchPhase::Complete | BatchPhase::Failed | BatchPhase::Cancelled
-        ) {
+        // Note: Failed is NOT skipped to allow reconciliation when work units
+        // are manually retried and completed outside normal flow
+        if matches!(status.phase, BatchPhase::Complete | BatchPhase::Cancelled) {
             tracing::debug!(
                 batch_id = %batch_id,
                 phase = ?status.phase,
@@ -257,15 +259,17 @@ impl BatchController {
                 // Discover files and create work units
                 self.reconcile_discovering(spec, status).await
             }
-            BatchPhase::Running => {
+            BatchPhase::Running | BatchPhase::Failed => {
                 // Check if batch is complete
+                // Note: Failed is included to allow reconciliation when work units
+                // are manually retried and completed outside normal flow
                 self.reconcile_running(spec, status).await
             }
             BatchPhase::Merging => {
                 // Merge in progress (handled by Finalizer)
                 Ok(status)
             }
-            BatchPhase::Complete | BatchPhase::Failed | BatchPhase::Cancelled => {
+            BatchPhase::Complete | BatchPhase::Cancelled => {
                 // Terminal phases, nothing to do
                 Ok(status)
             }

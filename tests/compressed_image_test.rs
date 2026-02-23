@@ -336,8 +336,7 @@ async fn test_process_bag_with_compressed_images() {
 
     let bag_path = "tests/fixtures/roboflow_extracted.bag";
     if !std::path::Path::new(bag_path).exists() {
-        println!("Skipping test: {} not found", bag_path);
-        return;
+        panic!("Required bag file not found at {}", bag_path);
     }
 
     let output_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
