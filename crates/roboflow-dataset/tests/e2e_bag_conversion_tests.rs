@@ -40,7 +40,6 @@ fn small_bag_file() -> std::path::PathBuf {
 // ============================================================================
 
 #[test]
-#[ignore = "Requires real bag file - run manually or in CI"]
 fn test_e2e_convert_small_bag_file() {
     let bag_path = small_bag_file();
     if !bag_path.exists() {
@@ -84,7 +83,6 @@ fn test_e2e_convert_small_bag_file() {
 }
 
 #[test]
-#[ignore = "Requires real bag file - run manually or in CI"]
 fn test_e2e_convert_bag_with_topic_mappings() {
     let bag_path = small_bag_file();
     if !bag_path.exists() {
@@ -411,7 +409,6 @@ fn test_e2e_multiple_cameras() {
 // ============================================================================
 
 #[test]
-#[ignore = "Requires real bag file - run manually or in CI"]
 fn test_e2e_nonexistent_bag_file() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
@@ -499,7 +496,6 @@ fn test_e2e_empty_episode_handling() {
 // ============================================================================
 
 #[test]
-#[ignore = "Performance test - run manually"]
 fn test_e2e_large_dataset_performance() {
     use roboflow_dataset::testing::FrameBuilder;
 

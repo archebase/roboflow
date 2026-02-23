@@ -866,4 +866,162 @@ mod tests {
         assert!(!BagSource::new("/path/to/file.bag").unwrap().is_cloud_url());
         assert!(!BagSource::new("file.bag").unwrap().is_cloud_url());
     }
+
+    #[test]
+    fn test_bag_source_batched_creation() {
+        let source = BagSourceBatched::new("test.bag", 100);
+        assert!(source.is_ok());
+        let source = source.unwrap();
+        assert_eq!(source.path, "test.bag");
+        assert_eq!(source.batch_size, 100);
+        assert!(!source.is_cloud_url());
+    }
+
+    #[test]
+    fn test_bag_source_batched_from_config() {
+        let config = SourceConfig::bag("test.bag");
+        let source = BagSourceBatched::from_config(&config, 256);
+        assert!(source.is_ok());
+        let source = source.unwrap();
+        assert_eq!(source.batch_size, 256);
+    }
+
+    #[test]
+    fn test_bag_source_batched_invalid_config() {
+        let config = SourceConfig::mcap("test.mcap");
+        let source = BagSourceBatched::from_config(&config, 100);
+        assert!(source.is_err());
+    }
+
+    #[test]
+    fn test_bag_source_batched_cloud_url() {
+        let source = BagSourceBatched::new("s3://bucket/file.bag", 100).unwrap();
+        assert!(source.is_cloud_url());
+    }
+
+    #[test]
+    fn test_bag_source_batched_various_batch_sizes() {
+        for size in [1, 10, 100, 1000, 10000] {
+            let source = BagSourceBatched::new("test.bag", size).unwrap();
+            assert_eq!(source.batch_size, size);
+        }
+    }
+
+    #[test]
+    fn test_bag_source_blocking_creation() {
+        let source = BagSourceBlocking::new("test.bag", 100);
+        assert!(source.is_ok());
+        let source = source.unwrap();
+        assert_eq!(source.path, "test.bag");
+        assert_eq!(source.batch_size, 100);
+        assert!(!source.is_cloud_url());
+    }
+
+    #[test]
+    fn test_bag_source_blocking_from_config() {
+        let config = SourceConfig::bag("test.bag");
+        let source = BagSourceBlocking::from_config(&config, 512);
+        assert!(source.is_ok());
+        let source = source.unwrap();
+        assert_eq!(source.batch_size, 512);
+    }
+
+    #[test]
+    fn test_bag_source_blocking_invalid_config() {
+        let config = SourceConfig::mcap("test.mcap");
+        let source = BagSourceBlocking::from_config(&config, 100);
+        assert!(source.is_err());
+    }
+
+    #[test]
+    fn test_bag_source_blocking_cloud_url() {
+        let source = BagSourceBlocking::new("oss://bucket/file.bag", 100).unwrap();
+        assert!(source.is_cloud_url());
+    }
+
+    #[test]
+    fn test_bag_source_blocking_various_batch_sizes() {
+        for size in [1, 50, 500, 5000] {
+            let source = BagSourceBlocking::new("test.bag", size).unwrap();
+            assert_eq!(source.batch_size, size);
+        }
+    }
+
+    #[test]
+    fn test_bag_source_initial_state() {
+        let source = BagSource::new("test.bag").unwrap();
+        assert!(source.metadata.is_none());
+        assert!(source.receiver.is_none());
+        assert!(source.decoder_handle.is_none());
+        assert!(!source.finished);
+    }
+
+    #[test]
+    fn test_bag_source_batched_initial_state() {
+        let source = BagSourceBatched::new("test.bag", 100).unwrap();
+        assert!(source.metadata.is_none());
+        assert!(source.receiver.is_none());
+        assert!(source.decoder_handle.is_none());
+        assert!(!source.finished);
+        assert!(source.current_batch.is_empty());
+    }
+
+    #[test]
+    fn test_bag_source_blocking_initial_state() {
+        let source = BagSourceBlocking::new("test.bag", 100).unwrap();
+        assert!(source.metadata.is_none());
+        assert!(source.receiver.is_none());
+        assert!(source.decoder_handle.is_none());
+        assert!(!source.finished);
+        assert!(source.current_batch.is_empty());
+    }
+
+    #[test]
+    fn test_bag_source_supports_seeking() {
+        let source = BagSource::new("test.bag").unwrap();
+        assert!(!source.supports_seeking());
+    }
+
+    #[test]
+    fn test_bag_source_batched_supports_seeking() {
+        let source = BagSourceBatched::new("test.bag", 100).unwrap();
+        assert!(!source.supports_seeking());
+    }
+
+    #[test]
+    fn test_bag_source_blocking_supports_seeking() {
+        let source = BagSourceBlocking::new("test.bag", 100).unwrap();
+        assert!(!source.supports_seeking());
+    }
+
+    #[test]
+    fn test_bag_source_empty_path() {
+        let source = BagSource::new("");
+        assert!(source.is_ok());
+        let source = source.unwrap();
+        assert_eq!(source.path, "");
+        assert!(!source.is_cloud_url());
+    }
+
+    #[test]
+    fn test_bag_source_path_with_spaces() {
+        let source = BagSource::new("/path/to/my file.bag");
+        assert!(source.is_ok());
+        let source = source.unwrap();
+        assert_eq!(source.path, "/path/to/my file.bag");
+    }
+
+    #[test]
+    fn test_bag_source_relative_path() {
+        let source = BagSource::new("./data/test.bag").unwrap();
+        assert_eq!(source.path, "./data/test.bag");
+        assert!(!source.is_cloud_url());
+    }
+
+    #[test]
+    fn test_bag_source_windows_path() {
+        let source = BagSource::new("C:\\Users\\test\\data.bag").unwrap();
+        assert_eq!(source.path, "C:\\Users\\test\\data.bag");
+        assert!(!source.is_cloud_url());
+    }
 }

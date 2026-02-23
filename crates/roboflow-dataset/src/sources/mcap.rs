@@ -314,4 +314,93 @@ mod tests {
                 .is_cloud_url()
         );
     }
+
+    #[test]
+    fn test_mcap_source_initial_state() {
+        let source = McapSource::new("test.mcap").unwrap();
+        assert!(source.metadata.is_none());
+        assert!(source.receiver.is_none());
+        assert!(source.decoder_handle.is_none());
+        assert!(!source.finished);
+    }
+
+    #[test]
+    fn test_mcap_source_supports_seeking() {
+        let source = McapSource::new("test.mcap").unwrap();
+        assert!(!source.supports_seeking());
+    }
+
+    #[test]
+    fn test_mcap_source_empty_path() {
+        let source = McapSource::new("");
+        assert!(source.is_ok());
+        let source = source.unwrap();
+        assert_eq!(source.path, "");
+        assert!(!source.is_cloud_url());
+    }
+
+    #[test]
+    fn test_mcap_source_path_with_spaces() {
+        let source = McapSource::new("/path/to/my file.mcap");
+        assert!(source.is_ok());
+        let source = source.unwrap();
+        assert_eq!(source.path, "/path/to/my file.mcap");
+    }
+
+    #[test]
+    fn test_mcap_source_relative_path() {
+        let source = McapSource::new("./data/test.mcap").unwrap();
+        assert_eq!(source.path, "./data/test.mcap");
+        assert!(!source.is_cloud_url());
+    }
+
+    #[test]
+    fn test_mcap_source_windows_path() {
+        let source = McapSource::new("C:\\Users\\test\\data.mcap").unwrap();
+        assert_eq!(source.path, "C:\\Users\\test\\data.mcap");
+        assert!(!source.is_cloud_url());
+    }
+
+    #[test]
+    fn test_mcap_source_s3_url_with_region() {
+        let source = McapSource::new("s3://my-bucket/path/to/file.mcap").unwrap();
+        assert_eq!(source.path, "s3://my-bucket/path/to/file.mcap");
+        assert!(source.is_cloud_url());
+    }
+
+    #[test]
+    fn test_mcap_source_oss_url() {
+        let source = McapSource::new("oss://my-bucket/data/file.mcap").unwrap();
+        assert_eq!(source.path, "oss://my-bucket/data/file.mcap");
+        assert!(source.is_cloud_url());
+    }
+
+    #[test]
+    fn test_mcap_source_check_decoder_result_no_handle() {
+        let mut source = McapSource::new("test.mcap").unwrap();
+        // When there's no decoder handle, check_decoder_result should return Ok
+        let result = source.check_decoder_result();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_mcap_source_from_config_preserves_path() {
+        let config = SourceConfig::mcap("/absolute/path/to/data.mcap");
+        let source = McapSource::from_config(&config).unwrap();
+        assert_eq!(source.path, "/absolute/path/to/data.mcap");
+    }
+
+    #[test]
+    fn test_mcap_source_various_extensions() {
+        // Even without .mcap extension, source should be creatable
+        let source = McapSource::new("data.file").unwrap();
+        assert_eq!(source.path, "data.file");
+        assert!(!source.is_cloud_url());
+    }
+
+    #[test]
+    fn test_mcap_source_url_encoded_path() {
+        let source = McapSource::new("s3://bucket/path%20with%20spaces/file.mcap").unwrap();
+        assert!(source.is_cloud_url());
+    }
 }

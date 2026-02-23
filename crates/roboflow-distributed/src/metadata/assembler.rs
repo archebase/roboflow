@@ -585,4 +585,134 @@ mod tests {
         assert_eq!(deserialized.task_index, 42);
         assert_eq!(deserialized.task, "grasp the object");
     }
+
+    #[test]
+    fn test_aggregate_statistics_empty() {
+        // Create a mock registry - we can't easily mock it, so test the logic directly
+        // by verifying BatchStatsSummary behavior with empty input
+        let mut summary = crate::stats::BatchStatsSummary::new("test-batch".to_string());
+        summary.calculate_global_stats();
+
+        assert_eq!(summary.batch_id, "test-batch");
+        assert_eq!(summary.total_episodes, 0);
+    }
+
+    #[test]
+    fn test_aggregate_statistics_single_episode() {
+        let mut summary = crate::stats::BatchStatsSummary::new("test-batch".to_string());
+
+        let mut ep_stats = crate::stats::EpisodeStats::new(0, 100);
+        ep_stats.add_feature(
+            "observation.state".to_string(),
+            FeatureStats {
+                min: vec![0.0; 7],
+                max: vec![1.0; 7],
+                mean: vec![0.5; 7],
+                std: vec![0.1; 7],
+            },
+        );
+
+        summary.add_episode(ep_stats);
+        summary.calculate_global_stats();
+
+        assert_eq!(summary.total_episodes, 1);
+    }
+
+    #[test]
+    fn test_aggregate_statistics_multiple_episodes() {
+        let mut summary = crate::stats::BatchStatsSummary::new("test-batch".to_string());
+
+        // Add multiple episodes
+        for i in 0..5 {
+            let mut ep_stats = crate::stats::EpisodeStats::new(i, 100 * (i + 1));
+            ep_stats.add_feature(
+                "observation.state".to_string(),
+                FeatureStats {
+                    min: vec![0.0; 7],
+                    max: vec![1.0; 7],
+                    mean: vec![0.5; 7],
+                    std: vec![0.1; 7],
+                },
+            );
+            summary.add_episode(ep_stats);
+        }
+
+        summary.calculate_global_stats();
+
+        assert_eq!(summary.total_episodes, 5);
+    }
+
+    #[test]
+    fn test_feature_spec_is_video() {
+        // Video feature
+        let video_spec = FeatureSpec {
+            dtype: "video".to_string(),
+            shape: vec![480, 640, 3],
+            names: Some(vec!["height".to_string(), "width".to_string()]),
+            video_info: Some(VideoInfo {
+                codec: "libx264".to_string(),
+                fps: 30,
+                profile: Some("high".to_string()),
+                crf: Some(23),
+            }),
+        };
+        assert!(video_spec.is_video());
+
+        // Non-video feature
+        let float_spec = FeatureSpec {
+            dtype: "float32".to_string(),
+            shape: vec![7],
+            names: None,
+            video_info: None,
+        };
+        assert!(!float_spec.is_video());
+    }
+
+    #[test]
+    fn test_partial_episode_metadata_new() {
+        let meta = PartialEpisodeMetadata::new(42);
+        assert_eq!(meta.episode_index, 42);
+        assert_eq!(meta.length, 0);
+        assert!(meta.tasks.is_empty());
+        assert!(meta.feature_shapes.is_empty());
+        assert!(meta.stats.is_empty());
+        assert!(meta.parquet_path.is_empty());
+    }
+
+    #[test]
+    fn test_episode_stats_entry_serialization() {
+        let entry = EpisodeStatsEntry {
+            episode_index: 10,
+            stats: serde_json::json!({
+                "observation.state": {
+                    "min": [0.0],
+                    "max": [1.0],
+                    "mean": [0.5],
+                    "std": [0.1]
+                }
+            }),
+        };
+
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("episode_index"));
+        assert!(json.contains("observation.state"));
+
+        let deserialized: EpisodeStatsEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.episode_index, 10);
+    }
+
+    #[test]
+    fn test_metadata_assembly_error_from_tikv_other() {
+        use crate::tikv::TikvError;
+
+        let tikv_err = TikvError::Other("custom error".to_string());
+        let assembly_err: MetadataAssemblyError = tikv_err.into();
+
+        match assembly_err {
+            MetadataAssemblyError::TiKvError(msg) => {
+                assert!(msg.contains("custom error"));
+            }
+            _ => panic!("Expected TiKvError variant"),
+        }
+    }
 }

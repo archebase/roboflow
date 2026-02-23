@@ -196,7 +196,7 @@ fn test_e2e_multi_episode_lerobot_dataset() {
     // Set 1 episode per chunk to get separate parquet files per episode
     writer.set_episodes_per_chunk(1);
 
-    let episode_counts = vec![10, 20, 15];
+    let episode_counts = [10, 20, 15];
 
     for (ep_idx, &frame_count) in episode_counts.iter().enumerate() {
         // Set episode index before starting episode

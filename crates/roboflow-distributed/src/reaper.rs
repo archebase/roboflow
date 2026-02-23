@@ -617,4 +617,202 @@ mod tests {
         assert_eq!(DEFAULT_STALE_THRESHOLD_SECS, 300);
         assert_eq!(DEFAULT_MAX_RECLAIMS_PER_ITERATION, 10);
     }
+
+    #[test]
+    fn test_reaper_config_zero_values() {
+        // Test that zero values are accepted
+        let config = ReaperConfig::new()
+            .with_interval(Duration::from_secs(0))
+            .with_stale_threshold(Duration::from_secs(0))
+            .with_max_reclaims(0)
+            .with_max_work_unit_scan(0);
+
+        assert_eq!(config.interval.as_secs(), 0);
+        assert_eq!(config.stale_threshold.as_secs(), 0);
+        assert_eq!(config.max_reclaims_per_iteration, 0);
+        assert_eq!(config.max_work_unit_scan, 0);
+    }
+
+    #[test]
+    fn test_reaper_config_builder_chain() {
+        // Test that builder methods can be chained
+        let config = ReaperConfig::default()
+            .with_interval(Duration::from_secs(30))
+            .with_stale_threshold(Duration::from_secs(120));
+
+        assert_eq!(config.interval.as_secs(), 30);
+        assert_eq!(config.stale_threshold.as_secs(), 120);
+        // Verify defaults are preserved for unset fields
+        assert_eq!(
+            config.max_reclaims_per_iteration,
+            DEFAULT_MAX_RECLAIMS_PER_ITERATION
+        );
+    }
+
+    #[test]
+    fn test_reaper_metrics_all_operations() {
+        let metrics = ReaperMetrics::new();
+
+        // Test all increment operations
+        metrics.inc_work_units_reclaimed();
+        metrics.inc_work_units_reclaimed();
+        metrics.inc_work_units_reclaimed();
+        assert_eq!(metrics.work_units_reclaimed.load(Ordering::Relaxed), 3);
+
+        metrics.inc_stale_workers_found(10);
+        assert_eq!(metrics.stale_workers_found.load(Ordering::Relaxed), 10);
+
+        metrics.inc_iterations();
+        metrics.inc_iterations();
+        assert_eq!(metrics.iterations_total.load(Ordering::Relaxed), 2);
+
+        metrics.inc_reclaim_attempts();
+        assert_eq!(metrics.reclaim_attempts.load(Ordering::Relaxed), 1);
+
+        metrics.inc_reclaim_failures();
+        assert_eq!(metrics.reclaim_failures.load(Ordering::Relaxed), 1);
+
+        metrics.inc_work_units_skipped();
+        assert_eq!(metrics.work_units_skipped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_reaper_metrics_snapshot() {
+        let metrics = ReaperMetrics::new();
+
+        metrics.inc_work_units_reclaimed();
+        metrics.inc_stale_workers_found(5);
+        metrics.inc_iterations();
+        metrics.inc_reclaim_attempts();
+        metrics.inc_reclaim_failures();
+        metrics.inc_work_units_skipped();
+
+        let snapshot = metrics.snapshot();
+
+        assert_eq!(snapshot.work_units_reclaimed, 1);
+        assert_eq!(snapshot.stale_workers_found, 5);
+        assert_eq!(snapshot.iterations_total, 1);
+        assert_eq!(snapshot.reclaim_attempts, 1);
+        assert_eq!(snapshot.reclaim_failures, 1);
+        assert_eq!(snapshot.work_units_skipped, 1);
+    }
+
+    #[test]
+    fn test_reaper_metrics_snapshot_clone() {
+        let metrics = ReaperMetrics::new();
+        metrics.inc_work_units_reclaimed();
+        metrics.inc_iterations();
+
+        let snapshot = metrics.snapshot();
+        let cloned = snapshot.clone();
+
+        assert_eq!(snapshot.work_units_reclaimed, cloned.work_units_reclaimed);
+        assert_eq!(snapshot.iterations_total, cloned.iterations_total);
+    }
+
+    #[test]
+    fn test_reclaim_result_variants() {
+        // Test all variants can be created and compared
+        let reclaimed = ReclaimResult::Reclaimed;
+        let not_stale = ReclaimResult::NotStale;
+        let not_processing = ReclaimResult::NotProcessing;
+        let failed = ReclaimResult::Failed;
+        let skipped = ReclaimResult::Skipped;
+
+        // Test Debug trait
+        assert!(format!("{:?}", reclaimed).contains("Reclaimed"));
+        assert!(format!("{:?}", not_stale).contains("NotStale"));
+        assert!(format!("{:?}", not_processing).contains("NotProcessing"));
+        assert!(format!("{:?}", failed).contains("Failed"));
+        assert!(format!("{:?}", skipped).contains("Skipped"));
+
+        // Test Clone trait
+        assert!(matches!(reclaimed.clone(), ReclaimResult::Reclaimed));
+        assert!(matches!(failed.clone(), ReclaimResult::Failed));
+    }
+
+    #[test]
+    fn test_reaper_metrics_concurrent() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let metrics = Arc::new(ReaperMetrics::new());
+        let mut handles = vec![];
+
+        // Spawn multiple threads that all increment counters
+        for _ in 0..10 {
+            let m = Arc::clone(&metrics);
+            handles.push(thread::spawn(move || {
+                m.inc_work_units_reclaimed();
+                m.inc_iterations();
+                m.inc_reclaim_attempts();
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // All increments should be visible
+        assert_eq!(metrics.work_units_reclaimed.load(Ordering::Relaxed), 10);
+        assert_eq!(metrics.iterations_total.load(Ordering::Relaxed), 10);
+        assert_eq!(metrics.reclaim_attempts.load(Ordering::Relaxed), 10);
+    }
+
+    #[test]
+    fn test_reaper_config_new() {
+        let config = ReaperConfig::new();
+        // Should be same as default
+        let default_config = ReaperConfig::default();
+        assert_eq!(config.interval, default_config.interval);
+        assert_eq!(config.stale_threshold, default_config.stale_threshold);
+        assert_eq!(
+            config.max_reclaims_per_iteration,
+            default_config.max_reclaims_per_iteration
+        );
+    }
+
+    #[test]
+    fn test_reaper_config_clone() {
+        let config = ReaperConfig::new()
+            .with_interval(Duration::from_secs(45))
+            .with_stale_threshold(Duration::from_secs(200));
+
+        let cloned = config.clone();
+        assert_eq!(config.interval, cloned.interval);
+        assert_eq!(config.stale_threshold, cloned.stale_threshold);
+    }
+
+    #[test]
+    fn test_reaper_config_debug() {
+        let config = ReaperConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("ReaperConfig"));
+        assert!(debug_str.contains("interval"));
+        assert!(debug_str.contains("stale_threshold"));
+    }
+
+    #[test]
+    fn test_reaper_metrics_default() {
+        let metrics = ReaperMetrics::default();
+        assert_eq!(metrics.work_units_reclaimed.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.stale_workers_found.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.iterations_total.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_reaper_metrics_snapshot_debug() {
+        let snapshot = ReaperMetricsSnapshot {
+            work_units_reclaimed: 5,
+            stale_workers_found: 2,
+            iterations_total: 10,
+            reclaim_attempts: 8,
+            reclaim_failures: 1,
+            work_units_skipped: 2,
+        };
+
+        let debug_str = format!("{:?}", snapshot);
+        assert!(debug_str.contains("ReaperMetricsSnapshot"));
+        assert!(debug_str.contains("work_units_reclaimed"));
+    }
 }

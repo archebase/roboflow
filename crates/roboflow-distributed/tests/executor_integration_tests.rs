@@ -185,7 +185,7 @@ async fn test_stage_execution_error_handling() {
     let input_file = format!("file://{}/roboflow_sample.bag", fixture_dir.display());
 
     let pipeline = PipelineBuilder::new()
-        .stage(Arc::new(DiscoverStage::new(&format!(
+        .stage(Arc::new(DiscoverStage::new(format!(
             "file://{}/",
             fixture_dir.display()
         ))))

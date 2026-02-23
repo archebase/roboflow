@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn test_task_hash_different_inputs() {
         // Even small changes should produce different hashes
-        let tasks = vec![
+        let tasks = [
             "pick up red block",
             "pick up blue block",
             "pickup red block",

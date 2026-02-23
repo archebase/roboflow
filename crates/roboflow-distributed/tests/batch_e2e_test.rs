@@ -224,9 +224,7 @@ async fn test_e2e_lerobot_executor_processes_work_units() {
             e
         ),
     }
-
     // Test completes if we get here (no panic)
-    assert!(true, "Test should complete without panic");
 }
 
 /// Test batch phase transitions.
@@ -386,7 +384,6 @@ async fn test_e2e_controller_reconciles_batch() {
 /// - Conversion execution
 /// - Output validation
 #[tokio::test]
-#[ignore = "Requires full infrastructure setup - run manually"]
 async fn test_e2e_full_batch_conversion() {
     let _ = tracing_subscriber::fmt::try_init();
 

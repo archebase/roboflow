@@ -20,7 +20,6 @@ mod tests {
     use roboflow_distributed::{TikvClient, WorkerStatus};
 
     #[tokio::test]
-    #[ignore = "requires fixing HeartbeatManager for async test context"]
     async fn test_heartbeat_manager() {
         // This test requires a running TiKV instance
         // For CI/CD, we skip if not available

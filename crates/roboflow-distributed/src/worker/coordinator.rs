@@ -758,4 +758,112 @@ mod tests {
         let debug_str = format!("{:?}", result);
         assert!(debug_str.contains("Success"));
     }
+
+    #[test]
+    fn test_processing_result_success_with_episode_stats() {
+        use crate::stats::EpisodeStats;
+
+        let stats = EpisodeStats::new(5, 100);
+        let result = ProcessingResult::Success {
+            episode_index: 5,
+            frame_count: 100,
+            episode_stats: Some(stats),
+        };
+
+        match result {
+            ProcessingResult::Success {
+                episode_index,
+                frame_count,
+                episode_stats,
+            } => {
+                assert_eq!(episode_index, 5);
+                assert_eq!(frame_count, 100);
+                assert!(episode_stats.is_some());
+                let stats = episode_stats.unwrap();
+                assert_eq!(stats.episode_index, 5);
+            }
+            _ => panic!("Expected Success variant"),
+        }
+    }
+
+    #[test]
+    fn test_processing_result_failed_with_complex_error() {
+        let error_msg = "Multiple errors occurred:\n1. File not found\n2. Permission denied";
+        let result = ProcessingResult::Failed {
+            error: error_msg.to_string(),
+        };
+
+        match result {
+            ProcessingResult::Failed { error } => {
+                assert!(error.contains("Multiple errors"));
+                assert!(error.contains("File not found"));
+                assert!(error.contains("Permission denied"));
+            }
+            _ => panic!("Expected Failed variant"),
+        }
+    }
+
+    #[test]
+    fn test_processing_result_failed_interrupted_by_shutdown() {
+        let result = ProcessingResult::Failed {
+            error: "Processing interrupted by shutdown signal".to_string(),
+        };
+
+        match result {
+            ProcessingResult::Failed { error } => {
+                assert!(error.contains("interrupted by shutdown"));
+            }
+            _ => panic!("Expected Failed variant"),
+        }
+    }
+
+    #[test]
+    fn test_worker_metrics_snapshot() {
+        let metrics = WorkerMetrics::new();
+
+        metrics.inc_jobs_claimed();
+        metrics.inc_jobs_claimed();
+        metrics.inc_jobs_completed();
+        metrics.inc_active_jobs();
+        metrics.inc_jobs_failed();
+        metrics.inc_heartbeat_errors();
+        metrics.inc_processing_errors();
+
+        // Verify all values are correct
+        assert_eq!(metrics.jobs_claimed.load(Ordering::Relaxed), 2);
+        assert_eq!(metrics.jobs_completed.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.jobs_failed.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.heartbeat_errors.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.processing_errors.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_worker_metrics_dec_active_jobs_underflow() {
+        let metrics = WorkerMetrics::new();
+
+        // Dec without inc should underflow but not panic
+        metrics.dec_active_jobs();
+
+        // This is expected behavior - the counter wraps
+        // The value would be very large due to underflow
+        let _value = metrics.active_jobs.load(Ordering::Relaxed);
+        // Just ensure it doesn't panic - value is always valid u64
+    }
+
+    #[test]
+    fn test_worker_metrics_multiple_dec_active_jobs() {
+        let metrics = WorkerMetrics::new();
+
+        metrics.inc_active_jobs();
+        metrics.inc_active_jobs();
+        metrics.inc_active_jobs();
+
+        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 3);
+
+        metrics.dec_active_jobs();
+        metrics.dec_active_jobs();
+
+        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 1);
+    }
 }

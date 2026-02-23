@@ -11,16 +11,19 @@ use std::sync::Arc;
 
 use roboflow_core::Result;
 use roboflow_dataset::formats::dataset_executor::{DatasetPipelineConfig, DatasetPipelineExecutor};
-use roboflow_dataset::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
+use roboflow_dataset::formats::lerobot::{
+    LerobotConfig, LerobotWriterConfig, create_lerobot_writer,
+};
 use roboflow_dataset::formats::{
     common::DatasetBaseConfig,
-    lerobot::{DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig},
+    lerobot::{DatasetConfig, FlushingConfig, StreamingConfig, VideoConfig},
 };
 use roboflow_dataset::sources::{SourceConfig, create_source};
 use roboflow_executor::stage::{PartitionId, Stage, StageId};
 use roboflow_executor::task::{Task, TaskContext, TaskResult, TaskStatus};
 
 use crate::metadata::MetadataSubmitter;
+use crate::tikv::TikvClient;
 
 /// Stage for converting bag files to LeRobot format.
 ///
@@ -33,6 +36,7 @@ pub struct ConvertStage {
     input_file: String,
     output_prefix: String,
     config_hash: String,
+    tikv: Option<Arc<TikvClient>>,
     metadata_submitter: Option<Arc<MetadataSubmitter>>,
 }
 
@@ -43,7 +47,7 @@ impl ConvertStage {
     ///
     /// * `input_file` - Input file URL to convert.
     /// * `output_prefix` - Output path prefix.
-    /// * `config_hash` - Configuration hash for caching.
+    /// * `config_hash` - Configuration hash for fetching config from TiKV.
     pub fn new(
         input_file: impl Into<String>,
         output_prefix: impl Into<String>,
@@ -53,8 +57,18 @@ impl ConvertStage {
             input_file: input_file.into(),
             output_prefix: output_prefix.into(),
             config_hash: config_hash.into(),
+            tikv: None,
             metadata_submitter: None,
         }
+    }
+
+    /// Set the TiKV client for fetching configuration.
+    ///
+    /// When set, the convert task will fetch the LerobotConfig from TiKV
+    /// using the config_hash. If not set, a default empty config is used.
+    pub fn with_tikv(mut self, tikv: Arc<TikvClient>) -> Self {
+        self.tikv = Some(tikv);
+        self
     }
 
     /// Set the metadata submitter for distributed metadata tracking.
@@ -89,6 +103,7 @@ impl Stage for ConvertStage {
             input_file: self.input_file.clone(),
             output_prefix: self.output_prefix.clone(),
             config_hash: self.config_hash.clone(),
+            tikv: self.tikv.clone(),
             partition_id: partition,
             metadata_submitter: self.metadata_submitter.clone(),
         })
@@ -99,8 +114,8 @@ impl Stage for ConvertStage {
 struct ConvertTask {
     input_file: String,
     output_prefix: String,
-    #[allow(dead_code)]
     config_hash: String,
+    tikv: Option<Arc<TikvClient>>,
     partition_id: PartitionId,
     metadata_submitter: Option<Arc<MetadataSubmitter>>,
 }
@@ -151,21 +166,49 @@ impl Task for ConvertTask {
             roboflow_core::RoboflowError::other(format!("Failed to initialize source: {}", e))
         })?;
 
-        // Create a basic LeRobot config
-        let lerobot_config = LerobotConfig {
-            dataset: DatasetConfig {
-                base: DatasetBaseConfig {
-                    name: format!("episode_{:06}", self.partition_id.0),
-                    fps: 30,
-                    robot_type: None,
-                },
-                env_type: None,
-            },
-            mappings: vec![],
-            video: VideoConfig::default(),
-            annotation_file: None,
-            flushing: FlushingConfig::default(),
-            streaming: StreamingConfig::default(),
+        // Fetch config from TiKV if available, otherwise use default
+        let lerobot_config = if let Some(tikv) = &self.tikv {
+            match tikv.get_config(&self.config_hash).await {
+                Ok(Some(config_record)) => {
+                    // Parse the TOML content into LerobotConfig
+                    match LerobotConfig::from_toml(&config_record.content) {
+                        Ok(config) => {
+                            tracing::info!(
+                                config_hash = %self.config_hash,
+                                mappings_count = config.mappings.len(),
+                                "Loaded config from TiKV"
+                            );
+                            config
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                config_hash = %self.config_hash,
+                                error = %e,
+                                "Failed to parse config from TiKV, using default"
+                            );
+                            create_default_config(self.partition_id.0 as usize)
+                        }
+                    }
+                }
+                Ok(None) => {
+                    tracing::warn!(
+                        config_hash = %self.config_hash,
+                        "Config not found in TiKV, using default"
+                    );
+                    create_default_config(self.partition_id.0 as usize)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        config_hash = %self.config_hash,
+                        error = %e,
+                        "Failed to fetch config from TiKV, using default"
+                    );
+                    create_default_config(self.partition_id.0 as usize)
+                }
+            }
+        } else {
+            tracing::debug!("No TiKV client, using default config");
+            create_default_config(self.partition_id.0 as usize)
         };
 
         // Create LerobotWriter
@@ -272,6 +315,25 @@ impl Task for ConvertTask {
             },
             status: TaskStatus::Success,
         })
+    }
+}
+
+/// Create a default LerobotConfig for when TiKV config is not available.
+fn create_default_config(partition_id: usize) -> LerobotConfig {
+    LerobotConfig {
+        dataset: DatasetConfig {
+            base: DatasetBaseConfig {
+                name: format!("episode_{:06}", partition_id),
+                fps: 30,
+                robot_type: None,
+            },
+            env_type: None,
+        },
+        mappings: vec![],
+        video: VideoConfig::default(),
+        annotation_file: None,
+        flushing: FlushingConfig::default(),
+        streaming: StreamingConfig::default(),
     }
 }
 
