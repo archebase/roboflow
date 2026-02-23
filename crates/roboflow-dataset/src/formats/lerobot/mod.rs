@@ -30,7 +30,10 @@ pub use episode::{
 pub use roboflow_media::video::{HardwareBackend, HardwareConfig};
 pub use trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 
-pub use factory::{LerobotWriterConfig, LerobotWriterResult, create_lerobot_writer};
+pub use factory::{
+    LerobotFactory, LerobotWriterConfig, LerobotWriterResult, create_lerobot_writer,
+    lerobot_factory, register_lerobot_format,
+};
 pub use video_profiles::{Profile, QualityTier, ResolvedConfig, SpeedPreset, VideoEncodingProfile};
 pub use writer::{CameraExtrinsic, CameraIntrinsic, EpisodeWriter, LerobotFrame, LerobotWriter};
 

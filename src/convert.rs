@@ -38,8 +38,10 @@ use roboflow_dataset::sources::{SourceConfig, create_source};
 
 use roboflow_dataset::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
 
+use roboflow_dataset::formats::dataset_executor::{
+    DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats, SequentialPolicy,
+};
 use roboflow_dataset::formats::{
-    PipelineConfig, PipelineStats,
     common::config::{DatasetBaseConfig, Mapping, MappingType},
     lerobot::{DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig},
 };
@@ -91,7 +93,7 @@ impl ConversionReport {
 
     /// Create from pipeline stats.
     fn from_pipeline_stats(
-        stats: PipelineStats,
+        stats: DatasetPipelineStats,
         input_path: impl Into<String>,
         output_path: impl Into<String>,
     ) -> Self {
@@ -310,24 +312,16 @@ impl ConvertBuilder {
             .map(|m| (m.topic.clone(), m.feature.clone()))
             .collect();
 
-        let mut streaming_config =
-            roboflow_dataset::formats::alignment::config::StreamingConfig::with_fps(
-                config.dataset.fps,
-            );
-        let frame_interval_ns = 1_000_000_000u64 / config.dataset.fps as u64;
-        streaming_config.completion_window_ns = frame_interval_ns * 3;
-
         let mut pipeline_config =
-            PipelineConfig::new(streaming_config).with_topic_mappings(topic_mappings);
+            DatasetPipelineConfig::with_fps(config.dataset.fps).with_topic_mappings(topic_mappings);
 
         if let Some(max) = self.max_frames {
             pipeline_config = pipeline_config.with_max_frames(max);
         }
 
-        // Execute pipeline
-        use roboflow_dataset::formats::PipelineExecutor;
-
-        let mut executor = PipelineExecutor::new(writer_result.writer, pipeline_config);
+        // Execute pipeline with sequential policy
+        let mut executor =
+            DatasetPipelineExecutor::new(writer_result.writer, pipeline_config, SequentialPolicy);
 
         // Process messages
         let batch_size = self.batch_size;

@@ -145,143 +145,13 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       RUSTFLAGS: -C linker=cc
-      TIKV_PD_ENDPOINTS: pd:2379
-    services:
-      pd:
-        image: pingcap/pd:v8.5.5
-        ports:
-          - 2379:2379
-        env:
-          PD_NAME: pd1
-          PD_DATA_DIR: /data
-          PD_CLIENT_URLS: http://0.0.0.0:2379
-          PD_PEER_URLS: http://0.0.0.0:2380
-          PD_ADVERTISE_CLIENT_URLS: http://pd:2379
-          PD_ADVERTISE_PEER_URLS: http://pd:2380
-          PD_INITIAL_CLUSTER: pd1=http://pd:2380
-
-      tikv:
-        image: pingcap/tikv:v8.5.5
-        ports:
-          - 20160:20160
-        env:
-          TIKV_ADDR: 0.0.0.0:20160
-          TIKV_ADVERTISE_ADDR: tikv:20160
-          TIKV_DATA_DIR: /data
-          TIKV_PD: http://pd:2379
-          TIKV_STATUS_ADDR: 0.0.0.0:20180
+      TIKV_PD_ENDPOINTS: 127.0.0.1:2379
     steps:
       - uses: actions/checkout@v4
         with:
           lfs: true
 
       - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: "vcpkg-x64-linux-${{ hashFiles('**/Cargo.lock') }}"
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm curl
-
-      - name: Wait for TiKV to be ready
-        run: |
-          echo "Waiting for TiKV cluster to be ready..."
-          for i in {1..30}; do
-            if curl -sf http://localhost:2379/health > /dev/null 2>&1; then
-              echo "PD is healthy"
-              break
-            fi
-            echo "Waiting for PD... ($i/30)"
-            sleep 2
-          done
-          for i in {1..30}; do
-            if curl -sf http://localhost:20180/status > /dev/null 2>&1; then
-              echo "TiKV is healthy"
-              break
-            fi
-            echo "Waiting for TiKV... ($i/30)"
-            sleep 2
-          done
-
-      - name: Cache vcpkg
-        uses: actions/cache@v4
-        id: cache-vcpkg
-        with:
-          path: ${{ github.workspace }}/vcpkg
-          key: vcpkg-x64-linux-${{ hashFiles('vcpkg.json') }}
-
-      - name: Clone and bootstrap vcpkg
-        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
-        run: |
-          git clone https://github.com/microsoft/vcpkg --depth 1 ${{ github.workspace }}/vcpkg
-          BASELINE=$(jq -r '."builtin-baseline"' ${{ github.workspace }}/vcpkg.json)
-          git -C ${{ github.workspace }}/vcpkg fetch --depth 1 origin "$BASELINE"
-          git -C ${{ github.workspace }}/vcpkg checkout "$BASELINE"
-          ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
-
-      - name: Install vcpkg packages
-        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
-        run: |
-          ${{ github.workspace }}/vcpkg/vcpkg install --triplet x64-linux --x-manifest-root=${{ github.workspace }} --x-install-root=${{ github.workspace }}/vcpkg/installed
-
-      - name: Configure vcpkg environment
-        run: |
-          VCPKG_INSTALLED=${{ github.workspace }}/vcpkg/installed
-          # Export for current step and future steps
-          echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=${VCPKG_INSTALLED}/x64-linux/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
-          echo "FFMPEG_PKG_CONFIG_PATH=${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig" >> $GITHUB_ENV
-          echo "FFMPEG_INCLUDE_DIR=${VCPKG_INSTALLED}/x64-linux/include" >> $GITHUB_ENV
-          echo "FFMPEG_LIBS_DIR=${VCPKG_INSTALLED}/x64-linux/lib" >> $GITHUB_ENV
-          # Export for current step
-          export PKG_CONFIG_PATH="${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          ls ${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig/libav*.pc
-
-      - name: Run tests
-        run: cargo test --all-features
-
-  coverage:
-    name: Coverage
-    needs: [rust-lint, rust-test-linux, rust-test-macos]
-    runs-on: ubuntu-24.04
-    env:
-      RUSTFLAGS: -C linker=cc
-      TIKV_PD_ENDPOINTS: pd:2379
-    services:
-      pd:
-        image: pingcap/pd:v8.5.5
-        ports:
-          - 2379:2379
-        env:
-          PD_NAME: pd1
-          PD_DATA_DIR: /data
-          PD_CLIENT_URLS: http://0.0.0.0:2379
-          PD_PEER_URLS: http://0.0.0.0:2380
-          PD_ADVERTISE_CLIENT_URLS: http://pd:2379
-          PD_ADVERTISE_PEER_URLS: http://pd:2380
-          PD_INITIAL_CLUSTER: pd1=http://pd:2380
-
-      tikv:
-        image: pingcap/tikv:v8.5.5
-        ports:
-          - 20160:20160
-        env:
-          TIKV_ADDR: 0.0.0.0:20160
-          TIKV_ADVERTISE_ADDR: tikv:20160
-          TIKV_DATA_DIR: /data
-          TIKV_PD: http://pd:2379
-          TIKV_STATUS_ADDR: 0.0.0.0:20180
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
 
@@ -305,6 +175,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm curl
 
+      - name: Start TiKV services
+        run: docker compose up -d pd tikv
+
       - name: Wait for TiKV to be ready
         run: |
           echo "Waiting for TiKV cluster to be ready..."
@@ -316,6 +189,11 @@ jobs:
             echo "Waiting for PD... ($i/30)"
             sleep 2
           done
+          if ! curl -sf http://localhost:2379/health > /dev/null 2>&1; then
+            echo "ERROR: PD failed to become healthy"
+            docker compose logs pd || true
+            exit 1
+          fi
           for i in {1..30}; do
             if curl -sf http://localhost:20180/status > /dev/null 2>&1; then
               echo "TiKV is healthy"
@@ -324,6 +202,11 @@ jobs:
             echo "Waiting for TiKV... ($i/30)"
             sleep 2
           done
+          if ! curl -sf http://localhost:20180/status > /dev/null 2>&1; then
+            echo "ERROR: TiKV failed to become healthy"
+            docker compose logs tikv || true
+            exit 1
+          fi
 
       - name: Cache vcpkg
         uses: actions/cache@v4
@@ -358,21 +241,22 @@ jobs:
           echo "FFMPEG_LIBS_DIR=${VCPKG_INSTALLED}/x64-linux/lib" >> $GITHUB_ENV
           # Export for current step
           export PKG_CONFIG_PATH="${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          # Verify FFmpeg and x264 were installed correctly
           ls ${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig/libav*.pc
-          ls ${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig/x264.pc
-          pkg-config --modversion libavcodec x264
 
-      - name: Generate Rust coverage
+      - name: Generate coverage and run tests
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
-      - name: Upload coverage reports to Codecov
+      - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./lcov.info
           flags: rust
           name: codecov-umbrella
+
+      - name: Cleanup TiKV services
+        if: always()
+        run: docker compose down -v
 
   security:
     name: Security Audit

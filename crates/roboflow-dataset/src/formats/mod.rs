@@ -1,10 +1,8 @@
 pub mod alignment;
 pub mod common;
 pub mod config;
+pub mod dataset_executor;
 pub mod lerobot;
-pub mod parallel_pipeline;
-pub mod pipeline;
-pub mod pipeline_common;
 
 // Format modules - always available (stubs for future formats)
 pub mod hdf5;
@@ -14,8 +12,9 @@ pub mod zarr;
 pub use common::{AlignedFrame, AudioData, DatasetWriter, ImageData, WriterStats};
 pub use config::{OutputConfig, OutputFormat};
 // Re-export image types from media module for backward compatibility
-pub use parallel_pipeline::{ParallelPipelineExecutor, ParallelPipelineStats};
-pub use pipeline::{PipelineConfig, PipelineExecutor, PipelineStats};
+pub use dataset_executor::{
+    DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats, EpisodeStrategy,
+};
 pub use roboflow_media::image::{
     DecodedImage, ImageDecoderBackend, ImageDecoderConfig, ImageDecoderFactory, ImageError,
     ImageFormat, decode_compressed_image,
@@ -23,6 +22,24 @@ pub use roboflow_media::image::{
 
 use roboflow_core::Result;
 use std::path::Path;
+use std::sync::LazyLock;
+
+// Auto-register LeRobot format when the registry is first accessed
+fn ensure_formats_registered() {
+    static REGISTERED: LazyLock<()> = LazyLock::new(|| {
+        lerobot::register_lerobot_format();
+        tracing::debug!("Registered built-in formats: lerobot");
+    });
+    LazyLock::force(&REGISTERED);
+}
+
+/// Initialize the format registry with built-in formats.
+///
+/// This is called automatically when needed, but can also be called
+/// explicitly to ensure formats are registered early.
+pub fn init_formats() {
+    ensure_formats_registered();
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DatasetFormat {
@@ -114,6 +131,32 @@ impl DatasetConfig {
     }
 }
 
+/// Create a dataset writer using the format registry.
+///
+/// This function uses the registry system to create format writers dynamically.
+/// The format is determined by the `DatasetConfig` variant.
+///
+/// # Arguments
+///
+/// * `output_dir` - Output directory for the dataset
+/// * `storage` - Optional storage backend (for cloud storage)
+/// * `output_prefix` - Optional prefix within storage (for cloud storage)
+/// * `config` - Dataset configuration (format-specific)
+///
+/// # Returns
+///
+/// A boxed writer implementing `DatasetWriter`.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use roboflow_dataset::formats::{create_writer, DatasetConfig, DatasetFormat};
+///
+/// let config = DatasetConfig::new(DatasetFormat::Lerobot, "my_dataset", 30, None);
+/// let mut writer = create_writer(Path::new("./output"), None, None, &config)?;
+/// writer.write_frame(&frame)?;
+/// writer.finalize()?;
+/// ```
 #[allow(deprecated)]
 pub fn create_writer(
     output_dir: impl AsRef<Path>,
@@ -121,22 +164,72 @@ pub fn create_writer(
     output_prefix: Option<&str>,
     config: &DatasetConfig,
 ) -> Result<Box<dyn DatasetWriter>> {
-    match config {
-        DatasetConfig::Lerobot(lerobot_config) => {
-            use crate::formats::lerobot::LerobotWriter;
-            if let (Some(storage), Some(prefix)) = (storage, output_prefix) {
-                let writer = LerobotWriter::new(
-                    std::sync::Arc::clone(storage),
-                    prefix.to_string(),
-                    output_dir,
-                    lerobot_config.clone(),
-                )?;
-                Ok(Box::new(writer))
-            } else {
-                let writer = LerobotWriter::new_local(output_dir, lerobot_config.clone())?;
-                Ok(Box::new(writer))
-            }
-        }
+    // Ensure formats are registered
+    ensure_formats_registered();
+
+    // Determine format name and get typed config
+    let (format_name, format_config) = match config {
+        DatasetConfig::Lerobot(lerobot_config) => ("lerobot", lerobot_config.clone()),
+    };
+
+    // Build output URL
+    let output_url = if let (Some(_s), Some(prefix)) = (storage, output_prefix) {
+        prefix.to_string()
+    } else {
+        output_dir.as_ref().to_string_lossy().to_string()
+    };
+
+    // Create context for the registry
+    let context = crate::core::traits::FormatContext {
+        output_url,
+        storage: storage.map(std::sync::Arc::clone),
+        base_path: output_dir.as_ref().to_path_buf(),
+        num_workers: 4,
+    };
+
+    // Convert config to JSON
+    let json_config = serde_json::to_value(&format_config).map_err(|e| {
+        roboflow_core::RoboflowError::other(format!("Failed to serialize config: {}", e))
+    })?;
+
+    // Use the registry to create the writer
+    let registry = crate::core::registry::FormatRegistry::global();
+    let registry_guard = registry.read().map_err(|e| {
+        roboflow_core::RoboflowError::other(format!("Failed to acquire registry lock: {}", e))
+    })?;
+
+    let writer = registry_guard.create_writer(format_name, &json_config, &context)?;
+
+    // Wrap FormatWriter to DatasetWriter
+    // Since FormatWriter implements all DatasetWriter methods, we can use a wrapper
+    Ok(Box::new(FormatWriterAdapter(writer)))
+}
+
+/// Adapter to convert a FormatWriter to a DatasetWriter.
+///
+/// This is needed because the registry returns `Box<dyn FormatWriter>` but
+/// `create_writer` returns `Box<dyn DatasetWriter>`.
+struct FormatWriterAdapter(Box<dyn crate::core::traits::FormatWriter>);
+
+impl DatasetWriter for FormatWriterAdapter {
+    fn write_frame(&mut self, frame: &common::AlignedFrame) -> Result<()> {
+        self.0.write_frame(frame)
+    }
+
+    fn write_batch(&mut self, frames: &[common::AlignedFrame]) -> Result<()> {
+        self.0.write_batch(frames)
+    }
+
+    fn finalize(&mut self) -> Result<common::WriterStats> {
+        self.0.finalize()
+    }
+
+    fn frame_count(&self) -> usize {
+        self.0.frame_count()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self.0.as_any()
     }
 }
 

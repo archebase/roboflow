@@ -4,7 +4,6 @@
 
 //! Task trait for atomic work units.
 
-use crate::object_store::ObjectRef;
 use std::fmt;
 
 use roboflow_core::Result;
@@ -83,8 +82,9 @@ impl TaskContext {
 
 /// Result of task execution.
 pub struct TaskResult {
-    /// Output references (object IDs).
-    pub outputs: Vec<ObjectRef>,
+    /// Output paths (e.g., "s3://bucket/output/episode_001/").
+    /// These are the locations where the task wrote its outputs.
+    pub outputs: Vec<String>,
 
     /// Metrics collected during execution.
     pub metrics: TaskMetrics,

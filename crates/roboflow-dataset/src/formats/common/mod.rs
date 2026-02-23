@@ -18,8 +18,8 @@
 
 pub mod base;
 pub mod config;
+pub mod frame_buffer;
 pub mod message_utils;
-pub mod operation;
 pub mod parquet_base;
 pub mod path_schemes;
 pub mod progress;
@@ -54,6 +54,9 @@ pub use roboflow_media::image::{decode_image_to_rgb, decode_to_rgb};
 // Re-export ring buffer for streaming frame processing
 pub use ring_buffer::{FrameRingBuffer, RingBufferError, RingBufferSnapshot};
 
+// Re-export frame buffer utilities for video encoding
+pub use frame_buffer::build_video_frame_buffer;
+
 // Re-export SIMD RGB to YUV conversion from roboflow_media
 pub use roboflow_media::video::{
     ConversionStrategy, optimal_strategy, rgb_to_nv12, rgb_to_yuv420p,
@@ -70,8 +73,5 @@ pub use roboflow_media::video::{
 // Re-export unified encoder types from roboflow_media
 pub use roboflow_media::video::OutputConfig as VideoOutputConfig;
 pub use roboflow_media::video::{EncodingResult, VideoEncoder};
-
-// Re-export DatasetStats for return values, but keep WriteOperation/Sink/VecSink internal
-pub use operation::DatasetStats;
 
 pub use message_utils::{extract_image_bytes, extract_u32, is_camera_info_topic};

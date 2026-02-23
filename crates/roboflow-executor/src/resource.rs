@@ -21,6 +21,16 @@ impl fmt::Display for SlotId {
     }
 }
 
+/// Worker identifier for distributed execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WorkerId(pub u64);
+
+impl fmt::Display for WorkerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Worker({})", self.0)
+    }
+}
+
 /// Slot state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotState {
@@ -142,9 +152,6 @@ pub struct Slot {
 
 /// Task identifier (re-exported from task module).
 pub use crate::task::TaskId;
-
-/// Worker identifier (re-exported from object_store module).
-pub use crate::object_store::WorkerId;
 
 /// Slot guard that releases the slot when dropped.
 pub struct SlotGuard {

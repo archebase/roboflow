@@ -4,12 +4,13 @@ use std::path::Path;
 
 use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig};
 use roboflow_dataset::DatasetWriter;
-use roboflow_dataset::formats::alignment::StreamingConfig;
+use roboflow_dataset::formats::dataset_executor::{
+    DatasetPipelineConfig, DatasetPipelineExecutor, SequentialPolicy,
+};
 use roboflow_dataset::formats::lerobot::{
     FlushingConfig, Mapping, MappingType, StreamingConfig as LerobotStreamingConfig,
 };
 use roboflow_dataset::sources::SourceConfig;
-use roboflow_dataset::{PipelineConfig, PipelineExecutor};
 
 // Large bag files (1.6GB/1.7GB) - used for comprehensive testing
 const _LARGE_BAG_PATH_1: &str =
@@ -97,14 +98,12 @@ fn test_bag_to_lerobot_e2e() {
         .collect();
 
     // Use streaming config from LerobotConfig
-    let pipeline_streaming =
-        roboflow_dataset::formats::alignment::StreamingConfig::with_fps(config.dataset.base.fps);
-    let pipeline_config =
-        PipelineConfig::new(pipeline_streaming).with_topic_mappings(topic_mappings);
+    let pipeline_config = DatasetPipelineConfig::with_fps(config.dataset.base.fps)
+        .with_topic_mappings(topic_mappings);
 
     let writer = LerobotWriter::new_local(output_path, config.clone())
         .expect("Failed to create LeRobot writer");
-    let mut executor = PipelineExecutor::new(writer, pipeline_config);
+    let mut executor = DatasetPipelineExecutor::new(writer, pipeline_config, SequentialPolicy);
 
     let source_config = SourceConfig::bag(TEST_BAG_PATH);
     let mut source = roboflow_dataset::sources::create_source(&source_config)
@@ -647,9 +646,8 @@ fn test_two_bags_to_lerobot_two_episodes() {
         .collect();
 
     // Use streaming config from LerobotConfig
-    let pipeline_streaming = StreamingConfig::with_fps(config.dataset.base.fps);
-    let pipeline_config =
-        PipelineConfig::new(pipeline_streaming).with_topic_mappings(topic_mappings);
+    let pipeline_config = DatasetPipelineConfig::with_fps(config.dataset.base.fps)
+        .with_topic_mappings(topic_mappings);
 
     // Process each bag file as a separate episode
     for (episode_idx, bag_path) in bag_files.iter().enumerate() {
@@ -669,7 +667,8 @@ fn test_two_bags_to_lerobot_two_episodes() {
         // Create a new writer for each episode
         let writer = LerobotWriter::new_local(output_path, config.clone())
             .expect("Failed to create LeRobot writer");
-        let mut executor = PipelineExecutor::new(writer, pipeline_config.clone());
+        let mut executor =
+            DatasetPipelineExecutor::new(writer, pipeline_config.clone(), SequentialPolicy);
 
         let frame_count = rt.block_on(async {
             let mut count = 0usize;

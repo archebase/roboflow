@@ -7,7 +7,6 @@
 use std::path::Path;
 
 use roboflow_core::Result;
-use roboflow_executor::object_store::{ObjectId, ObjectRef};
 use roboflow_executor::stage::{PartitionId, Stage, StageId};
 use roboflow_executor::task::{Task, TaskContext, TaskResult, TaskStatus};
 use roboflow_storage::StorageFactory;
@@ -76,7 +75,7 @@ struct DiscoverTask {
 
 #[async_trait::async_trait]
 impl Task for DiscoverTask {
-    async fn execute(&mut self, ctx: &TaskContext) -> Result<TaskResult> {
+    async fn execute(&mut self, _ctx: &TaskContext) -> Result<TaskResult> {
         tracing::info!(
             source_prefix = %self.source_prefix,
             "Discovering input files"
@@ -137,23 +136,8 @@ impl Task for DiscoverTask {
 
         tracing::info!(file_count = files.len(), "Discovered input files");
 
-        // Create outputs - one per file
-        let outputs: Vec<ObjectRef> = files
-            .into_iter()
-            .enumerate()
-            .map(|(i, url)| {
-                let data = url.into_bytes();
-                ObjectRef::new(
-                    ObjectId::new([(i as u8).wrapping_add(1); 32]),
-                    data.len() as u64,
-                    ctx.task_id,
-                    vec![],
-                )
-            })
-            .collect();
-
         Ok(TaskResult {
-            outputs,
+            outputs: files, // Output: list of discovered file URLs
             metrics: Default::default(),
             status: TaskStatus::Success,
         })

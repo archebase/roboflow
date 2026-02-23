@@ -660,77 +660,10 @@ impl FrameAlignmentBuffer {
 
     /// Extract image dimensions from JPEG/PNG header data.
     ///
-    /// Returns Some((width, height)) if dimensions can be extracted, None otherwise.
+    /// Uses `ImageFormat::extract_dimensions()` from roboflow-media.
     fn extract_image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
-        if data.len() < 4 {
-            return None;
-        }
-
-        // Check for JPEG magic bytes (FF D8)
-        if data[0] == 0xFF && data[1] == 0xD8 {
-            return Self::extract_jpeg_dimensions(data);
-        }
-
-        // Check for PNG magic bytes (89 50 4E 47 = \x89PNG)
-        if data[0] == 0x89 && &data[1..4] == b"PNG" {
-            return Self::extract_png_dimensions(data);
-        }
-
-        None
-    }
-
-    /// Extract dimensions from JPEG header.
-    fn extract_jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
-        // JPEG format: FF C0 (SOF0 marker) followed by length, precision, height, width
-        // We need to find the SOF0 marker (FF C0 or FF C2 for progressive)
-        let mut i = 2;
-        while i < data.len().saturating_sub(8) {
-            // Find marker (FF xx)
-            if data[i] == 0xFF {
-                let marker = data[i + 1];
-
-                // SOF0 (baseline) or SOF2 (progressive) JPEG markers contain dimensions
-                if marker == 0xC0 || marker == 0xC2 {
-                    // Skip marker (FF xx), length (2 bytes), precision (1 byte)
-                    // Height and width are next (each 2 bytes, big-endian)
-                    let height = u16::from_be_bytes([data[i + 5], data[i + 6]]) as u32;
-                    let width = u16::from_be_bytes([data[i + 7], data[i + 8]]) as u32;
-                    return Some((width, height));
-                }
-
-                // Skip to next marker: skip marker bytes plus the length field
-                if marker != 0xFF && marker != 0x00 {
-                    let length = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
-                    i += 2 + length;
-                } else {
-                    i += 1;
-                }
-            } else {
-                i += 1;
-            }
-        }
-        None
-    }
-
-    /// Extract dimensions from PNG header.
-    fn extract_png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
-        // PNG IHDR chunk starts at byte 8: 4 bytes length, 4 bytes "IHDR", then width and height
-        if data.len() < 24 {
-            return None;
-        }
-
-        // Bytes 8-11: chunk length (should be 13 for IHDR)
-        // Bytes 12-15: chunk type (should be "IHDR")
-        if &data[12..16] != b"IHDR" {
-            return None;
-        }
-
-        // Bytes 16-19: width (big-endian)
-        // Bytes 20-23: height (big-endian)
-        let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
-        let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
-
-        Some((width, height))
+        let format = ImageFormat::from_magic_bytes(data);
+        format.extract_dimensions(data)
     }
 }
 

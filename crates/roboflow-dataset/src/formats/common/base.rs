@@ -375,12 +375,6 @@ impl DatasetFrame {
     }
 }
 
-/// Audio data with metadata.
-///
-/// Used for datasets that include audio observations.
-///
-/// This is a re-export of [`roboflow_media::AudioData`] for convenience.
-
 #[cfg(test)]
 mod tests {
     use super::*;

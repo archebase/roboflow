@@ -33,9 +33,10 @@ use std::path::{Path, PathBuf};
 
 use roboflow_core::{Result, RoboflowError};
 
-use crate::formats::alignment::config::StreamingConfig;
+use crate::formats::dataset_executor::{
+    DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats, SequentialPolicy,
+};
 use crate::formats::lerobot::LerobotWriter;
-use crate::formats::pipeline::{PipelineConfig, PipelineExecutor, PipelineStats};
 use crate::sources::{SourceConfig, create_source, register_builtin_sources};
 
 /// Configuration for file conversion.
@@ -111,8 +112,8 @@ pub struct ConversionStats {
     pub fps: f64,
 }
 
-impl From<PipelineStats> for ConversionStats {
-    fn from(stats: PipelineStats) -> Self {
+impl From<DatasetPipelineStats> for ConversionStats {
+    fn from(stats: DatasetPipelineStats) -> Self {
         Self {
             frames_written: stats.frames_written,
             episodes_written: stats.episodes_written,
@@ -207,11 +208,8 @@ pub fn convert_file(
         "Starting conversion"
     );
 
-    // Create the streaming config from dataset fps
-    let streaming_config = StreamingConfig::with_fps(config.dataset.fps());
-
     // Create pipeline config
-    let mut pipeline_config = PipelineConfig::new(streaming_config);
+    let mut pipeline_config = DatasetPipelineConfig::with_fps(config.dataset.fps());
     if let Some(max) = config.max_frames {
         pipeline_config = pipeline_config.with_max_frames(max);
     }
@@ -227,8 +225,8 @@ pub fn convert_file(
 
     let writer = LerobotWriter::new_local(output_dir, lerobot_config.clone())?;
 
-    // Create and run the pipeline
-    let mut executor = PipelineExecutor::new(writer, pipeline_config);
+    // Create and run the pipeline with sequential policy
+    let mut executor = DatasetPipelineExecutor::new(writer, pipeline_config, SequentialPolicy);
 
     // Process messages in batches
     let batch_size = 1000;
@@ -265,6 +263,7 @@ pub fn convert_file(
         messages = pipeline_stats.messages_processed,
         duration_sec = pipeline_stats.duration_sec,
         fps = pipeline_stats.fps,
+        policy = pipeline_stats.policy_name,
         "Conversion complete"
     );
 

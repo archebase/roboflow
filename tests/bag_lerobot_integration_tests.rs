@@ -17,8 +17,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use roboflow::{LerobotConfig, LerobotWriter};
-use roboflow_dataset::formats::alignment::StreamingConfig;
-use roboflow_dataset::{PipelineConfig, PipelineExecutor};
+use roboflow_dataset::formats::dataset_executor::{
+    DatasetPipelineConfig, DatasetPipelineExecutor, SequentialPolicy,
+};
 
 const BAG_PATH: &str = "tests/fixtures/roboflow_extracted.bag";
 const CONFIG_PATH: &str = "tests/fixtures/roboflow_extracted_lerobot.toml";
@@ -69,12 +70,11 @@ async fn test_bag_to_lerobot_conversion() {
     let writer =
         LerobotWriter::new_local(output_dir.path(), lerobot_config).expect("create LerobotWriter");
 
-    let streaming_config = StreamingConfig::with_fps(30);
-    let pipeline_config = PipelineConfig::new(streaming_config)
+    let pipeline_config = DatasetPipelineConfig::with_fps(30)
         .with_topic_mappings(topic_mappings)
         .with_max_frames(500); // Limit for CI
 
-    let mut executor = PipelineExecutor::new(writer, pipeline_config);
+    let mut executor = DatasetPipelineExecutor::new(writer, pipeline_config, SequentialPolicy);
 
     let source_config = roboflow::SourceConfig::bag(BAG_PATH);
     let mut source = create_source(&source_config).expect("create bag source");
@@ -155,12 +155,11 @@ async fn test_bag_color_images_only() {
     let writer =
         LerobotWriter::new_local(output_dir.path(), lerobot_config).expect("create writer");
 
-    let streaming_config = StreamingConfig::with_fps(30);
-    let pipeline_config = PipelineConfig::new(streaming_config)
+    let streaming_config = DatasetPipelineConfig::with_fps(30)
         .with_topic_mappings(topic_mappings)
         .with_max_frames(100);
 
-    let mut executor = PipelineExecutor::new(writer, pipeline_config);
+    let mut executor = DatasetPipelineExecutor::new(writer, streaming_config, SequentialPolicy);
 
     let source_config = roboflow::SourceConfig::bag(BAG_PATH);
     let mut source = create_source(&source_config).expect("create source");
@@ -209,12 +208,11 @@ async fn test_bag_compressed_depth_conversion() {
     let writer =
         LerobotWriter::new_local(output_dir.path(), lerobot_config).expect("create writer");
 
-    let streaming_config = StreamingConfig::with_fps(30);
-    let pipeline_config = PipelineConfig::new(streaming_config)
+    let pipeline_config = DatasetPipelineConfig::with_fps(30)
         .with_topic_mappings(topic_mappings)
         .with_max_frames(50);
 
-    let mut executor = PipelineExecutor::new(writer, pipeline_config);
+    let mut executor = DatasetPipelineExecutor::new(writer, pipeline_config, SequentialPolicy);
 
     let source_config = roboflow::SourceConfig::bag(BAG_PATH);
     let mut source = create_source(&source_config).expect("create source");
