@@ -7,6 +7,8 @@
 //! This stage processes input files and converts them to the
 //! LeRobot v2.1 dataset format (Parquet + MP4 videos).
 
+use std::sync::Arc;
+
 use roboflow_core::Result;
 use roboflow_dataset::formats::dataset_executor::{DatasetPipelineConfig, DatasetPipelineExecutor};
 use roboflow_dataset::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
@@ -17,6 +19,8 @@ use roboflow_dataset::formats::{
 use roboflow_dataset::sources::{SourceConfig, create_source};
 use roboflow_executor::stage::{PartitionId, Stage, StageId};
 use roboflow_executor::task::{Task, TaskContext, TaskResult, TaskStatus};
+
+use crate::metadata::MetadataSubmitter;
 
 /// Stage for converting bag files to LeRobot format.
 ///
@@ -29,6 +33,7 @@ pub struct ConvertStage {
     input_file: String,
     output_prefix: String,
     config_hash: String,
+    metadata_submitter: Option<Arc<MetadataSubmitter>>,
 }
 
 impl ConvertStage {
@@ -48,7 +53,17 @@ impl ConvertStage {
             input_file: input_file.into(),
             output_prefix: output_prefix.into(),
             config_hash: config_hash.into(),
+            metadata_submitter: None,
         }
+    }
+
+    /// Set the metadata submitter for distributed metadata tracking.
+    ///
+    /// When set, the convert task will submit episode metadata to the
+    /// distributed registry after conversion completes.
+    pub fn with_metadata_submitter(mut self, submitter: Arc<MetadataSubmitter>) -> Self {
+        self.metadata_submitter = Some(submitter);
+        self
     }
 }
 
@@ -75,6 +90,7 @@ impl Stage for ConvertStage {
             output_prefix: self.output_prefix.clone(),
             config_hash: self.config_hash.clone(),
             partition_id: partition,
+            metadata_submitter: self.metadata_submitter.clone(),
         })
     }
 }
@@ -86,6 +102,7 @@ struct ConvertTask {
     #[allow(dead_code)]
     config_hash: String,
     partition_id: PartitionId,
+    metadata_submitter: Option<Arc<MetadataSubmitter>>,
 }
 
 #[async_trait::async_trait]
@@ -200,6 +217,46 @@ impl Task for ConvertTask {
             policy = stats.policy_name,
             "Conversion complete"
         );
+
+        // Submit metadata to distributed registry if configured
+        if let Some(submitter) = &self.metadata_submitter {
+            // Use partition_id as episode index (worker should have allocated via EpisodeAllocator)
+            let episode_index: usize = self.partition_id.0.try_into().unwrap_or(0);
+
+            // Build feature shapes from writer state (placeholder - would need writer state access)
+            let feature_shapes = std::collections::HashMap::new();
+
+            // Build video paths (placeholder - would need actual video paths from writer)
+            let video_paths = std::collections::HashMap::new();
+
+            // Build stats from executor stats (placeholder)
+            let feature_stats = std::collections::HashMap::new();
+
+            match submitter
+                .submit_episode(
+                    episode_index,
+                    frames_written,
+                    vec![], // Tasks - would come from config
+                    feature_shapes,
+                    format!("{}/data", output_dir),
+                    video_paths,
+                    feature_stats,
+                )
+                .await
+            {
+                Ok(result) => {
+                    tracing::info!(
+                        episode_index = result.episode_index,
+                        task_count = result.task_indices.len(),
+                        "Metadata submitted successfully"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to submit metadata");
+                    // Continue even if metadata submission fails
+                }
+            }
+        }
 
         // Return output path
         let output_path = format!("{}/data", output_dir);
