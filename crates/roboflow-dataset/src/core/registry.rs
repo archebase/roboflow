@@ -7,8 +7,8 @@
 //! This module provides a registry system that allows formats to register
 //! themselves and be created dynamically based on configuration.
 
-use super::error::{PipelineError, Result};
-use super::traits::{FormatContext, FormatWriter};
+use super::traits::{FormatContext, FormatWriter, Result};
+use roboflow_core::RoboflowError;
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
@@ -134,12 +134,10 @@ impl FormatRegistry {
         config: &serde_json::Value,
         context: &FormatContext,
     ) -> Result<Box<dyn FormatWriter>> {
-        let descriptor =
-            self.formats
-                .get(format)
-                .ok_or_else(|| PipelineError::FormatNotSupported {
-                    format: format.to_string(),
-                })?;
+        let descriptor = self
+            .formats
+            .get(format)
+            .ok_or_else(|| RoboflowError::other(format!("Format not supported: {}", format)))?;
 
         // Note: Feature flag checking is done at registration time.
         // If a format is registered, it's available.
@@ -233,11 +231,7 @@ mod tests {
             description: "Test format",
             file_extension: "test",
             feature_flag: None,
-            factory: |_, _| {
-                Err(PipelineError::NotSupported {
-                    operation: "test".to_string(),
-                })
-            },
+            factory: |_, _| Err(RoboflowError::other("test operation not supported")),
         });
 
         assert!(registry.is_available("test"));
@@ -253,11 +247,7 @@ mod tests {
             description: "Test format 1",
             file_extension: "t1",
             feature_flag: None,
-            factory: |_, _| {
-                Err(PipelineError::NotSupported {
-                    operation: "test".to_string(),
-                })
-            },
+            factory: |_, _| Err(RoboflowError::other("test operation not supported")),
         });
 
         registry.register(FormatDescriptor {
@@ -265,11 +255,7 @@ mod tests {
             description: "Test format 2",
             file_extension: "t2",
             feature_flag: None,
-            factory: |_, _| {
-                Err(PipelineError::NotSupported {
-                    operation: "test".to_string(),
-                })
-            },
+            factory: |_, _| Err(RoboflowError::other("test operation not supported")),
         });
 
         let list = registry.list();

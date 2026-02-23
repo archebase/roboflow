@@ -64,7 +64,6 @@
 
 pub mod conversion;
 pub mod core;
-pub mod executor;
 pub mod formats;
 pub mod sources;
 

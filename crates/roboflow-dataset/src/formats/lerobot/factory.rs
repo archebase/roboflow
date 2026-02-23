@@ -138,6 +138,80 @@ fn create_local_writer(config: &LerobotWriterConfig) -> Result<LerobotWriterResu
     })
 }
 
+// ============================================================================
+// FormatFactory Implementation for Registry
+// ============================================================================
+
+use crate::core::traits::{FormatContext, FormatFactory, FormatWriter};
+
+/// Factory for creating LeRobot writers via the registry system.
+///
+/// This implements the [`FormatFactory`] trait, allowing LeRobot format
+/// to be registered and created dynamically.
+pub struct LerobotFactory;
+
+impl FormatFactory for LerobotFactory {
+    fn format_name(&self) -> &'static str {
+        "lerobot"
+    }
+
+    fn description(&self) -> &'static str {
+        "LeRobot v2.1 dataset format - Hugging Face's robotics learning format"
+    }
+
+    fn create_writer(
+        &self,
+        config: &serde_json::Value,
+        context: &FormatContext,
+    ) -> roboflow_core::Result<Box<dyn FormatWriter>> {
+        // Deserialize LerobotConfig from JSON
+        let lerobot_config: LerobotConfig =
+            serde_json::from_value(config.clone()).map_err(|e| {
+                roboflow_core::RoboflowError::other(format!(
+                    "Failed to parse LeRobot config: {}",
+                    e
+                ))
+            })?;
+
+        // Create the writer config
+        let writer_config = LerobotWriterConfig::new(&context.output_url, lerobot_config);
+
+        // Create the writer using the existing factory function
+        let result = create_lerobot_writer(&writer_config).map_err(|e| {
+            roboflow_core::RoboflowError::other(format!("Failed to create LeRobot writer: {}", e))
+        })?;
+
+        Ok(Box::new(result.writer))
+    }
+
+    fn is_available(&self) -> bool {
+        // LeRobot is always available (no optional dependencies)
+        true
+    }
+}
+
+/// Get the LeRobot factory instance for registration.
+pub fn lerobot_factory() -> &'static LerobotFactory {
+    static FACTORY: LerobotFactory = LerobotFactory;
+    &FACTORY
+}
+
+/// Register the LeRobot format with the global registry.
+///
+/// This should be called during crate initialization.
+pub fn register_lerobot_format() {
+    crate::core::registry::register_format(crate::core::registry::FormatDescriptor {
+        name: "lerobot",
+        description: "LeRobot v2.1 dataset format - Hugging Face's robotics learning format",
+        file_extension: "parquet",
+        feature_flag: None,
+        factory: |config, context| {
+            let factory = LerobotFactory;
+            factory.create_writer(config, context)
+        },
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,5 +261,32 @@ mod tests {
             LerobotWriterConfig::new(temp_dir.to_string_lossy().to_string(), test_config());
         let result = create_lerobot_writer(&config);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_lerobot_factory() {
+        let factory = LerobotFactory;
+        assert_eq!(factory.format_name(), "lerobot");
+        assert!(factory.is_available());
+        assert!(factory.description().contains("LeRobot"));
+    }
+
+    #[test]
+    fn test_factory_create_writer() {
+        let factory = LerobotFactory;
+        let temp_dir = std::env::temp_dir().join(format!("test_factory_{}", std::process::id()));
+
+        let config = test_config();
+        let json_config = serde_json::to_value(&config).unwrap();
+
+        let context = FormatContext {
+            output_url: temp_dir.to_string_lossy().to_string(),
+            storage: None,
+            base_path: temp_dir.clone(),
+            num_workers: 1,
+        };
+
+        let writer = factory.create_writer(&json_config, &context);
+        assert!(writer.is_ok());
     }
 }
