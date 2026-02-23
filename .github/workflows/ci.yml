@@ -145,31 +145,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       RUSTFLAGS: -C linker=cc
-      TIKV_PD_ENDPOINTS: pd:2379
-    services:
-      pd:
-        image: pingcap/pd:v8.5.5
-        ports:
-          - 2379:2379
-        env:
-          PD_NAME: pd1
-          PD_DATA_DIR: /data
-          PD_CLIENT_URLS: http://0.0.0.0:2379
-          PD_PEER_URLS: http://0.0.0.0:2380
-          PD_ADVERTISE_CLIENT_URLS: http://pd:2379
-          PD_ADVERTISE_PEER_URLS: http://pd:2380
-          PD_INITIAL_CLUSTER: pd1=http://pd:2380
-
-      tikv:
-        image: pingcap/tikv:v8.5.5
-        ports:
-          - 20160:20160
-        env:
-          TIKV_ADDR: 0.0.0.0:20160
-          TIKV_ADVERTISE_ADDR: tikv:20160
-          TIKV_DATA_DIR: /data
-          TIKV_PD: http://pd:2379
-          TIKV_STATUS_ADDR: 0.0.0.0:20180
+      TIKV_PD_ENDPOINTS: 127.0.0.1:2379
     steps:
       - uses: actions/checkout@v4
         with:
@@ -199,20 +175,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm curl
 
+      - name: Add host.docker.internal to /etc/hosts
+        run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
+
+      - name: Start TiKV services
+        run: docker compose up -d pd tikv
+
       - name: Wait for TiKV to be ready
         run: |
           echo "Waiting for TiKV cluster to be ready..."
           for i in {1..30}; do
-            if curl -sf http://localhost:2379/pd/api/v1/health > /dev/null 2>&1; then
+            if curl -sf http://localhost:2379/health > /dev/null 2>&1; then
               echo "PD is healthy"
               break
             fi
             echo "Waiting for PD... ($i/30)"
             sleep 2
           done
-          if ! curl -sf http://localhost:2379/pd/api/v1/health > /dev/null 2>&1; then
+          if ! curl -sf http://localhost:2379/health > /dev/null 2>&1; then
             echo "ERROR: PD failed to become healthy"
-            curl -v http://localhost:2379/pd/api/v1/health || true
+            docker compose logs pd || true
             exit 1
           fi
           for i in {1..30}; do
@@ -225,6 +207,7 @@ jobs:
           done
           if ! curl -sf http://localhost:20180/status > /dev/null 2>&1; then
             echo "ERROR: TiKV failed to become healthy"
+            docker compose logs tikv || true
             exit 1
           fi
 
@@ -273,6 +256,10 @@ jobs:
           files: ./lcov.info
           flags: rust
           name: codecov-umbrella
+
+      - name: Cleanup TiKV services
+        if: always()
+        run: docker compose down -v
 
   security:
     name: Security Audit
