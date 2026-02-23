@@ -27,7 +27,7 @@ services:
       - --data-dir=/data
       - --client-urls=http://0.0.0.0:2379
       - --peer-urls=http://0.0.0.0:2380
-      - --advertise-client-urls=http://host.docker.internal:2379
+      - --advertise-client-urls=http://pd:2379
       - --advertise-peer-urls=http://pd:2380
       - --initial-cluster=pd1=http://pd:2380
       - --log-level=info
@@ -51,7 +51,7 @@ services:
       - "20180:20180"  # TiKV status API
     command:
       - --addr=0.0.0.0:20160
-      - --advertise-addr=host.docker.internal:20160
+      - --advertise-addr=tikv:20160
       - --data-dir=/data
       - --pd=http://pd:2379
       - --log-level=info
