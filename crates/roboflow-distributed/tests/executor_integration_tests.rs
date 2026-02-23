@@ -12,7 +12,7 @@ use std::sync::Arc;
 use roboflow_distributed::{
     LeRobotExecutor, WorkFile, WorkUnit,
     stages::{ConvertStage, DiscoverStage, MergeStage},
-    worker::{JobRegistry, ProcessingResult},
+    worker::JobRegistry,
 };
 use roboflow_executor::{PipelineBuilder, StageExecutor, StageId};
 

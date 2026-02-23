@@ -344,4 +344,124 @@ mod tests {
         assert_eq!(files.video_files.len(), 1);
         assert_eq!(files.metadata_files.len(), 1);
     }
+
+    #[test]
+    fn test_conversion_config_new() {
+        let dataset_config = DatasetConfig::new(DatasetFormat::Lerobot, "my_dataset", 30, None);
+        let config = ConversionConfig::new(dataset_config);
+
+        assert!(config.output_prefix.is_none());
+        assert!(config.max_frames.is_none());
+        assert!(config.topic_mappings.is_empty());
+    }
+
+    #[test]
+    fn test_conversion_result_debug() {
+        let result = ConversionResult {
+            output_dir: PathBuf::from("/output"),
+            stats: ConversionStats {
+                frames_written: 100,
+                episodes_written: 1,
+                messages_processed: 1000,
+                duration_sec: 10.0,
+                fps: 100.0,
+            },
+            output_files: OutputFiles::default(),
+        };
+
+        let debug_str = format!("{:?}", result);
+        assert!(debug_str.contains("frames_written: 100"));
+    }
+
+    #[test]
+    fn test_conversion_stats_from_pipeline_stats() {
+        let pipeline_stats = DatasetPipelineStats {
+            frames_written: 500,
+            episodes_written: 5,
+            messages_processed: 5000,
+            duration_sec: 50.0,
+            fps: 100.0,
+            policy_name: "SequentialPolicy",
+        };
+
+        let stats = ConversionStats::from(pipeline_stats);
+
+        assert_eq!(stats.frames_written, 500);
+        assert_eq!(stats.episodes_written, 5);
+        assert_eq!(stats.messages_processed, 5000);
+        assert_eq!(stats.duration_sec, 50.0);
+        assert_eq!(stats.fps, 100.0);
+    }
+
+    #[test]
+    fn test_output_files_default() {
+        let files = OutputFiles::default();
+
+        assert!(files.parquet_files.is_empty());
+        assert!(files.video_files.is_empty());
+        assert!(files.metadata_files.is_empty());
+    }
+
+    #[test]
+    fn test_collect_output_files_mkv() {
+        let dir = tempdir().unwrap();
+
+        // Create MKV file
+        std::fs::write(dir.path().join("video.mkv"), "mkv").unwrap();
+
+        let files = collect_output_files(dir.path()).unwrap();
+
+        assert_eq!(files.video_files.len(), 1);
+    }
+
+    #[test]
+    fn test_collect_output_files_empty_dir() {
+        let dir = tempdir().unwrap();
+
+        let files = collect_output_files(dir.path()).unwrap();
+
+        assert!(files.parquet_files.is_empty());
+        assert!(files.video_files.is_empty());
+        assert!(files.metadata_files.is_empty());
+    }
+
+    #[test]
+    fn test_collect_output_files_nested() {
+        let dir = tempdir().unwrap();
+
+        // Create nested structure
+        std::fs::create_dir_all(dir.path().join("a/b/c")).unwrap();
+        std::fs::write(dir.path().join("a/data.parquet"), "p").unwrap();
+        std::fs::write(dir.path().join("a/b/video.mp4"), "v").unwrap();
+        std::fs::write(dir.path().join("a/b/c/meta.json"), "m").unwrap();
+
+        let files = collect_output_files(dir.path()).unwrap();
+
+        assert_eq!(files.parquet_files.len(), 1);
+        assert_eq!(files.video_files.len(), 1);
+        assert_eq!(files.metadata_files.len(), 1);
+    }
+
+    #[test]
+    fn test_conversion_config_multiple_topic_mappings() {
+        let config =
+            ConversionConfig::new(DatasetConfig::new(DatasetFormat::Lerobot, "test", 30, None))
+                .with_topic_mapping("/camera/left", "observation.images.left")
+                .with_topic_mapping("/camera/right", "observation.images.right")
+                .with_topic_mapping("/joint_states", "observation.state");
+
+        assert_eq!(config.topic_mappings.len(), 3);
+        assert_eq!(
+            config.topic_mappings.get("/camera/left"),
+            Some(&"observation.images.left".to_string())
+        );
+        assert_eq!(
+            config.topic_mappings.get("/camera/right"),
+            Some(&"observation.images.right".to_string())
+        );
+        assert_eq!(
+            config.topic_mappings.get("/joint_states"),
+            Some(&"observation.state".to_string())
+        );
+    }
 }
