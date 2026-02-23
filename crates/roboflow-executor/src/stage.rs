@@ -79,14 +79,6 @@ pub trait Stage: Send + Sync {
     }
 }
 
-/// Marker trait for format-specific stages.
-pub trait FormatStage<F: crate::format::DatasetFormat>: Stage {
-    /// Get the format name.
-    fn format_name(&self) -> &'static str {
-        F::NAME
-    }
-}
-
 /// Partition identifier within a stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PartitionId(pub u64);

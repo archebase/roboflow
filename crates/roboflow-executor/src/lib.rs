@@ -43,11 +43,13 @@
 //! let par_policy = ParallelPolicy::new(4);
 //! let results = par_policy.execute_batch(items, |x| process(x));
 //! ```
+//!
+//! # Data Storage
+//!
+//! Data is stored via `roboflow-storage::Storage` (S3, OSS, local).
+//! Tasks return output paths in `TaskResult::outputs`.
 
 pub mod executor;
-pub mod format;
-pub mod lineage;
-pub mod object_store;
 pub mod pipeline;
 pub mod pipeline_executor;
 pub mod policy;
@@ -58,16 +60,6 @@ pub mod task;
 
 // Core types
 pub use executor::{ExecuteResult, StageExecutor};
-pub use format::{
-    ConfigError, DatasetFormat, DatasetMetadata, EpisodeMetadata, EpisodeWriter, Feature,
-    FormatConfig, Frame, LeRobotV21, MetadataError, MetadataGenerator, Observation, RLDS,
-    WriterError,
-};
-pub use lineage::{Lineage, LineageError, MemoryLineage, RecomputePlan, TaskLineage};
-pub use object_store::{
-    LocalObjectStore, MemoryObjectStore, ObjectId, ObjectRef, ObjectStore, ObjectStoreError,
-    WorkerId,
-};
 pub use pipeline::{Pipeline, PipelineBuilder, PipelineError};
 pub use pipeline_executor::{
     EpisodeStrategy, FrameForProcessing, FrameProcessor, PipelineExecutor, PipelineExecutorConfig,
@@ -78,8 +70,8 @@ pub use resource::{
     ResourceCapacity, ResourceRequest, Slot, SlotGuard, SlotId, SlotPool, SlotState,
 };
 pub use scheduler::StageScheduler;
-pub use stage::{FormatStage, PartitionId, Stage, StageId};
-pub use task::{Task, TaskContext, TaskId, TaskMetrics, TaskResult, TaskStatus};
+pub use stage::{PartitionId, Stage, StageId};
+pub use task::{Task, TaskContext, TaskId, TaskMetrics, TaskOutput, TaskResult, TaskStatus};
 
 /// Re-export core types
 pub use roboflow_core::Result;

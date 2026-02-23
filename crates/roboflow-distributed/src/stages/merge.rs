@@ -7,7 +7,6 @@
 use std::path::Path;
 
 use roboflow_core::Result;
-use roboflow_executor::object_store::{ObjectId, ObjectRef};
 use roboflow_executor::stage::{PartitionId, Stage, StageId};
 use roboflow_executor::task::{Task, TaskContext, TaskMetrics, TaskResult, TaskStatus};
 
@@ -151,10 +150,8 @@ impl Task for MergeTask {
 
         tracing::info!(episode_count = episode_count, "Merge complete");
 
-        let obj_ref = ObjectRef::new(ObjectId::new([3u8; 32]), 2048, ctx.task_id, vec![]);
-
         Ok(TaskResult {
-            outputs: vec![obj_ref],
+            outputs: vec![self.output_path.clone()], // Return final output path
             metrics: TaskMetrics {
                 duration_secs: 0.0,
                 cpu_secs: 0.0,

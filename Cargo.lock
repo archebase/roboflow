@@ -4215,15 +4215,11 @@ name = "roboflow-executor"
 version = "0.2.0"
 dependencies = [
  "async-trait",
- "chrono",
  "futures",
- "hex",
  "num_cpus",
  "rayon",
  "roboflow-core",
  "serde",
- "serde_json",
- "sha2",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",

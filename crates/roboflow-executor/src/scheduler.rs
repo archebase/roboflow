@@ -7,49 +7,34 @@
 //! The StageScheduler orchestrates execution of a DAG of stages. It:
 //! 1. Determines which stages are ready to execute (dependencies satisfied)
 //! 2. Schedules tasks within each stage to available slots
-//! 3. Handles stage-level retries and fault recovery
+//! 3. On failure, the entire pipeline is retried (no lineage tracking needed)
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use roboflow_core::Result;
 
-use crate::lineage::Lineage;
-use crate::object_store::ObjectRef;
 use crate::pipeline::Pipeline;
 use crate::resource::{ResourceRequest, SlotPool};
 use crate::stage::{PartitionId, Stage, StageId};
 use crate::task::{Task, TaskContext, TaskId, TaskResult};
 
 /// Stage scheduler orchestrates stage execution.
-#[allow(dead_code)]
 pub struct StageScheduler {
-    /// Object store for intermediate data (WIP: not yet used).
-    object_store: Arc<dyn crate::object_store::ObjectStore>,
-    /// Lineage tracker for fault tolerance (WIP: not yet used).
-    lineage: Arc<dyn Lineage>,
     /// Slot pool for resource management.
     slot_pool: Arc<SlotPool>,
 }
 
 impl StageScheduler {
     /// Create a new stage scheduler.
-    pub fn new(
-        object_store: Arc<dyn crate::object_store::ObjectStore>,
-        lineage: Arc<dyn Lineage>,
-        slot_pool: Arc<SlotPool>,
-    ) -> Self {
-        Self {
-            object_store,
-            lineage,
-            slot_pool,
-        }
+    pub fn new(slot_pool: Arc<SlotPool>) -> Self {
+        Self { slot_pool }
     }
 
     /// Execute a pipeline to completion.
     pub async fn execute_pipeline(&self, pipeline: &Pipeline) -> Result<PipelineResult> {
         let mut completed_stages = HashSet::new();
-        let mut stage_outputs: HashMap<StageId, Vec<ObjectRef>> = HashMap::new();
+        let mut stage_outputs: HashMap<StageId, Vec<String>> = HashMap::new();
 
         loop {
             let ready_stages = pipeline.ready_stages(&completed_stages);
@@ -68,7 +53,7 @@ impl StageScheduler {
         }
 
         // Collect final outputs from terminal stages
-        let final_outputs: Vec<ObjectRef> = pipeline
+        let final_outputs: Vec<String> = pipeline
             .stages()
             .keys()
             .filter(|id| {
@@ -91,8 +76,8 @@ impl StageScheduler {
     async fn execute_stage(
         &self,
         stage: &Arc<dyn Stage>,
-        _previous_outputs: &HashMap<StageId, Vec<ObjectRef>>,
-    ) -> Result<Vec<ObjectRef>> {
+        _previous_outputs: &HashMap<StageId, Vec<String>>,
+    ) -> Result<Vec<String>> {
         let partition_count = stage.partition_count();
         let mut tasks: Vec<Box<dyn Task>> = Vec::with_capacity(partition_count);
 
@@ -134,8 +119,8 @@ impl StageScheduler {
             results.push(result);
         }
 
-        // Collect outputs
-        let outputs: Vec<ObjectRef> = results.into_iter().flat_map(|r| r.outputs).collect();
+        // Collect output paths
+        let outputs: Vec<String> = results.into_iter().flat_map(|r| r.outputs).collect();
 
         Ok(outputs)
     }
@@ -144,8 +129,8 @@ impl StageScheduler {
 /// Result of pipeline execution.
 #[derive(Debug)]
 pub struct PipelineResult {
-    /// Outputs from all stages.
-    pub stage_outputs: HashMap<StageId, Vec<ObjectRef>>,
-    /// Final outputs from terminal stages.
-    pub final_outputs: Vec<ObjectRef>,
+    /// Outputs from all stages (output paths).
+    pub stage_outputs: HashMap<StageId, Vec<String>>,
+    /// Final outputs from terminal stages (output paths).
+    pub final_outputs: Vec<String>,
 }

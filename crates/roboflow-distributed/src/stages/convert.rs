@@ -15,7 +15,6 @@ use roboflow_dataset::formats::{
     lerobot::{DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig},
 };
 use roboflow_dataset::sources::{SourceConfig, create_source};
-use roboflow_executor::object_store::{ObjectId, ObjectRef};
 use roboflow_executor::stage::{PartitionId, Stage, StageId};
 use roboflow_executor::task::{Task, TaskContext, TaskResult, TaskStatus};
 
@@ -202,11 +201,11 @@ impl Task for ConvertTask {
             "Conversion complete"
         );
 
-        let _output_path = format!("{}/data", output_dir);
-        let obj_ref = ObjectRef::new(ObjectId::new([2u8; 32]), 1024, ctx.task_id, vec![]);
+        // Return output path
+        let output_path = format!("{}/data", output_dir);
 
         Ok(TaskResult {
-            outputs: vec![obj_ref],
+            outputs: vec![output_path],
             metrics: roboflow_executor::task::TaskMetrics {
                 duration_secs: stats.duration_sec,
                 cpu_secs: 0.0,
