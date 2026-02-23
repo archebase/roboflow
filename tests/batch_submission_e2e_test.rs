@@ -42,7 +42,7 @@ use roboflow_dataset::{
 use roboflow_distributed::{
     batch::{
         BatchController, BatchIndexKeys, BatchKeys, BatchPhase, BatchSpec, BatchStatus, WorkFile,
-        WorkUnit, WorkUnitKeys,
+        WorkUnit, WorkUnitKeys, batch_id_from_spec,
     },
     tikv::client::TikvClient,
 };
@@ -332,11 +332,14 @@ async fn test_batch_submission_with_multiple_bag_files() {
         format!("s3://{}/{}/output", config.output_bucket, test_prefix),
     );
 
+    // Get the canonical batch_id from spec (namespace:name format)
+    let canonical_batch_id = batch_id_from_spec(&spec);
+
     // Store batch spec and status in TiKV
-    let spec_key = BatchKeys::spec(&batch_id);
+    let spec_key = BatchKeys::spec(&canonical_batch_id);
     let spec_data = serde_yaml_ng::to_string(&spec).unwrap().into_bytes();
     let status = BatchStatus::new();
-    let status_key = BatchKeys::status(&batch_id);
+    let status_key = BatchKeys::status(&canonical_batch_id);
     let status_data = bincode::serialize(&status).unwrap();
 
     tikv.batch_put(vec![
@@ -346,7 +349,7 @@ async fn test_batch_submission_with_multiple_bag_files() {
     .await
     .unwrap();
 
-    println!("   ✓ Batch submitted: {}", batch_id);
+    println!("   ✓ Batch submitted: {}", canonical_batch_id);
 
     // Create work units for each bag file
     println!("\n3. Creating work units...");
@@ -354,13 +357,13 @@ async fn test_batch_submission_with_multiple_bag_files() {
         let unit_id = format!("unit-{}", i);
         let work_unit = WorkUnit::with_id(
             unit_id.clone(),
-            batch_id.clone(),
+            canonical_batch_id.clone(),
             vec![WorkFile::new(url.clone(), 1024)],
             format!("s3://{}/{}/output", config.output_bucket, test_prefix),
             "config-hash".to_string(),
         );
 
-        let unit_key = WorkUnitKeys::unit(&batch_id, &unit_id);
+        let unit_key = WorkUnitKeys::unit(&canonical_batch_id, &unit_id);
         let unit_data = bincode::serialize(&work_unit).unwrap();
 
         tikv.put(unit_key, unit_data).await.unwrap();
@@ -377,7 +380,7 @@ async fn test_batch_submission_with_multiple_bag_files() {
         .unwrap();
 
     // Add to Running phase index
-    let phase_key = BatchIndexKeys::phase(BatchPhase::Running, &batch_id);
+    let phase_key = BatchIndexKeys::phase(BatchPhase::Running, &canonical_batch_id);
     tikv.put(phase_key, vec![]).await.unwrap();
 
     println!(
@@ -389,7 +392,7 @@ async fn test_batch_submission_with_multiple_bag_files() {
     println!("\n4. Processing work units...");
     for i in 0..uploaded_urls.len() {
         let unit_id = format!("unit-{}", i);
-        let unit_key = WorkUnitKeys::unit(&batch_id, &unit_id);
+        let unit_key = WorkUnitKeys::unit(&canonical_batch_id, &unit_id);
 
         let mut work_unit: WorkUnit =
             bincode::deserialize(&tikv.get(unit_key.clone()).await.unwrap().unwrap()).unwrap();
@@ -424,14 +427,20 @@ async fn test_batch_submission_with_multiple_bag_files() {
 
     // Cleanup
     println!("\n6. Cleaning up...");
-    let _ = tikv.delete(BatchKeys::spec(&batch_id)).await;
-    let _ = tikv.delete(BatchKeys::status(&batch_id)).await;
+    let _ = tikv.delete(BatchKeys::spec(&canonical_batch_id)).await;
+    let _ = tikv.delete(BatchKeys::status(&canonical_batch_id)).await;
     let _ = tikv
-        .delete(BatchIndexKeys::phase(BatchPhase::Running, &batch_id))
+        .delete(BatchIndexKeys::phase(
+            BatchPhase::Running,
+            &canonical_batch_id,
+        ))
         .await;
     for i in 0..uploaded_urls.len() {
         let _ = tikv
-            .delete(WorkUnitKeys::unit(&batch_id, &format!("unit-{}", i)))
+            .delete(WorkUnitKeys::unit(
+                &canonical_batch_id,
+                &format!("unit-{}", i),
+            ))
             .await;
     }
 
