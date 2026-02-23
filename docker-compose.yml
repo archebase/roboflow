@@ -69,6 +69,10 @@ services:
       start_period: 60s
     networks:
       - roboflow-network
+    ulimits:
+      nofile:
+        soft: 131072
+        hard: 131072
     deploy:
       resources:
         limits:
