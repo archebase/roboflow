@@ -135,7 +135,8 @@ pub use lerobot_executor::LeRobotExecutor;
 pub use metadata::{
     DatasetMetadataRegistry, EpisodeInfo, EpisodeStatsEntry, FeatureInfo, FeatureShape,
     FeatureSpec, GlobalMetadataAssembler, LerobotInfo, MetadataAssemblyError, MetadataKeys,
-    PartialEpisodeMetadata, TaskEntry, TaskInfo, VideoFeatureInfo, VideoInfo,
+    MetadataSubmitter, PartialEpisodeMetadata, SubmissionResult, TaskEntry, TaskInfo,
+    VideoFeatureInfo, VideoInfo, extract_feature_shapes,
 };
 
 // =============================================================================

@@ -43,12 +43,14 @@
 mod assembler;
 mod keys;
 mod registry;
+mod submitter;
 mod types;
 
 // Public exports
 pub use assembler::{GlobalMetadataAssembler, MetadataAssemblyError};
 pub use keys::MetadataKeys;
 pub use registry::DatasetMetadataRegistry;
+pub use submitter::{MetadataSubmitter, SubmissionResult, extract_feature_shapes};
 pub use types::{
     EpisodeInfo, EpisodeStatsEntry, FeatureInfo, FeatureShape, FeatureSpec, LerobotInfo,
     PartialEpisodeMetadata, TaskEntry, TaskInfo, VideoFeatureInfo, VideoInfo,
