@@ -202,24 +202,24 @@ jobs:
       - name: Wait for TiKV to be ready
         run: |
           echo "Waiting for TiKV cluster to be ready..."
-          for i in {1..30}; do
+          for i in {1..60}; do
             if curl -sf http://localhost:2379/health > /dev/null 2>&1; then
               echo "PD is healthy"
               break
             fi
-            echo "Waiting for PD... ($i/30)"
+            echo "Waiting for PD... ($i/60)"
             sleep 2
           done
           if ! curl -sf http://localhost:2379/health > /dev/null 2>&1; then
             echo "ERROR: PD failed to become healthy"
             exit 1
           fi
-          for i in {1..30}; do
+          for i in {1..60}; do
             if curl -sf http://localhost:20180/status > /dev/null 2>&1; then
               echo "TiKV is healthy"
               break
             fi
-            echo "Waiting for TiKV... ($i/30)"
+            echo "Waiting for TiKV... ($i/60)"
             sleep 2
           done
           if ! curl -sf http://localhost:20180/status > /dev/null 2>&1; then
