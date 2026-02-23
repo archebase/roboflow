@@ -246,17 +246,27 @@ async fn test_e2e_lerobot_dataset_to_minio() {
 
     println!("✓ Uploaded {} files to MinIO", uploaded_count);
 
-    // Verify files exist in MinIO
-    let object_store = output_storage.object_store();
-    let list_result = object_store
-        .list_with_delimiter(Some(&object_store::path::Path::from(test_prefix.clone())))
-        .await
-        .expect("Failed to list objects");
+    // Verify files exist in MinIO by checking each uploaded file
+    println!("Verifying upload by checking individual files...");
+    let mut verified_count = 0;
 
-    println!(
-        "Verifying upload: found {} objects in MinIO",
-        list_result.objects.len()
-    );
+    // Check that the key files exist
+    let expected_files = vec![
+        format!("{}/meta/info.json", test_prefix),
+        format!("{}/meta/episodes.jsonl", test_prefix),
+    ];
+
+    for file_path in &expected_files {
+        match output_storage.exists(Path::new(file_path)).await {
+            true => {
+                println!("  ✓ Found: {}", file_path);
+                verified_count += 1;
+            }
+            false => {
+                println!("  ✗ Missing: {}", file_path);
+            }
+        }
+    }
 
     // Check for expected files
     let data_dir = temp_dir.path().join("data");
@@ -272,8 +282,8 @@ async fn test_e2e_lerobot_dataset_to_minio() {
     }
 
     assert!(
-        !list_result.objects.is_empty(),
-        "Should have uploaded files to MinIO"
+        verified_count > 0,
+        "Should have uploaded and verified files in MinIO"
     );
 
     println!("✓ LeRobot dataset to MinIO test passed");
