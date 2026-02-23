@@ -161,9 +161,8 @@ async fn test_e2e_batch_submission_and_work_units() {
     }
 
     // Verify work units were created by scanning
-    let work_unit_prefix = format!("/roboflow/v1/batch/{}/workunit/", batch_id);
-    let stored_units: Vec<(Vec<u8>, Vec<u8>)> =
-        tikv.scan(work_unit_prefix.into_bytes(), 100).await.unwrap();
+    let work_unit_prefix = WorkUnitKeys::batch_prefix(&batch_id);
+    let stored_units: Vec<(Vec<u8>, Vec<u8>)> = tikv.scan(work_unit_prefix, 100).await.unwrap();
 
     assert_eq!(
         stored_units.len(),
