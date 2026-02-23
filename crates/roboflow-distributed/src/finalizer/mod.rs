@@ -11,14 +11,16 @@ pub mod config;
 
 use super::batch::{BatchController, BatchKeys, BatchPhase, BatchSpec, BatchStatus, BatchSummary};
 use super::merge::MergeCoordinator;
+use super::metadata::{DatasetMetadataRegistry, GlobalMetadataAssembler};
 use super::tikv::TikvClient;
 use crate::stats::StatsCollector;
 use crate::tikv::TikvError;
+use roboflow_storage::Storage;
 use std::sync::Arc;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
-pub use config::FinalizerConfig;
+pub use config::{DatasetMetadataConfig, FinalizerConfig};
 
 /// Finalizer for completing merged batches.
 ///
@@ -42,6 +44,9 @@ pub struct Finalizer {
 
     /// Optional stats collector for aggregating episode statistics.
     stats_collector: Option<Arc<dyn StatsCollector>>,
+
+    /// Optional storage backend for writing metadata files.
+    storage: Option<Arc<dyn Storage>>,
 }
 
 impl Finalizer {
@@ -60,6 +65,7 @@ impl Finalizer {
             merge_coordinator,
             config,
             stats_collector: None,
+            storage: None,
         })
     }
 
@@ -79,6 +85,48 @@ impl Finalizer {
             merge_coordinator,
             config,
             stats_collector: Some(stats_collector),
+            storage: None,
+        })
+    }
+
+    /// Create a finalizer with storage and metadata assembly enabled.
+    pub fn with_storage(
+        pod_id: String,
+        tikv: Arc<TikvClient>,
+        batch_controller: Arc<BatchController>,
+        merge_coordinator: Arc<MergeCoordinator>,
+        config: FinalizerConfig,
+        storage: Arc<dyn Storage>,
+    ) -> Result<Self, TikvError> {
+        Ok(Self {
+            pod_id,
+            tikv,
+            batch_controller,
+            merge_coordinator,
+            config,
+            stats_collector: None,
+            storage: Some(storage),
+        })
+    }
+
+    /// Create a finalizer with all optional features enabled.
+    pub fn with_all(
+        pod_id: String,
+        tikv: Arc<TikvClient>,
+        batch_controller: Arc<BatchController>,
+        merge_coordinator: Arc<MergeCoordinator>,
+        config: FinalizerConfig,
+        stats_collector: Arc<dyn StatsCollector>,
+        storage: Arc<dyn Storage>,
+    ) -> Result<Self, TikvError> {
+        Ok(Self {
+            pod_id,
+            tikv,
+            batch_controller,
+            merge_coordinator,
+            config,
+            stats_collector: Some(stats_collector),
+            storage: Some(storage),
         })
     }
 
@@ -221,37 +269,50 @@ impl Finalizer {
 
         let output_path = &spec.spec.output;
 
-        // Aggregate episode stats if collector is configured
-        if let Some(collector) = &self.stats_collector {
-            match collector.get_batch_stats(&batch.id).await {
-                Ok(Some(summary)) => {
-                    info!(
-                        pod_id = %self.pod_id,
-                        batch_id = %batch.id,
-                        total_episodes = summary.total_episodes,
-                        total_frames = summary.total_frames,
-                        feature_count = summary.global_stats.len(),
-                        "Aggregated batch statistics"
-                    );
-                    // TODO: Write aggregated stats to LeRobot metadata files
-                    // This would update info.json with global stats
+        // Assemble and write LeRobot metadata files if storage is configured
+        if let Some(storage) = &self.storage {
+            if let Some(dataset_config) = &self.config.dataset_config {
+                info!(
+                    pod_id = %self.pod_id,
+                    batch_id = %batch.id,
+                    "Assembling LeRobot metadata"
+                );
+
+                let registry = DatasetMetadataRegistry::new(self.tikv.clone(), &batch.id);
+                let assembler =
+                    GlobalMetadataAssembler::new(registry, storage.clone(), &batch.id, output_path);
+
+                match assembler
+                    .assemble_and_write(
+                        &dataset_config.name,
+                        dataset_config.robot_type.clone(),
+                        dataset_config.fps,
+                    )
+                    .await
+                {
+                    Ok(()) => {
+                        info!(
+                            pod_id = %self.pod_id,
+                            batch_id = %batch.id,
+                            "LeRobot metadata assembly complete"
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            pod_id = %self.pod_id,
+                            batch_id = %batch.id,
+                            error = %e,
+                            "Failed to assemble LeRobot metadata"
+                        );
+                        // Continue with finalization even if metadata assembly fails
+                    }
                 }
-                Ok(None) => {
-                    warn!(
-                        pod_id = %self.pod_id,
-                        batch_id = %batch.id,
-                        "No episode stats found for batch"
-                    );
-                }
-                Err(e) => {
-                    error!(
-                        pod_id = %self.pod_id,
-                        batch_id = %batch.id,
-                        error = %e,
-                        "Failed to get batch stats"
-                    );
-                    // Continue with finalization even if stats fail
-                }
+            } else {
+                warn!(
+                    pod_id = %self.pod_id,
+                    batch_id = %batch.id,
+                    "Storage configured but dataset_config missing, skipping metadata assembly"
+                );
             }
         }
 
