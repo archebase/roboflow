@@ -5,6 +5,8 @@
 //! MinIO integration tests for S3-compatible object storage.
 //!
 //! These tests validate S3/OSS functionality using a MinIO instance.
+//! Tests will FAIL if MinIO is not available.
+//!
 //! To run these tests, start MinIO using docker-compose:
 //!
 //! ```bash
@@ -13,7 +15,7 @@
 //!
 //! Then run the tests with:
 //! ```bash
-//! cargo test --test minio_integration_tests -- --ignored
+//! cargo test --test minio_integration_tests
 //! ```
 //!
 //! # Environment Variables

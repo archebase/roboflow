@@ -12,15 +12,16 @@
 //!
 //! # Prerequisites
 //!
-//! 1. Start infrastructure: `make dev-up`
+//! 1. Start infrastructure: `docker compose up -d` (MinIO, TiKV, PD)
 //! 2. Add to /etc/hosts: `127.0.0.1 pd`
 //!    (Required because PD advertises its Docker DNS name to clients)
+//!
+//! Tests will FAIL if infrastructure is not available.
 //!
 //! # Running
 //!
 //! ```bash
-//! # Run with TiKV/MinIO tests enabled
-//! cargo test --test batch_e2e_integration_test -- --ignored --nocapture
+//! cargo test --test batch_e2e_integration_test -- --nocapture
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -655,11 +656,7 @@ async fn test_e2e_smoke_test() {
     status.print_diagnostics();
 
     if !status.all_available() {
-        println!("\nInfrastructure not available. To run this test:");
-        println!("  1. Start infrastructure: make dev-up");
-        println!("  2. Add DNS entry: echo '127.0.0.1 pd' | sudo tee -a /etc/hosts");
-        println!("  3. Run test: cargo test --test batch_e2e_integration_test -- --ignored");
-        return;
+        panic!("Infrastructure not available. Ensure MinIO, TiKV, and PD are running.");
     }
 
     // Just verify we can create all clients successfully

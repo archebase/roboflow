@@ -13,10 +13,12 @@
 //! docker compose up -d minio minio-init
 //! ```
 //!
+//! Tests will FAIL if MinIO is not available.
+//!
 //! # Running
 //!
 //! ```bash
-//! cargo test --test batch_minio_only_e2e_test -- --ignored --nocapture
+//! cargo test --test batch_minio_only_e2e_test -- --nocapture
 //! ```
 
 use std::path::{Path, PathBuf};

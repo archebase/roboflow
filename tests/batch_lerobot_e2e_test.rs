@@ -10,10 +10,12 @@
 //! 3. Process work units through LeRobotExecutor
 //! 4. Verify output dataset structure in MinIO
 //!
+//! Tests will FAIL if infrastructure is not available.
+//!
 //! To run these tests:
 //! ```bash
-//! make dev-up  # Start MinIO, TiKV, PD
-//! cargo test --test batch_lerobot_e2e_test -- --ignored --nocapture
+//! docker compose up -d  # Start MinIO, TiKV, PD
+//! cargo test --test batch_lerobot_e2e_test -- --nocapture
 //! ```
 
 use std::path::{Path, PathBuf};
