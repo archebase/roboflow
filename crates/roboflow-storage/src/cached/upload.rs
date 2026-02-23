@@ -315,4 +315,123 @@ mod tests {
         assert_eq!(config.worker_id, 5);
         assert!(config.delete_after_upload);
     }
+
+    #[test]
+    fn test_cache_stats_default() {
+        let stats = CacheStats::default();
+        assert_eq!(stats.cache_hits, 0);
+        assert_eq!(stats.cache_misses, 0);
+        assert_eq!(stats.total_cached_bytes, 0);
+        assert_eq!(stats.cached_file_count, 0);
+        assert_eq!(stats.pending_uploads, 0);
+        assert_eq!(stats.uploads_completed, 0);
+        assert_eq!(stats.uploads_failed, 0);
+        assert_eq!(stats.bytes_uploaded, 0);
+    }
+
+    #[test]
+    fn test_cache_stats_hit_rate_no_requests() {
+        let stats = CacheStats::default();
+        assert_eq!(stats.hit_rate(), 0.0);
+    }
+
+    #[test]
+    fn test_cache_stats_hit_rate_100_percent() {
+        let stats = CacheStats {
+            cache_hits: 100,
+            cache_misses: 0,
+            ..Default::default()
+        };
+        assert!((stats.hit_rate() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cache_stats_hit_rate_50_percent() {
+        let stats = CacheStats {
+            cache_hits: 50,
+            cache_misses: 50,
+            ..Default::default()
+        };
+        assert!((stats.hit_rate() - 50.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cache_stats_hit_rate_25_percent() {
+        let stats = CacheStats {
+            cache_hits: 25,
+            cache_misses: 75,
+            ..Default::default()
+        };
+        assert!((stats.hit_rate() - 25.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cache_entry_new() {
+        let path = PathBuf::from("test/file.dat");
+        let entry = CacheEntry::new(path.clone(), 1024);
+
+        assert_eq!(entry._path, path);
+        assert_eq!(entry.size, 1024);
+        assert!(!entry.pending_upload);
+    }
+
+    #[test]
+    fn test_cache_entry_record_access() {
+        let entry = CacheEntry::new(PathBuf::from("test"), 100);
+
+        let initial_count = entry
+            .access_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(initial_count, 1);
+
+        entry.record_access();
+        let new_count = entry
+            .access_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(new_count, 2);
+
+        entry.record_access();
+        entry.record_access();
+        let final_count = entry
+            .access_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(final_count, 4);
+    }
+
+    #[test]
+    fn test_cache_entry_debug() {
+        let entry = CacheEntry::new(PathBuf::from("test"), 1024);
+        let debug_str = format!("{:?}", entry);
+
+        assert!(debug_str.contains("CacheEntry"));
+        assert!(debug_str.contains("size"));
+    }
+
+    #[test]
+    fn test_cache_stats_clone() {
+        let stats = CacheStats {
+            cache_hits: 10,
+            cache_misses: 5,
+            total_cached_bytes: 1000,
+            ..Default::default()
+        };
+        let cloned = stats.clone();
+
+        assert_eq!(stats.cache_hits, cloned.cache_hits);
+        assert_eq!(stats.cache_misses, cloned.cache_misses);
+        assert_eq!(stats.total_cached_bytes, cloned.total_cached_bytes);
+    }
+
+    #[test]
+    fn test_cache_stats_debug() {
+        let stats = CacheStats {
+            cache_hits: 10,
+            cache_misses: 5,
+            ..Default::default()
+        };
+        let debug_str = format!("{:?}", stats);
+
+        assert!(debug_str.contains("cache_hits"));
+        assert!(debug_str.contains("cache_misses"));
+    }
 }

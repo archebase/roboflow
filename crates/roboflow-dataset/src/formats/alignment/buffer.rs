@@ -733,4 +733,151 @@ mod tests {
         // Can't easily test adding frames without a full message setup,
         // but the logic is straightforward
     }
+
+    #[test]
+    fn test_partial_frame_multiple_features() {
+        let mut frame = PartialFrame::new(5, 1_000_000_000, 2_000_000_000);
+
+        frame.add_feature("observation.images.cam_0");
+        frame.add_feature("observation.state");
+        frame.add_feature("action");
+
+        assert_eq!(frame.feature_count(), 3);
+        assert!(frame.has_feature("observation.images.cam_0"));
+        assert!(frame.has_feature("observation.state"));
+        assert!(frame.has_feature("action"));
+        assert!(!frame.has_feature("observation.images.cam_1"));
+    }
+
+    #[test]
+    fn test_partial_frame_buffer_time() {
+        let frame = PartialFrame::new(0, 0, 100_000_000);
+
+        // Buffer time should be very small since we just created it
+        let buffer_time = frame.buffer_time_ms();
+        assert!(buffer_time >= 0.0);
+        assert!(buffer_time < 100.0); // Should be less than 100ms
+    }
+
+    #[test]
+    fn test_frame_alignment_buffer_new() {
+        let config = StreamingConfig::with_fps(30);
+        let buffer = FrameAlignmentBuffer::new(config);
+
+        assert!(buffer.active_frames.is_empty());
+        assert_eq!(buffer.next_frame_index, 0);
+        assert_eq!(buffer.current_timestamp, 0);
+    }
+
+    #[test]
+    fn test_frame_alignment_buffer_with_completion_criteria() {
+        let config = StreamingConfig::with_fps(30);
+        let criteria =
+            FrameCompletionCriteria::new().require_feature("observation.images.cam_0", 1);
+
+        let buffer = FrameAlignmentBuffer::with_completion_criteria(config, criteria);
+
+        assert!(buffer.active_frames.is_empty());
+    }
+
+    #[test]
+    fn test_frame_alignment_buffer_different_fps() {
+        // Test with 60 FPS
+        let config = StreamingConfig::with_fps(60);
+        let buffer = FrameAlignmentBuffer::new(config);
+
+        // 60 FPS = 16,666,666 ns interval
+        assert_eq!(buffer.align_to_frame_boundary(0), 0);
+
+        // Just verify the alignment produces valid results
+        let result1 = buffer.align_to_frame_boundary(8_333_333);
+        let result2 = buffer.align_to_frame_boundary(25_000_000);
+        assert!(result1 > 0);
+        assert!(result2 > result1);
+    }
+
+    #[test]
+    fn test_timestamped_message_creation() {
+        let mut message = HashMap::new();
+        message.insert("data".to_string(), CodecValue::Bytes(vec![1, 2, 3]));
+
+        let msg = TimestampedMessage {
+            log_time: 1_000_000_000,
+            message,
+        };
+
+        assert_eq!(msg.log_time, 1_000_000_000);
+        assert!(msg.message.contains_key("data"));
+    }
+
+    #[test]
+    fn test_partial_frame_debug() {
+        let frame = PartialFrame::new(0, 0, 100_000_000);
+        let debug_str = format!("{:?}", frame);
+
+        assert!(debug_str.contains("PartialFrame"));
+        assert!(debug_str.contains("timestamp"));
+        assert!(debug_str.contains("index"));
+    }
+
+    #[test]
+    fn test_buffer_active_frames_count() {
+        let config = StreamingConfig::with_fps(30);
+        let buffer = FrameAlignmentBuffer::new(config);
+
+        assert_eq!(buffer.active_frames.len(), 0);
+    }
+
+    #[test]
+    fn test_buffer_flush_empty() {
+        let config = StreamingConfig::with_fps(30);
+        let mut buffer = FrameAlignmentBuffer::new(config);
+
+        let frames = buffer.flush();
+        assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn test_buffer_stats_initial() {
+        let config = StreamingConfig::with_fps(30);
+        let buffer = FrameAlignmentBuffer::new(config);
+
+        // Stats should be zero initially
+        assert_eq!(buffer.stats.frames_processed, 0);
+        assert_eq!(buffer.stats.normal_completions, 0);
+        assert_eq!(buffer.stats.force_completions, 0);
+    }
+
+    #[test]
+    fn test_align_to_frame_boundary_zero() {
+        let config = StreamingConfig::with_fps(30);
+        let buffer = FrameAlignmentBuffer::new(config);
+
+        // Zero timestamp should align to zero
+        assert_eq!(buffer.align_to_frame_boundary(0), 0);
+    }
+
+    #[test]
+    fn test_align_to_frame_boundary_large_timestamp() {
+        let config = StreamingConfig::with_fps(30);
+        let buffer = FrameAlignmentBuffer::new(config);
+
+        // Test with a large timestamp (1 second = 1_000_000_000 ns)
+        // At 30 FPS, frame interval is 33,333,333 ns
+        // 1 second should be frame 30 (30 * 33,333,333 = 999,999,990)
+        let result = buffer.align_to_frame_boundary(1_000_000_000);
+        assert!(result > 0);
+    }
+
+    #[test]
+    fn test_partial_frame_clone() {
+        let mut frame = PartialFrame::new(0, 0, 100_000_000);
+        frame.add_feature("test");
+
+        let cloned = frame.clone();
+
+        assert_eq!(frame.timestamp, cloned.timestamp);
+        assert_eq!(frame.index, cloned.index);
+        assert_eq!(frame.feature_count(), cloned.feature_count());
+    }
 }

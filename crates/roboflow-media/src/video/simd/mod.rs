@@ -903,4 +903,150 @@ mod tests {
         let result = rgb_to_nv12_in_place(&mut buffer, 3, 3);
         assert!(result.is_err());
     }
+
+    // =============================================================================
+    // Batch Conversion Tests
+    // =============================================================================
+
+    #[test]
+    fn test_rgb_batch_to_nv12_empty() {
+        let frames: Vec<&[u8]> = vec![];
+        let result = rgb_batch_to_nv12(&frames, 4, 4).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_rgb_batch_to_nv12_single_frame() {
+        let rgb_data = vec![128u8; 4 * 4 * 3];
+        let frames: Vec<&[u8]> = vec![&rgb_data];
+
+        let result = rgb_batch_to_nv12(&frames, 4, 4).unwrap();
+        assert_eq!(result.len(), 1);
+
+        let (y, uv) = &result[0];
+        assert_eq!(y.len(), 16);
+        assert_eq!(uv.len(), 8);
+    }
+
+    #[test]
+    fn test_rgb_batch_to_nv12_multiple_frames() {
+        let rgb_data1 = vec![255u8; 4 * 4 * 3];
+        let rgb_data2 = vec![0u8; 4 * 4 * 3];
+        let rgb_data3 = vec![128u8; 4 * 4 * 3];
+
+        let frames: Vec<&[u8]> = vec![&rgb_data1, &rgb_data2, &rgb_data3];
+
+        let result = rgb_batch_to_nv12(&frames, 4, 4).unwrap();
+        assert_eq!(result.len(), 3);
+
+        // Verify each frame has correct dimensions
+        for (y, uv) in &result {
+            assert_eq!(y.len(), 16);
+            assert_eq!(uv.len(), 8);
+        }
+    }
+
+    #[test]
+    fn test_rgb_batch_to_nv12_size_mismatch() {
+        let rgb_data1 = vec![0u8; 4 * 4 * 3];
+        let rgb_data2 = vec![0u8; 10]; // Wrong size
+
+        let frames: Vec<&[u8]> = vec![&rgb_data1, &rgb_data2];
+
+        let result = rgb_batch_to_nv12(&frames, 4, 4);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rgb_batch_to_yuv420p_empty() {
+        let frames: Vec<&[u8]> = vec![];
+        let result = rgb_batch_to_yuv420p(&frames, 4, 4).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_rgb_batch_to_yuv420p_single_frame() {
+        let rgb_data = vec![128u8; 4 * 4 * 3];
+        let frames: Vec<&[u8]> = vec![&rgb_data];
+
+        let result = rgb_batch_to_yuv420p(&frames, 4, 4).unwrap();
+        assert_eq!(result.len(), 1);
+
+        let (y, u, v) = &result[0];
+        assert_eq!(y.len(), 16);
+        assert_eq!(u.len(), 4);
+        assert_eq!(v.len(), 4);
+    }
+
+    #[test]
+    fn test_rgb_batch_to_yuv420p_multiple_frames() {
+        let rgb_data1 = vec![255u8; 4 * 4 * 3];
+        let rgb_data2 = vec![0u8; 4 * 4 * 3];
+
+        let frames: Vec<&[u8]> = vec![&rgb_data1, &rgb_data2];
+
+        let result = rgb_batch_to_yuv420p(&frames, 4, 4).unwrap();
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_rgb_batch_to_yuv420p_size_mismatch() {
+        let rgb_data = vec![0u8; 10]; // Wrong size
+        let frames: Vec<&[u8]> = vec![&rgb_data];
+
+        let result = rgb_batch_to_yuv420p(&frames, 4, 4);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rgb_batch_to_yuv420p_odd_dimensions() {
+        let rgb_data = vec![0u8; 3 * 3 * 3];
+        let frames: Vec<&[u8]> = vec![&rgb_data];
+
+        let result = rgb_batch_to_yuv420p(&frames, 3, 3);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rgb_batch_to_nv12_odd_dimensions() {
+        let rgb_data = vec![0u8; 3 * 3 * 3];
+        let frames: Vec<&[u8]> = vec![&rgb_data];
+
+        let result = rgb_batch_to_nv12(&frames, 3, 3);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_optimal_strategy_function() {
+        let strategy = optimal_strategy();
+        // Should return a valid strategy
+        match strategy {
+            ConversionStrategy::Avx512
+            | ConversionStrategy::Avx2
+            | ConversionStrategy::Sse2
+            | ConversionStrategy::Neon
+            | ConversionStrategy::Scalar => {}
+        }
+    }
+
+    #[test]
+    fn test_rgb_to_yuv420p_zero_dimensions() {
+        let rgb_data = vec![0u8; 0];
+        let result = rgb_to_yuv420p(&rgb_data, 0, 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rgb_to_nv12_zero_dimensions() {
+        let rgb_data = vec![0u8; 0];
+        let result = rgb_to_nv12(&rgb_data, 0, 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rgb_to_nv12_in_place_zero_dimensions() {
+        let mut buffer = vec![0u8; 0];
+        let result = rgb_to_nv12_in_place(&mut buffer, 0, 0);
+        assert!(result.is_err());
+    }
 }

@@ -1151,4 +1151,72 @@ mod tests {
         // Cleanup
         let _ = fs::remove_dir_all(temp_dir);
     }
+
+    #[test]
+    fn test_cache_config_with_upload_buffer_size() {
+        let config = CacheConfig::new("/tmp/cache").with_upload_buffer_size(16 * 1024 * 1024); // 16 MB
+
+        assert_eq!(config.upload_buffer_size, 16 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_cache_config_with_upload_buffer_size_min() {
+        // Should enforce minimum of 1024 bytes
+        let config = CacheConfig::new("/tmp/cache").with_upload_buffer_size(100);
+
+        assert_eq!(config.upload_buffer_size, 1024);
+    }
+
+    #[test]
+    fn test_cache_config_with_upload_concurrency_min() {
+        // Should enforce minimum of 1
+        let config = CacheConfig::new("/tmp/cache").with_upload_concurrency(0);
+
+        assert_eq!(config.upload_concurrency, 1);
+    }
+
+    #[test]
+    fn test_cache_config_with_max_pending_uploads() {
+        let config = CacheConfig::new("/tmp/cache").with_max_pending_uploads(50);
+
+        assert_eq!(config.max_pending_uploads, 50);
+    }
+
+    #[test]
+    fn test_cache_config_with_max_pending_uploads_min() {
+        // Should enforce minimum of 1
+        let config = CacheConfig::new("/tmp/cache").with_max_pending_uploads(0);
+
+        assert_eq!(config.max_pending_uploads, 1);
+    }
+
+    #[test]
+    fn test_cache_config_with_shutdown_timeout() {
+        let config = CacheConfig::new("/tmp/cache").with_shutdown_timeout_secs(60);
+
+        assert_eq!(config.shutdown_timeout_secs, 60);
+    }
+
+    #[test]
+    fn test_cache_config_clone() {
+        let config = CacheConfig::new("/tmp/cache")
+            .with_max_cache_size(1024 * 1024)
+            .with_upload_concurrency(2);
+
+        let cloned = config.clone();
+
+        assert_eq!(config.cache_directory, cloned.cache_directory);
+        assert_eq!(config.max_cache_size, cloned.max_cache_size);
+        assert_eq!(config.upload_concurrency, cloned.upload_concurrency);
+    }
+
+    #[test]
+    fn test_cache_config_debug() {
+        let config = CacheConfig::new("/tmp/cache");
+        let debug_str = format!("{:?}", config);
+
+        assert!(debug_str.contains("CacheConfig"));
+        assert!(debug_str.contains("cache_directory"));
+        assert!(debug_str.contains("max_cache_size"));
+    }
 }

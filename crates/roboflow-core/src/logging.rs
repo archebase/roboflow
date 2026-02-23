@@ -232,4 +232,96 @@ mod tests {
         let config = LoggingConfig::from_env();
         assert_eq!(config.format, LogFormat::Pretty); // default
     }
+
+    #[test]
+    fn test_log_format_equality() {
+        assert_eq!(LogFormat::Json, LogFormat::Json);
+        assert_eq!(LogFormat::Pretty, LogFormat::Pretty);
+        assert_ne!(LogFormat::Json, LogFormat::Pretty);
+    }
+
+    #[test]
+    fn test_log_format_debug() {
+        let format = LogFormat::Json;
+        let debug_str = format!("{:?}", format);
+        assert!(debug_str.contains("Json"));
+
+        let format = LogFormat::Pretty;
+        let debug_str = format!("{:?}", format);
+        assert!(debug_str.contains("Pretty"));
+    }
+
+    #[test]
+    fn test_log_format_clone() {
+        let format = LogFormat::Json;
+        let cloned = format;
+        assert_eq!(format, cloned);
+    }
+
+    #[test]
+    fn test_logging_config_clone() {
+        let config = LoggingConfig {
+            format: LogFormat::Json,
+            default_level: Some("debug".to_string()),
+            span_events: true,
+        };
+        let cloned = config.clone();
+
+        assert_eq!(config.format, cloned.format);
+        assert_eq!(config.default_level, cloned.default_level);
+        assert_eq!(config.span_events, cloned.span_events);
+    }
+
+    #[test]
+    fn test_logging_config_debug() {
+        let config = LoggingConfig {
+            format: LogFormat::Json,
+            default_level: Some("info".to_string()),
+            span_events: true,
+        };
+        let debug_str = format!("{:?}", config);
+
+        assert!(debug_str.contains("format"));
+        assert!(debug_str.contains("default_level"));
+        assert!(debug_str.contains("span_events"));
+    }
+
+    #[test]
+    fn test_logging_config_with_json_format() {
+        let config = LoggingConfig {
+            format: LogFormat::Json,
+            default_level: None,
+            span_events: false,
+        };
+        assert_eq!(config.format, LogFormat::Json);
+    }
+
+    #[test]
+    fn test_logging_config_with_span_events() {
+        let config = LoggingConfig {
+            format: LogFormat::Pretty,
+            default_level: None,
+            span_events: true,
+        };
+        assert!(config.span_events);
+    }
+
+    #[test]
+    fn test_logging_config_with_default_level() {
+        let config = LoggingConfig {
+            format: LogFormat::Pretty,
+            default_level: Some("trace".to_string()),
+            span_events: false,
+        };
+        assert_eq!(config.default_level, Some("trace".to_string()));
+    }
+
+    #[test]
+    fn test_log_format_parse_case_insensitive() {
+        // Test various case combinations
+        assert_eq!(LogFormat::parse("Json"), Some(LogFormat::Json));
+        assert_eq!(LogFormat::parse("jSoN"), Some(LogFormat::Json));
+        assert_eq!(LogFormat::parse("PRETTY"), Some(LogFormat::Pretty));
+        assert_eq!(LogFormat::parse("Pretty"), Some(LogFormat::Pretty));
+    }
 }
