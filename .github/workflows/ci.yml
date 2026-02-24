@@ -171,8 +171,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm curl
 
-      - name: Add host.docker.internal to /etc/hosts
-        run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
+      - name: Add required host aliases to /etc/hosts
+        run: |
+          if ! grep -qE '(^|\s)host\.docker\.internal(\s|$)' /etc/hosts; then
+            echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
+          fi
+          if ! grep -qE '(^|\s)pd(\s|$)' /etc/hosts; then
+            echo "127.0.0.1 pd" | sudo tee -a /etc/hosts
+          fi
+          echo "Configured host aliases:"
+          grep -E 'host\.docker\.internal|(^|\s)pd(\s|$)' /etc/hosts
 
       - name: Cache vcpkg
         uses: actions/cache@v4
@@ -270,34 +278,58 @@ jobs:
       - name: Verify service connectivity
         run: |
           echo "Verifying PD connectivity..."
+          pd_ok=0
           for i in {1..30}; do
-            if curl -sf http://localhost:2379/health > /dev/null 2>&1; then
+            if curl -sf http://localhost:2379/health > /dev/null 2>&1 && curl -sf http://pd:2379/health > /dev/null 2>&1; then
               echo "PD is healthy"
+              pd_ok=1
               break
             fi
             echo "Waiting for PD... ($i/30)"
             sleep 2
           done
+          if [ "$pd_ok" -ne 1 ]; then
+            echo "PD failed readiness checks" >&2
+            docker compose ps
+            docker compose logs pd --tail 100 || true
+            exit 1
+          fi
 
           echo "Verifying TiKV connectivity..."
+          tikv_ok=0
           for i in {1..30}; do
             if curl -sf http://localhost:20180/status > /dev/null 2>&1; then
               echo "TiKV is healthy"
+              tikv_ok=1
               break
             fi
             echo "Waiting for TiKV... ($i/30)"
             sleep 2
           done
+          if [ "$tikv_ok" -ne 1 ]; then
+            echo "TiKV failed readiness checks" >&2
+            docker compose ps
+            docker compose logs tikv --tail 100 || true
+            exit 1
+          fi
 
           echo "Verifying MinIO connectivity..."
+          minio_ok=0
           for i in {1..30}; do
             if curl -sf http://localhost:9000/minio/health/ready > /dev/null 2>&1; then
               echo "MinIO is healthy"
+              minio_ok=1
               break
             fi
             echo "Waiting for MinIO... ($i/30)"
             sleep 2
           done
+          if [ "$minio_ok" -ne 1 ]; then
+            echo "MinIO failed readiness checks" >&2
+            docker compose ps
+            docker compose logs minio --tail 100 || true
+            exit 1
+          fi
 
       - name: Generate coverage and run tests
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
