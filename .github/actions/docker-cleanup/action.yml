@@ -1,0 +1,10 @@
+name: 'Docker Cleanup'
+description: 'Cleanup Docker Compose services and volumes'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Docker compose down
+      if: always()
+      shell: bash
+      run: docker compose down -v

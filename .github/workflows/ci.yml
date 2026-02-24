@@ -13,6 +13,10 @@ env:
   MINIO_ENDPOINT: http://127.0.0.1:9000
   MINIO_ACCESS_KEY: minioadmin
   MINIO_SECRET_KEY: minioadmin
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "4"
 
 jobs:
   license:
@@ -33,9 +37,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust-env
         with:
-          components: rustfmt
+          rust-components: rustfmt
+          install-build-deps: 'false'
 
       - name: Check formatting
         run: cargo fmt -- --check
@@ -57,13 +62,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust-env
         with:
-          components: clippy
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: "vcpkg-${{ matrix.triplet }}-${{ hashFiles('**/Cargo.lock') }}"
+          rust-components: clippy
+          install-build-deps: 'false'
 
       - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'
@@ -118,7 +120,7 @@ jobs:
           pkg-config --modversion libavcodec x264
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo-retry clippy --all-targets --all-features -- -D warnings
 
   rust-test-macos:
     name: Rust Tests (macOS)
@@ -131,11 +133,9 @@ jobs:
         with:
           lfs: true
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/setup-rust-env
         with:
-          key: "vcpkg-arm64-osx-${{ hashFiles('**/Cargo.lock') }}"
+          install-build-deps: 'false'
 
       - name: Install system dependencies
         run: |
@@ -155,13 +155,9 @@ jobs:
         with:
           lfs: true
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust-env
         with:
-          components: llvm-tools-preview
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: "vcpkg-x64-linux-${{ hashFiles('**/Cargo.lock') }}"
+          rust-components: llvm-tools-preview
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -217,119 +213,12 @@ jobs:
           export PKG_CONFIG_PATH="${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           ls ${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig/libav*.pc
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Pull Docker images
-        run: docker compose pull --quiet
+      - uses: ./.github/actions/cache-docker
 
       - name: Start infrastructure services
         run: docker compose up -d minio minio-init pd tikv
 
-      - name: Wait for services to be healthy
-        timeout-minutes: 5
-        run: |
-          echo "Waiting for services to be healthy..."
-          for i in {1..30}; do
-            output=$(docker compose ps)
-
-            pd_healthy=0
-            tikv_healthy=0
-            minio_healthy=0
-
-            # Check PD
-            if echo "$output" | grep "roboflow-pd" | grep -q "healthy"; then
-              pd_healthy=1
-              echo "  [ok] pd"
-            fi
-
-            # Check TiKV
-            if echo "$output" | grep "roboflow-tikv" | grep -q "healthy"; then
-              tikv_healthy=1
-              echo "  [ok] tikv"
-            fi
-
-            # Check MinIO
-            if echo "$output" | grep "roboflow-minio" | grep -q "healthy"; then
-              minio_healthy=1
-              echo "  [ok] minio"
-            fi
-
-            if [ "$pd_healthy" -eq 1 ] && [ "$tikv_healthy" -eq 1 ] && [ "$minio_healthy" -eq 1 ]; then
-              echo "All services are healthy!"
-              docker compose ps
-              exit 0
-            fi
-
-            echo "Waiting... (attempt $i/30)"
-            sleep 10
-          done
-
-          echo "Services not healthy after timeout"
-          docker compose ps
-          echo ""
-          echo "=== PD logs ==="
-          docker compose logs pd --tail 50 || true
-          echo ""
-          echo "=== TiKV logs ==="
-          docker compose logs tikv --tail 50 || true
-          exit 1
-
-      - name: Verify service connectivity
-        run: |
-          echo "Verifying PD connectivity..."
-          pd_ok=0
-          for i in {1..30}; do
-            if curl -sf http://localhost:2379/health > /dev/null 2>&1 && curl -sf http://pd:2379/health > /dev/null 2>&1; then
-              echo "PD is healthy"
-              pd_ok=1
-              break
-            fi
-            echo "Waiting for PD... ($i/30)"
-            sleep 2
-          done
-          if [ "$pd_ok" -ne 1 ]; then
-            echo "PD failed readiness checks" >&2
-            docker compose ps
-            docker compose logs pd --tail 100 || true
-            exit 1
-          fi
-
-          echo "Verifying TiKV connectivity..."
-          tikv_ok=0
-          for i in {1..30}; do
-            if curl -sf http://localhost:20180/status > /dev/null 2>&1; then
-              echo "TiKV is healthy"
-              tikv_ok=1
-              break
-            fi
-            echo "Waiting for TiKV... ($i/30)"
-            sleep 2
-          done
-          if [ "$tikv_ok" -ne 1 ]; then
-            echo "TiKV failed readiness checks" >&2
-            docker compose ps
-            docker compose logs tikv --tail 100 || true
-            exit 1
-          fi
-
-          echo "Verifying MinIO connectivity..."
-          minio_ok=0
-          for i in {1..30}; do
-            if curl -sf http://localhost:9000/minio/health/ready > /dev/null 2>&1; then
-              echo "MinIO is healthy"
-              minio_ok=1
-              break
-            fi
-            echo "Waiting for MinIO... ($i/30)"
-            sleep 2
-          done
-          if [ "$minio_ok" -ne 1 ]; then
-            echo "MinIO failed readiness checks" >&2
-            docker compose ps
-            docker compose logs minio --tail 100 || true
-            exit 1
-          fi
+      - uses: ./.github/actions/wait-for-services
 
       - name: Generate coverage and run tests
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
@@ -342,9 +231,7 @@ jobs:
           flags: rust
           name: codecov-umbrella
 
-      - name: Cleanup TiKV services
-        if: always()
-        run: docker compose down -v
+      - uses: ./.github/actions/docker-cleanup
 
   security:
     name: Security Audit
