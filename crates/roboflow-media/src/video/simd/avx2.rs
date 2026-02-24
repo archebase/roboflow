@@ -55,6 +55,7 @@ unsafe fn load_rgb_values(rgb_ptr: *const u8) -> (__m256i, __m256i, __m256i) {
     let r = _mm256_loadu_si256(r_arr.as_ptr() as *const __m256i);
     let g = _mm256_loadu_si256(g_arr.as_ptr() as *const __m256i);
     let b = _mm256_loadu_si256(b_arr.as_ptr() as *const __m256i);
+    (r, g, b)
 }
 
 /// Convert 8 RGB pixels to 8 Y values using AVX2 (32-bit arithmetic).
