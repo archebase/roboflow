@@ -45,7 +45,6 @@
 mod builder;
 mod camera;
 mod camera_params;
-mod encoding;
 mod episode_writer;
 mod frame;
 mod parquet;

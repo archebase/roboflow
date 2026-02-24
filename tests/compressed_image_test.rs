@@ -13,10 +13,8 @@ use roboflow::{
     DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig as DatasetConfig,
     LerobotWriter, LerobotWriterTrait, VideoConfig,
 };
-use roboflow_dataset::formats::dataset_executor::{
-    DatasetPipelineConfig, DatasetPipelineExecutor, SequentialPolicy,
-};
 use roboflow_dataset::{ImageData, common::AlignedFrame};
+use roboflow_pipeline::{DatasetPipelineConfig, DatasetPipelineExecutor, SequentialPolicy};
 
 /// Test that ImageData correctly handles compressed vs raw images.
 #[test]
@@ -336,8 +334,7 @@ async fn test_process_bag_with_compressed_images() {
 
     let bag_path = "tests/fixtures/roboflow_extracted.bag";
     if !std::path::Path::new(bag_path).exists() {
-        println!("Skipping test: {} not found", bag_path);
-        return;
+        panic!("Required bag file not found at {}", bag_path);
     }
 
     let output_dir = tempfile::TempDir::new().expect("Failed to create temp dir");

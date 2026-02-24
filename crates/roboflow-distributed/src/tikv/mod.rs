@@ -24,6 +24,6 @@ pub use config::TikvConfig;
 pub use error::TikvError;
 pub use locks::{LockGuard, LockManager, LockManagerConfig};
 pub use schema::{
-    CheckpointState, HeartbeatRecord, LockRecord, ParquetUploadState, UploadedPart,
+    CheckpointState, ConfigRecord, HeartbeatRecord, LockRecord, ParquetUploadState, UploadedPart,
     VideoUploadState, WorkerStatus,
 };

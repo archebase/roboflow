@@ -45,9 +45,9 @@ use robocodec::CodecValue;
 use roboflow_core::{Result, TimestampedMessage};
 use tracing::{debug, info, trace, warn};
 
-use crate::core::traits::{AlignedFrame, FormatWriter};
-use crate::formats::alignment::config::StreamingConfig;
-use crate::formats::common::{ImageData, extract_image_bytes, extract_u32};
+use roboflow_dataset::core::traits::{AlignedFrame, FormatWriter};
+use roboflow_dataset::formats::alignment::config::StreamingConfig;
+use roboflow_dataset::formats::common::{ImageData, extract_image_bytes, extract_u32};
 
 /// Re-export execution policy types from roboflow_executor.
 pub use roboflow_executor::{ExecutionPolicy, ParallelPolicy, SequentialPolicy};
@@ -672,7 +672,8 @@ impl<W: FormatWriter, P: ExecutionPolicy> DatasetPipelineExecutor<W, P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::stats::EpisodeStats;
+    use roboflow_dataset::core::stats::EpisodeStats;
+    use roboflow_dataset::core::traits::WriterStats;
     use std::any::Any;
 
     /// Mock writer for testing.
@@ -698,8 +699,8 @@ mod tests {
             Ok(())
         }
 
-        fn finalize(&mut self) -> Result<crate::core::traits::WriterStats> {
-            Ok(crate::core::traits::WriterStats {
+        fn finalize(&mut self) -> Result<WriterStats> {
+            Ok(WriterStats {
                 frames_written: self.frame_count,
                 images_encoded: 0,
                 state_records: 0,

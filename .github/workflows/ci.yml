@@ -8,6 +8,15 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  TIKV_PD_ENDPOINTS: 127.0.0.1:2379
+  MINIO_ENDPOINT: http://127.0.0.1:9000
+  MINIO_ACCESS_KEY: minioadmin
+  MINIO_SECRET_KEY: minioadmin
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "4"
 
 jobs:
   license:
@@ -28,9 +37,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust-env
         with:
-          components: rustfmt
+          rust-components: rustfmt
+          install-build-deps: 'false'
 
       - name: Check formatting
         run: cargo fmt -- --check
@@ -52,13 +62,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust-env
         with:
-          components: clippy
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: "vcpkg-${{ matrix.triplet }}-${{ hashFiles('**/Cargo.lock') }}"
+          rust-components: clippy
+          install-build-deps: 'false'
 
       - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'
@@ -103,8 +110,8 @@ jobs:
           echo "PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
           echo "FFMPEG_PKG_CONFIG_PATH=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
-          echo "FFMPEG_INCLUDE_DIR=${VCPKG_INSTALLED}/${{ matrix.triplet }}/include" >> $GITHUB_ENV
-          echo "FFMPEG_LIBS_DIR=${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib" >> $GITHUB_ENV
+          echo "FFMPEG_INCLUDE_DIR=${{ github.workspace }}/vcpkg/installed/${{ matrix.triplet }}/include" >> $GITHUB_ENV
+          echo "FFMPEG_LIBS_DIR=${{ github.workspace }}/vcpkg/installed/${{ matrix.triplet }}/lib" >> $GITHUB_ENV
           # Export for current step
           export PKG_CONFIG_PATH="${VCPKG_INSTALLED}/${{ matrix.triplet }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           # Verify FFmpeg and x264 were installed correctly
@@ -113,7 +120,7 @@ jobs:
           pkg-config --modversion libavcodec x264
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo-retry clippy --all-targets --all-features -- -D warnings
 
   rust-test-macos:
     name: Rust Tests (macOS)
@@ -126,18 +133,18 @@ jobs:
         with:
           lfs: true
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/setup-rust-env
         with:
-          key: "vcpkg-arm64-osx-${{ hashFiles('**/Cargo.lock') }}"
+          install-build-deps: 'false'
 
       - name: Install system dependencies
         run: |
           brew install hdf5@1.10 nasm ffmpeg
 
-      - name: Run tests
-        run: cargo test --all-features
+      # Note: ARM macOS runners don't support Docker (no nested virtualization)
+      # E2E tests requiring TiKV/MinIO are run on Linux only
+      - name: Run tests (lib and unit tests only)
+        run: cargo test --all-features --lib --bins
 
   rust-test-linux:
     name: Rust Tests (Linux)
@@ -145,68 +152,33 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       RUSTFLAGS: -C linker=cc
-      TIKV_PD_ENDPOINTS: 127.0.0.1:2379
     steps:
       - uses: actions/checkout@v4
         with:
           lfs: true
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust-env
         with:
-          components: llvm-tools-preview
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: "vcpkg-x64-linux-${{ hashFiles('**/Cargo.lock') }}"
-
-      - name: Cache cargo-llvm-cov
-        uses: actions/cache@v4
-        id: cache-llvm-cov
-        with:
-          path: ~/.cargo/bin/cargo-llvm-cov
-          key: ${{ runner.os }}-cargo-llvm-cov-${{ hashFiles('**/Cargo.lock') }}
+          rust-components: llvm-tools-preview
 
       - name: Install cargo-llvm-cov
-        if: steps.cache-llvm-cov.outputs.cache-hit != 'true'
-        run: cargo install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm curl
 
-      - name: Start TiKV services
-        run: docker compose up -d pd tikv
-
-      - name: Wait for TiKV to be ready
+      - name: Add required host aliases to /etc/hosts
         run: |
-          echo "Waiting for TiKV cluster to be ready..."
-          for i in {1..30}; do
-            if curl -sf http://localhost:2379/health > /dev/null 2>&1; then
-              echo "PD is healthy"
-              break
-            fi
-            echo "Waiting for PD... ($i/30)"
-            sleep 2
-          done
-          if ! curl -sf http://localhost:2379/health > /dev/null 2>&1; then
-            echo "ERROR: PD failed to become healthy"
-            docker compose logs pd || true
-            exit 1
+          if ! grep -qE '(^|\s)host\.docker\.internal(\s|$)' /etc/hosts; then
+            echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
           fi
-          for i in {1..30}; do
-            if curl -sf http://localhost:20180/status > /dev/null 2>&1; then
-              echo "TiKV is healthy"
-              break
-            fi
-            echo "Waiting for TiKV... ($i/30)"
-            sleep 2
-          done
-          if ! curl -sf http://localhost:20180/status > /dev/null 2>&1; then
-            echo "ERROR: TiKV failed to become healthy"
-            docker compose logs tikv || true
-            exit 1
+          if ! grep -qE '(^|\s)pd(\s|$)' /etc/hosts; then
+            echo "127.0.0.1 pd" | sudo tee -a /etc/hosts
           fi
+          echo "Configured host aliases:"
+          grep -E 'host\.docker\.internal|(^|\s)pd(\s|$)' /etc/hosts
 
       - name: Cache vcpkg
         uses: actions/cache@v4
@@ -237,11 +209,18 @@ jobs:
           echo "PKG_CONFIG_PATH=${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=${VCPKG_INSTALLED}/x64-linux/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
           echo "FFMPEG_PKG_CONFIG_PATH=${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig" >> $GITHUB_ENV
-          echo "FFMPEG_INCLUDE_DIR=${VCPKG_INSTALLED}/x64-linux/include" >> $GITHUB_ENV
-          echo "FFMPEG_LIBS_DIR=${VCPKG_INSTALLED}/x64-linux/lib" >> $GITHUB_ENV
+          echo "FFMPEG_INCLUDE_DIR=${{ github.workspace }}/vcpkg/installed/x64-linux/include" >> $GITHUB_ENV
+          echo "FFMPEG_LIBS_DIR=${{ github.workspace }}/vcpkg/installed/x64-linux/lib" >> $GITHUB_ENV
           # Export for current step
           export PKG_CONFIG_PATH="${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           ls ${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig/libav*.pc
+
+      - uses: ./.github/actions/cache-docker
+
+      - name: Start infrastructure services
+        run: docker compose up -d minio minio-init pd tikv
+
+      - uses: ./.github/actions/wait-for-services
 
       - name: Generate coverage and run tests
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
@@ -254,12 +233,12 @@ jobs:
           flags: rust
           name: codecov-umbrella
 
-      - name: Cleanup TiKV services
-        if: always()
-        run: docker compose down -v
+      - uses: ./.github/actions/docker-cleanup
 
   security:
     name: Security Audit
+    env:
+      RUSTC_WRAPPER: ""
     needs: license
     runs-on: ubuntu-24.04
     steps:

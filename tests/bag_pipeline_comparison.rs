@@ -43,7 +43,6 @@ fn init_sources() {
 }
 
 #[test]
-#[ignore = "Requires real bag file - run manually"]
 fn test_reading_vs_full_pipeline() {
     init_sources();
 

@@ -90,6 +90,7 @@ mod concurrent;
 mod config;
 #[allow(dead_code, clippy::wrong_self_convention)]
 mod convert;
+mod dataset_encode;
 #[allow(dead_code)]
 mod decode;
 mod encoder;
@@ -100,6 +101,7 @@ mod frame;
 mod hardware;
 #[allow(dead_code)]
 mod hardware_config;
+mod profiles;
 #[allow(dead_code)]
 mod rsmpeg;
 #[allow(dead_code)]
@@ -134,8 +136,10 @@ pub use frame::FrameBuffer;
 /// Video encoder error type.
 pub use frame::VideoEncoderError;
 
+pub use dataset_encode::{EncodeStats, build_frame_buffer_static, encode_videos};
 /// Video frame buffer (alias for FrameBuffer).
 pub use frame::VideoFrameBuffer;
+pub use profiles::{Profile, QualityTier, ResolvedConfig, SpeedPreset, VideoEncodingProfile};
 
 // -----------------------------------------------------------------------------
 // Simple Video Encoder API

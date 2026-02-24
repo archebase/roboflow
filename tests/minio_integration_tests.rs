@@ -5,6 +5,8 @@
 //! MinIO integration tests for S3-compatible object storage.
 //!
 //! These tests validate S3/OSS functionality using a MinIO instance.
+//! Tests will FAIL if MinIO is not available.
+//!
 //! To run these tests, start MinIO using docker-compose:
 //!
 //! ```bash
@@ -13,7 +15,7 @@
 //!
 //! Then run the tests with:
 //! ```bash
-//! cargo test --test minio_integration_tests -- --ignored
+//! cargo test --test minio_integration_tests
 //! ```
 //!
 //! # Environment Variables
@@ -219,14 +221,12 @@ fn create_test_frame(
     }
 }
 
-/// Skip the test if MinIO is not available.
-macro_rules! skip_if_no_minio {
+/// Panic if MinIO is not available.
+macro_rules! require_minio {
     () => {
         let config = MinioConfig::default();
         if !config.is_available() {
-            eprintln!("Skipping test: MinIO not available at {}", config.endpoint);
-            eprintln!("Start MinIO with: docker compose up -d minio minio-init");
-            return;
+            panic!("Required service MinIO is not available at {}. Start MinIO with: docker compose up -d minio minio-init", config.endpoint);
         }
     };
 }
@@ -236,9 +236,8 @@ macro_rules! skip_if_no_minio {
 // =============================================================================
 
 #[test]
-#[ignore = "requires MinIO service"]
 fn test_minio_basic_connection() {
-    skip_if_no_minio!();
+    require_minio!();
 
     let config = MinioConfig::default();
     println!("Testing MinIO connection at: {}", config.endpoint);
@@ -458,9 +457,8 @@ fn test_compressed_images_with_local_output() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires MinIO service"]
 fn test_minio_bucket_management() {
-    skip_if_no_minio!();
+    require_minio!();
 
     let config = MinioConfig::default();
     let test_bucket = format!("test-bucket-{}", std::process::id());
@@ -555,9 +553,8 @@ fn test_concurrent_local_writes() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires MinIO service"]
 fn test_large_file_upload_to_minio() {
-    skip_if_no_minio!();
+    require_minio!();
 
     let config = MinioConfig::default();
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -773,4 +770,453 @@ fn test_multi_camera_unique_temp_files() {
     }
 
     println!("✓ Multi-camera unique temp files test passed (regression test)");
+}
+
+// =============================================================================
+// Test: S3 Storage List Operations
+// =============================================================================
+
+#[test]
+fn test_s3_list_operations() {
+    require_minio!();
+
+    let config = MinioConfig::default();
+    let storage = config.create_storage().expect("Failed to create storage");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime.block_on(async {
+        // Create test files
+        let test_prefix = "test_list_ops";
+        let files = vec![
+            format!("{}/file1.txt", test_prefix),
+            format!("{}/file2.txt", test_prefix),
+            format!("{}/subdir/file3.txt", test_prefix),
+        ];
+
+        for path in &files {
+            storage
+                .write(Path::new(path), Bytes::from("test data"))
+                .await
+                .expect("Failed to write file");
+        }
+
+        // List files with prefix
+        let listed = storage
+            .list(Path::new(test_prefix))
+            .await
+            .expect("Failed to list files");
+
+        assert!(listed.len() >= 3, "Should list at least 3 files");
+
+        // Cleanup
+        for path in &files {
+            let _ = storage.delete(Path::new(path)).await;
+        }
+
+        println!("✓ S3 list operations test passed");
+    });
+}
+
+// =============================================================================
+// Test: S3 Storage Exists Check
+// =============================================================================
+
+#[test]
+fn test_s3_exists_check() {
+    require_minio!();
+
+    let config = MinioConfig::default();
+    let storage = config.create_storage().expect("Failed to create storage");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime.block_on(async {
+        let test_path = Path::new("test_exists/file.txt");
+
+        // File should not exist initially
+        assert!(
+            !storage.exists(test_path).await,
+            "File should not exist initially"
+        );
+
+        // Write file
+        storage
+            .write(test_path, Bytes::from("test data"))
+            .await
+            .expect("Failed to write file");
+
+        // File should exist now
+        assert!(
+            storage.exists(test_path).await,
+            "File should exist after write"
+        );
+
+        // Cleanup
+        let _ = storage.delete(test_path).await;
+
+        println!("✓ S3 exists check test passed");
+    });
+}
+
+// =============================================================================
+// Test: S3 Storage Size Operation
+// =============================================================================
+
+#[test]
+fn test_s3_size_operation() {
+    require_minio!();
+
+    let config = MinioConfig::default();
+    let storage = config.create_storage().expect("Failed to create storage");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime.block_on(async {
+        let test_path = Path::new("test_size/file.bin");
+        let test_data = Bytes::from(vec![0u8; 1024]); // 1KB
+
+        // Write file
+        storage
+            .write(test_path, test_data.clone())
+            .await
+            .expect("Failed to write file");
+
+        // Check size
+        let size = storage.size(test_path).await.expect("Failed to get size");
+        assert_eq!(size, 1024, "File size should be 1024 bytes");
+
+        // Cleanup
+        let _ = storage.delete(test_path).await;
+
+        println!("✓ S3 size operation test passed");
+    });
+}
+
+// =============================================================================
+// Test: S3 Storage Metadata Operation
+// =============================================================================
+
+#[test]
+fn test_s3_metadata_operation() {
+    require_minio!();
+
+    let config = MinioConfig::default();
+    let storage = config.create_storage().expect("Failed to create storage");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime.block_on(async {
+        let test_path = Path::new("test_metadata/file.txt");
+        let test_data = Bytes::from("metadata test content");
+
+        // Write file
+        storage
+            .write(test_path, test_data)
+            .await
+            .expect("Failed to write file");
+
+        // Get metadata
+        let metadata = storage
+            .metadata(test_path)
+            .await
+            .expect("Failed to get metadata");
+
+        assert!(metadata.size > 0, "Metadata size should be > 0");
+        assert!(
+            metadata.last_modified.is_some(),
+            "Last modified should be set"
+        );
+
+        // Cleanup
+        let _ = storage.delete(test_path).await;
+
+        println!("✓ S3 metadata operation test passed");
+    });
+}
+
+// =============================================================================
+// Test: S3 Storage Copy Operation
+// =============================================================================
+
+#[test]
+fn test_s3_copy_operation() {
+    require_minio!();
+
+    let config = MinioConfig::default();
+    let storage = config.create_storage().expect("Failed to create storage");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime.block_on(async {
+        let src_path = Path::new("test_copy/source.txt");
+        let dst_path = Path::new("test_copy/destination.txt");
+        let test_data = Bytes::from("copy test content");
+
+        // Write source file
+        storage
+            .write(src_path, test_data.clone())
+            .await
+            .expect("Failed to write source");
+
+        // Copy file
+        storage
+            .copy(src_path, dst_path)
+            .await
+            .expect("Failed to copy file");
+
+        // Verify destination exists and has same content
+        assert!(storage.exists(dst_path).await, "Destination should exist");
+        let copied_data = storage
+            .read(dst_path)
+            .await
+            .expect("Failed to read copied file");
+        assert_eq!(copied_data, test_data, "Copied content should match");
+
+        // Cleanup
+        let _ = storage.delete(src_path).await;
+        let _ = storage.delete(dst_path).await;
+
+        println!("✓ S3 copy operation test passed");
+    });
+}
+
+// =============================================================================
+// Test: S3 Storage Create Directory Operations
+// =============================================================================
+
+#[test]
+fn test_s3_create_dir_operations() {
+    require_minio!();
+
+    let config = MinioConfig::default();
+    let storage = config.create_storage().expect("Failed to create storage");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime.block_on(async {
+        let test_dir = Path::new("test_createdir/subdir");
+
+        // create_dir should succeed (no-op for S3)
+        storage
+            .create_dir(test_dir)
+            .await
+            .expect("create_dir should succeed");
+
+        // create_dir_all should also succeed
+        storage
+            .create_dir_all(test_dir)
+            .await
+            .expect("create_dir_all should succeed");
+
+        println!("✓ S3 create directory operations test passed");
+    });
+}
+
+// =============================================================================
+// Test: S3 Storage Large File Upload
+// =============================================================================
+
+#[test]
+fn test_s3_large_file_upload() {
+    require_minio!();
+
+    let config = MinioConfig::default();
+    let storage = config.create_storage().expect("Failed to create storage");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime.block_on(async {
+        let test_path = Path::new("test_large/large_file.bin");
+
+        // Create a 1MB file
+        let test_data = Bytes::from(vec![0xABu8; 1024 * 1024]);
+
+        // Write large file
+        storage
+            .write(test_path, test_data.clone())
+            .await
+            .expect("Failed to write large file");
+
+        // Verify size
+        let size = storage.size(test_path).await.expect("Failed to get size");
+        assert_eq!(size, 1024 * 1024, "File size should be 1MB");
+
+        // Verify content (just check first/last bytes to save time)
+        let read_data = storage.read(test_path).await.expect("Failed to read file");
+        assert_eq!(
+            read_data.len(),
+            1024 * 1024,
+            "Read data length should match"
+        );
+        assert_eq!(read_data[0], 0xAB, "First byte should match");
+        assert_eq!(read_data[1024 * 1024 - 1], 0xAB, "Last byte should match");
+
+        // Cleanup
+        let _ = storage.delete(test_path).await;
+
+        println!("✓ S3 large file upload test passed");
+    });
+}
+
+// =============================================================================
+// Test: S3 Storage Overwrite Behavior
+// =============================================================================
+
+#[test]
+fn test_s3_overwrite_behavior() {
+    require_minio!();
+
+    let config = MinioConfig::default();
+    let storage = config.create_storage().expect("Failed to create storage");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime.block_on(async {
+        let test_path = Path::new("test_overwrite/file.txt");
+
+        // Write initial content
+        storage
+            .write(test_path, Bytes::from("initial content"))
+            .await
+            .expect("Failed to write initial");
+
+        // Overwrite with new content
+        storage
+            .write(test_path, Bytes::from("overwritten content"))
+            .await
+            .expect("Failed to overwrite");
+
+        // Verify overwritten content
+        let read_data = storage.read(test_path).await.expect("Failed to read");
+        assert_eq!(
+            read_data,
+            Bytes::from("overwritten content"),
+            "Content should be overwritten"
+        );
+
+        // Cleanup
+        let _ = storage.delete(test_path).await;
+
+        println!("✓ S3 overwrite behavior test passed");
+    });
+}
+
+// =============================================================================
+// Test: S3 Storage Error Handling - Read Non-existent File
+// =============================================================================
+
+#[test]
+fn test_s3_read_nonexistent_file() {
+    require_minio!();
+
+    let config = MinioConfig::default();
+    let storage = config.create_storage().expect("Failed to create storage");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime.block_on(async {
+        let test_path = Path::new("nonexistent/path/file.txt");
+
+        let result = storage.read(test_path).await;
+        assert!(
+            result.is_err(),
+            "Reading nonexistent file should return error"
+        );
+
+        println!("✓ S3 read nonexistent file test passed");
+    });
+}
+
+// =============================================================================
+// Test: S3 Storage Nested Directory Structure
+// =============================================================================
+
+#[test]
+fn test_s3_nested_directory_structure() {
+    require_minio!();
+
+    let config = MinioConfig::default();
+    let storage = config.create_storage().expect("Failed to create storage");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime.block_on(async {
+        // Create deeply nested structure
+        let nested_path = Path::new("test_nested/a/b/c/d/e/file.txt");
+
+        storage
+            .write(nested_path, Bytes::from("nested content"))
+            .await
+            .expect("Failed to write nested file");
+
+        // Verify file exists
+        assert!(
+            storage.exists(nested_path).await,
+            "Nested file should exist"
+        );
+
+        // Read back
+        let read_data = storage
+            .read(nested_path)
+            .await
+            .expect("Failed to read nested file");
+        assert_eq!(
+            read_data,
+            Bytes::from("nested content"),
+            "Nested content should match"
+        );
+
+        // Cleanup
+        let _ = storage.delete(nested_path).await;
+
+        println!("✓ S3 nested directory structure test passed");
+    });
+}
+
+// =============================================================================
+// Test: S3 Storage Read Range Operations
+// =============================================================================
+
+#[test]
+fn test_s3_read_range_operations() {
+    require_minio!();
+
+    let config = MinioConfig::default();
+    let storage = config.create_storage().expect("Failed to create storage");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    runtime.block_on(async {
+        let test_path = Path::new("test_range/data.bin");
+
+        // Create test data with recognizable pattern
+        let test_data: Vec<u8> = (0..=255).collect();
+        storage
+            .write(test_path, Bytes::from(test_data.clone()))
+            .await
+            .expect("Failed to write file");
+
+        // Read first 10 bytes
+        let range1 = storage
+            .read_range(test_path, 0, Some(10))
+            .await
+            .expect("Failed to read range");
+        assert_eq!(range1.len(), 10, "Range should be 10 bytes");
+        assert_eq!(&range1[..], &test_data[0..10], "Range content should match");
+
+        // Read middle section
+        let range2 = storage
+            .read_range(test_path, 100, Some(150))
+            .await
+            .expect("Failed to read range");
+        assert_eq!(range2.len(), 50, "Range should be 50 bytes");
+        assert_eq!(
+            &range2[..],
+            &test_data[100..150],
+            "Range content should match"
+        );
+
+        // Read from offset to end (no end specified)
+        let range3 = storage
+            .read_range(test_path, 200, None)
+            .await
+            .expect("Failed to read range");
+        assert_eq!(range3.len(), 56, "Range should be 56 bytes (256-200)");
+        assert_eq!(&range3[..], &test_data[200..], "Range content should match");
+
+        // Cleanup
+        let _ = storage.delete(test_path).await;
+
+        println!("✓ S3 read range operations test passed");
+    });
 }

@@ -409,4 +409,244 @@ mod tests {
         assert!(debug_str.contains("StagedParquetFile"));
         assert!(debug_str.contains("worker-1"));
     }
+
+    #[test]
+    fn test_staged_parquet_file_clone() {
+        let file = StagedParquetFile {
+            path: PathBuf::from("/path/to/file.parquet"),
+            worker_id: "worker-1".to_string(),
+            episode_index: 42,
+        };
+        let cloned = file.clone();
+        assert_eq!(file.path, cloned.path);
+        assert_eq!(file.worker_id, cloned.worker_id);
+        assert_eq!(file.episode_index, cloned.episode_index);
+    }
+
+    #[test]
+    fn test_staged_parquet_file_sorting() {
+        let mut files = [
+            StagedParquetFile {
+                path: PathBuf::from("episode_3.parquet"),
+                worker_id: "w1".to_string(),
+                episode_index: 3,
+            },
+            StagedParquetFile {
+                path: PathBuf::from("episode_1.parquet"),
+                worker_id: "w1".to_string(),
+                episode_index: 1,
+            },
+            StagedParquetFile {
+                path: PathBuf::from("episode_2.parquet"),
+                worker_id: "w2".to_string(),
+                episode_index: 2,
+            },
+        ];
+
+        files.sort_by_key(|f| f.episode_index);
+
+        assert_eq!(files[0].episode_index, 1);
+        assert_eq!(files[1].episode_index, 2);
+        assert_eq!(files[2].episode_index, 3);
+    }
+
+    #[test]
+    fn test_extract_episode_number_various_patterns() {
+        // Standard patterns
+        assert_eq!(
+            extract_episode_number(Path::new("episode_000000.parquet")),
+            0
+        );
+        assert_eq!(
+            extract_episode_number(Path::new("episode_000001.parquet")),
+            1
+        );
+        assert_eq!(
+            extract_episode_number(Path::new("episode_999999.parquet")),
+            999999
+        );
+
+        // With different padding
+        assert_eq!(extract_episode_number(Path::new("episode_1.parquet")), 1);
+        assert_eq!(extract_episode_number(Path::new("episode_42.parquet")), 42);
+
+        // With path prefix
+        assert_eq!(
+            extract_episode_number(Path::new("/data/chunk-000/episode_00123.parquet")),
+            123
+        );
+        assert_eq!(
+            extract_episode_number(Path::new("staging/worker-1/episode_456.parquet")),
+            456
+        );
+    }
+
+    #[test]
+    fn test_extract_episode_number_invalid_patterns() {
+        // Invalid patterns
+        assert_eq!(extract_episode_number(Path::new("data.parquet")), 0);
+        assert_eq!(extract_episode_number(Path::new("episode_.parquet")), 0);
+        assert_eq!(extract_episode_number(Path::new("episode_.txt")), 0);
+        assert_eq!(extract_episode_number(Path::new("episode_abc.parquet")), 0);
+
+        // Mixed formats
+        assert_eq!(
+            extract_episode_number(Path::new("my_episode_123.parquet")),
+            0
+        );
+        assert_eq!(extract_episode_number(Path::new("episode-123.parquet")), 0);
+    }
+
+    #[test]
+    fn test_parquet_merge_executor_new() {
+        use roboflow_storage::LocalStorage;
+
+        let temp_dir = std::env::temp_dir();
+        let storage = Arc::new(LocalStorage::new(temp_dir.clone()));
+        let executor =
+            ParquetMergeExecutor::new(storage, "s3://bucket/output".to_string(), temp_dir);
+
+        // Just verify we can create it
+        let _ = executor;
+    }
+
+    #[test]
+    fn test_parquet_merge_executor_local_output() {
+        use roboflow_storage::LocalStorage;
+
+        let temp_dir = std::env::temp_dir();
+        let storage = Arc::new(LocalStorage::new(temp_dir.clone()));
+        let executor =
+            ParquetMergeExecutor::new(storage, "file:///output/dataset".to_string(), temp_dir);
+
+        let _ = executor;
+    }
+
+    #[test]
+    fn test_parquet_merge_executor_relative_output() {
+        use roboflow_storage::LocalStorage;
+
+        let temp_dir = std::env::temp_dir();
+        let storage = Arc::new(LocalStorage::new(temp_dir.clone()));
+        let executor = ParquetMergeExecutor::new(storage, "./output/dataset".to_string(), temp_dir);
+
+        let _ = executor;
+    }
+
+    #[test]
+    fn test_staged_parquet_file_equality() {
+        let file1 = StagedParquetFile {
+            path: PathBuf::from("episode_1.parquet"),
+            worker_id: "worker-1".to_string(),
+            episode_index: 1,
+        };
+
+        let file2 = StagedParquetFile {
+            path: PathBuf::from("episode_1.parquet"),
+            worker_id: "worker-1".to_string(),
+            episode_index: 1,
+        };
+
+        // Both files should be equal in their fields
+        assert_eq!(file1.path, file2.path);
+        assert_eq!(file1.worker_id, file2.worker_id);
+        assert_eq!(file1.episode_index, file2.episode_index);
+    }
+
+    #[test]
+    fn test_staged_parquet_file_different_workers() {
+        let file1 = StagedParquetFile {
+            path: PathBuf::from("episode_1.parquet"),
+            worker_id: "worker-1".to_string(),
+            episode_index: 1,
+        };
+
+        let file2 = StagedParquetFile {
+            path: PathBuf::from("episode_1.parquet"),
+            worker_id: "worker-2".to_string(),
+            episode_index: 1,
+        };
+
+        // Same episode_index and path but different workers
+        assert_eq!(file1.episode_index, file2.episode_index);
+        assert_ne!(file1.worker_id, file2.worker_id);
+    }
+
+    #[test]
+    fn test_extract_episode_number_unicode() {
+        // Test with non-ASCII characters - should return 0
+        assert_eq!(
+            extract_episode_number(Path::new("episode_一二三.parquet")),
+            0
+        );
+    }
+
+    #[test]
+    fn test_extract_episode_number_negative() {
+        // Negative numbers are parsed as-is (the function doesn't validate)
+        let result = extract_episode_number(Path::new("episode_-1.parquet"));
+        // The function will parse "-1" as a valid i64
+        assert_eq!(result, -1);
+    }
+
+    #[test]
+    fn test_extract_episode_number_overflow() {
+        // Very large numbers
+        let result = extract_episode_number(Path::new("episode_999999999999.parquet"));
+        // Should parse or return 0 if it overflows
+        assert!(result >= 0);
+    }
+
+    #[test]
+    fn test_extract_episode_number_leading_zeros() {
+        assert_eq!(
+            extract_episode_number(Path::new("episode_0000000001.parquet")),
+            1
+        );
+        assert_eq!(
+            extract_episode_number(Path::new("episode_0000000000.parquet")),
+            0
+        );
+    }
+
+    #[test]
+    fn test_extract_episode_number_case_sensitivity() {
+        // Should be case sensitive - Episode vs episode
+        assert_eq!(extract_episode_number(Path::new("Episode_123.parquet")), 0);
+        assert_eq!(
+            extract_episode_number(Path::new("episode_123.parquet")),
+            123
+        );
+    }
+
+    #[test]
+    fn test_staged_parquet_file_zero_episode() {
+        let file = StagedParquetFile {
+            path: PathBuf::from("episode_0.parquet"),
+            worker_id: "worker-1".to_string(),
+            episode_index: 0,
+        };
+
+        assert_eq!(file.episode_index, 0);
+    }
+
+    #[test]
+    fn test_staged_parquet_file_large_episode() {
+        let file = StagedParquetFile {
+            path: PathBuf::from("episode_999999.parquet"),
+            worker_id: "worker-1".to_string(),
+            episode_index: 999999,
+        };
+
+        assert_eq!(file.episode_index, 999999);
+    }
+
+    #[test]
+    fn test_extract_episode_number_with_query_string() {
+        // URLs with query strings
+        assert_eq!(
+            extract_episode_number(Path::new("episode_123.parquet?version=1")),
+            0
+        );
+    }
 }

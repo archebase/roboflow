@@ -1,0 +1,74 @@
+name: 'Setup Rust Environment'
+description: 'Setup Rust toolchain, Python, caching, and common build dependencies'
+
+inputs:
+  python-version:
+    description: 'Python version to install'
+    required: false
+    default: '3.11'
+  rust-components:
+    description: 'Rust components to install (comma-separated)'
+    required: false
+    default: ''
+  cache-pip:
+    description: 'Enable pip caching'
+    required: false
+    default: 'false'
+  install-maturin:
+    description: 'Install maturin for building Python wheels'
+    required: false
+    default: 'false'
+  install-build-deps:
+    description: 'Install protobuf-compiler, mold, and clang on Linux'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: ${{ inputs.cache-pip == 'true' && 'pip' || '' }}
+
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: ${{ inputs.rust-components }}
+
+    - name: Install Linux build dependencies
+      if: runner.os == 'Linux' && inputs.install-build-deps == 'true'
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler mold clang
+
+    - name: Detect cache key suffix
+      id: cache-suffix
+      shell: bash
+      run: |
+        if [ "${{ runner.os }}" = "Linux" ]; then
+          UBUNTU_VERSION=$(lsb_release -rs | tr -d '.')
+          echo "suffix=ubuntu-${UBUNTU_VERSION}" >> $GITHUB_OUTPUT
+        else
+          echo "suffix=${{ runner.os }}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Setup sccache
+      uses: mozilla-actions/sccache-action@v0.0.9
+
+    - name: Setup cargo retry wrapper
+      shell: bash
+      run: |
+        mkdir -p "$HOME/.cargo-bin"
+        cp "${{ github.action_path }}/scripts/cargo-with-retry.sh" "$HOME/.cargo-bin/cargo-retry"
+        chmod +x "$HOME/.cargo-bin/cargo-retry"
+        echo "$HOME/.cargo-bin" >> $GITHUB_PATH
+        echo "SCCACHE_IGNORE_SERVER_IO_ERROR=1" >> $GITHUB_ENV
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: rust-stable-${{ runner.os }}-${{ steps.cache-suffix.outputs.suffix }}
+        cache-on-failure: true
+
+    - name: Install maturin
+      if: inputs.install-maturin == 'true'
+      shell: bash
+      run: pip install maturin[patchelf] --upgrade

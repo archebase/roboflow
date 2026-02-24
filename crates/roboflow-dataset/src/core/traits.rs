@@ -337,6 +337,7 @@ impl Default for FormatContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn test_format_context_default() {
@@ -345,5 +346,267 @@ mod tests {
         assert!(ctx.storage.is_none());
         assert!(ctx.base_path.as_os_str().is_empty());
         assert_eq!(ctx.num_workers, 4);
+    }
+
+    #[test]
+    fn test_format_context_clone() {
+        let ctx = FormatContext {
+            output_url: "s3://bucket/path".to_string(),
+            storage: None,
+            base_path: PathBuf::from("data"),
+            num_workers: 8,
+        };
+
+        let cloned = ctx.clone();
+        assert_eq!(cloned.output_url, "s3://bucket/path");
+        assert_eq!(cloned.base_path, PathBuf::from("data"));
+        assert_eq!(cloned.num_workers, 8);
+    }
+
+    #[test]
+    fn test_format_context_with_fields() {
+        let ctx = FormatContext {
+            output_url: "file:///output".to_string(),
+            storage: None,
+            base_path: PathBuf::from("dataset"),
+            num_workers: 16,
+        };
+
+        assert_eq!(ctx.output_url, "file:///output");
+        assert_eq!(ctx.base_path, PathBuf::from("dataset"));
+        assert_eq!(ctx.num_workers, 16);
+    }
+
+    /// Mock VideoPathScheme for testing
+    #[derive(Debug, Clone)]
+    struct MockVideoPathScheme {
+        scheme_name: &'static str,
+    }
+
+    impl VideoPathScheme for MockVideoPathScheme {
+        fn video_path(&self, episode: usize, camera: &str, chunk: usize) -> PathBuf {
+            PathBuf::from(format!(
+                "videos/chunk-{}/{}/episode_{:06}.mp4",
+                chunk, camera, episode
+            ))
+        }
+
+        fn chunk_dir(&self, chunk: usize) -> PathBuf {
+            PathBuf::from(format!("videos/chunk-{}", chunk))
+        }
+
+        fn parse_episode(&self, path: &std::path::Path) -> Option<usize> {
+            let filename = path.file_name()?.to_str()?;
+            if let Some(rest) = filename.strip_prefix("episode_")
+                && let Some(num_str) = rest.strip_suffix(".mp4")
+            {
+                return num_str.parse().ok();
+            }
+            None
+        }
+
+        fn scheme_name(&self) -> &'static str {
+            self.scheme_name
+        }
+    }
+
+    #[test]
+    fn test_video_path_scheme_video_path() {
+        let scheme = MockVideoPathScheme {
+            scheme_name: "mock",
+        };
+
+        let path = scheme.video_path(42, "cam_left", 0);
+        assert_eq!(
+            path,
+            PathBuf::from("videos/chunk-0/cam_left/episode_000042.mp4")
+        );
+
+        let path2 = scheme.video_path(0, "cam_right", 1);
+        assert_eq!(
+            path2,
+            PathBuf::from("videos/chunk-1/cam_right/episode_000000.mp4")
+        );
+    }
+
+    #[test]
+    fn test_video_path_scheme_chunk_dir() {
+        let scheme = MockVideoPathScheme {
+            scheme_name: "mock",
+        };
+
+        assert_eq!(scheme.chunk_dir(0), PathBuf::from("videos/chunk-0"));
+        assert_eq!(scheme.chunk_dir(1), PathBuf::from("videos/chunk-1"));
+        assert_eq!(scheme.chunk_dir(99), PathBuf::from("videos/chunk-99"));
+    }
+
+    #[test]
+    fn test_video_path_scheme_parse_episode() {
+        let scheme = MockVideoPathScheme {
+            scheme_name: "mock",
+        };
+
+        assert_eq!(
+            scheme.parse_episode(Path::new("episode_000042.mp4")),
+            Some(42)
+        );
+        assert_eq!(
+            scheme.parse_episode(Path::new("videos/chunk-0/cam/episode_000001.mp4")),
+            Some(1)
+        );
+        assert_eq!(scheme.parse_episode(Path::new("invalid.mp4")), None);
+        assert_eq!(scheme.parse_episode(Path::new("episode_.mp4")), None);
+    }
+
+    #[test]
+    fn test_video_path_scheme_default_extension() {
+        let scheme = MockVideoPathScheme {
+            scheme_name: "mock",
+        };
+        assert_eq!(scheme.video_extension(), "mp4");
+    }
+
+    #[test]
+    fn test_video_path_scheme_scheme_name() {
+        let scheme = MockVideoPathScheme {
+            scheme_name: "test_scheme",
+        };
+        assert_eq!(scheme.scheme_name(), "test_scheme");
+    }
+
+    /// Mock FormatWriter for testing default implementations
+    struct MockFormatWriter {
+        frames_written: usize,
+        format_name: &'static str,
+    }
+
+    impl MockFormatWriter {
+        fn new() -> Self {
+            Self {
+                frames_written: 0,
+                format_name: "mock",
+            }
+        }
+    }
+
+    impl FormatWriter for MockFormatWriter {
+        fn write_frame(&mut self, _frame: &AlignedFrame) -> Result<()> {
+            self.frames_written += 1;
+            Ok(())
+        }
+
+        fn finalize(&mut self) -> Result<WriterStats> {
+            Ok(WriterStats::default())
+        }
+
+        fn frame_count(&self) -> usize {
+            self.frames_written
+        }
+
+        fn format_name(&self) -> &'static str {
+            self.format_name
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+    }
+
+    #[test]
+    fn test_format_writer_default_write_batch() {
+        let mut writer = MockFormatWriter::new();
+
+        // Create some mock frames
+        let frames: Vec<AlignedFrame> = vec![];
+
+        // Default write_batch should call write_frame for each frame
+        let result = writer.write_batch(&frames);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_format_writer_default_start_episode() {
+        let mut writer = MockFormatWriter::new();
+
+        // Default start_episode should return Ok(0)
+        let result = FormatWriter::start_episode(&mut writer, None);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[test]
+    fn test_format_writer_default_finish_episode() {
+        let mut writer = MockFormatWriter::new();
+
+        // Default finish_episode should return Ok(default stats)
+        let result = FormatWriter::finish_episode(&mut writer);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_format_writer_default_episode_index() {
+        let writer = MockFormatWriter::new();
+
+        // Default episode_index should return None
+        assert!(writer.episode_index().is_none());
+    }
+
+    #[test]
+    fn test_format_writer_default_supports_episodes() {
+        let writer = MockFormatWriter::new();
+
+        // Default supports_episodes should return false
+        assert!(!writer.supports_episodes());
+    }
+
+    #[test]
+    fn test_format_writer_default_format_version() {
+        let writer = MockFormatWriter::new();
+
+        // Default format_version should return "unknown"
+        assert_eq!(writer.format_version(), "unknown");
+    }
+
+    #[test]
+    fn test_format_writer_default_handles_video() {
+        let writer = MockFormatWriter::new();
+
+        // Default handles_video should return true
+        assert!(writer.handles_video());
+    }
+
+    #[test]
+    fn test_format_writer_default_video_path_scheme() {
+        let writer = MockFormatWriter::new();
+
+        // Default video_path_scheme should return None
+        assert!(writer.video_path_scheme().is_none());
+    }
+
+    #[test]
+    fn test_episode_manager_blanket_impl() {
+        let mut writer = MockFormatWriter::new();
+
+        // The blanket impl should work through EpisodeManager trait
+        let manager: &mut dyn EpisodeManager = &mut writer;
+
+        let result = manager.start_episode(None);
+        assert!(result.is_ok());
+
+        let current = manager.current_episode();
+        assert!(current.is_none());
+
+        let completed = manager.episodes_completed();
+        assert_eq!(completed, 0);
+    }
+
+    #[test]
+    fn test_format_writer_format_name() {
+        let writer = MockFormatWriter::new();
+        assert_eq!(writer.format_name(), "mock");
     }
 }

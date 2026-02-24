@@ -32,14 +32,26 @@ The project uses a Cargo workspace with 5 crates:
 
 ```bash
 cargo build                              # Standard build
-cargo test                               # All tests
-cargo test --test minio_integration_tests # MinIO integration tests
+cargo test                               # All tests (including integration tests)
+cargo test --test minio_integration_tests # MinIO integration tests only
 ```
 
-**Note:** MinIO integration tests require running docker-compose infrastructure:
+### Test Infrastructure Requirements
+
+**All integration tests assume the following infrastructure is running:**
+
+| Service | Purpose | Docker Compose Service |
+|---------|---------|------------------------|
+| MinIO | S3-compatible object storage | `minio`, `minio-init` |
+| TiKV | Distributed KV storage | `tikv` |
+| PD | TiKV placement driver | `pd` |
+
+**Start infrastructure before running tests:**
 ```bash
-docker compose up -d minio minio-init
+docker compose up -d
 ```
+
+**Important:** Integration tests should **FAIL** if infrastructure is not available, rather than being skipped. Do not use `#[ignored]` attributes for infrastructure-dependent tests. This ensures CI catches missing infrastructure early.
 
 ## Code Quality
 
@@ -211,6 +223,31 @@ docker compose down        # Stop all services
 | PD | TiKV placement driver | 2379, 2380 |
 
 **Pre-created buckets:** `roboflow-datasets`, `roboflow-raw`, `roboflow-temp`
+
+**TiKV Host Configuration:**
+For TiKV tests to work from the host (not inside Docker), PD advertises its client URL as `http://pd:2379`. You must add this hostname to your `/etc/hosts`:
+
+```bash
+# Add to /etc/hosts
+127.0.0.1 pd
+```
+
+Or use the provided script:
+```bash
+./scripts/setup-hosts.sh  # Requires sudo
+```
+
+**Running E2E Tests:**
+```bash
+# Start infrastructure
+docker compose up -d
+
+# Run all e2e tests (requires TiKV + MinIO)
+cargo test --test batch_submission_e2e_test -- --nocapture
+
+# Run MinIO-only tests (no TiKV required)
+cargo test --test batch_minio_only_e2e_test -- --nocapture
+```
 
 ## LeRobot v2.1 Format
 

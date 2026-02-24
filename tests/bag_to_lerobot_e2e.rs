@@ -3,14 +3,11 @@ use std::fs;
 use std::path::Path;
 
 use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig};
-use roboflow_dataset::DatasetWriter;
-use roboflow_dataset::formats::dataset_executor::{
-    DatasetPipelineConfig, DatasetPipelineExecutor, SequentialPolicy,
-};
 use roboflow_dataset::formats::lerobot::{
     FlushingConfig, Mapping, MappingType, StreamingConfig as LerobotStreamingConfig,
 };
 use roboflow_dataset::sources::SourceConfig;
+use roboflow_pipeline::{DatasetPipelineConfig, DatasetPipelineExecutor, SequentialPolicy};
 
 // Large bag files (1.6GB/1.7GB) - used for comprehensive testing
 const _LARGE_BAG_PATH_1: &str =
@@ -79,8 +76,7 @@ fn create_test_lerobot_config() -> LerobotConfig {
 #[test]
 fn test_bag_to_lerobot_e2e() {
     if !Path::new(TEST_BAG_PATH).exists() {
-        eprintln!("Skipping test: bag file not found at {}", TEST_BAG_PATH);
-        return;
+        panic!("Required bag file not found at {}", TEST_BAG_PATH);
     }
 
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -177,11 +173,9 @@ fn test_bag_to_lerobot_e2e() {
 }
 
 #[test]
-#[ignore = "Requires S3/MinIO and real bag file - run manually"]
 fn test_bag_to_lerobot_s3_upload() {
     if !Path::new(TEST_BAG_PATH).exists() {
-        eprintln!("Skipping test: bag file not found at {}", TEST_BAG_PATH);
-        return;
+        panic!("Required bag file not found at {}", TEST_BAG_PATH);
     }
 
     unsafe {
@@ -199,8 +193,21 @@ fn test_bag_to_lerobot_s3_upload() {
 
         let config = create_test_lerobot_config();
 
-        let mut writer = LerobotWriter::new_local(local_path, config.clone())
+        // Register builtin sources before creating source
+        roboflow_dataset::sources::register_builtin_sources();
+
+        let topic_mappings: HashMap<String, String> = config
+            .mappings
+            .iter()
+            .map(|m| (m.topic.clone(), m.feature.clone()))
+            .collect();
+
+        let pipeline_config = DatasetPipelineConfig::with_fps(config.dataset.base.fps)
+            .with_topic_mappings(topic_mappings);
+
+        let writer = LerobotWriter::new_local(local_path, config.clone())
             .expect("Failed to create LeRobot writer");
+        let mut executor = DatasetPipelineExecutor::new(writer, pipeline_config, SequentialPolicy);
 
         let source_config = SourceConfig::bag(TEST_BAG_PATH);
         let mut source = roboflow_dataset::sources::create_source(&source_config)
@@ -210,19 +217,20 @@ fn test_bag_to_lerobot_s3_upload() {
             .expect("Failed to initialize source");
         println!("Source metadata: {:?}", metadata);
 
-        writer.start_episode(Some(0)).expect("Failed to start episode");
-
         let mut frame_count = 0usize;
         loop {
             match source.read_batch(100).await {
-                Ok(Some(messages)) => {
-                    for _msg in messages {
-                        frame_count += 1;
+                Ok(Some(messages)) if !messages.is_empty() => {
+                    for msg in messages {
+                        if executor.process_message(msg).is_ok() {
+                            frame_count += 1;
+                        }
                         if frame_count.is_multiple_of(100) {
                             println!("Processed {} frames...", frame_count);
                         }
                     }
                 }
+                Ok(Some(_)) => continue,
                 Ok(None) => {
                     println!("End of stream reached after {} frames", frame_count);
                     break;
@@ -234,16 +242,13 @@ fn test_bag_to_lerobot_s3_upload() {
             }
         }
 
-        writer.finish_episode(Some(0)).expect("Failed to finish episode");
-
-        let stats = DatasetWriter::finalize(&mut writer)
-            .expect("Failed to finalize writer");
+        let stats = executor.finalize().expect("Failed to finalize executor");
         println!("Writer stats: {:?}", stats);
 
         verify_lerobot_structure(local_path, &config);
 
         println!("LeRobot 2.1 conversion completed successfully!");
-        println!("To upload to S3, use: aws s3 cp {} s3://roboflow-datasets/test-e2e/ --recursive --endpoint-url=http://localhost:9000", 
+        println!("To upload to S3, use: aws s3 cp {} s3://roboflow-datasets/test-e2e/ --recursive --endpoint-url=http://localhost:9000",
             local_path.display());
     });
 }
@@ -623,8 +628,7 @@ fn test_two_bags_to_lerobot_two_episodes() {
 
     for (i, bag_path) in bag_files.iter().enumerate() {
         if !Path::new(bag_path).exists() {
-            eprintln!("Skipping test: bag file {} not found at {}", i, bag_path);
-            return;
+            panic!("Required bag file {} not found at {}", i, bag_path);
         }
     }
 

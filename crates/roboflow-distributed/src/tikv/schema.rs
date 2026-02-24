@@ -111,6 +111,39 @@ impl LockRecord {
     }
 }
 
+/// Helper module for serializing serde_json::Value as a JSON string for bincode compatibility.
+mod json_value_as_string {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use serde_json::Value;
+
+    pub fn serialize<S>(value: &Option<Value>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(v) => {
+                let s = serde_json::to_string(v).map_err(serde::ser::Error::custom)?;
+                serializer.serialize_some(&s)
+            }
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<String> = Option::deserialize(deserializer)?;
+        match opt {
+            Some(s) => {
+                let v = serde_json::from_str(&s).map_err(serde::de::Error::custom)?;
+                Ok(Some(v))
+            }
+            None => Ok(None),
+        }
+    }
+}
+
 /// Worker heartbeat record.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HeartbeatRecord {
@@ -132,7 +165,8 @@ pub struct HeartbeatRecord {
     /// Worker capabilities.
     pub capabilities: Vec<String>,
 
-    /// Optional worker metadata.
+    /// Optional worker metadata (stored as JSON string for bincode compatibility).
+    #[serde(with = "json_value_as_string")]
     pub metadata: Option<serde_json::Value>,
 }
 

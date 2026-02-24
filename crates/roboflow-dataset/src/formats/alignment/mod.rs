@@ -301,6 +301,16 @@ impl Default for AlignerStats {
 mod tests {
     use super::*;
 
+    /// Helper to create a timestamped message
+    fn create_message(log_time: u64) -> TimestampedMessage {
+        let mut message = HashMap::new();
+        message.insert(
+            "data".to_string(),
+            robocodec::CodecValue::Bytes(vec![1, 2, 3]),
+        );
+        TimestampedMessage { log_time, message }
+    }
+
     #[test]
     fn test_frame_aligner_new() {
         let config = StreamingConfig::with_fps(30);
@@ -347,5 +357,104 @@ mod tests {
         let stats = AlignerStats::new();
         assert_eq!(stats.alignment.frames_processed, 0);
         assert_eq!(stats.processing.frames_processed, 0);
+    }
+
+    #[test]
+    fn test_frame_aligner_process_single_message() {
+        let config = StreamingConfig::with_fps(30);
+        let processor = Box::new(PassthroughProcessor::new());
+        let mut aligner = FrameAligner::new(config, processor);
+
+        // Create a message
+        let msg = create_message(1_000_000_000);
+
+        // Process the message - may or may not complete a frame
+        let result = aligner.process_message(&msg, "observation.images.cam_0");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_frame_aligner_with_topic_mappings() {
+        let config = StreamingConfig::with_fps(30);
+        let mut mappings = HashMap::new();
+        mappings.insert(
+            "/camera/left".to_string(),
+            "observation.images.left".to_string(),
+        );
+        mappings.insert(
+            "/camera/right".to_string(),
+            "observation.images.right".to_string(),
+        );
+
+        let processor = Box::new(PassthroughProcessor::new());
+        let aligner = FrameAligner::new(config, processor).with_topic_mappings(mappings);
+
+        assert_eq!(
+            aligner.get_feature_name("/camera/left"),
+            "observation.images.left"
+        );
+        assert_eq!(
+            aligner.get_feature_name("/camera/right"),
+            "observation.images.right"
+        );
+    }
+
+    #[test]
+    fn test_frame_aligner_estimated_memory() {
+        let config = StreamingConfig::with_fps(30);
+        let processor = Box::new(PassthroughProcessor::new());
+        let aligner = FrameAligner::new(config, processor);
+
+        // Empty buffer should have minimal memory
+        assert!(aligner.estimated_memory_bytes() < 1024 * 1024);
+    }
+
+    #[test]
+    fn test_frame_aligner_finalize() {
+        let config = StreamingConfig::with_fps(30);
+        let processor = Box::new(PassthroughProcessor::new());
+        let mut aligner = FrameAligner::new(config, processor);
+
+        // Finalize should succeed even with no messages
+        let stats = aligner.finalize();
+        assert!(stats.is_ok());
+    }
+
+    #[test]
+    fn test_frame_aligner_add_messages_with_features() {
+        let config = StreamingConfig::with_fps(30);
+        let processor = Box::new(PassthroughProcessor::new());
+        let mut aligner = FrameAligner::new(config, processor);
+
+        // Create multiple messages
+        let messages = vec![
+            ("feature_a".to_string(), create_message(1_000_000_000)),
+            ("feature_b".to_string(), create_message(1_000_010_000)),
+            ("feature_a".to_string(), create_message(1_000_020_000)),
+        ];
+
+        let result = aligner.add_messages_with_features(messages);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_aligner_stats_default() {
+        let stats1 = AlignerStats::default();
+        let stats2 = AlignerStats::new();
+        assert_eq!(
+            stats1.alignment.frames_processed,
+            stats2.alignment.frames_processed
+        );
+    }
+
+    #[test]
+    fn test_frame_aligner_with_completion_criteria() {
+        let config = StreamingConfig::with_fps(30);
+        let criteria =
+            FrameCompletionCriteria::new().require_feature("observation.images.cam_0", 1);
+        let processor = Box::new(PassthroughProcessor::new());
+
+        let aligner = FrameAligner::with_completion_criteria(config, criteria, processor);
+        assert!(aligner.is_buffer_empty());
     }
 }

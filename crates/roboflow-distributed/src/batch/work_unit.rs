@@ -611,4 +611,188 @@ mod tests {
         assert_eq!(summary.file_count, 2);
         assert_eq!(summary.total_size, 3000);
     }
+
+    #[test]
+    fn test_work_unit_status_display() {
+        assert_eq!(format!("{}", WorkUnitStatus::Pending), "Pending");
+        assert_eq!(format!("{}", WorkUnitStatus::Processing), "Processing");
+        assert_eq!(format!("{}", WorkUnitStatus::Complete), "Complete");
+        assert_eq!(format!("{}", WorkUnitStatus::Failed), "Failed");
+        assert_eq!(format!("{}", WorkUnitStatus::Dead), "Dead");
+        assert_eq!(format!("{}", WorkUnitStatus::Cancelled), "Cancelled");
+    }
+
+    #[test]
+    fn test_work_unit_status_can_transition_to() {
+        use crate::state::StateLifecycle;
+
+        // Pending can transition to Processing, Failed, Cancelled
+        assert!(WorkUnitStatus::Pending.can_transition_to(&WorkUnitStatus::Processing));
+        assert!(WorkUnitStatus::Pending.can_transition_to(&WorkUnitStatus::Failed));
+        assert!(WorkUnitStatus::Pending.can_transition_to(&WorkUnitStatus::Cancelled));
+        assert!(!WorkUnitStatus::Pending.can_transition_to(&WorkUnitStatus::Complete));
+        assert!(!WorkUnitStatus::Pending.can_transition_to(&WorkUnitStatus::Dead));
+
+        // Processing can transition to Complete, Failed, Dead, Cancelled
+        assert!(WorkUnitStatus::Processing.can_transition_to(&WorkUnitStatus::Complete));
+        assert!(WorkUnitStatus::Processing.can_transition_to(&WorkUnitStatus::Failed));
+        assert!(WorkUnitStatus::Processing.can_transition_to(&WorkUnitStatus::Dead));
+        assert!(WorkUnitStatus::Processing.can_transition_to(&WorkUnitStatus::Cancelled));
+        assert!(!WorkUnitStatus::Processing.can_transition_to(&WorkUnitStatus::Pending));
+
+        // Failed can transition to Processing, Cancelled
+        assert!(WorkUnitStatus::Failed.can_transition_to(&WorkUnitStatus::Processing));
+        assert!(WorkUnitStatus::Failed.can_transition_to(&WorkUnitStatus::Cancelled));
+        assert!(!WorkUnitStatus::Failed.can_transition_to(&WorkUnitStatus::Complete));
+
+        // Terminal states cannot transition
+        assert!(!WorkUnitStatus::Complete.can_transition_to(&WorkUnitStatus::Pending));
+        assert!(!WorkUnitStatus::Dead.can_transition_to(&WorkUnitStatus::Pending));
+        assert!(!WorkUnitStatus::Cancelled.can_transition_to(&WorkUnitStatus::Pending));
+
+        // Self-transition is always allowed
+        assert!(WorkUnitStatus::Pending.can_transition_to(&WorkUnitStatus::Pending));
+        assert!(WorkUnitStatus::Processing.can_transition_to(&WorkUnitStatus::Processing));
+        assert!(WorkUnitStatus::Complete.can_transition_to(&WorkUnitStatus::Complete));
+    }
+
+    #[test]
+    fn test_work_unit_status_is_claimable() {
+        assert!(WorkUnitStatus::Pending.is_claimable());
+        assert!(WorkUnitStatus::Failed.is_claimable());
+        assert!(!WorkUnitStatus::Processing.is_claimable());
+        assert!(!WorkUnitStatus::Complete.is_claimable());
+        assert!(!WorkUnitStatus::Dead.is_claimable());
+        assert!(!WorkUnitStatus::Cancelled.is_claimable());
+    }
+
+    #[test]
+    fn test_work_unit_claim_max_attempts_exceeded() {
+        let mut unit = WorkUnit::new(
+            "batch-123".to_string(),
+            vec![WorkFile::new("s3://bucket/file.mcap".to_string(), 1024)],
+            "s3://output/".to_string(),
+            "config-hash".to_string(),
+        );
+
+        unit.attempts = 3; // Already at max
+        unit.max_attempts = 3;
+
+        // When attempts >= max_attempts, is_claimable() returns false
+        // so we get NotClaimable error
+        let result = unit.claim("worker-1".to_string());
+        assert!(result.is_err());
+        assert!(!unit.is_claimable());
+    }
+
+    #[test]
+    fn test_work_unit_primary_source() {
+        let files = vec![
+            WorkFile::new("s3://bucket/file1.mcap".to_string(), 1000),
+            WorkFile::new("s3://bucket/file2.mcap".to_string(), 2000),
+        ];
+        let unit = WorkUnit::new(
+            "batch-123".to_string(),
+            files,
+            "s3://output/".to_string(),
+            "config-hash".to_string(),
+        );
+
+        assert_eq!(unit.primary_source(), Some("s3://bucket/file1.mcap"));
+    }
+
+    #[test]
+    fn test_work_unit_primary_source_empty() {
+        let unit = WorkUnit::new(
+            "batch-123".to_string(),
+            vec![],
+            "s3://output/".to_string(),
+            "config-hash".to_string(),
+        );
+
+        assert_eq!(unit.primary_source(), None);
+    }
+
+    #[test]
+    fn test_work_unit_is_single_file() {
+        let single = WorkUnit::new(
+            "batch-123".to_string(),
+            vec![WorkFile::new("s3://bucket/file.mcap".to_string(), 1024)],
+            "s3://output/".to_string(),
+            "config-hash".to_string(),
+        );
+        assert!(single.is_single_file());
+
+        let multiple = WorkUnit::new(
+            "batch-123".to_string(),
+            vec![
+                WorkFile::new("s3://bucket/file1.mcap".to_string(), 1024),
+                WorkFile::new("s3://bucket/file2.mcap".to_string(), 2048),
+            ],
+            "s3://output/".to_string(),
+            "config-hash".to_string(),
+        );
+        assert!(!multiple.is_single_file());
+    }
+
+    #[test]
+    fn test_work_unit_error_display() {
+        let err1 = WorkUnitError::NotClaimable {
+            id: "unit-123".to_string(),
+            status: WorkUnitStatus::Processing,
+        };
+        assert!(err1.to_string().contains("unit-123"));
+        assert!(err1.to_string().contains("not claimable"));
+
+        let err2 = WorkUnitError::MaxAttemptsExceeded {
+            id: "unit-456".to_string(),
+            max_attempts: 3,
+        };
+        assert!(err2.to_string().contains("unit-456"));
+        assert!(err2.to_string().contains("max attempts"));
+
+        let err3 = WorkUnitError::Serialization("invalid data".to_string());
+        assert!(err3.to_string().contains("invalid data"));
+    }
+
+    #[test]
+    fn test_work_unit_claim_attempts_increment() {
+        let mut unit = WorkUnit::new(
+            "batch-123".to_string(),
+            vec![WorkFile::new("s3://bucket/file.mcap".to_string(), 1024)],
+            "s3://output/".to_string(),
+            "config-hash".to_string(),
+        );
+
+        assert_eq!(unit.attempts, 0);
+
+        unit.claim("worker-1".to_string()).unwrap();
+        assert_eq!(unit.attempts, 1);
+
+        unit.fail("error".to_string());
+        assert_eq!(unit.status, WorkUnitStatus::Failed);
+
+        unit.claim("worker-2".to_string()).unwrap();
+        assert_eq!(unit.attempts, 2);
+    }
+
+    #[test]
+    fn test_work_unit_not_claimable_after_complete() {
+        let mut unit = WorkUnit::new(
+            "batch-123".to_string(),
+            vec![WorkFile::new("s3://bucket/file.mcap".to_string(), 1024)],
+            "s3://output/".to_string(),
+            "config-hash".to_string(),
+        );
+
+        unit.complete();
+        let result = unit.claim("worker-1".to_string());
+        assert!(result.is_err());
+        match result {
+            Err(WorkUnitError::NotClaimable { status, .. }) => {
+                assert_eq!(status, WorkUnitStatus::Complete);
+            }
+            _ => panic!("Expected NotClaimable error"),
+        }
+    }
 }

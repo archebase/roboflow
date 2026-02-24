@@ -6,6 +6,7 @@ members = [
     "crates/roboflow-executor",
     "crates/roboflow-media",
     "crates/roboflow-dataset",
+    "crates/roboflow-pipeline",
     "crates/roboflow-distributed",
 ]
 resolver = "2"
@@ -16,6 +17,7 @@ roboflow-core = { path = "crates/roboflow-core", version = "0.2.0" }
 roboflow-storage = { path = "crates/roboflow-storage", version = "0.2.0" }
 roboflow-executor = { path = "crates/roboflow-executor", version = "0.2.0" }
 roboflow-media = { path = "crates/roboflow-media", version = "0.2.0" }
+roboflow-pipeline = { path = "crates/roboflow-pipeline", version = "0.2.0" }
 roboflow-dataset = { path = "crates/roboflow-dataset", version = "0.2.0" }
 roboflow-distributed = { path = "crates/roboflow-distributed", version = "0.2.0" }
 
@@ -48,12 +50,14 @@ robocodec = { workspace = true }
 roboflow-core = { workspace = true }
 roboflow-storage = { workspace = true }
 roboflow-media = { workspace = true }
+roboflow-pipeline = { workspace = true }
 roboflow-distributed = { workspace = true }
 roboflow-dataset = { workspace = true }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml_ng = "0.10"
+async-trait = { workspace = true }
 thiserror = "1.0"
 anyhow = "1.0"
 pest = "2.7"

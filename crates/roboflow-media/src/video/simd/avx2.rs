@@ -37,69 +37,81 @@ const V_B: i16 = -21; // -0.081312 * 256
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn load_rgb_values(rgb_ptr: *const u8) -> (__m256i, __m256i, __m256i) {
-    // Load 8 RGB pixels (24 bytes) - we need 3 loads of 8 bytes each
+    // Load 8 RGB pixels (24 bytes) into 32-bit integer vectors
     // RGB layout: R0 G0 B0 R1 G1 B1 R2 G2 B2 R3 G3 B3 R4 G4 B4 R5 G5 B5 R6 G6 B6 R7 G7 B7
+    //
+    // We use i32 to avoid overflow during multiplication:
+    // max value per channel is 255, max coefficient is 150,
+    // 255 * 150 = 38250 which overflows i16 (max 32767).
 
-    // For simplicity, use scalar extraction for now and optimize later
-    let mut r_arr = [0i16; 16];
-    let mut g_arr = [0i16; 16];
-    let mut b_arr = [0i16; 16];
-
+    let mut r_arr = [0i32; 8];
+    let mut g_arr = [0i32; 8];
+    let mut b_arr = [0i32; 8];
     for i in 0..8 {
-        r_arr[i] = *rgb_ptr.add(i * 3) as i16;
-        g_arr[i] = *rgb_ptr.add(i * 3 + 1) as i16;
-        b_arr[i] = *rgb_ptr.add(i * 3 + 2) as i16;
+        r_arr[i] = *rgb_ptr.add(i * 3) as i32;
+        g_arr[i] = *rgb_ptr.add(i * 3 + 1) as i32;
+        b_arr[i] = *rgb_ptr.add(i * 3 + 2) as i32;
     }
-
     let r = _mm256_loadu_si256(r_arr.as_ptr() as *const __m256i);
     let g = _mm256_loadu_si256(g_arr.as_ptr() as *const __m256i);
     let b = _mm256_loadu_si256(b_arr.as_ptr() as *const __m256i);
-
     (r, g, b)
 }
 
-/// Convert 8 RGB pixels to 8 Y values using AVX2.
+/// Convert 8 RGB pixels to 8 Y values using AVX2 (32-bit arithmetic).
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn rgb8_to_y_avx2(r: __m256i, g: __m256i, b: __m256i) -> __m256i {
-    // Y = 0.299*R + 0.587*G + 0.114*B
-    // Using 8-bit coefficients scaled by 256
-    let y_r = _mm256_set1_epi16(Y_R);
-    let y_g = _mm256_set1_epi16(Y_G);
-    let y_b = _mm256_set1_epi16(Y_B);
+    // Y = (77*R + 150*G + 29*B + 128) >> 8
+    // Using 32-bit multiply to avoid i16 overflow (255*150 = 38250 > 32767)
+    let y_r = _mm256_set1_epi32(Y_R as i32);
+    let y_g = _mm256_set1_epi32(Y_G as i32);
+    let y_b = _mm256_set1_epi32(Y_B as i32);
 
-    // Multiply and accumulate
-    let r_contrib = _mm256_mullo_epi16(r, y_r);
-    let g_contrib = _mm256_mullo_epi16(g, y_g);
-    let b_contrib = _mm256_mullo_epi16(b, y_b);
+    let r_contrib = _mm256_mullo_epi32(r, y_r);
+    let g_contrib = _mm256_mullo_epi32(g, y_g);
+    let b_contrib = _mm256_mullo_epi32(b, y_b);
 
-    let y_sum = _mm256_add_epi16(_mm256_add_epi16(r_contrib, g_contrib), b_contrib);
-
+    let y_sum = _mm256_add_epi32(_mm256_add_epi32(r_contrib, g_contrib), b_contrib);
     // Add rounding offset (128 = 256/2) and shift right by 8
-    let rounding = _mm256_set1_epi16(128);
-    let y_rounded = _mm256_add_epi16(y_sum, rounding);
+    let rounding = _mm256_set1_epi32(128);
+    let y_rounded = _mm256_add_epi32(y_sum, rounding);
 
-    // Arithmetic shift right by 8
-    _mm256_srai_epi16(y_rounded, 8)
+    _mm256_srai_epi32(y_rounded, 8)
 }
 
-/// Pack 16-bit values to 8-bit with clamping.
+/// Pack 8x i32 values to 8x u8 with clamping, returned in lower 64 bits of __m128i.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn pack_and_clamp_epi16(v: __m256i) -> __m128i {
-    // Clamp to 0-255 range
+unsafe fn pack_and_clamp_epi32(v: __m256i) -> __m128i {
+    // Clamp to 0-255 range in 32-bit
     let zero = _mm256_setzero_si256();
-    let max_val = _mm256_set1_epi16(255);
+    let max_val = _mm256_set1_epi32(255);
+    let clamped = _mm256_min_epi32(_mm256_max_epi32(v, zero), max_val);
 
-    let clamped = _mm256_min_epi16(_mm256_max_epi16(v, zero), max_val);
+    // Pack 32-bit -> 16-bit (with saturation) per lane, then 16-bit -> 8-bit
+    // _mm256_packs_epi32 works per 128-bit lane:
+    //   lane0: pack(clamped[0..3], zero[0..3]) -> 8 x i16
+    //   lane1: pack(clamped[4..7], zero[4..7]) -> 8 x i16
+    let packed16 = _mm256_packs_epi32(clamped, zero);
+    // lane0: [v0, v1, v2, v3, 0, 0, 0, 0] as i16
+    // lane1: [v4, v5, v6, v7, 0, 0, 0, 0] as i16
 
-    // Pack 16-bit to 8-bit (takes lower 128 bits of each 128-bit lane)
-    let packed = _mm256_packus_epi16(clamped, zero);
+    // _mm256_packus_epi16 works per 128-bit lane:
+    let packed8 = _mm256_packus_epi16(packed16, zero);
+    // lane0: [v0, v1, v2, v3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] as u8
+    // lane1: [v4, v5, v6, v7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] as u8
 
-    // Extract lower 128 bits
-    _mm256_castsi256_si128(packed)
+    // Extract both lanes and combine: we need v0..v3 from lane0 and v4..v7 from lane1
+    let lo = _mm256_castsi256_si128(packed8); // [v0,v1,v2,v3, 0,0,0,0, ...]
+    let hi = _mm256_extracti128_si256(packed8, 1); // [v4,v5,v6,v7, 0,0,0,0, ...]
+
+    // Combine: shift hi left by 4 bytes and OR with lo
+    let hi_shifted = _mm_slli_si128(hi, 4);
+    _mm_or_si128(lo, hi_shifted)
+    // Result: [v0, v1, v2, v3, v4, v5, v6, v7, 0, 0, 0, 0, 0, 0, 0, 0]
 }
 
 /// Convert RGB24 to YUV420P using AVX2 (8 pixels at a time for Y).
@@ -130,10 +142,10 @@ pub unsafe fn rgb_to_yuv420p_avx2(
         while x < width_minus_8 {
             let (r, g, b) = load_rgb_values(rgb_data.as_ptr().add(row_offset + x * 3));
             let y_vals = rgb8_to_y_avx2(r, g, b);
-            let y_packed = pack_and_clamp_epi16(y_vals);
+            let y_packed = pack_and_clamp_epi32(y_vals);
 
-            // Store 8 Y values
-            _mm_storeu_si128(
+            // Store 8 Y values (lower 64 bits of __m128i)
+            _mm_storel_epi64(
                 y_plane.as_mut_ptr().add(y_row_offset + x) as *mut __m128i,
                 y_packed,
             );
@@ -207,8 +219,8 @@ pub unsafe fn rgb_to_nv12_avx2(
         while x < width_minus_8 {
             let (r, g, b) = load_rgb_values(rgb_data.as_ptr().add(row_offset + x * 3));
             let y_vals = rgb8_to_y_avx2(r, g, b);
-            let y_packed = pack_and_clamp_epi16(y_vals);
-            _mm_storeu_si128(
+            let y_packed = pack_and_clamp_epi32(y_vals);
+            _mm_storel_epi64(
                 y_plane.as_mut_ptr().add(y_row_offset + x) as *mut __m128i,
                 y_packed,
             );

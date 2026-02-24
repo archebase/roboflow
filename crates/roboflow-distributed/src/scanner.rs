@@ -1217,4 +1217,165 @@ mod tests {
             "Rubbish_sorting_P4-278_20250830101558.bag"
         );
     }
+
+    #[test]
+    fn test_scanner_config_from_env_defaults() {
+        // When env vars are not set, should use defaults
+        let config = ScannerConfig::from_env().unwrap();
+        // These are the expected defaults
+        assert!(!config.batch_namespace.is_empty());
+        assert!(config.scan_interval.as_secs() > 0);
+        assert!(config.batch_size > 0);
+    }
+
+    #[test]
+    fn test_scanner_config_new_with_namespace() {
+        let config = ScannerConfig::new("custom-namespace");
+        assert_eq!(config.batch_namespace, "custom-namespace");
+        // Should use defaults for other fields
+        assert_eq!(
+            config.scan_interval,
+            Duration::from_secs(DEFAULT_SCAN_INTERVAL_SECS)
+        );
+        assert_eq!(config.batch_size, DEFAULT_BATCH_SIZE);
+    }
+
+    #[test]
+    fn test_scanner_config_clone() {
+        let config = ScannerConfig::new("test-ns")
+            .with_scan_interval(Duration::from_secs(120))
+            .with_batch_size(50);
+        let cloned = config.clone();
+        assert_eq!(config.batch_namespace, cloned.batch_namespace);
+        assert_eq!(config.scan_interval, cloned.scan_interval);
+        assert_eq!(config.batch_size, cloned.batch_size);
+    }
+
+    #[test]
+    fn test_scanner_config_debug() {
+        let config = ScannerConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("ScannerConfig"));
+        assert!(debug_str.contains("batch_namespace"));
+        assert!(debug_str.contains("scan_interval"));
+    }
+
+    #[test]
+    fn test_scanner_metrics_increment_operations() {
+        let metrics = ScannerMetrics::new();
+
+        // Test multiple increments
+        metrics.inc_files_discovered(5);
+        metrics.inc_files_discovered(3);
+        assert_eq!(metrics.files_discovered.load(Ordering::Relaxed), 8);
+
+        metrics.inc_jobs_created(2);
+        metrics.inc_jobs_created(4);
+        assert_eq!(metrics.jobs_created.load(Ordering::Relaxed), 6);
+
+        metrics.inc_duplicates_skipped(10);
+        assert_eq!(metrics.duplicates_skipped.load(Ordering::Relaxed), 10);
+
+        metrics.inc_scan_errors();
+        metrics.inc_scan_errors();
+        metrics.inc_scan_errors();
+        assert_eq!(metrics.scan_errors.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn test_scanner_metrics_scan_duration() {
+        let metrics = ScannerMetrics::new();
+
+        metrics.set_last_scan_duration(12345);
+        assert_eq!(metrics.last_scan_duration_ms.load(Ordering::Relaxed), 12345);
+    }
+
+    #[test]
+    fn test_scanner_metrics_leader_status() {
+        let metrics = ScannerMetrics::new();
+
+        metrics.set_leader(true);
+        assert_eq!(metrics.is_leader.load(Ordering::Relaxed), 1);
+        assert!(metrics.snapshot().is_leader);
+
+        metrics.set_leader(false);
+        assert_eq!(metrics.is_leader.load(Ordering::Relaxed), 0);
+        assert!(!metrics.snapshot().is_leader);
+    }
+
+    #[test]
+    fn test_metrics_snapshot_debug() {
+        let snapshot = MetricsSnapshot {
+            files_discovered: 100,
+            jobs_created: 50,
+            duplicates_skipped: 10,
+            scan_errors: 2,
+            last_scan_duration_ms: 5000,
+            is_leader: true,
+        };
+        let debug_str = format!("{:?}", snapshot);
+        assert!(debug_str.contains("MetricsSnapshot"));
+        assert!(debug_str.contains("files_discovered"));
+        assert!(debug_str.contains("is_leader"));
+    }
+
+    #[test]
+    fn test_metrics_snapshot_clone() {
+        let snapshot = MetricsSnapshot {
+            files_discovered: 100,
+            jobs_created: 50,
+            duplicates_skipped: 10,
+            scan_errors: 2,
+            last_scan_duration_ms: 5000,
+            is_leader: true,
+        };
+        let cloned = snapshot.clone();
+        assert_eq!(snapshot.files_discovered, cloned.files_discovered);
+        assert_eq!(snapshot.is_leader, cloned.is_leader);
+    }
+
+    #[test]
+    fn test_scan_stats_clone() {
+        let stats = ScanStats {
+            files_discovered: 100,
+            jobs_created: 50,
+            duplicates_skipped: 10,
+        };
+        let cloned = stats.clone();
+        assert_eq!(stats.files_discovered, cloned.files_discovered);
+        assert_eq!(stats.jobs_created, cloned.jobs_created);
+        assert_eq!(stats.duplicates_skipped, cloned.duplicates_skipped);
+    }
+
+    #[test]
+    fn test_scan_stats_debug() {
+        let stats = ScanStats {
+            files_discovered: 100,
+            jobs_created: 50,
+            duplicates_skipped: 10,
+        };
+        let debug_str = format!("{:?}", stats);
+        assert!(debug_str.contains("ScanStats"));
+        assert!(debug_str.contains("files_discovered"));
+    }
+
+    #[test]
+    fn test_default_constants() {
+        assert_eq!(DEFAULT_SCAN_INTERVAL_SECS, 60);
+        assert_eq!(DEFAULT_BATCH_SIZE, 100);
+        assert_eq!(DEFAULT_LOCK_TTL_SECS, 300);
+    }
+
+    #[test]
+    fn test_scanner_config_with_all_builders() {
+        let config = ScannerConfig::new("my-namespace")
+            .with_scan_interval(Duration::from_secs(30))
+            .with_batch_size(25)
+            .with_max_batches_per_cycle(5);
+
+        assert_eq!(config.batch_namespace, "my-namespace");
+        assert_eq!(config.scan_interval, Duration::from_secs(30));
+        assert_eq!(config.batch_size, 25);
+        assert_eq!(config.max_batches_per_cycle, 5);
+    }
 }

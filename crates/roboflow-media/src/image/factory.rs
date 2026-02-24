@@ -317,10 +317,14 @@ mod tests {
         let decoder = factory.get_decoder();
         assert!(decoder.is_available());
 
-        // On macOS, Auto selects Apple backend; on other platforms, falls back to CPU
+        // On macOS, Auto selects Apple backend; on Linux, Auto tries GPU first
+        // (GpuImageDecoder::try_new always succeeds), so it returns Gpu;
+        // on other platforms, falls back to CPU.
         #[cfg(target_os = "macos")]
         assert_eq!(decoder.decoder_type(), DecoderType::Apple);
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
+        assert_eq!(decoder.decoder_type(), DecoderType::Gpu);
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         assert_eq!(decoder.decoder_type(), DecoderType::Cpu);
     }
 

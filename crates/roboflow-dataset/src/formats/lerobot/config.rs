@@ -328,6 +328,9 @@ pub struct StreamingConfig {
     /// Timeout for frame operations in seconds (default: 5)
     #[serde(default = "default_buffer_timeout_secs")]
     pub buffer_timeout_secs: u64,
+
+    #[serde(default)]
+    pub finalize_metadata_in_coordinator: bool,
 }
 
 impl Default for StreamingConfig {
@@ -338,6 +341,7 @@ impl Default for StreamingConfig {
             ring_buffer_size: default_ring_buffer_size(),
             upload_part_size: default_upload_part_size(),
             buffer_timeout_secs: default_buffer_timeout_secs(),
+            finalize_metadata_in_coordinator: false,
         }
     }
 }
@@ -392,6 +396,38 @@ crf = 18
         assert_eq!(config.mappings[0].feature, "observation.images.cam_high");
         assert_eq!(config.video.codec, "libx264");
         assert_eq!(config.video.crf, 18);
+    }
+
+    #[test]
+    fn test_parse_config_with_flushing_section() {
+        let toml = r#"
+[dataset]
+name = "dataset_with_flushing"
+fps = 30
+
+[[mappings]]
+topic = "/cam"
+feature = "observation.images.cam"
+mapping_type = "image"
+
+[video]
+codec = "libx264"
+crf = 22
+preset = "fast"
+
+[flushing]
+max_frames_per_chunk = 200
+max_memory_bytes = 1048576
+incremental_video_encoding = true
+"#;
+
+        let config = LerobotConfig::from_toml(toml).unwrap();
+        assert_eq!(config.dataset.name, "dataset_with_flushing");
+        assert_eq!(config.dataset.fps, 30);
+        assert_eq!(config.video.crf, 22);
+        assert_eq!(config.flushing.max_frames_per_chunk, 200);
+        assert_eq!(config.flushing.max_memory_bytes, 1_048_576);
+        assert!(config.flushing.incremental_video_encoding);
     }
 
     #[test]
@@ -569,6 +605,7 @@ incremental_video_encoding = false
         assert_eq!(config.ring_buffer_size, 128);
         assert_eq!(config.upload_part_size, 16 * 1024 * 1024);
         assert_eq!(config.buffer_timeout_secs, 5);
+        assert!(!config.finalize_metadata_in_coordinator);
     }
 
     #[test]
@@ -584,6 +621,7 @@ use_coordinator = true
 ring_buffer_size = 256
 upload_part_size = 33554432
 buffer_timeout_secs = 10
+finalize_metadata_in_coordinator = true
 "#;
 
         let config: LerobotConfig = toml::from_str(toml).unwrap();
@@ -592,6 +630,7 @@ buffer_timeout_secs = 10
         assert_eq!(config.streaming.ring_buffer_size, 256);
         assert_eq!(config.streaming.upload_part_size, 33554432);
         assert_eq!(config.streaming.buffer_timeout_secs, 10);
+        assert!(config.streaming.finalize_metadata_in_coordinator);
     }
 
     // =============================================================================
