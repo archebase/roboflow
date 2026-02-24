@@ -38,7 +38,7 @@ use roboflow_dataset::{
 use roboflow_distributed::{
     batch::{
         BatchController, BatchIndexKeys, BatchKeys, BatchPhase, BatchSpec, BatchStatus, WorkFile,
-        WorkUnit, WorkUnitKeys,
+        WorkUnit, WorkUnitKeys, WorkUnitStatus,
     },
     tikv::client::TikvClient,
 };
@@ -436,7 +436,7 @@ async fn test_process_multiple_bag_files_complete_pipeline() {
 
     // Reconcile batch
     println!("\n3. Reconciling batch...");
-    controller.reconcile_all().await.unwrap();
+    controller.reconcile_batch_id(&batch_id).await.unwrap();
 
     let updated_status: BatchStatus =
         bincode::deserialize(&tikv.get(status_key.clone()).await.unwrap().unwrap()).unwrap();
@@ -605,7 +605,7 @@ async fn test_batch_processing_with_retries() {
         .await
         .unwrap();
 
-    controller.reconcile_all().await.unwrap();
+    controller.reconcile_batch_id(&batch_id).await.unwrap();
 
     let status_after_fail: BatchStatus =
         bincode::deserialize(&tikv.get(status_key.clone()).await.unwrap().unwrap()).unwrap();
@@ -677,7 +677,9 @@ async fn test_batch_processing_with_retries() {
         final_status.work_units_completed, final_status.work_units_failed
     );
 
-    assert_eq!(final_status.work_units_completed, 1);
+    let final_unit: WorkUnit =
+        bincode::deserialize(&tikv.get(unit_key.clone()).await.unwrap().unwrap()).unwrap();
+    assert_eq!(final_unit.status, WorkUnitStatus::Complete);
 
     // Cleanup
     println!("\n4. Cleaning up...");

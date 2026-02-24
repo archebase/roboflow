@@ -43,8 +43,6 @@
 //! - [`CameraIntrinsic`], [`CameraExtrinsic`], [`ExtrinsicData`] - Camera calibration types
 
 mod builder;
-mod camera;
-mod camera_params;
 mod episode_writer;
 mod frame;
 mod parquet;
@@ -53,7 +51,9 @@ mod writer_impl;
 
 // Re-export public API
 pub use builder::LerobotWriterBuilder;
-pub use camera::{CameraExtrinsic, CameraIntrinsic, ExtrinsicData};
 pub use episode_writer::EpisodeWriter;
 pub use frame::LerobotFrame;
+pub use roboflow_media::camera::{
+    CameraExtrinsic, CameraIntrinsic, CameraParamsWriter, ExtrinsicData,
+};
 pub use writer_impl::LerobotWriter;

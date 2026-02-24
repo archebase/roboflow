@@ -8,9 +8,11 @@
 //! formats (JPEG, PNG) and video encoding (H.264, H.265) with hardware
 //! acceleration support.
 
+pub mod camera;
 pub mod frame;
 pub mod image;
 pub mod video;
 
 // Re-export core frame types for convenience
+pub use camera::{CameraExtrinsic, CameraIntrinsic, CameraParamsWriter, ExtrinsicData};
 pub use frame::{AudioData, CameraInfo, ImageData, ImageDataError};

@@ -10,6 +10,8 @@ description = "Image and video encoding/decoding for robotics datasets"
 [dependencies]
 roboflow-core = { workspace = true }
 robocodec = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # Image decoding
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
@@ -32,3 +34,4 @@ thiserror = "1.0"
 tracing = "0.1"
 
 [dev-dependencies]
+tempfile = { workspace = true }
