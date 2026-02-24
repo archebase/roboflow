@@ -55,10 +55,9 @@ impl LerobotConfig {
 
     /// Parse configuration from a TOML string.
     pub fn from_toml(toml_str: &str) -> Result<Self> {
-        let config: CompatLerobotConfig = toml::from_str(toml_str).map_err(|e| {
+        let config: LerobotConfig = toml::from_str(toml_str).map_err(|e| {
             roboflow_core::RoboflowError::parse("LerobotConfig", format!("TOML parse error: {}", e))
         })?;
-        let config = config.into_lerobot_config();
         config.validate()?;
         Ok(config)
     }
@@ -99,108 +98,6 @@ impl LerobotConfig {
         }
 
         Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-enum CompatLerobotConfig {
-    Nested(LerobotConfig),
-    Flat(FlatLerobotConfig),
-}
-
-impl CompatLerobotConfig {
-    fn into_lerobot_config(self) -> LerobotConfig {
-        match self {
-            CompatLerobotConfig::Nested(cfg) => cfg,
-            CompatLerobotConfig::Flat(flat) => LerobotConfig {
-                dataset: DatasetConfig {
-                    base: DatasetBaseConfig {
-                        name: flat.dataset_name,
-                        fps: flat.fps,
-                        robot_type: flat.robot_type,
-                    },
-                    env_type: flat.env_type,
-                },
-                mappings: flat.mappings,
-                video: VideoConfig {
-                    codec: flat.video.codec,
-                    crf: flat.video.crf,
-                    preset: flat.video.preset,
-                    profile: flat.video.profile,
-                },
-                annotation_file: flat.annotation_file,
-                flushing: FlushingConfig {
-                    max_frames_per_chunk: flat.memory.max_frame_buffer,
-                    max_memory_bytes: flat.memory.max_memory_bytes,
-                    incremental_video_encoding: flat.memory.incremental_video_encoding,
-                },
-                streaming: flat.streaming,
-            },
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct FlatLerobotConfig {
-    dataset_name: String,
-    fps: u32,
-    #[serde(default)]
-    robot_type: Option<String>,
-    #[serde(default)]
-    env_type: Option<String>,
-    #[serde(default)]
-    mappings: Vec<Mapping>,
-    #[serde(default)]
-    video: FlatVideoOptions,
-    #[serde(default)]
-    memory: FlatMemoryOptions,
-    #[serde(default)]
-    streaming: StreamingConfig,
-    #[serde(default)]
-    annotation_file: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct FlatVideoOptions {
-    #[serde(default = "default_codec")]
-    codec: String,
-    #[serde(default = "default_crf")]
-    crf: u32,
-    #[serde(default = "default_preset")]
-    preset: String,
-    #[serde(default)]
-    profile: Option<String>,
-}
-
-impl Default for FlatVideoOptions {
-    fn default() -> Self {
-        Self {
-            codec: default_codec(),
-            crf: default_crf(),
-            preset: default_preset(),
-            profile: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct FlatMemoryOptions {
-    #[serde(default = "default_max_frames")]
-    max_frame_buffer: usize,
-    #[serde(default = "default_max_memory")]
-    max_memory_bytes: usize,
-    #[serde(default = "default_incremental_encoding")]
-    incremental_video_encoding: bool,
-}
-
-impl Default for FlatMemoryOptions {
-    fn default() -> Self {
-        Self {
-            max_frame_buffer: default_max_frames(),
-            max_memory_bytes: default_max_memory(),
-            incremental_video_encoding: default_incremental_encoding(),
-        }
     }
 }
 
@@ -498,9 +395,10 @@ crf = 18
     }
 
     #[test]
-    fn test_parse_flat_config() {
+    fn test_parse_config_with_flushing_section() {
         let toml = r#"
-dataset_name = "flat_dataset"
+[dataset]
+name = "dataset_with_flushing"
 fps = 30
 
 [[mappings]]
@@ -513,14 +411,14 @@ codec = "libx264"
 crf = 22
 preset = "fast"
 
-[memory]
-max_frame_buffer = 200
+[flushing]
+max_frames_per_chunk = 200
 max_memory_bytes = 1048576
 incremental_video_encoding = true
 "#;
 
         let config = LerobotConfig::from_toml(toml).unwrap();
-        assert_eq!(config.dataset.name, "flat_dataset");
+        assert_eq!(config.dataset.name, "dataset_with_flushing");
         assert_eq!(config.dataset.fps, 30);
         assert_eq!(config.video.crf, 22);
         assert_eq!(config.flushing.max_frames_per_chunk, 200);
