@@ -173,6 +173,24 @@ impl BatchController {
         Ok(())
     }
 
+    /// Reconcile a single batch by ID.
+    ///
+    /// This bypasses phase indexes and directly loads the spec.
+    pub async fn reconcile_batch_id(&self, batch_id: &str) -> Result<(), TikvError> {
+        let spec_key = BatchKeys::spec(batch_id);
+        let spec_data = match self.client.get(spec_key.clone()).await? {
+            Some(data) => data,
+            None => {
+                return Err(TikvError::Other(format!(
+                    "Spec not found for batch_id {}",
+                    batch_id
+                )));
+            }
+        };
+
+        self.reconcile_batch(&spec_key, &spec_data).await
+    }
+
     /// Reconcile a single batch job.
     ///
     /// This reads the spec and status, then drives the state forward.
@@ -398,6 +416,16 @@ impl BatchController {
         status.files_completed = completed;
         status.files_failed = failed;
         status.files_active = processing;
+
+        if matches!(status.phase, BatchPhase::Failed)
+            && failed == 0
+            && (completed > 0 || processing > 0)
+        {
+            status.error = None;
+            status.failed_work_units.clear();
+            status.completed_at = None;
+            status.transition_to(BatchPhase::Running);
+        }
 
         // Check if batch should be marked failed
         if status.should_fail(spec.spec.backoff_limit) {

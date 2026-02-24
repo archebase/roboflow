@@ -23,10 +23,9 @@ use roboflow_media::video::{
     EncodeStats, RsmpegVideoComposer, VideoComposer, build_frame_buffer_static, encode_videos,
 };
 
-use super::camera::{CameraExtrinsic, CameraIntrinsic};
-use super::camera_params::CameraParamsWriter;
 use super::frame::LerobotFrame;
 use super::stats;
+use super::{CameraExtrinsic, CameraIntrinsic, CameraParamsWriter};
 
 /// Default episodes per chunk for LeRobot v2.1 format.
 /// This matches LeRobot's default of 500 episodes per chunk.
@@ -1270,7 +1269,7 @@ mod tests {
         DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig,
     };
     use crate::formats::lerobot::writer::EpisodeWriter;
-    use crate::formats::lerobot::writer::camera::{CameraExtrinsic, CameraIntrinsic};
+    use crate::formats::lerobot::writer::{CameraExtrinsic, CameraIntrinsic};
     use roboflow_storage::LocalStorage;
 
     /// Build a minimal LerobotConfig with a custom FlushingConfig.
