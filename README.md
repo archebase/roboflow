@@ -110,10 +110,7 @@ roboflow run --pod-id my-pod-1
 ### Submit a Conversion Job
 
 ```bash
-roboflow submit \
-  --input s3://bucket/input.bag \
-  --output s3://bucket/output/ \
-  --config lerobot_config.toml
+roboflow submit s3://bucket/input.bag --output s3://bucket/output/
 ```
 
 ### Manage Jobs
