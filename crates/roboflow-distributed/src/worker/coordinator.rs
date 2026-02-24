@@ -2,8 +2,6 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -13,14 +11,12 @@ use tokio::time::sleep;
 
 use super::config::WorkerConfig;
 use super::metrics::{ProcessingResult, WorkerMetrics};
-use super::processor::{DirectWorkProcessor, SharedWorkProcessor};
+use super::processor::{MissingWorkProcessor, SharedWorkProcessor};
 use super::registry::JobRegistry;
 use crate::batch::{BatchController, WorkUnit};
-use crate::converter::{ConverterConfig, LeRobotConverter};
-use crate::episode::EpisodeAllocator;
 use crate::shutdown::ShutdownHandler;
 use crate::slot_pool::SlotPool;
-use crate::stats::{EpisodeStats, StatsCollector};
+use crate::stats::StatsCollector;
 use crate::tikv::{
     TikvError,
     client::TikvClient,
@@ -37,7 +33,6 @@ pub struct Coordinator {
     job_registry: Arc<RwLock<JobRegistry>>,
     stats_collector: Option<Arc<dyn StatsCollector>>,
     slot_pool: Arc<SlotPool>,
-    episode_allocator: Option<Arc<dyn EpisodeAllocator>>,
     processor: SharedWorkProcessor,
 }
 
@@ -61,8 +56,7 @@ impl Coordinator {
             job_registry,
             stats_collector: None,
             slot_pool,
-            episode_allocator: None,
-            processor: Arc::new(DirectWorkProcessor),
+            processor: Arc::new(MissingWorkProcessor),
         })
     }
 
@@ -73,11 +67,6 @@ impl Coordinator {
 
     pub fn with_stats_collector(mut self, stats_collector: Arc<dyn StatsCollector>) -> Self {
         self.stats_collector = Some(stats_collector);
-        self
-    }
-
-    pub fn with_episode_allocator(mut self, episode_allocator: Arc<dyn EpisodeAllocator>) -> Self {
-        self.episode_allocator = Some(episode_allocator);
         self
     }
 
@@ -274,7 +263,7 @@ impl Coordinator {
             }
         };
 
-        let result = self.processor.process(self, unit).await;
+        let result = self.processor.process(unit).await;
 
         match result {
             Ok(processing_result) => {
@@ -293,124 +282,6 @@ impl Coordinator {
                 Ok(false)
             }
         }
-    }
-
-    pub(crate) async fn execute_work_unit_direct(
-        &self,
-        unit: &WorkUnit,
-    ) -> Result<ProcessingResult, TikvError> {
-        use roboflow_dataset::formats::lerobot::{
-            LerobotConfig, LerobotWriterConfig, create_lerobot_writer,
-        };
-        use roboflow_dataset::sources::{SourceConfig, create_source};
-        use roboflow_pipeline::{DatasetPipelineConfig, DatasetPipelineExecutor};
-
-        let input_file = unit
-            .files
-            .first()
-            .map(|f| f.url.clone())
-            .ok_or_else(|| TikvError::Other("No input files".to_string()))?;
-
-        let output_dir = if self.config.output_prefix.starts_with("s3://")
-            || self.config.output_prefix.starts_with("oss://")
-        {
-            std::env::temp_dir().join(format!("roboflow_{}", self.pod_id))
-        } else {
-            PathBuf::from(&self.config.output_prefix)
-        };
-
-        let converter_config = ConverterConfig::with_batch(
-            &unit.batch_id,
-            &output_dir,
-            self.config.episodes_per_chunk,
-        )
-        .pod_id(&self.pod_id);
-
-        let mut converter = if let Some(ref allocator) = self.episode_allocator {
-            LeRobotConverter::new(allocator.clone(), converter_config)
-        } else {
-            LeRobotConverter::local(converter_config)
-        };
-
-        let allocation = converter
-            .allocate_episode()
-            .await
-            .map_err(|e| TikvError::Other(format!("Allocation failed: {}", e)))?;
-
-        let source_type = if input_file.ends_with(".mcap") {
-            "mcap"
-        } else if input_file.ends_with(".bag") {
-            "bag"
-        } else {
-            return Err(TikvError::Other(format!("Unsupported: {}", input_file)));
-        };
-
-        let source_config = match source_type {
-            "mcap" => SourceConfig::mcap(&input_file),
-            "bag" => SourceConfig::bag(&input_file),
-            _ => unreachable!(),
-        };
-
-        let mut source = create_source(&source_config)
-            .map_err(|e| TikvError::Other(format!("Source error: {}", e)))?;
-
-        source
-            .initialize(&source_config)
-            .await
-            .map_err(|e| TikvError::Other(format!("Init error: {}", e)))?;
-
-        let lerobot_config = match self.tikv.get_config(&unit.config_hash).await {
-            Ok(Some(config_record)) => LerobotConfig::from_toml(&config_record.content)
-                .unwrap_or_else(|_| create_default_config(allocation.episode_index as usize)),
-            _ => create_default_config(allocation.episode_index as usize),
-        };
-
-        let episode_output_dir =
-            output_dir.join(format!("episode_{:06}", allocation.episode_index));
-        std::fs::create_dir_all(&episode_output_dir)
-            .map_err(|e| TikvError::Other(format!("Mkdir error: {}", e)))?;
-
-        let writer_config = LerobotWriterConfig::new(
-            episode_output_dir.to_string_lossy().to_string(),
-            lerobot_config,
-        );
-
-        let writer_result = create_lerobot_writer(&writer_config)
-            .map_err(|e| TikvError::Other(format!("Writer error: {}", e)))?;
-
-        let writer = writer_result.writer;
-        let pipeline_config = DatasetPipelineConfig::with_fps(30);
-        let num_threads = std::thread::available_parallelism()
-            .map(|p| p.get())
-            .unwrap_or(4);
-        let mut executor = DatasetPipelineExecutor::parallel(writer, pipeline_config, num_threads);
-
-        loop {
-            match source.read_batch(100).await {
-                Ok(Some(messages)) => {
-                    if let Err(e) = executor.process_messages(messages) {
-                        return Err(TikvError::Other(format!("Pipeline: {}", e)));
-                    }
-                }
-                Ok(None) => break,
-                Err(e) => return Err(TikvError::Other(format!("Read: {}", e))),
-            }
-        }
-
-        let pipeline_stats = executor
-            .finalize()
-            .map_err(|e| TikvError::Other(format!("Finalize: {}", e)))?;
-
-        let episode_stats = convert_pipeline_stats_to_episode_stats(
-            allocation.episode_index as usize,
-            &pipeline_stats,
-        );
-
-        Ok(ProcessingResult::Success {
-            episode_index: allocation.episode_index,
-            frame_count: pipeline_stats.frames_written as u64,
-            episode_stats: Some(episode_stats),
-        })
     }
 
     async fn handle_execution_result(
@@ -474,42 +345,6 @@ impl Coordinator {
             _ = sleep(duration) => Ok(false),
             _ = shutdown_rx.recv() => Ok(true),
         }
-    }
-}
-
-fn convert_pipeline_stats_to_episode_stats(
-    episode_index: usize,
-    pipeline_stats: &roboflow_pipeline::DatasetPipelineStats,
-) -> EpisodeStats {
-    EpisodeStats {
-        episode_index,
-        frame_count: pipeline_stats.frames_written,
-        feature_stats: HashMap::new(),
-        task_indices: Vec::new(),
-        recorded_at: Some(chrono::Utc::now().timestamp()),
-    }
-}
-
-fn create_default_config(
-    episode_index: usize,
-) -> roboflow_dataset::formats::lerobot::LerobotConfig {
-    use roboflow_dataset::formats::common::DatasetBaseConfig;
-    use roboflow_dataset::formats::lerobot::{DatasetConfig, LerobotConfig, VideoConfig};
-
-    LerobotConfig {
-        dataset: DatasetConfig {
-            base: DatasetBaseConfig {
-                name: format!("episode_{:06}", episode_index),
-                fps: 30,
-                robot_type: None,
-            },
-            env_type: None,
-        },
-        mappings: vec![],
-        video: VideoConfig::default(),
-        annotation_file: None,
-        flushing: Default::default(),
-        streaming: Default::default(),
     }
 }
 

@@ -7,28 +7,24 @@ use std::sync::Arc;
 use crate::batch::WorkUnit;
 use crate::tikv::TikvError;
 
-use super::coordinator::Coordinator;
 use super::metrics::ProcessingResult;
 
 #[async_trait::async_trait]
 pub trait WorkProcessor: Send + Sync {
-    async fn process(
-        &self,
-        coordinator: &Coordinator,
-        work_unit: &WorkUnit,
-    ) -> Result<ProcessingResult, TikvError>;
+    async fn process(&self, work_unit: &WorkUnit) -> Result<ProcessingResult, TikvError>;
 }
 
-pub struct DirectWorkProcessor;
+pub struct MissingWorkProcessor;
 
 #[async_trait::async_trait]
-impl WorkProcessor for DirectWorkProcessor {
-    async fn process(
-        &self,
-        coordinator: &Coordinator,
-        work_unit: &WorkUnit,
-    ) -> Result<ProcessingResult, TikvError> {
-        coordinator.execute_work_unit_direct(work_unit).await
+impl WorkProcessor for MissingWorkProcessor {
+    async fn process(&self, work_unit: &WorkUnit) -> Result<ProcessingResult, TikvError> {
+        Ok(ProcessingResult::Failed {
+            error: format!(
+                "No WorkProcessor configured for work unit {} in batch {}",
+                work_unit.id, work_unit.batch_id
+            ),
+        })
     }
 }
 

@@ -18,13 +18,11 @@
 
 pub mod batch;
 pub mod catalog;
-pub mod converter;
 pub mod episode;
 pub mod finalizer;
 pub mod heartbeat;
 pub mod merge;
 pub mod metadata;
-pub mod providers;
 pub mod reaper;
 pub mod scanner;
 pub mod shutdown;
@@ -33,14 +31,6 @@ pub mod state;
 pub mod stats;
 pub mod tikv;
 pub mod worker;
-
-pub use providers::{
-    ConfigProvider, InMemoryConfigProvider, ProductionSourceProvider, ProviderFactory,
-    SourceProvider, TikvConfigProvider,
-};
-
-#[cfg(test)]
-pub use providers::mock::{MockFrame, MockLerobotWriter, MockSource, MockSourceProvider};
 
 // Re-export public types from state (unified state lifecycle)
 pub use state::{StateLifecycle, StateTransitionError};
@@ -114,12 +104,6 @@ pub use slot_pool::{SlotGuard, SlotPool, SlotPoolError};
 // Re-export public types from stats (episode statistics collection)
 pub use stats::{
     BatchStatsSummary, EpisodeStats, FeatureStats, StatsCollector, StatsKeys, TiKVStatsCollector,
-};
-
-// Re-export public types from converter (LeRobot converter orchestrator)
-pub use converter::{
-    ConverterConfig, ConverterError,
-    DEFAULT_EPISODES_PER_CHUNK as CONVERTER_DEFAULT_EPISODES_PER_CHUNK, LeRobotConverter,
 };
 
 // Re-export public types from metadata (dataset metadata management)

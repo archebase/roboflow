@@ -4064,6 +4064,7 @@ name = "roboflow"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bincode",
  "bumpalo",
  "bytemuck",
@@ -4194,9 +4195,7 @@ dependencies = [
  "polars",
  "pretty_assertions",
  "roboflow-core",
- "roboflow-dataset",
  "roboflow-executor",
- "roboflow-pipeline",
  "roboflow-storage",
  "serde",
  "serde_json",

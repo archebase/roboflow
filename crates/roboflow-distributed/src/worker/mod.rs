@@ -9,7 +9,7 @@
 //! The worker is composed of two main components:
 //!
 //! - **Coordinator**: Handles coordination logic (claiming work, heartbeats, shutdown)
-//! - **Direct Execution**: Uses `LeRobotConverter` and `DatasetPipelineExecutor` directly
+//! - **Work Processor**: Executes work units via an injected `WorkProcessor`
 //!
 //! This separation improves testability and maintainability.
 
@@ -26,15 +26,13 @@ pub use config::{
 };
 pub use coordinator::{Coordinator, send_heartbeat_inner};
 pub use metrics::{ProcessingResult, WorkerMetrics, WorkerMetricsSnapshot};
-pub use processor::{DirectWorkProcessor, SharedWorkProcessor, WorkProcessor};
+pub use processor::{MissingWorkProcessor, SharedWorkProcessor, WorkProcessor};
 pub use registry::JobRegistry;
 
 use std::sync::Arc;
 
 use super::tikv::{TikvError, client::TikvClient};
 use tokio::sync::RwLock;
-
-use crate::episode::EpisodeAllocator;
 
 /// Default cancellation check interval in seconds.
 pub const DEFAULT_CANCELLATION_CHECK_INTERVAL_SECS: u64 = 5;
@@ -73,37 +71,23 @@ impl Worker {
         })
     }
 
-    /// Create a worker with episode allocation for distributed processing.
-    ///
-    /// This enables:
-    /// - Centralized episode index allocation via TiKV
-    /// - Automatic chunk index calculation
-    /// - LeRobot v2.1 compliant output structure
-    ///
-    /// # Arguments
-    ///
-    /// * `pod_id` - Unique identifier for this worker instance
-    /// * `tikv` - TiKV client for coordination
-    /// * `config` - Worker configuration
-    /// * `episode_allocator` - Episode allocator (e.g., TiKVEpisodeAllocator)
-    pub fn with_episode_allocator(
+    pub fn with_processor(
         pod_id: impl Into<String>,
         tikv: Arc<TikvClient>,
         config: WorkerConfig,
-        episode_allocator: Arc<dyn EpisodeAllocator>,
+        processor: SharedWorkProcessor,
     ) -> Result<Self, TikvError> {
         let pod_id = pod_id.into();
         let cancellation_token = Arc::new(tokio_util::sync::CancellationToken::new());
         let job_registry = Arc::new(RwLock::new(JobRegistry::default()));
 
-        // Create coordinator
         let coordinator = Coordinator::new(
             pod_id.clone(),
             tikv.clone(),
             config.clone(),
             job_registry.clone(),
         )?
-        .with_episode_allocator(episode_allocator);
+        .with_processor(processor);
 
         Ok(Self {
             coordinator,
@@ -165,7 +149,7 @@ impl Worker {
     /// This will continuously:
     /// 1. Check for shutdown signal
     /// 2. Find and claim a work unit (if under concurrent limit)
-    /// 3. Process the work unit using direct execution
+    /// 3. Process the work unit using the configured work processor
     /// 4. Complete or fail the work unit
     /// 5. Send periodic heartbeats
     /// 6. Repeat until shutdown

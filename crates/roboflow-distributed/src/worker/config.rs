@@ -29,6 +29,9 @@ pub const DEFAULT_CHECKPOINT_INTERVAL_FRAMES: u64 = 100;
 /// Default checkpoint interval in seconds.
 pub const DEFAULT_CHECKPOINT_INTERVAL_SECS: u64 = 10;
 
+/// Default episodes per chunk for LeRobot-compatible chunking.
+pub const DEFAULT_EPISODES_PER_CHUNK: u32 = 500;
+
 /// Worker configuration.
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
@@ -103,7 +106,7 @@ impl Default for WorkerConfig {
             output_storage_url: None,
             expected_workers: 1,
             merge_output_path: String::from("datasets/merged"),
-            episodes_per_chunk: crate::converter::DEFAULT_EPISODES_PER_CHUNK,
+            episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
         }
     }
 }
