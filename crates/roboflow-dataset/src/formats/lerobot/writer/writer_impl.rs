@@ -17,13 +17,14 @@ use crate::formats::common::{AlignedFrame, DatasetWriter, ImageData, WriterStats
 use crate::formats::lerobot::config::LerobotConfig;
 use crate::formats::lerobot::metadata::MetadataCollector;
 use crate::formats::lerobot::trait_impl::{FromAlignedFrame, LerobotWriterTrait};
-use crate::formats::lerobot::video_profiles::ResolvedConfig;
+use crate::formats::lerobot::video_profiles::resolve_video_config;
 use roboflow_core::Result;
-use roboflow_media::video::{RsmpegVideoComposer, VideoComposer};
+use roboflow_media::video::{
+    EncodeStats, RsmpegVideoComposer, VideoComposer, build_frame_buffer_static, encode_videos,
+};
 
 use super::camera::{CameraExtrinsic, CameraIntrinsic};
 use super::camera_params::CameraParamsWriter;
-use super::encoding::{EncodeStats, encode_videos};
 use super::frame::LerobotFrame;
 use super::stats;
 
@@ -519,7 +520,7 @@ impl LerobotWriter {
             .collect();
 
         // Resolve video configuration
-        let resolved = ResolvedConfig::from_video_config(&self.config.video);
+        let resolved = resolve_video_config(&self.config.video);
         let encoder_config = resolved.to_encoder_config(self.config.dataset.fps);
 
         // Create temp directory for segments
@@ -537,7 +538,7 @@ impl LerobotWriter {
             }
 
             // Build frame buffer
-            let (buffer, skipped) = super::encoding::build_frame_buffer_static(images)?;
+            let (buffer, skipped) = build_frame_buffer_static(images)?;
             encode_stats.skipped_frames += skipped;
 
             if buffer.is_empty() {
@@ -713,7 +714,7 @@ impl LerobotWriter {
             .collect();
 
         // Resolve the video configuration
-        let resolved = ResolvedConfig::from_video_config(&self.config.video);
+        let resolved = resolve_video_config(&self.config.video);
 
         // Batch encoding with intermediate files
         let (video_files, encode_stats) = encode_videos(
