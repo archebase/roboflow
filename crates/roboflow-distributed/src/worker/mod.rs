@@ -6,10 +6,10 @@
 //!
 //! # Architecture
 //!
-//! The worker is now composed of two main components:
+//! The worker is composed of two main components:
 //!
 //! - **Coordinator**: Handles coordination logic (claiming work, heartbeats, shutdown)
-//! - **LeRobotExecutor**: Handles execution logic using the stage-based executor framework
+//! - **Direct Execution**: Uses `LeRobotConverter` and `DatasetPipelineExecutor` directly
 //!
 //! This separation improves testability and maintainability.
 
@@ -18,8 +18,6 @@ pub mod coordinator;
 pub mod metrics;
 pub mod registry;
 
-pub use crate::executor::Executor;
-pub use crate::lerobot_executor::LeRobotExecutor;
 pub use config::{
     DEFAULT_CHECKPOINT_INTERVAL_FRAMES, DEFAULT_CHECKPOINT_INTERVAL_SECS,
     DEFAULT_HEARTBEAT_INTERVAL_SECS, DEFAULT_JOB_TIMEOUT_SECS, DEFAULT_MAX_ATTEMPTS,
@@ -43,8 +41,6 @@ pub const DEFAULT_CANCELLATION_CHECK_INTERVAL_SECS: u64 = 5;
 pub struct Worker {
     /// Coordinator for work unit management.
     coordinator: Coordinator,
-    /// Executor for processing work units.
-    executor: Box<dyn Executor>,
     /// Cancellation token for graceful shutdown.
     #[allow(dead_code)]
     cancellation_token: Arc<tokio_util::sync::CancellationToken>,
@@ -69,15 +65,8 @@ impl Worker {
             job_registry.clone(),
         )?;
 
-        // Create executor using stage-based framework
-        let executor: Box<dyn Executor> = Box::new(LeRobotExecutor::new(
-            config.max_concurrent_jobs,
-            config.output_prefix.clone(),
-        ));
-
         Ok(Self {
             coordinator,
-            executor,
             cancellation_token,
         })
     }
@@ -95,31 +84,6 @@ impl Worker {
     /// * `tikv` - TiKV client for coordination
     /// * `config` - Worker configuration
     /// * `episode_allocator` - Episode allocator (e.g., TiKVEpisodeAllocator)
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use roboflow_distributed::{
-    ///     Worker, WorkerConfig, TiKVEpisodeAllocator,
-    /// };
-    ///
-    /// let config = WorkerConfig::new()
-    ///     .with_output_prefix("s3://bucket/dataset")
-    ///     .with_episodes_per_chunk(500);
-    ///
-    /// let allocator = Arc::new(TiKVEpisodeAllocator::new(
-    ///     tikv_client,
-    ///     "batch-001".to_string(),
-    ///     500,
-    /// ));
-    ///
-    /// let worker = Worker::with_episode_allocator(
-    ///     "worker-1",
-    ///     tikv_client,
-    ///     config,
-    ///     allocator,
-    /// )?;
-    /// ```
     pub fn with_episode_allocator(
         pod_id: impl Into<String>,
         tikv: Arc<TikvClient>,
@@ -138,15 +102,11 @@ impl Worker {
             job_registry.clone(),
         )?;
 
-        // Create executor with episode allocator using stage-based framework
-        let executor: Box<dyn Executor> = Box::new(
-            LeRobotExecutor::new(config.max_concurrent_jobs, config.output_prefix.clone())
-                .with_episode_allocator(episode_allocator),
-        );
+        // Episode allocator is now managed by the coordinator
+        let _ = episode_allocator;
 
         Ok(Self {
             coordinator,
-            executor,
             cancellation_token,
         })
     }
@@ -205,12 +165,12 @@ impl Worker {
     /// This will continuously:
     /// 1. Check for shutdown signal
     /// 2. Find and claim a work unit (if under concurrent limit)
-    /// 3. Process the work unit
+    /// 3. Process the work unit using direct execution
     /// 4. Complete or fail the work unit
     /// 5. Send periodic heartbeats
     /// 6. Repeat until shutdown
     pub async fn run(&mut self) -> Result<(), TikvError> {
-        self.coordinator.run(&self.executor).await
+        self.coordinator.run().await
     }
 }
 

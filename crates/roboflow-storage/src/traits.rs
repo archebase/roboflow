@@ -289,3 +289,7 @@ pub trait StreamingRead: Read {
     /// Discards any buffered data and starts fetching from the new position.
     fn seek_to(&mut self, offset: u64) -> StorageResult<()>;
 }
+
+#[cfg(test)]
+#[path = "traits_tests.rs"]
+mod traits_tests;

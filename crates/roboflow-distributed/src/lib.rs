@@ -20,10 +20,8 @@ pub mod batch;
 pub mod catalog;
 pub mod converter;
 pub mod episode;
-pub mod executor;
 pub mod finalizer;
 pub mod heartbeat;
-pub mod lerobot_executor;
 pub mod merge;
 pub mod metadata;
 pub mod providers;
@@ -31,7 +29,6 @@ pub mod reaper;
 pub mod scanner;
 pub mod shutdown;
 pub mod slot_pool;
-pub mod stages;
 pub mod state;
 pub mod stats;
 pub mod tikv;
@@ -124,12 +121,6 @@ pub use converter::{
     ConverterConfig, ConverterError,
     DEFAULT_EPISODES_PER_CHUNK as CONVERTER_DEFAULT_EPISODES_PER_CHUNK, LeRobotConverter,
 };
-
-// Re-export public types from executor (executor trait)
-pub use executor::Executor;
-
-// Re-export public types from lerobot_executor (stage-based executor integration)
-pub use lerobot_executor::LeRobotExecutor;
 
 // Re-export public types from metadata (dataset metadata management)
 pub use metadata::{

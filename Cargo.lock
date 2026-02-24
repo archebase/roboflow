@@ -4105,6 +4105,7 @@ dependencies = [
  "roboflow-dataset",
  "roboflow-distributed",
  "roboflow-media",
+ "roboflow-pipeline",
  "roboflow-storage",
  "rosbag",
  "serde",
@@ -4195,6 +4196,7 @@ dependencies = [
  "roboflow-core",
  "roboflow-dataset",
  "roboflow-executor",
+ "roboflow-pipeline",
  "roboflow-storage",
  "serde",
  "serde_json",
@@ -4244,6 +4246,27 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "zune-jpeg 0.4.21",
+]
+
+[[package]]
+name = "roboflow-pipeline"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "crossbeam-channel",
+ "rayon",
+ "robocodec",
+ "roboflow-core",
+ "roboflow-dataset",
+ "roboflow-executor",
+ "roboflow-media",
+ "roboflow-storage",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

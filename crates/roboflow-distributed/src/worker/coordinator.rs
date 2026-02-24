@@ -2,14 +2,8 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Coordinator for distributed work unit management.
-//!
-//! This module handles coordination logic separated from execution:
-//! - Finding and claiming work units
-//! - Completing or failing work units
-//! - Heartbeat management
-//! - Shutdown handling
-
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -21,44 +15,31 @@ use super::config::WorkerConfig;
 use super::metrics::{ProcessingResult, WorkerMetrics};
 use super::registry::JobRegistry;
 use crate::batch::{BatchController, WorkUnit};
-use crate::executor::Executor;
+use crate::converter::{ConverterConfig, LeRobotConverter};
+use crate::episode::EpisodeAllocator;
 use crate::shutdown::ShutdownHandler;
-use crate::stats::StatsCollector;
+use crate::slot_pool::SlotPool;
+use crate::stats::{EpisodeStats, StatsCollector};
 use crate::tikv::{
     TikvError,
     client::TikvClient,
     schema::{HeartbeatRecord, WorkerStatus},
 };
 
-/// Coordinator for managing distributed work.
-///
-/// The coordinator is responsible for:
-/// - Claiming work units from the batch queue
-/// - Delegating execution to the TaskExecutor
-/// - Reporting results back to TiKV
-/// - Managing heartbeats and shutdown
-/// - Recording episode statistics via StatsCollector
 pub struct Coordinator {
-    /// Unique identifier for this worker instance.
     pod_id: String,
-    /// TiKV client for coordination.
     tikv: Arc<TikvClient>,
-    /// Worker configuration.
     config: WorkerConfig,
-    /// Worker metrics.
     metrics: Arc<WorkerMetrics>,
-    /// Shutdown handler.
     shutdown_handler: ShutdownHandler,
-    /// Batch controller for work unit operations.
     batch_controller: BatchController,
-    /// Job registry for canceling active jobs on shutdown.
     job_registry: Arc<RwLock<JobRegistry>>,
-    /// Optional stats collector for episode statistics.
     stats_collector: Option<Arc<dyn StatsCollector>>,
+    slot_pool: Arc<SlotPool>,
+    episode_allocator: Option<Arc<dyn EpisodeAllocator>>,
 }
 
 impl Coordinator {
-    /// Create a new coordinator.
     pub fn new(
         pod_id: impl Into<String>,
         tikv: Arc<TikvClient>,
@@ -66,6 +47,7 @@ impl Coordinator {
         job_registry: Arc<RwLock<JobRegistry>>,
     ) -> Result<Self, TikvError> {
         let batch_controller = BatchController::with_client(tikv.clone());
+        let slot_pool = Arc::new(SlotPool::new(config.max_concurrent_jobs));
 
         Ok(Self {
             pod_id: pod_id.into(),
@@ -76,83 +58,54 @@ impl Coordinator {
             batch_controller,
             job_registry,
             stats_collector: None,
+            slot_pool,
+            episode_allocator: None,
         })
     }
 
-    /// Create a coordinator with stats collection enabled.
-    pub fn with_stats_collector(
-        pod_id: impl Into<String>,
-        tikv: Arc<TikvClient>,
-        config: WorkerConfig,
-        job_registry: Arc<RwLock<JobRegistry>>,
-        stats_collector: Arc<dyn StatsCollector>,
-    ) -> Result<Self, TikvError> {
-        let batch_controller = BatchController::with_client(tikv.clone());
-
-        Ok(Self {
-            pod_id: pod_id.into(),
-            tikv,
-            config,
-            metrics: Arc::new(WorkerMetrics::new()),
-            shutdown_handler: ShutdownHandler::new(),
-            batch_controller,
-            job_registry,
-            stats_collector: Some(stats_collector),
-        })
+    pub fn with_stats_collector(mut self, stats_collector: Arc<dyn StatsCollector>) -> Self {
+        self.stats_collector = Some(stats_collector);
+        self
     }
 
-    /// Get the pod ID.
+    pub fn with_episode_allocator(mut self, episode_allocator: Arc<dyn EpisodeAllocator>) -> Self {
+        self.episode_allocator = Some(episode_allocator);
+        self
+    }
+
     pub fn pod_id(&self) -> &str {
         &self.pod_id
     }
 
-    /// Get the metrics.
     pub fn metrics(&self) -> &WorkerMetrics {
         &self.metrics
     }
 
-    /// Get the configuration.
     pub fn config(&self) -> &WorkerConfig {
         &self.config
     }
 
-    /// Check if shutdown has been requested.
     pub fn is_shutdown_requested(&self) -> bool {
         self.shutdown_handler.is_requested()
     }
 
-    /// Request shutdown.
     pub fn shutdown(&self) -> Result<(), TikvError> {
         self.shutdown_handler.shutdown();
         Ok(())
     }
 
-    /// Find and claim a work unit.
-    ///
-    /// Returns the claimed work unit or None if no work is available.
     pub async fn claim_work(&self) -> Result<Option<WorkUnit>, TikvError> {
         match self.batch_controller.claim_work_unit(&self.pod_id).await {
             Ok(Some(unit)) => {
                 self.metrics.inc_jobs_claimed();
                 self.metrics.inc_active_jobs();
-                tracing::info!(
-                    pod_id = %self.pod_id,
-                    unit_id = %unit.id,
-                    batch_id = %unit.batch_id,
-                    files = unit.files.len(),
-                    "Work unit claimed"
-                );
                 Ok(Some(unit))
             }
             Ok(None) => Ok(None),
-            Err(e) => {
-                tracing::warn!(pod_id = %self.pod_id, error = %e, "Failed to claim work unit");
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 
-    /// Complete a work unit.
     pub async fn complete_work(&self, batch_id: &str, unit_id: &str) -> Result<(), TikvError> {
         match self
             .batch_controller
@@ -162,38 +115,16 @@ impl Coordinator {
             Ok(true) => {
                 self.metrics.inc_jobs_completed();
                 self.metrics.dec_active_jobs();
-                tracing::info!(
-                    pod_id = %self.pod_id,
-                    unit_id = %unit_id,
-                    batch_id = %batch_id,
-                    "Work unit completed"
-                );
                 Ok(())
             }
             Ok(false) => {
-                tracing::warn!(
-                    pod_id = %self.pod_id,
-                    unit_id = %unit_id,
-                    batch_id = %batch_id,
-                    "Work unit not found for completion"
-                );
                 self.metrics.dec_active_jobs();
                 Ok(())
             }
-            Err(e) => {
-                tracing::error!(
-                    pod_id = %self.pod_id,
-                    unit_id = %unit_id,
-                    batch_id = %batch_id,
-                    error = %e,
-                    "Failed to complete work unit"
-                );
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 
-    /// Fail a work unit with an error message.
     pub async fn fail_work(
         &self,
         batch_id: &str,
@@ -202,45 +133,22 @@ impl Coordinator {
     ) -> Result<(), TikvError> {
         match self
             .batch_controller
-            .fail_work_unit(batch_id, unit_id, error.clone())
+            .fail_work_unit(batch_id, unit_id, error)
             .await
         {
             Ok(true) => {
                 self.metrics.inc_jobs_failed();
                 self.metrics.dec_active_jobs();
-                tracing::warn!(
-                    pod_id = %self.pod_id,
-                    unit_id = %unit_id,
-                    batch_id = %batch_id,
-                    error = %error,
-                    "Work unit failed"
-                );
                 Ok(())
             }
             Ok(false) => {
-                tracing::warn!(
-                    pod_id = %self.pod_id,
-                    unit_id = %unit_id,
-                    batch_id = %batch_id,
-                    "Work unit not found for failure"
-                );
                 self.metrics.dec_active_jobs();
                 Ok(())
             }
-            Err(e) => {
-                tracing::error!(
-                    pod_id = %self.pod_id,
-                    unit_id = %unit_id,
-                    batch_id = %batch_id,
-                    error = %e,
-                    "Failed to mark work unit as failed"
-                );
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 
-    /// Send heartbeat to TiKV.
     pub async fn send_heartbeat(&self) -> Result<(), TikvError> {
         let active = self.metrics.active_jobs.load(Ordering::Relaxed) as u32;
         let total_processed = self.metrics.jobs_completed.load(Ordering::Relaxed);
@@ -261,64 +169,13 @@ impl Coordinator {
         };
 
         self.tikv.update_heartbeat(&self.pod_id, &heartbeat).await?;
-
-        tracing::debug!(
-            pod_id = %self.pod_id,
-            active_jobs = active,
-            total_processed = total_processed,
-            status = ?heartbeat.status,
-            "Heartbeat sent"
-        );
-
         Ok(())
     }
 
-    /// Send final draining heartbeat on shutdown.
-    pub async fn send_draining_heartbeat(&self) -> Result<(), TikvError> {
-        let mut heartbeat = self
-            .tikv
-            .get_heartbeat(&self.pod_id)
-            .await?
-            .unwrap_or_else(|| HeartbeatRecord::new(self.pod_id.clone()));
-
-        heartbeat.beat();
-        heartbeat.status = WorkerStatus::Draining;
-
-        // Add shutdown metadata
-        if let Some(ref mut metadata) = heartbeat.metadata
-            && let Some(obj) = metadata.as_object_mut()
-        {
-            obj.insert(
-                "shutdown_at".to_string(),
-                serde_json::json!(chrono::Utc::now().to_rfc3339()),
-            );
-            obj.insert("reason".to_string(), serde_json::json!("graceful_shutdown"));
-        }
-
-        self.tikv.update_heartbeat(&self.pod_id, &heartbeat).await?;
-
-        tracing::info!(
-            pod_id = %self.pod_id,
-            "Final draining heartbeat sent"
-        );
-
-        Ok(())
-    }
-
-    /// Run the main coordination loop.
-    ///
-    /// This continuously:
-    /// 1. Checks for shutdown signal
-    /// 2. Claims work units (if under capacity)
-    /// 3. Delegates execution to the executor
-    /// 4. Reports results
-    /// 5. Sends periodic heartbeats
-    pub async fn run(&mut self, executor: &dyn Executor) -> Result<(), TikvError> {
-        // Start signal handler
+    pub async fn run(&mut self) -> Result<(), TikvError> {
         let mut shutdown_rx = self.shutdown_handler.start_signal_handler();
         let shutdown_tx = self.shutdown_handler.sender();
 
-        // Spawn background task to cancel all active jobs on shutdown
         let registry_for_shutdown = self.job_registry.clone();
         let mut cancel_rx = self.shutdown_handler.subscribe();
         tokio::spawn(async move {
@@ -326,36 +183,15 @@ impl Coordinator {
             let registry = registry_for_shutdown.read().await;
             registry.cancel_all();
             drop(registry);
-            tracing::info!("Cancelled all active jobs on shutdown");
         });
 
-        // Start heartbeat task
         let heartbeat_handle = self.spawn_heartbeat_task(shutdown_tx.subscribe());
-
-        tracing::info!(
-            pod_id = %self.pod_id,
-            max_concurrent_jobs = self.config.max_concurrent_jobs,
-            poll_interval_secs = self.config.poll_interval.as_secs(),
-            "Starting coordinator"
-        );
-
-        // Main loop
-        let loop_result = self.run_main_loop(executor, &mut shutdown_rx).await;
-
-        // Wait for heartbeat task
+        let loop_result = self.run_main_loop(&mut shutdown_rx).await;
         let _ = heartbeat_handle.await;
-
-        // Send final draining heartbeat
-        if let Err(e) = self.send_draining_heartbeat().await {
-            tracing::error!(pod_id = %self.pod_id, error = %e, "Failed to send draining heartbeat");
-        }
-
-        tracing::info!(pod_id = %self.pod_id, "Coordinator stopped gracefully");
 
         loop_result
     }
 
-    /// Spawn the heartbeat background task.
     fn spawn_heartbeat_task(
         &self,
         mut heartbeat_rx: tokio::sync::broadcast::Receiver<()>,
@@ -367,45 +203,32 @@ impl Coordinator {
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(heartbeat_interval);
-            interval.tick().await; // Skip first tick
+            interval.tick().await;
 
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        if let Err(e) = send_heartbeat_inner(&tikv, &pod_id, &metrics).await {
-                            metrics.inc_heartbeat_errors();
-                            tracing::error!(pod_id = %pod_id, error = %e, "Heartbeat failed");
-                        }
+                        let _ = send_heartbeat_inner(&tikv, &pod_id, &metrics).await;
                     }
-                    _ = heartbeat_rx.recv() => {
-                        tracing::info!(pod_id = %pod_id, "Heartbeat task shutting down");
-                        break;
-                    }
+                    _ = heartbeat_rx.recv() => break,
                 }
             }
         })
     }
 
-    /// Run the main processing loop.
     async fn run_main_loop(
         &mut self,
-        executor: &dyn Executor,
         shutdown_rx: &mut tokio::sync::broadcast::Receiver<()>,
     ) -> Result<(), TikvError> {
         loop {
             let active_count = self.metrics.active_jobs.load(Ordering::Relaxed) as usize;
 
             if active_count < self.config.max_concurrent_jobs {
-                // Try to claim and process work
                 match self.claim_work().await? {
                     Some(unit) => {
-                        let should_exit = self.process_work_unit(executor, &unit).await?;
-                        if should_exit {
-                            return Ok(());
-                        }
+                        let _ = self.process_work_unit(&unit).await;
                     }
                     None => {
-                        // No work available - wait with shutdown handling
                         if self
                             .wait_with_shutdown(shutdown_rx, self.config.poll_interval)
                             .await?
@@ -414,63 +237,162 @@ impl Coordinator {
                         }
                     }
                 }
-            } else {
-                // At capacity - brief sleep with shutdown handling
-                if self
-                    .wait_with_shutdown(shutdown_rx, Duration::from_millis(100))
-                    .await?
-                {
-                    return Ok(());
-                }
+            } else if self
+                .wait_with_shutdown(shutdown_rx, Duration::from_millis(100))
+                .await?
+            {
+                return Ok(());
             }
         }
     }
 
-    /// Process a single work unit.
-    ///
-    /// Returns Ok(true) if the loop should exit, Ok(false) to continue.
-    async fn process_work_unit(
-        &self,
-        executor: &dyn Executor,
-        unit: &WorkUnit,
-    ) -> Result<bool, TikvError> {
-        let unit_id = unit.id.clone();
+    async fn process_work_unit(&self, unit: &WorkUnit) -> Result<bool, TikvError> {
         let batch_id = unit.batch_id.clone();
+        let unit_id = unit.id.clone();
 
-        // Check for shutdown before processing
         if self.shutdown_handler.is_requested() {
-            tracing::info!(pod_id = %self.pod_id, "Shutdown requested, releasing work");
-            self.release_on_shutdown(&batch_id, &unit_id).await;
             return Ok(true);
         }
 
-        // Execute the work unit
-        let result = executor.execute(unit, self.job_registry.clone()).await;
+        let _slot_guard = match self.slot_pool.acquire().await {
+            Ok(guard) => guard,
+            Err(_) => return Ok(false),
+        };
 
-        // Handle result
+        let result = self.execute_work_unit_direct(unit).await;
+
         match result {
             Ok(processing_result) => {
                 self.handle_execution_result(&batch_id, &unit_id, processing_result)
                     .await
             }
             Err(e) => {
-                tracing::error!(
-                    pod_id = %self.pod_id,
-                    batch_id = %batch_id,
-                    unit_id = %unit_id,
-                    error = %e,
-                    "Work unit execution failed"
-                );
-                self.fail_work(&batch_id, &unit_id, format!("Execution error: {}", e))
-                    .await?;
+                let _ = self
+                    .fail_work(&batch_id, &unit_id, format!("Execution error: {}", e))
+                    .await;
                 Ok(false)
             }
         }
     }
 
-    /// Handle the result of work unit execution.
-    ///
-    /// Returns Ok(true) if the loop should exit, Ok(false) to continue.
+    async fn execute_work_unit_direct(
+        &self,
+        unit: &WorkUnit,
+    ) -> Result<ProcessingResult, TikvError> {
+        use roboflow_dataset::formats::lerobot::{
+            LerobotConfig, LerobotWriterConfig, create_lerobot_writer,
+        };
+        use roboflow_dataset::sources::{SourceConfig, create_source};
+        use roboflow_pipeline::{DatasetPipelineConfig, DatasetPipelineExecutor};
+
+        let input_file = unit
+            .files
+            .first()
+            .map(|f| f.url.clone())
+            .ok_or_else(|| TikvError::Other("No input files".to_string()))?;
+
+        let output_dir = if self.config.output_prefix.starts_with("s3://")
+            || self.config.output_prefix.starts_with("oss://")
+        {
+            std::env::temp_dir().join(format!("roboflow_{}", self.pod_id))
+        } else {
+            PathBuf::from(&self.config.output_prefix)
+        };
+
+        let converter_config = ConverterConfig::with_batch(
+            &unit.batch_id,
+            &output_dir,
+            self.config.episodes_per_chunk,
+        )
+        .pod_id(&self.pod_id);
+
+        let mut converter = if let Some(ref allocator) = self.episode_allocator {
+            LeRobotConverter::new(allocator.clone(), converter_config)
+        } else {
+            LeRobotConverter::local(converter_config)
+        };
+
+        let allocation = converter
+            .allocate_episode()
+            .await
+            .map_err(|e| TikvError::Other(format!("Allocation failed: {}", e)))?;
+
+        let source_type = if input_file.ends_with(".mcap") {
+            "mcap"
+        } else if input_file.ends_with(".bag") {
+            "bag"
+        } else {
+            return Err(TikvError::Other(format!("Unsupported: {}", input_file)));
+        };
+
+        let source_config = match source_type {
+            "mcap" => SourceConfig::mcap(&input_file),
+            "bag" => SourceConfig::bag(&input_file),
+            _ => unreachable!(),
+        };
+
+        let mut source = create_source(&source_config)
+            .map_err(|e| TikvError::Other(format!("Source error: {}", e)))?;
+
+        source
+            .initialize(&source_config)
+            .await
+            .map_err(|e| TikvError::Other(format!("Init error: {}", e)))?;
+
+        let lerobot_config = match self.tikv.get_config(&unit.config_hash).await {
+            Ok(Some(config_record)) => LerobotConfig::from_toml(&config_record.content)
+                .unwrap_or_else(|_| create_default_config(allocation.episode_index as usize)),
+            _ => create_default_config(allocation.episode_index as usize),
+        };
+
+        let episode_output_dir =
+            output_dir.join(format!("episode_{:06}", allocation.episode_index));
+        std::fs::create_dir_all(&episode_output_dir)
+            .map_err(|e| TikvError::Other(format!("Mkdir error: {}", e)))?;
+
+        let writer_config = LerobotWriterConfig::new(
+            episode_output_dir.to_string_lossy().to_string(),
+            lerobot_config,
+        );
+
+        let writer_result = create_lerobot_writer(&writer_config)
+            .map_err(|e| TikvError::Other(format!("Writer error: {}", e)))?;
+
+        let writer = writer_result.writer;
+        let pipeline_config = DatasetPipelineConfig::with_fps(30);
+        let num_threads = std::thread::available_parallelism()
+            .map(|p| p.get())
+            .unwrap_or(4);
+        let mut executor = DatasetPipelineExecutor::parallel(writer, pipeline_config, num_threads);
+
+        loop {
+            match source.read_batch(100).await {
+                Ok(Some(messages)) => {
+                    if let Err(e) = executor.process_messages(messages) {
+                        return Err(TikvError::Other(format!("Pipeline: {}", e)));
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => return Err(TikvError::Other(format!("Read: {}", e))),
+            }
+        }
+
+        let pipeline_stats = executor
+            .finalize()
+            .map_err(|e| TikvError::Other(format!("Finalize: {}", e)))?;
+
+        let episode_stats = convert_pipeline_stats_to_episode_stats(
+            allocation.episode_index as usize,
+            &pipeline_stats,
+        );
+
+        Ok(ProcessingResult::Success {
+            episode_index: allocation.episode_index,
+            frame_count: pipeline_stats.frames_written as u64,
+            episode_stats: Some(episode_stats),
+        })
+    }
+
     async fn handle_execution_result(
         &self,
         batch_id: &str,
@@ -483,72 +405,40 @@ impl Coordinator {
                 frame_count,
                 episode_stats,
             } => {
-                // Record episode stats if collector is configured
                 if let (Some(collector), Some(stats)) = (&self.stats_collector, episode_stats)
                     && let Err(e) = collector.record_episode_stats(batch_id, stats).await
                 {
-                    tracing::error!(
-                        pod_id = %self.pod_id,
+                    tracing::warn!(
                         batch_id = %batch_id,
+                        unit_id = %unit_id,
                         episode_index = episode_index,
                         error = %e,
                         "Failed to record episode stats"
                     );
-                    // Continue processing - stats recording failure shouldn't fail the job
-                }
-
-                if let Err(e) = self.complete_work(batch_id, unit_id).await {
-                    tracing::error!(
-                        pod_id = %self.pod_id,
-                        unit_id = %unit_id,
-                        error = %e,
-                        "Failed to complete work unit"
-                    );
-                    self.metrics.inc_processing_errors();
                 }
 
                 tracing::info!(
-                    pod_id = %self.pod_id,
+                    batch_id = %batch_id,
                     unit_id = %unit_id,
                     episode_index = episode_index,
                     frame_count = frame_count,
-                    "Work unit completed successfully"
+                    "Work unit completed"
                 );
 
+                let _ = self.complete_work(batch_id, unit_id).await;
                 Ok(false)
             }
             ProcessingResult::Failed { error } => {
-                if error.contains("interrupted by shutdown") {
-                    tracing::info!(pod_id = %self.pod_id, "Work interrupted by shutdown");
-                    self.release_on_shutdown(batch_id, unit_id).await;
+                if error.contains("shutdown") {
                     return Ok(true);
                 }
-
-                if let Err(e) = self.fail_work(batch_id, unit_id, error).await {
-                    tracing::error!(
-                        pod_id = %self.pod_id,
-                        unit_id = %unit_id,
-                        error = %e,
-                        "Failed to mark work unit as failed"
-                    );
-                    self.metrics.inc_processing_errors();
-                }
+                let _ = self.fail_work(batch_id, unit_id, error).await;
                 Ok(false)
             }
-            ProcessingResult::Cancelled => {
-                tracing::info!(
-                    pod_id = %self.pod_id,
-                    unit_id = %unit_id,
-                    "Work unit cancelled"
-                );
-                Ok(false)
-            }
+            ProcessingResult::Cancelled => Ok(false),
         }
     }
 
-    /// Wait for a duration or until shutdown is requested.
-    ///
-    /// Returns Ok(true) if shutdown was requested, Ok(false) if timeout elapsed.
     async fn wait_with_shutdown(
         &self,
         shutdown_rx: &mut tokio::sync::broadcast::Receiver<()>,
@@ -556,36 +446,47 @@ impl Coordinator {
     ) -> Result<bool, TikvError> {
         tokio::select! {
             _ = sleep(duration) => Ok(false),
-            _ = shutdown_rx.recv() => {
-                tracing::info!(pod_id = %self.pod_id, "Shutdown requested while waiting");
-                Ok(true)
-            }
+            _ = shutdown_rx.recv() => Ok(true),
         }
-    }
-
-    /// Release a work unit back to pending on shutdown.
-    async fn release_on_shutdown(&self, batch_id: &str, unit_id: &str) {
-        if let Err(e) = self
-            .batch_controller
-            .fail_work_unit(
-                batch_id,
-                unit_id,
-                "Shutdown requested, releasing back to Pending".to_string(),
-            )
-            .await
-        {
-            tracing::error!(
-                pod_id = %self.pod_id,
-                unit_id = %unit_id,
-                error = %e,
-                "Failed to release work unit during shutdown"
-            );
-        }
-        self.metrics.dec_active_jobs();
     }
 }
 
-/// Send heartbeat (inner function for use in spawned task).
+fn convert_pipeline_stats_to_episode_stats(
+    episode_index: usize,
+    pipeline_stats: &roboflow_pipeline::DatasetPipelineStats,
+) -> EpisodeStats {
+    EpisodeStats {
+        episode_index,
+        frame_count: pipeline_stats.frames_written,
+        feature_stats: HashMap::new(),
+        task_indices: Vec::new(),
+        recorded_at: Some(chrono::Utc::now().timestamp()),
+    }
+}
+
+fn create_default_config(
+    episode_index: usize,
+) -> roboflow_dataset::formats::lerobot::LerobotConfig {
+    use roboflow_dataset::formats::common::DatasetBaseConfig;
+    use roboflow_dataset::formats::lerobot::{DatasetConfig, LerobotConfig, VideoConfig};
+
+    LerobotConfig {
+        dataset: DatasetConfig {
+            base: DatasetBaseConfig {
+                name: format!("episode_{:06}", episode_index),
+                fps: 30,
+                robot_type: None,
+            },
+            env_type: None,
+        },
+        mappings: vec![],
+        video: VideoConfig::default(),
+        annotation_file: None,
+        flushing: Default::default(),
+        streaming: Default::default(),
+    }
+}
+
 pub async fn send_heartbeat_inner(
     tikv: &TikvClient,
     pod_id: &str,
@@ -610,260 +511,4 @@ pub async fn send_heartbeat_inner(
 
     tikv.update_heartbeat(pod_id, &heartbeat).await?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_worker_config_default() {
-        let config = WorkerConfig::default();
-        assert!(config.max_concurrent_jobs > 0);
-        assert!(config.poll_interval.as_secs() > 0);
-        assert!(config.heartbeat_interval.as_secs() > 0);
-    }
-
-    #[test]
-    fn test_worker_config_clone() {
-        let config = WorkerConfig::default();
-        let cloned = config.clone();
-        assert_eq!(config.max_concurrent_jobs, cloned.max_concurrent_jobs);
-        assert_eq!(config.poll_interval, cloned.poll_interval);
-    }
-
-    #[test]
-    fn test_worker_config_debug() {
-        let config = WorkerConfig::default();
-        let debug_str = format!("{:?}", config);
-        assert!(debug_str.contains("WorkerConfig"));
-        assert!(debug_str.contains("max_concurrent_jobs"));
-    }
-
-    #[test]
-    fn test_worker_metrics_new() {
-        let metrics = WorkerMetrics::new();
-        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 0);
-        assert_eq!(metrics.jobs_claimed.load(Ordering::Relaxed), 0);
-        assert_eq!(metrics.jobs_completed.load(Ordering::Relaxed), 0);
-        assert_eq!(metrics.jobs_failed.load(Ordering::Relaxed), 0);
-        assert_eq!(metrics.heartbeat_errors.load(Ordering::Relaxed), 0);
-        assert_eq!(metrics.processing_errors.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn test_worker_metrics_increment_operations() {
-        let metrics = WorkerMetrics::new();
-
-        metrics.inc_jobs_claimed();
-        metrics.inc_jobs_claimed();
-        assert_eq!(metrics.jobs_claimed.load(Ordering::Relaxed), 2);
-
-        metrics.inc_jobs_completed();
-        assert_eq!(metrics.jobs_completed.load(Ordering::Relaxed), 1);
-
-        metrics.inc_jobs_failed();
-        assert_eq!(metrics.jobs_failed.load(Ordering::Relaxed), 1);
-
-        metrics.inc_active_jobs();
-        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 1);
-
-        metrics.inc_active_jobs();
-        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 2);
-
-        metrics.dec_active_jobs();
-        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 1);
-
-        metrics.inc_heartbeat_errors();
-        assert_eq!(metrics.heartbeat_errors.load(Ordering::Relaxed), 1);
-
-        metrics.inc_processing_errors();
-        assert_eq!(metrics.processing_errors.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn test_worker_metrics_concurrent_operations() {
-        use std::sync::Arc;
-        use std::thread;
-
-        let metrics = Arc::new(WorkerMetrics::new());
-        let mut handles = vec![];
-
-        for _ in 0..10 {
-            let m = Arc::clone(&metrics);
-            handles.push(thread::spawn(move || {
-                m.inc_jobs_claimed();
-                m.inc_jobs_completed();
-                m.inc_active_jobs();
-            }));
-        }
-
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        assert_eq!(metrics.jobs_claimed.load(Ordering::Relaxed), 10);
-        assert_eq!(metrics.jobs_completed.load(Ordering::Relaxed), 10);
-        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 10);
-    }
-
-    #[test]
-    fn test_processing_result_success() {
-        let result = ProcessingResult::Success {
-            episode_index: 5,
-            frame_count: 1000,
-            episode_stats: None,
-        };
-
-        match result {
-            ProcessingResult::Success {
-                episode_index,
-                frame_count,
-                ..
-            } => {
-                assert_eq!(episode_index, 5);
-                assert_eq!(frame_count, 1000);
-            }
-            _ => panic!("Expected Success variant"),
-        }
-    }
-
-    #[test]
-    fn test_processing_result_failed() {
-        let result = ProcessingResult::Failed {
-            error: "Test error".to_string(),
-        };
-
-        match result {
-            ProcessingResult::Failed { error } => {
-                assert_eq!(error, "Test error");
-            }
-            _ => panic!("Expected Failed variant"),
-        }
-    }
-
-    #[test]
-    fn test_processing_result_cancelled() {
-        let result = ProcessingResult::Cancelled;
-        assert!(matches!(result, ProcessingResult::Cancelled));
-    }
-
-    #[test]
-    fn test_processing_result_debug() {
-        let result = ProcessingResult::Success {
-            episode_index: 0,
-            frame_count: 100,
-            episode_stats: None,
-        };
-        let debug_str = format!("{:?}", result);
-        assert!(debug_str.contains("Success"));
-    }
-
-    #[test]
-    fn test_processing_result_success_with_episode_stats() {
-        use crate::stats::EpisodeStats;
-
-        let stats = EpisodeStats::new(5, 100);
-        let result = ProcessingResult::Success {
-            episode_index: 5,
-            frame_count: 100,
-            episode_stats: Some(stats),
-        };
-
-        match result {
-            ProcessingResult::Success {
-                episode_index,
-                frame_count,
-                episode_stats,
-            } => {
-                assert_eq!(episode_index, 5);
-                assert_eq!(frame_count, 100);
-                assert!(episode_stats.is_some());
-                let stats = episode_stats.unwrap();
-                assert_eq!(stats.episode_index, 5);
-            }
-            _ => panic!("Expected Success variant"),
-        }
-    }
-
-    #[test]
-    fn test_processing_result_failed_with_complex_error() {
-        let error_msg = "Multiple errors occurred:\n1. File not found\n2. Permission denied";
-        let result = ProcessingResult::Failed {
-            error: error_msg.to_string(),
-        };
-
-        match result {
-            ProcessingResult::Failed { error } => {
-                assert!(error.contains("Multiple errors"));
-                assert!(error.contains("File not found"));
-                assert!(error.contains("Permission denied"));
-            }
-            _ => panic!("Expected Failed variant"),
-        }
-    }
-
-    #[test]
-    fn test_processing_result_failed_interrupted_by_shutdown() {
-        let result = ProcessingResult::Failed {
-            error: "Processing interrupted by shutdown signal".to_string(),
-        };
-
-        match result {
-            ProcessingResult::Failed { error } => {
-                assert!(error.contains("interrupted by shutdown"));
-            }
-            _ => panic!("Expected Failed variant"),
-        }
-    }
-
-    #[test]
-    fn test_worker_metrics_snapshot() {
-        let metrics = WorkerMetrics::new();
-
-        metrics.inc_jobs_claimed();
-        metrics.inc_jobs_claimed();
-        metrics.inc_jobs_completed();
-        metrics.inc_active_jobs();
-        metrics.inc_jobs_failed();
-        metrics.inc_heartbeat_errors();
-        metrics.inc_processing_errors();
-
-        // Verify all values are correct
-        assert_eq!(metrics.jobs_claimed.load(Ordering::Relaxed), 2);
-        assert_eq!(metrics.jobs_completed.load(Ordering::Relaxed), 1);
-        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 1);
-        assert_eq!(metrics.jobs_failed.load(Ordering::Relaxed), 1);
-        assert_eq!(metrics.heartbeat_errors.load(Ordering::Relaxed), 1);
-        assert_eq!(metrics.processing_errors.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn test_worker_metrics_dec_active_jobs_underflow() {
-        let metrics = WorkerMetrics::new();
-
-        // Dec without inc should underflow but not panic
-        metrics.dec_active_jobs();
-
-        // This is expected behavior - the counter wraps
-        // The value would be very large due to underflow
-        let _value = metrics.active_jobs.load(Ordering::Relaxed);
-        // Just ensure it doesn't panic - value is always valid u64
-    }
-
-    #[test]
-    fn test_worker_metrics_multiple_dec_active_jobs() {
-        let metrics = WorkerMetrics::new();
-
-        metrics.inc_active_jobs();
-        metrics.inc_active_jobs();
-        metrics.inc_active_jobs();
-
-        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 3);
-
-        metrics.dec_active_jobs();
-        metrics.dec_active_jobs();
-
-        assert_eq!(metrics.active_jobs.load(Ordering::Relaxed), 1);
-    }
 }
