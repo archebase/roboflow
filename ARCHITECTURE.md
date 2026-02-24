@@ -27,10 +27,11 @@ Roboflow is a distributed data transformation pipeline that converts robotics ba
 |-------|---------|-----------|
 | `roboflow-core` | Foundation types, error handling, registry | `RoboflowError`, `CodecValue`, `TypeRegistry` |
 | `roboflow-storage` | Storage abstraction layer | `Storage`, `LocalStorage`, `S3Storage`, `StorageFactory` |
-| `roboflow-dataset` | Dataset format writers | `LerobotWriter`, `DatasetWriter`, `ImageData` |
-| `roboflow-distributed` | Distributed coordination via TiKV | `TiKVClient`, `BatchController`, `Worker`, `Catalog` |
-| `roboflow-sources` | Data source implementations | `BagSource`, `McapSource`, `RrdSource` |
-| `roboflow-sinks` | Data sink implementations | `LerobotSink`, `ZarrSink`, `DatasetFrame` |
+| `roboflow-executor` | Stage-based task executor | `StageExecutor`, `Pipeline`, `ExecutionPolicy`, `SlotPool` |
+| `roboflow-media` | Image and video encoding/decoding | `ImageData`, `VideoEncoder`, `ConcurrentVideoEncoder` |
+| `roboflow-dataset` | Dataset format writers and sources | `LerobotWriter`, `DatasetWriter`, `Source`, `BagSource`, `McapSource` |
+| `roboflow-pipeline` | Pipeline execution and stages | `DatasetPipelineExecutor`, `DiscoverStage`, `ConvertStage`, `MergeStage` |
+| `roboflow-distributed` | Distributed coordination via TiKV | `TiKVClient`, `BatchController`, `Worker`, `Scanner`, `Finalizer` |
 
 ## Core Abstractions
 
@@ -55,7 +56,7 @@ trait SeekableStorage: Storage {
 - **S3**: AWS S3-compatible storage
 - **OSS**: Alibaba Cloud Object Storage
 
-### Pipeline Stages
+### Source/Sink Pattern
 
 ```rust
 trait Source: Send + Sync {
@@ -63,13 +64,25 @@ trait Source: Send + Sync {
     async fn read_batch(&mut self, size: usize) -> SourceResult<Option<Vec<TimestampedMessage>>>;
     async fn finalize(&mut self) -> SourceResult<SourceStats>;
 }
+```
 
-trait Sink: Send + Sync {
-    async fn initialize(&mut self, config: &SinkConfig) -> SinkResult<()>;
-    async fn write_frame(&mut self, frame: DatasetFrame) -> SinkResult<()>;
-    async fn flush(&mut self) -> SinkResult<()>;
-    async fn finalize(&mut self) -> SinkResult<SinkStats>;
-    fn supports_checkpointing(&self) -> bool;
+**Supported sources:**
+- **MCAP**: Streaming and memory-mapped reads
+- **ROS1 Bag**: Legacy bag format support
+- **RRD**: Rerun data format
+
+### Pipeline Stages
+
+```rust
+// Stage-based execution inspired by Spark
+pub struct DiscoverStage;
+pub struct ConvertStage;
+pub struct MergeStage;
+
+// Pipeline executor
+pub struct DatasetPipelineExecutor {
+    writer: Box<dyn DatasetWriter>,
+    config: DatasetPipelineConfig,
 }
 ```
 
@@ -117,6 +130,7 @@ The distributed system uses a Kubernetes-inspired design with TiKV as the contro
 | kubelet heartbeat | HeartbeatManager | Worker liveness |
 | Finalizers | Finalizer controller | Cleanup handling |
 | Job/CronJob | BatchSpec, WorkUnit | Work scheduling |
+| Scheduler | Scanner | File discovery and job creation |
 
 ### Batch State Machine
 
@@ -124,11 +138,11 @@ The distributed system uses a Kubernetes-inspired design with TiKV as the contro
 ┌──────────┐    ┌─────────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
 │ Pending  │───▶│ Discovering │───▶│ Running  │───▶│ Merging  │───▶│ Complete │
 └──────────┘    └─────────────┘    └──────────┘    └──────────┘    └──────────┘
-                                      │
-                                      ▼
-                                   ┌──────────┐
-                                   │ Failed   │
-                                   └──────────┘
+                                       │
+                                       ▼
+                                    ┌──────────┐
+                                    │ Failed   │
+                                    └──────────┘
 ```
 
 ### TiKV Key Structure
@@ -142,6 +156,27 @@ roboflow/worker/{pod_id}/lock      → LockRecord
 roboflow/worker/{pod_id}/checkpoint→ CheckpointState
 ```
 
+## CLI Commands
+
+The unified `roboflow` binary provides all operations:
+
+```bash
+# Run unified service (default: all roles)
+roboflow run
+
+# Run specific roles
+roboflow run --role worker
+roboflow run --role finalizer
+
+# Job management
+roboflow submit --input s3://bucket/file.bag --output s3://bucket/out/
+roboflow jobs list
+roboflow batch list
+
+# Health check
+roboflow health
+```
+
 ## Dataset Writing
 
 ### LeRobot Format
@@ -151,23 +186,30 @@ struct LerobotConfig {
     pub dataset: DatasetConfig,
     pub mappings: Vec<Mapping>,
     pub video: VideoConfig,
-    pub flushing: FlushingConfig,  // Incremental flushing
+    pub flushing: FlushingConfig,
+    pub streaming: StreamingConfig,
 }
 
-struct FlushingConfig {
-    pub max_frames_per_chunk: usize,  // Default: 1000
-    pub max_memory_bytes: usize,      // Default: 2GB
-    pub incremental_video_encoding: bool,
+struct StreamingConfig {
+    pub finalize_metadata_in_coordinator: bool,
 }
 ```
 
-### Incremental Flushing
+### Video Encoding
 
-To prevent OOM on long recordings, the writer processes data in chunks:
+```rust
+// Concurrent video encoder for parallel chunk encoding
+pub struct ConcurrentVideoEncoder {
+    config: ConcurrentEncoderConfig,
+}
 
-1. **Frame-based**: Flush after N frames (configurable, default 1000)
-2. **Memory-based**: Flush when memory exceeds threshold (default 2GB)
-3. **Output structure**: `data/chunk-000/`, `data/chunk-001/`, etc.
+pub struct ConcurrentEncoderConfig {
+    pub storage: Arc<dyn Storage>,
+    pub key_prefix: String,
+    pub codec: VideoCodec,
+    pub crf: u8,
+}
+```
 
 ### Upload Coordinator
 
@@ -176,7 +218,6 @@ struct EpisodeUploadCoordinator {
     pub storage: Arc<dyn Storage>,
     pub config: UploadConfig,
     pub progress: Option<UploadProgress>,
-    // Worker pool for parallel uploads
 }
 
 struct UploadConfig {
@@ -213,7 +254,7 @@ let data = arena.alloc_vec::<u8>(size);
 
 ```toml
 [source]
-type = "mcap"  # or "bag", "rrd", "hdf5"
+type = "mcap"  # or "bag", "rrd"
 path = "s3://bucket/path/to/data.mcap"
 
 # Optional: topic filtering
@@ -325,17 +366,15 @@ enum CircuitState {
 
 | Flag | Purpose |
 |------|---------|
-| `distributed` | TiKV distributed coordination (always enabled) |
-| `dataset-hdf5` | HDF5 dataset format support |
-| `dataset-parquet` | Parquet dataset format support |
-| `cloud-storage` | S3/OSS cloud storage support |
-| `gpu` | GPU compression (Linux only) |
 | `jemalloc` | jemalloc allocator (Linux only) |
 | `cli` | CLI support for binaries |
+| `profiling` | Profiling support for profiler binary |
+| `cpuid` | CPU-aware WindowLog detection (x86_64 only) |
+| `io-uring-io` | io_uring support for Linux 5.6+ |
 
 ## See Also
 
 - `CLAUDE.md` - Developer guidelines and conventions
-- `tests/s3_pipeline_tests.rs` - Integration tests
-- `crates/roboflow-dataset/src/lerobot/` - Dataset writer implementation
+- `tests/` - Integration and E2E tests
+- `crates/roboflow-dataset/src/` - Dataset writer and source implementations
 - `crates/roboflow-distributed/src/` - Distributed coordination
