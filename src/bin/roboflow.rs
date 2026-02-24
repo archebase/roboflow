@@ -514,7 +514,7 @@ impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
             .await
             .map_err(|e| roboflow_distributed::TikvError::Other(format!("Init error: {e}")))?;
 
-        let lerobot_config = match self.tikv.get_config(&work_unit.config_hash).await {
+        let mut lerobot_config = match self.tikv.get_config(&work_unit.config_hash).await {
             Ok(Some(config_record)) => LerobotConfig::from_toml(&config_record.content)
                 .unwrap_or_else(|_| LerobotConfig {
                     dataset: DatasetConfig {
@@ -547,6 +547,8 @@ impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
                 streaming: Default::default(),
             },
         };
+
+        lerobot_config.streaming.finalize_metadata_in_coordinator = true;
 
         let episode_output_dir =
             output_dir.join(format!("episode_{:06}", allocation.episode_index));

@@ -111,11 +111,72 @@ impl FormatWriter for LerobotWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::formats::common::AlignedFrame;
+    use crate::formats::common::config::DatasetBaseConfig;
+    use crate::formats::lerobot::config::{
+        DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig,
+    };
+
+    fn test_config() -> LerobotConfig {
+        LerobotConfig {
+            dataset: DatasetConfig {
+                base: DatasetBaseConfig {
+                    name: "format_writer_impl_tests".to_string(),
+                    fps: 30,
+                    robot_type: None,
+                },
+                env_type: None,
+            },
+            mappings: Vec::new(),
+            video: VideoConfig::default(),
+            annotation_file: None,
+            flushing: FlushingConfig::default(),
+            streaming: StreamingConfig::default(),
+        }
+    }
+
+    fn make_stateful_frame(index: usize) -> AlignedFrame {
+        let mut frame = AlignedFrame::new(index, (index as u64) * 33_333_333);
+        frame.add_state("observation.state".to_string(), vec![index as f32, 1.0]);
+        frame.add_action("action".to_string(), vec![0.1, 0.2]);
+        frame
+    }
 
     #[test]
     fn test_format_writer_trait_bounds() {
         // Verify that LerobotWriter implements FormatWriter
         fn assert_format_writer<W: FormatWriter>() {}
         assert_format_writer::<LerobotWriter>();
+    }
+
+    #[test]
+    fn test_format_writer_methods_smoke() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let mut writer =
+            LerobotWriter::new_local(temp.path(), test_config()).expect("create writer");
+
+        assert_eq!(FormatWriter::format_name(&writer), "lerobot");
+        assert_eq!(FormatWriter::format_version(&writer), "2.1");
+        assert!(FormatWriter::supports_episodes(&writer));
+        assert!(FormatWriter::handles_video(&writer));
+        assert!(FormatWriter::video_path_scheme(&writer).is_none());
+
+        let episode = FormatWriter::start_episode(&mut writer, Some(0)).expect("start episode");
+        assert_eq!(episode, 0);
+        assert_eq!(FormatWriter::episode_index(&writer), Some(0));
+
+        let frames = vec![make_stateful_frame(0), make_stateful_frame(1)];
+        FormatWriter::write_batch(&mut writer, &frames).expect("write batch");
+        assert_eq!(FormatWriter::frame_count(&writer), 2);
+
+        let stats = FormatWriter::finish_episode(&mut writer).expect("finish episode");
+        assert_eq!(stats.frames, 2);
+        assert_eq!(stats.episode_index, 0);
+
+        let final_stats = FormatWriter::finalize(&mut writer).expect("finalize writer");
+        assert_eq!(final_stats.frames_written, 2);
+
+        assert!(FormatWriter::as_any(&writer).is::<LerobotWriter>());
+        assert!(FormatWriter::as_any_mut(&mut writer).is::<LerobotWriter>());
     }
 }

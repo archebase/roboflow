@@ -129,7 +129,10 @@ async fn create_and_upload_dataset(
         video: VideoConfig::default(),
         annotation_file: None,
         flushing: FlushingConfig::default(),
-        streaming: StreamingConfig::default(),
+        streaming: StreamingConfig {
+            finalize_metadata_in_coordinator: true,
+            ..StreamingConfig::default()
+        },
     };
 
     let mut writer =
@@ -841,11 +844,17 @@ async fn test_dataset_validation_after_batch_completion() {
         .exists(Path::new(&format!("{}/meta/episodes.jsonl", output_prefix)))
         .await;
 
-    assert!(info_exists, "info.json should exist");
-    assert!(episodes_exists, "episodes.jsonl should exist");
+    assert!(
+        !info_exists,
+        "info.json should not exist before coordinator finalization"
+    );
+    assert!(
+        !episodes_exists,
+        "episodes.jsonl should not exist before coordinator finalization"
+    );
 
-    println!("   ✓ meta/info.json exists");
-    println!("   ✓ meta/episodes.jsonl exists");
+    println!("   ✓ meta/info.json not present before coordinator finalization");
+    println!("   ✓ meta/episodes.jsonl not present before coordinator finalization");
 
     // Check for chunk directories
     let chunk_000_exists = storage

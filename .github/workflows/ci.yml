@@ -8,6 +8,11 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  TIKV_PD_ENDPOINTS: 127.0.0.1:2379
+  MINIO_ENDPOINT: http://127.0.0.1:9000
+  MINIO_ACCESS_KEY: minioadmin
+  MINIO_SECRET_KEY: minioadmin
 
 jobs:
   license:
@@ -145,7 +150,6 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       RUSTFLAGS: -C linker=cc
-      TIKV_PD_ENDPOINTS: 127.0.0.1:2379
     steps:
       - uses: actions/checkout@v4
         with:
@@ -159,75 +163,16 @@ jobs:
         with:
           key: "vcpkg-x64-linux-${{ hashFiles('**/Cargo.lock') }}"
 
-      - name: Cache cargo-llvm-cov
-        uses: actions/cache@v4
-        id: cache-llvm-cov
-        with:
-          path: ~/.cargo/bin/cargo-llvm-cov
-          key: ${{ runner.os }}-cargo-llvm-cov-${{ hashFiles('**/Cargo.lock') }}
-
       - name: Install cargo-llvm-cov
-        if: steps.cache-llvm-cov.outputs.cache-hit != 'true'
-        run: cargo install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm curl
 
-      - name: Configure PD hostname alias
-        run: |
-          if ! grep -qE '^127\.0\.0\.1\s+pd(\s|$)' /etc/hosts; then
-            echo '127.0.0.1 pd' | sudo tee -a /etc/hosts
-          fi
-
-      - name: Start infrastructure services
-        run: docker compose up -d minio minio-init pd tikv
-
-      - name: Wait for infrastructure to be ready
-        run: |
-          echo "Waiting for MinIO to be ready..."
-          for i in {1..45}; do
-            if curl -sf http://localhost:9000/minio/health/ready > /dev/null 2>&1; then
-              echo "MinIO is healthy"
-              break
-            fi
-            echo "Waiting for MinIO... ($i/45)"
-            sleep 2
-          done
-          if ! curl -sf http://localhost:9000/minio/health/ready > /dev/null 2>&1; then
-            echo "ERROR: MinIO failed to become healthy"
-            docker compose logs minio || true
-            exit 1
-          fi
-
-          echo "Waiting for TiKV cluster to be ready..."
-          for i in {1..30}; do
-            if curl -sf http://localhost:2379/health > /dev/null 2>&1; then
-              echo "PD is healthy"
-              break
-            fi
-            echo "Waiting for PD... ($i/30)"
-            sleep 2
-          done
-          if ! curl -sf http://localhost:2379/health > /dev/null 2>&1; then
-            echo "ERROR: PD failed to become healthy"
-            docker compose logs pd || true
-            exit 1
-          fi
-          for i in {1..30}; do
-            if curl -sf http://localhost:20180/status > /dev/null 2>&1; then
-              echo "TiKV is healthy"
-              break
-            fi
-            echo "Waiting for TiKV... ($i/30)"
-            sleep 2
-          done
-          if ! curl -sf http://localhost:20180/status > /dev/null 2>&1; then
-            echo "ERROR: TiKV failed to become healthy"
-            docker compose logs tikv || true
-            exit 1
-          fi
+      - name: Add host.docker.internal to /etc/hosts
+        run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
 
       - name: Cache vcpkg
         uses: actions/cache@v4
@@ -263,6 +208,96 @@ jobs:
           # Export for current step
           export PKG_CONFIG_PATH="${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           ls ${VCPKG_INSTALLED}/x64-linux/lib/pkgconfig/libav*.pc
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Pull Docker images
+        run: docker compose pull --quiet
+
+      - name: Start infrastructure services
+        run: docker compose up -d minio minio-init pd tikv
+
+      - name: Wait for services to be healthy
+        timeout-minutes: 5
+        run: |
+          echo "Waiting for services to be healthy..."
+          for i in {1..30}; do
+            output=$(docker compose ps)
+
+            pd_healthy=0
+            tikv_healthy=0
+            minio_healthy=0
+
+            # Check PD
+            if echo "$output" | grep "roboflow-pd" | grep -q "healthy"; then
+              pd_healthy=1
+              echo "  [ok] pd"
+            fi
+
+            # Check TiKV
+            if echo "$output" | grep "roboflow-tikv" | grep -q "healthy"; then
+              tikv_healthy=1
+              echo "  [ok] tikv"
+            fi
+
+            # Check MinIO
+            if echo "$output" | grep "roboflow-minio" | grep -q "healthy"; then
+              minio_healthy=1
+              echo "  [ok] minio"
+            fi
+
+            if [ "$pd_healthy" -eq 1 ] && [ "$tikv_healthy" -eq 1 ] && [ "$minio_healthy" -eq 1 ]; then
+              echo "All services are healthy!"
+              docker compose ps
+              exit 0
+            fi
+
+            echo "Waiting... (attempt $i/30)"
+            sleep 10
+          done
+
+          echo "Services not healthy after timeout"
+          docker compose ps
+          echo ""
+          echo "=== PD logs ==="
+          docker compose logs pd --tail 50 || true
+          echo ""
+          echo "=== TiKV logs ==="
+          docker compose logs tikv --tail 50 || true
+          exit 1
+
+      - name: Verify service connectivity
+        run: |
+          echo "Verifying PD connectivity..."
+          for i in {1..30}; do
+            if curl -sf http://localhost:2379/health > /dev/null 2>&1; then
+              echo "PD is healthy"
+              break
+            fi
+            echo "Waiting for PD... ($i/30)"
+            sleep 2
+          done
+
+          echo "Verifying TiKV connectivity..."
+          for i in {1..30}; do
+            if curl -sf http://localhost:20180/status > /dev/null 2>&1; then
+              echo "TiKV is healthy"
+              break
+            fi
+            echo "Waiting for TiKV... ($i/30)"
+            sleep 2
+          done
+
+          echo "Verifying MinIO connectivity..."
+          for i in {1..30}; do
+            if curl -sf http://localhost:9000/minio/health/ready > /dev/null 2>&1; then
+              echo "MinIO is healthy"
+              break
+            fi
+            echo "Waiting for MinIO... ($i/30)"
+            sleep 2
+          done
 
       - name: Generate coverage and run tests
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info

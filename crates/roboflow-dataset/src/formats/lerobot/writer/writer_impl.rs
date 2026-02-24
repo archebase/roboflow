@@ -744,8 +744,14 @@ impl LerobotWriter {
         // Merge all pending segments into final episode files
         self.merge_pending_segments()?;
 
-        // Write metadata files
-        self.metadata.write_all(&self.output_dir, &self.config)?;
+        if self.config.streaming.finalize_metadata_in_coordinator {
+            tracing::info!(
+                output_dir = %self.output_dir.display(),
+                "Skipping local metadata write; coordinator finalizes metadata"
+            );
+        } else {
+            self.metadata.write_all(&self.output_dir, &self.config)?;
+        }
 
         let duration = self
             .start_time
@@ -1111,8 +1117,14 @@ impl DatasetWriter for LerobotWriter {
         // Write camera parameters
         self.write_camera_parameters()?;
 
-        // Write metadata files
-        self.metadata.write_all(&self.output_dir, &self.config)?;
+        if self.config.streaming.finalize_metadata_in_coordinator {
+            tracing::info!(
+                output_dir = %self.output_dir.display(),
+                "Skipping local metadata write; coordinator finalizes metadata"
+            );
+        } else {
+            self.metadata.write_all(&self.output_dir, &self.config)?;
+        }
 
         let duration = self
             .start_time
@@ -1257,6 +1269,9 @@ mod tests {
     use crate::formats::lerobot::config::{
         DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig,
     };
+    use crate::formats::lerobot::writer::EpisodeWriter;
+    use crate::formats::lerobot::writer::camera::{CameraExtrinsic, CameraIntrinsic};
+    use roboflow_storage::LocalStorage;
 
     /// Build a minimal LerobotConfig with a custom FlushingConfig.
     fn test_config(flushing: FlushingConfig) -> LerobotConfig {
@@ -1410,6 +1425,175 @@ mod tests {
                     .unwrap_or(true),
             "Temp directory should be cleaned up after merge: {:?}",
             temp_dir
+        );
+    }
+
+    #[test]
+    fn test_new_local_rejects_cloud_output_urls() {
+        let cfg = test_config(FlushingConfig::default());
+
+        assert!(LerobotWriter::new_local("s3://bucket/path", cfg.clone()).is_err());
+        assert!(LerobotWriter::new_local("oss://bucket/path", cfg.clone()).is_err());
+        assert!(LerobotWriter::new_local("S3://bucket/path", cfg.clone()).is_err());
+        assert!(LerobotWriter::new_local("OSS://bucket/path", cfg).is_err());
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn test_deprecated_constructors_and_internal_constructor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(FlushingConfig::default());
+
+        let via_create = LerobotWriter::create(tmp.path(), cfg.clone()).unwrap();
+        assert!(via_create.is_initialized());
+
+        let storage = Arc::new(LocalStorage::new(tmp.path())) as Arc<dyn roboflow_storage::Storage>;
+        let via_new = LerobotWriter::new(
+            storage.clone(),
+            "prefix".to_string(),
+            tmp.path(),
+            cfg.clone(),
+        )
+        .unwrap();
+        assert!(via_new.is_initialized());
+
+        let internal = LerobotWriter::new_internal(
+            storage,
+            "prefix2".to_string(),
+            tmp.path().join("buf"),
+            cfg,
+            false,
+        )
+        .unwrap();
+        assert!(internal.is_initialized());
+    }
+
+    #[test]
+    fn test_chunk_accessors_and_episode_writer_trait_methods() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut writer =
+            LerobotWriter::new_local(tmp.path(), test_config(FlushingConfig::default())).unwrap();
+
+        writer.set_episodes_per_chunk(10);
+        writer.set_episode_index(25);
+        assert_eq!(writer.get_episodes_per_chunk(), 10);
+        assert_eq!(writer.get_episode_index(), 25);
+        assert_eq!(writer.get_chunk_index(), 2);
+
+        <LerobotWriter as EpisodeWriter>::set_episodes_per_chunk(&mut writer, 7);
+        <LerobotWriter as EpisodeWriter>::set_episode_index(&mut writer, 15);
+        assert_eq!(
+            <LerobotWriter as EpisodeWriter>::get_episodes_per_chunk(&writer),
+            7
+        );
+        assert_eq!(
+            <LerobotWriter as EpisodeWriter>::get_episode_index(&writer),
+            15
+        );
+        assert_eq!(
+            <LerobotWriter as EpisodeWriter>::get_chunk_index(&writer),
+            2
+        );
+
+        writer.start_episode(None).unwrap();
+        assert!(tmp.path().join("data/chunk-002").exists());
+        assert!(tmp.path().join("videos/chunk-002").exists());
+    }
+
+    #[test]
+    fn test_write_frame_requires_initialized_and_empty_helpers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut writer =
+            LerobotWriter::new_local(tmp.path(), test_config(FlushingConfig::default())).unwrap();
+
+        writer.initialized = false;
+        assert!(writer.write_frame(&make_frame(0)).is_err());
+
+        writer.initialized = true;
+        let (files, stats) = writer.encode_videos().unwrap();
+        assert!(files.is_empty());
+        assert_eq!(stats.images_encoded, 0);
+
+        writer.flush_video_segment().unwrap();
+        assert_eq!(writer.skipped_frames(), 0);
+        assert_eq!(writer.failed_encodings(), 0);
+    }
+
+    #[test]
+    fn test_camera_params_register_task_and_finalize_no_frames() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut writer =
+            LerobotWriter::new_local(tmp.path(), test_config(FlushingConfig::default())).unwrap();
+
+        let t0 = writer.register_task("pick".to_string());
+        let t1 = writer.register_task("pick".to_string());
+        assert_eq!(t0, t1);
+        assert_eq!(writer.metadata().tasks.len(), 1);
+
+        writer.set_camera_intrinsics(
+            "cam_a".to_string(),
+            CameraIntrinsic {
+                fx: 1.0,
+                fy: 1.0,
+                ppx: 0.0,
+                ppy: 0.0,
+                distortion_model: "none".to_string(),
+                k1: 0.0,
+                k2: 0.0,
+                k3: 0.0,
+                p1: 0.0,
+                p2: 0.0,
+            },
+        );
+        writer.set_camera_extrinsics(
+            "cam_a".to_string(),
+            CameraExtrinsic::new(
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                [0.0, 0.0, 0.0],
+            ),
+        );
+
+        let stats = <LerobotWriter as DatasetWriter>::finalize(&mut writer).unwrap();
+        assert_eq!(stats.frames_written, 0);
+        assert!(tmp.path().join("parameters/cam_a_intrinsic.json").exists());
+        assert!(tmp.path().join("parameters/cam_a_extrinsic.json").exists());
+        assert!(tmp.path().join("meta/info.json").exists());
+    }
+
+    #[test]
+    fn test_finalize_skips_local_metadata_when_coordinator_enabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = test_config(FlushingConfig::default());
+        config.streaming.finalize_metadata_in_coordinator = true;
+
+        let mut writer = LerobotWriter::new_local(tmp.path(), config).unwrap();
+        let stats = <LerobotWriter as DatasetWriter>::finalize(&mut writer).unwrap();
+
+        assert_eq!(stats.frames_written, 0);
+        assert!(!tmp.path().join("meta/info.json").exists());
+        assert!(!tmp.path().join("meta/episodes.jsonl").exists());
+        assert!(!tmp.path().join("meta/episodes_stats.jsonl").exists());
+    }
+
+    #[test]
+    fn test_from_aligned_frame_conversion_paths() {
+        let mut frame = AlignedFrame::new(3, 1_500_000_000);
+        frame.add_state("robot_observation".to_string(), vec![1.0, 2.0]);
+        frame.add_action("action".to_string(), vec![0.5, 0.2]);
+        frame.add_image(
+            "observation.images.front".to_string(),
+            ImageData::new(8, 8, vec![0; 8 * 8 * 3]),
+        );
+
+        let converted = LerobotFrame::from_aligned_frame(&frame, 12);
+        assert_eq!(converted.episode_index, 12);
+        assert_eq!(converted.frame_index, 3);
+        assert!(converted.observation_state.is_some());
+        assert!(converted.action.is_some());
+        assert!(
+            converted
+                .image_frames
+                .contains_key("observation.images.front")
         );
     }
 }

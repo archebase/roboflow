@@ -600,3 +600,196 @@ impl Default for MetadataCollector {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::formats::common::config::DatasetBaseConfig;
+    use crate::formats::common::parquet_base::FeatureStats;
+    use crate::formats::lerobot::config::{
+        DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig,
+    };
+    use roboflow_storage::LocalStorage;
+    use std::path::PathBuf;
+
+    fn test_config(robot_type: Option<&str>) -> LerobotConfig {
+        LerobotConfig {
+            dataset: DatasetConfig {
+                base: DatasetBaseConfig {
+                    name: "dataset_for_metadata_tests".to_string(),
+                    fps: 30,
+                    robot_type: robot_type.map(ToString::to_string),
+                },
+                env_type: None,
+            },
+            mappings: Vec::new(),
+            video: VideoConfig::default(),
+            annotation_file: None,
+            flushing: FlushingConfig::default(),
+            streaming: StreamingConfig::default(),
+        }
+    }
+
+    fn sample_stats() -> HashMap<String, FeatureStats> {
+        let mut m = HashMap::new();
+        m.insert(
+            "observation.state".to_string(),
+            FeatureStats {
+                mean: vec![0.0, 1.0],
+                std: vec![1.0, 2.0],
+                min: vec![-1.0, -1.0],
+                max: vec![2.0, 3.0],
+            },
+        );
+        m
+    }
+
+    #[test]
+    fn test_write_all_generates_expected_files_and_content() {
+        let mut collector = MetadataCollector::new();
+        collector.update_state_dim("observation.state".to_string(), 6);
+        collector.update_state_dim("action".to_string(), 6);
+        collector.update_image_shape("observation.images.cam_front".to_string(), 640, 480);
+        let task_index = collector.register_task("pick and place".to_string());
+        collector.add_episode(0, 10, vec![task_index]);
+        collector.add_episode_stats(0, sample_stats());
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        collector
+            .write_all(tmp.path(), &test_config(None))
+            .expect("write all metadata");
+
+        let meta = tmp.path().join("meta");
+        assert!(meta.join("info.json").exists());
+        assert!(meta.join("episodes.jsonl").exists());
+        assert!(meta.join("tasks.jsonl").exists());
+        assert!(meta.join("episodes_stats.jsonl").exists());
+
+        let info_text = std::fs::read_to_string(meta.join("info.json")).expect("read info.json");
+        let info: serde_json::Value = serde_json::from_str(&info_text).expect("parse info.json");
+        assert_eq!(info["robot_type"], "unknown");
+        assert_eq!(info["total_episodes"], 1);
+        assert_eq!(info["total_frames"], 10);
+        assert!(info["features"]["observation.state"].is_object());
+        assert!(info["features"]["action"].is_object());
+        assert!(info["features"]["observation.images.cam_front"].is_object());
+    }
+
+    #[test]
+    fn test_write_all_skips_tasks_file_when_no_tasks() {
+        let mut collector = MetadataCollector::new();
+        collector.add_episode(0, 2, vec![]);
+        collector.add_episode_stats(0, sample_stats());
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        collector
+            .write_all(tmp.path(), &test_config(Some("ur5")))
+            .expect("write all metadata");
+
+        let meta = tmp.path().join("meta");
+        assert!(meta.join("info.json").exists());
+        assert!(meta.join("episodes.jsonl").exists());
+        assert!(meta.join("episodes_stats.jsonl").exists());
+        assert!(!meta.join("tasks.jsonl").exists());
+    }
+
+    #[test]
+    fn test_write_all_to_storage_with_and_without_prefix() {
+        let mut collector = MetadataCollector::new();
+        collector.update_state_dim("observation.state".to_string(), 3);
+        collector.add_episode(0, 1, vec![]);
+        collector.add_episode_stats(0, sample_stats());
+
+        let root = tempfile::tempdir().expect("tempdir");
+        let storage = Arc::new(LocalStorage::new(root.path())) as Arc<dyn Storage>;
+
+        collector
+            .write_all_to_storage(&storage, "dataset_a", &test_config(Some("franka")))
+            .expect("write metadata to storage with prefix");
+
+        let prefixed_meta = PathBuf::from(root.path()).join("dataset_a/meta");
+        assert!(prefixed_meta.join("info.json").exists());
+        assert!(prefixed_meta.join("episodes.jsonl").exists());
+        assert!(prefixed_meta.join("episodes_stats.jsonl").exists());
+
+        collector
+            .write_all_to_storage(&storage, "", &test_config(Some("franka")))
+            .expect("write metadata to storage without prefix");
+
+        let root_meta = PathBuf::from(root.path()).join("meta");
+        assert!(root_meta.join("info.json").exists());
+        assert!(root_meta.join("episodes.jsonl").exists());
+        assert!(root_meta.join("episodes_stats.jsonl").exists());
+    }
+
+    #[test]
+    fn test_write_all_to_storage_writes_tasks_and_feature_details() {
+        let mut collector = MetadataCollector::new();
+        collector.update_state_dim("observation.state".to_string(), 7);
+        collector.update_state_dim("action".to_string(), 4);
+        collector.update_image_shape("observation.images.cam_left".to_string(), 1280, 720);
+
+        let t_pick = collector.register_task("pick".to_string());
+        let t_place = collector.register_task("place".to_string());
+
+        collector.add_episode(0, 5, vec![t_pick]);
+        collector.add_episode(1, 6, vec![t_place]);
+        collector.add_episode_stats(0, sample_stats());
+        collector.add_episode_stats(1, sample_stats());
+
+        let root = tempfile::tempdir().expect("tempdir");
+        let storage = Arc::new(LocalStorage::new(root.path())) as Arc<dyn Storage>;
+
+        collector
+            .write_all_to_storage(&storage, "dataset_b", &test_config(Some("franka")))
+            .expect("write metadata to storage");
+
+        let meta = PathBuf::from(root.path()).join("dataset_b/meta");
+        let info_text = std::fs::read_to_string(meta.join("info.json")).expect("read info.json");
+        let info: serde_json::Value = serde_json::from_str(&info_text).expect("parse info.json");
+
+        assert_eq!(info["robot_type"], "franka");
+        assert_eq!(info["total_episodes"], 2);
+        assert_eq!(info["total_frames"], 11);
+        assert_eq!(info["features"]["observation.state"]["shape"][0], 7);
+        assert_eq!(info["features"]["action"]["shape"][0], 4);
+        assert_eq!(
+            info["features"]["observation.images.cam_left"]["shape"][0],
+            720
+        );
+        assert_eq!(
+            info["features"]["observation.images.cam_left"]["shape"][1],
+            1280
+        );
+
+        let tasks_text = std::fs::read_to_string(meta.join("tasks.jsonl")).expect("read tasks");
+        let task_lines: Vec<&str> = tasks_text.lines().collect();
+        assert_eq!(task_lines.len(), 2);
+
+        let episodes_text =
+            std::fs::read_to_string(meta.join("episodes.jsonl")).expect("read episodes");
+        assert_eq!(episodes_text.lines().count(), 2);
+
+        let stats_text =
+            std::fs::read_to_string(meta.join("episodes_stats.jsonl")).expect("read stats");
+        assert_eq!(stats_text.lines().count(), 2);
+    }
+
+    #[test]
+    fn test_write_all_to_storage_uses_unknown_robot_type_by_default() {
+        let mut collector = MetadataCollector::new();
+        collector.add_episode(0, 1, vec![]);
+
+        let root = tempfile::tempdir().expect("tempdir");
+        let storage = Arc::new(LocalStorage::new(root.path())) as Arc<dyn Storage>;
+
+        collector
+            .write_all_to_storage(&storage, "dataset_c", &test_config(None))
+            .expect("write metadata to storage");
+
+        let info_text = std::fs::read_to_string(root.path().join("dataset_c/meta/info.json"))
+            .expect("read info.json");
+        let info: serde_json::Value = serde_json::from_str(&info_text).expect("parse info.json");
+        assert_eq!(info["robot_type"], "unknown");
+    }
+}

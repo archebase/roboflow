@@ -1,4 +1,4 @@
-use roboflow_executor::{Stage, StageId, Task, TaskContext};
+use roboflow_executor::{Stage, StageId};
 use roboflow_pipeline::stages::{ConvertStage, DiscoverStage, MergeStage};
 
 #[test]
