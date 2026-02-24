@@ -175,11 +175,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libhdf5-dev pkg-config nasm curl
 
-      - name: Start TiKV services
-        run: docker compose up -d pd tikv
-
-      - name: Wait for TiKV to be ready
+      - name: Configure PD hostname alias
         run: |
+          if ! grep -qE '^127\.0\.0\.1\s+pd(\s|$)' /etc/hosts; then
+            echo '127.0.0.1 pd' | sudo tee -a /etc/hosts
+          fi
+
+      - name: Start infrastructure services
+        run: docker compose up -d minio minio-init pd tikv
+
+      - name: Wait for infrastructure to be ready
+        run: |
+          echo "Waiting for MinIO to be ready..."
+          for i in {1..45}; do
+            if curl -sf http://localhost:9000/minio/health/ready > /dev/null 2>&1; then
+              echo "MinIO is healthy"
+              break
+            fi
+            echo "Waiting for MinIO... ($i/45)"
+            sleep 2
+          done
+          if ! curl -sf http://localhost:9000/minio/health/ready > /dev/null 2>&1; then
+            echo "ERROR: MinIO failed to become healthy"
+            docker compose logs minio || true
+            exit 1
+          fi
+
           echo "Waiting for TiKV cluster to be ready..."
           for i in {1..30}; do
             if curl -sf http://localhost:2379/health > /dev/null 2>&1; then
