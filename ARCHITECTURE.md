@@ -169,7 +169,7 @@ roboflow run --role worker
 roboflow run --role finalizer
 
 # Job management
-roboflow submit --input s3://bucket/file.bag --output s3://bucket/out/
+roboflow submit s3://bucket/file.bag --output s3://bucket/out/
 roboflow jobs list
 roboflow batch list
 
