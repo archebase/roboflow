@@ -14,15 +14,17 @@ Roboflow: Distributed data transformation pipeline converting robotics bag/MCAP 
 
 ## Workspace Structure
 
-The project uses a Cargo workspace with 5 crates:
+The project uses a Cargo workspace with 7 crates:
 
 | Crate | Purpose |
 |-------|---------|
 | `roboflow-core` | Error types, registry, values |
 | `roboflow-storage` | S3, OSS, Local storage (always available) |
-| `roboflow-dataset` | KPS, LeRobot, streaming converters |
-| `roboflow-distributed` | TiKV client, catalog, circuit breaker |
-| `roboflow-hdf5` | Optional HDF5 format support |
+| `roboflow-executor` | Stage-based task executor for distributed pipelines |
+| `roboflow-media` | Image and video encoding/decoding |
+| `roboflow-dataset` | Dataset writers, sources (MCAP, bag), streaming converters |
+| `roboflow-pipeline` | Pipeline execution and stages for dataset processing |
+| `roboflow-distributed` | TiKV client, catalog, circuit breaker, worker coordination |
 
 **Import patterns:**
 - Use facade re-exports from `roboflow`: `use roboflow::{Robocodec, DatasetWriter, ...}`
