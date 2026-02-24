@@ -32,16 +32,15 @@ impl Stage for DiscoverStage {
 
     fn create_task(&self, partition: PartitionId) -> Box<dyn Task> {
         Box::new(DiscoverTask {
-            input_dir: self.input_dir.clone(),
-            partition,
+            _input_dir: self.input_dir.clone(),
+            _partition: partition,
         })
     }
 }
 
-#[allow(dead_code)]
 struct DiscoverTask {
-    input_dir: PathBuf,
-    partition: PartitionId,
+    _input_dir: PathBuf,
+    _partition: PartitionId,
 }
 
 #[async_trait::async_trait]

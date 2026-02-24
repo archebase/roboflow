@@ -60,6 +60,9 @@ pub struct FramePool {
     alloc_count: AtomicU64,
 }
 
+// SAFETY: FramePool uses atomic operations (AtomicU64, AtomicBool) for all
+// concurrent access. The raw pointer (base_ptr) is managed internally with
+// proper synchronization via atomic CAS on free_mask.
 unsafe impl Send for FramePool {}
 unsafe impl Sync for FramePool {}
 
@@ -97,6 +100,9 @@ impl FramePool {
         let base_ptr = if total_size == 0 {
             std::ptr::null_mut()
         } else {
+            // SAFETY: Layout is valid (validated above). We allocate exactly `total_size` bytes
+            // with 64-byte alignment for SIMD operations. The pointer is stored in base_ptr
+            // and will be deallocated in Drop using the same layout.
             let ptr = unsafe { alloc(layout) };
             if ptr.is_null() {
                 return Err(FramePoolError::AllocationFailed(
@@ -162,6 +168,8 @@ impl FramePool {
     pub fn acquire(&self) -> Option<OwnedSlot<'_>> {
         let slot_index = self.try_acquire_slot()?;
         Some(OwnedSlot {
+            // SAFETY: slot_index is guaranteed to be < slot_count by try_acquire_slot.
+            // base_ptr is valid and aligned, and the offset calculation is within bounds.
             data_ptr: unsafe {
                 NonNull::new_unchecked(self.base_ptr.add((slot_index as usize) * self.slot_size))
             },
@@ -217,6 +225,9 @@ impl FramePool {
 impl Drop for FramePool {
     fn drop(&mut self) {
         if !self.base_ptr.is_null() && self.layout.size() > 0 {
+            // SAFETY: base_ptr was allocated with the same layout in new(),
+            // and is still valid. All slots must be released before drop
+            // (enforced by RAII via OwnedSlot).
             unsafe {
                 dealloc(self.base_ptr, self.layout);
             }
@@ -247,6 +258,8 @@ pub struct OwnedSlot<'a> {
     height: u32,
 }
 
+// SAFETY: OwnedSlot points to memory in FramePool which is Send + Sync.
+// The slot is exclusively owned, so no data races are possible.
 unsafe impl Send for OwnedSlot<'_> {}
 
 impl OwnedSlot<'_> {
@@ -260,10 +273,14 @@ impl OwnedSlot<'_> {
     }
     #[inline]
     pub fn data(&self) -> &[u8] {
+        // SAFETY: data_ptr is valid for data_size bytes, acquired from FramePool
+        // which guarantees proper alignment and size.
         unsafe { std::slice::from_raw_parts(self.data_ptr.as_ptr(), self.data_size) }
     }
     #[inline]
     pub fn data_mut(&mut self) -> &mut [u8] {
+        // SAFETY: data_ptr is valid for data_size bytes, acquired from FramePool.
+        // We have exclusive access via &mut self, so aliasing is not possible.
         unsafe { std::slice::from_raw_parts_mut(self.data_ptr.as_ptr(), self.data_size) }
     }
     #[inline]
@@ -315,6 +332,9 @@ pub struct AtomicFramePool {
     inner: FramePool,
 }
 
+// SAFETY: AtomicFramePool wraps FramePool and uses atomic operations for slot
+// acquisition/release. All mutable operations use atomic compare_exchange,
+// making it safe for concurrent access from multiple threads.
 unsafe impl Send for AtomicFramePool {}
 unsafe impl Sync for AtomicFramePool {}
 
@@ -328,6 +348,8 @@ impl AtomicFramePool {
     pub fn acquire(self: &Arc<Self>) -> Option<ArcSlot> {
         let slot_index = self.inner.try_acquire_slot()?;
         Some(ArcSlot {
+            // SAFETY: slot_index is guaranteed to be < slot_count by try_acquire_slot.
+            // base_ptr is valid and aligned, and the offset calculation is within bounds.
             data_ptr: unsafe {
                 NonNull::new_unchecked(
                     self.inner
@@ -388,6 +410,8 @@ pub struct ArcSlot {
     _guard: SlotGuard,
 }
 
+// SAFETY: ArcSlot points to memory in AtomicFramePool which is Send + Sync.
+// The slot is exclusively owned via SlotGuard, so no data races are possible.
 unsafe impl Send for ArcSlot {}
 
 impl ArcSlot {
@@ -401,10 +425,14 @@ impl ArcSlot {
     }
     #[inline]
     pub fn data(&self) -> &[u8] {
+        // SAFETY: data_ptr is valid for data_size bytes, acquired from AtomicFramePool
+        // which guarantees proper alignment and size.
         unsafe { std::slice::from_raw_parts(self.data_ptr.as_ptr(), self.data_size) }
     }
     #[inline]
     pub fn data_mut(&mut self) -> &mut [u8] {
+        // SAFETY: data_ptr is valid for data_size bytes, acquired from AtomicFramePool.
+        // We have exclusive access via &mut self, so aliasing is not possible.
         unsafe { std::slice::from_raw_parts_mut(self.data_ptr.as_ptr(), self.data_size) }
     }
     #[inline]

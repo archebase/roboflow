@@ -21,7 +21,6 @@
 //! - [`AudioData`] - Audio data with metadata
 //! - [`CameraInfo`] - Camera calibration information
 
-#[allow(unused_imports)]
 use roboflow_core::Result;
 use roboflow_media::{AudioData, CameraInfo, ImageData};
 use std::collections::HashMap;

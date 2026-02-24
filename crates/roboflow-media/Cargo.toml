@@ -16,7 +16,6 @@ serde_json = { workspace = true }
 # Image decoding
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 zune-jpeg = "0.4"
-png = "0.17"
 
 # Video encoding
 rsmpeg = { version = "0.18", features = ["link_system_ffmpeg", "link_vcpkg_ffmpeg"] }

@@ -32,16 +32,15 @@ impl Stage for MergeStage {
 
     fn create_task(&self, partition: PartitionId) -> Box<dyn Task> {
         Box::new(MergeTask {
-            output_dir: self.output_dir.clone(),
-            partition,
+            _output_dir: self.output_dir.clone(),
+            _partition: partition,
         })
     }
 }
 
-#[allow(dead_code)]
 struct MergeTask {
-    output_dir: PathBuf,
-    partition: PartitionId,
+    _output_dir: PathBuf,
+    _partition: PartitionId,
 }
 
 #[async_trait::async_trait]

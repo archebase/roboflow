@@ -10,40 +10,30 @@ description = "Dataset formats and conversion for robotics training data"
 [dependencies]
 roboflow-core = { workspace = true }
 roboflow-storage = { workspace = true }
-roboflow-executor = { workspace = true }
-roboflow-media = { workspace = true }
+roboflow-media = { workspace = true, optional = true }
 robocodec = { workspace = true }
 
-polars = { version = "0.41", features = ["parquet", "lazy", "diagonal_concat"] }
+polars = { version = "0.41", features = ["parquet", "lazy", "diagonal_concat"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_yaml_ng = "0.10"
 toml = "0.8"
 thiserror = "1.0"
-anyhow = "1.0"
 tracing = "0.1"
-crossbeam-channel = "0.5"
-crossbeam-deque = "0.8"
-rayon = "1.10"
-num_cpus = "1.16"
+crossbeam-channel = { version = "0.5", optional = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
-futures = "0.3"
 uuid = { version = "1.10", features = ["v4", "serde"] }
-mcap = "0.24"
-rosbag = "0.6"
-chrono = { workspace = true }
-zstd = "0.13"
-lz4_flex = "0.11"
-bzip2 = "0.4"
-bytes = "1"
-memmap2 = "0.9"
-hex = "0.4"
-regex = "1.10"
+mcap = { version = "0.24", optional = true }
 tempfile = "3.10"
 
 [features]
-default = []
+default = ["lerobot", "mcap-source"]
+# LeRobot dataset format support (includes parquet via polars)
+lerobot = ["dep:polars", "dep:roboflow-media", "dep:crossbeam-channel"]
+# MCAP file source support
+mcap-source = ["dep:mcap", "dep:crossbeam-channel"]
+# Video encoding support (requires roboflow-media)
+video = ["dep:roboflow-media", "dep:crossbeam-channel"]
 
 [dev-dependencies]
 pretty_assertions = "1.4"

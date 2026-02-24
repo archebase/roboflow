@@ -94,6 +94,9 @@ impl VideoComposer for RsmpegVideoComposer {
         let mut stream_mapping: Vec<Option<usize>> = Vec::new();
         for stream in first_input.streams().iter() {
             let mut out_stream = output_ctx.new_stream();
+            // SAFETY: avcodec_parameters_alloc allocates a new parameters struct.
+            // avcodec_parameters_copy safely copies from the input stream's codecpar.
+            // The from_raw conversion is safe because the pointer is non-null (checked).
             let codecpar = unsafe {
                 let new_par = ffi::avcodec_parameters_alloc();
                 ffi::avcodec_parameters_copy(new_par, stream.codecpar().as_ptr() as *const _);

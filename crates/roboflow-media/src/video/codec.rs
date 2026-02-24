@@ -243,6 +243,8 @@ fn find_and_create_context(name: &str) -> Result<(AVCodecContext, String, bool),
         .ok_or_else(|| "No H.264 encoder available".to_string())?;
 
     let actual_name = codec.name().to_str().unwrap_or("unknown").to_string();
+    // SAFETY: codec.as_ptr() returns a valid pointer to an AVCodec struct
+    // obtained from FFmpeg's find_encoder. We only read the capabilities field.
     let codec_caps = unsafe { (*codec.as_ptr()).capabilities };
     let supports_flush = (codec_caps & ffi::AV_CODEC_CAP_ENCODER_FLUSH as i32) != 0;
 
