@@ -38,12 +38,12 @@ use roboflow_dataset::sources::{SourceConfig, create_source};
 
 use roboflow_dataset::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
 
-use roboflow_dataset::formats::dataset_executor::{
-    DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats, SequentialPolicy,
-};
 use roboflow_dataset::formats::{
     common::config::{DatasetBaseConfig, Mapping, MappingType},
     lerobot::{DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig},
+};
+use roboflow_pipeline::{
+    DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats, SequentialPolicy,
 };
 
 /// Report from a conversion operation.

@@ -51,7 +51,6 @@
 
 pub mod executor;
 pub mod pipeline;
-pub mod pipeline_executor;
 pub mod policy;
 pub mod resource;
 pub mod scheduler;
@@ -61,10 +60,6 @@ pub mod task;
 // Core types
 pub use executor::{ExecuteResult, StageExecutor};
 pub use pipeline::{Pipeline, PipelineBuilder, PipelineError};
-pub use pipeline_executor::{
-    EpisodeStrategy, FrameForProcessing, FrameProcessor, PipelineExecutor, PipelineExecutorConfig,
-    PipelineExecutorStats, ProcessedFrameOutput,
-};
 pub use policy::{ExecutionPolicy, ParallelPolicy, SequentialPolicy};
 pub use resource::{
     ResourceCapacity, ResourceRequest, Slot, SlotGuard, SlotId, SlotPool, SlotState,

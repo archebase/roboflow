@@ -16,6 +16,7 @@
 pub mod config;
 pub mod coordinator;
 pub mod metrics;
+pub mod processor;
 pub mod registry;
 
 pub use config::{
@@ -25,6 +26,7 @@ pub use config::{
 };
 pub use coordinator::{Coordinator, send_heartbeat_inner};
 pub use metrics::{ProcessingResult, WorkerMetrics, WorkerMetricsSnapshot};
+pub use processor::{DirectWorkProcessor, SharedWorkProcessor, WorkProcessor};
 pub use registry::JobRegistry;
 
 use std::sync::Arc;
@@ -100,10 +102,8 @@ impl Worker {
             tikv.clone(),
             config.clone(),
             job_registry.clone(),
-        )?;
-
-        // Episode allocator is now managed by the coordinator
-        let _ = episode_allocator;
+        )?
+        .with_episode_allocator(episode_allocator);
 
         Ok(Self {
             coordinator,

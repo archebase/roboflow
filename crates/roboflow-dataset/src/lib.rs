@@ -9,9 +9,8 @@
 //!
 //! # Architecture
 //!
-//! - [`conversion`] - High-level conversion API (recommended entry point)
-//! - [`core`] - Core traits and types for format-agnostic writing
 //! - [`formats`] - Format-specific implementations (LeRobot, etc.)
+//! - [`core`] - Core traits and types for format-agnostic writing
 //! - [`media`] - Media handling (video encoding, image decoding)
 //! - [`sources`] - Data source abstractions (bag, MCAP)
 //!
@@ -24,23 +23,6 @@
 //!
 //! For direct media processing without dataset conversion, use the
 //! `roboflow-media` crate directly.
-//!
-//! # Quick Start
-//!
-//! ```rust,ignore
-//! use roboflow_dataset::conversion::{convert_file, ConversionConfig};
-//! use roboflow_dataset::formats::{DatasetConfig, DatasetFormat};
-//!
-//! let config = ConversionConfig::new(
-//!     DatasetConfig::new(DatasetFormat::Lerobot, "my_dataset", 30, None)
-//! );
-//!
-//! let result = convert_file(
-//!     Path::new("recording.bag"),
-//!     Path::new("./output"),
-//!     &config,
-//! )?;
-//! ```
 //!
 //! # Low-Level API
 //!
@@ -62,7 +44,6 @@
 //! let stats = writer.finalize()?;
 //! ```
 
-pub mod conversion;
 pub mod core;
 pub mod formats;
 pub mod sources;
@@ -89,9 +70,7 @@ pub use formats::lerobot::{LerobotWriterConfig, LerobotWriterResult, create_lero
 
 pub use formats::common::{CameraInfo, DatasetFrame, ImageData};
 
-pub use formats::{
-    DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats, DatasetWriter,
-};
+pub use formats::DatasetWriter;
 
 pub use formats::lerobot::{
     DatasetConfig, LerobotConfig, LerobotWriter, Mapping, MappingType, StreamingConfig, VideoConfig,
@@ -106,8 +85,3 @@ pub use roboflow_media::video::{
 // Re-export unified encoder (OutputConfig aliased to avoid conflict with formats::OutputConfig)
 pub use roboflow_media::video::OutputConfig as VideoOutputConfig;
 pub use roboflow_media::video::{EncodingResult, VideoEncoder};
-
-// Re-export conversion API
-pub use conversion::{
-    ConversionConfig, ConversionResult, ConversionStats, OutputFiles, convert_file,
-};

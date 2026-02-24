@@ -13,6 +13,7 @@ use tokio::time::sleep;
 
 use super::config::WorkerConfig;
 use super::metrics::{ProcessingResult, WorkerMetrics};
+use super::processor::{DirectWorkProcessor, SharedWorkProcessor};
 use super::registry::JobRegistry;
 use crate::batch::{BatchController, WorkUnit};
 use crate::converter::{ConverterConfig, LeRobotConverter};
@@ -37,6 +38,7 @@ pub struct Coordinator {
     stats_collector: Option<Arc<dyn StatsCollector>>,
     slot_pool: Arc<SlotPool>,
     episode_allocator: Option<Arc<dyn EpisodeAllocator>>,
+    processor: SharedWorkProcessor,
 }
 
 impl Coordinator {
@@ -60,7 +62,13 @@ impl Coordinator {
             stats_collector: None,
             slot_pool,
             episode_allocator: None,
+            processor: Arc::new(DirectWorkProcessor),
         })
+    }
+
+    pub fn with_processor(mut self, processor: SharedWorkProcessor) -> Self {
+        self.processor = processor;
+        self
     }
 
     pub fn with_stats_collector(mut self, stats_collector: Arc<dyn StatsCollector>) -> Self {
@@ -208,7 +216,9 @@ impl Coordinator {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        let _ = send_heartbeat_inner(&tikv, &pod_id, &metrics).await;
+                        if send_heartbeat_inner(&tikv, &pod_id, &metrics).await.is_err() {
+                            metrics.inc_heartbeat_errors();
+                        }
                     }
                     _ = heartbeat_rx.recv() => break,
                 }
@@ -226,7 +236,9 @@ impl Coordinator {
             if active_count < self.config.max_concurrent_jobs {
                 match self.claim_work().await? {
                     Some(unit) => {
-                        let _ = self.process_work_unit(&unit).await;
+                        if self.process_work_unit(&unit).await? {
+                            return Ok(());
+                        }
                     }
                     None => {
                         if self
@@ -256,10 +268,13 @@ impl Coordinator {
 
         let _slot_guard = match self.slot_pool.acquire().await {
             Ok(guard) => guard,
-            Err(_) => return Ok(false),
+            Err(_) => {
+                self.metrics.dec_active_jobs();
+                return Ok(false);
+            }
         };
 
-        let result = self.execute_work_unit_direct(unit).await;
+        let result = self.processor.process(self, unit).await;
 
         match result {
             Ok(processing_result) => {
@@ -267,15 +282,20 @@ impl Coordinator {
                     .await
             }
             Err(e) => {
-                let _ = self
+                if let Err(fail_err) = self
                     .fail_work(&batch_id, &unit_id, format!("Execution error: {}", e))
-                    .await;
+                    .await
+                {
+                    self.metrics.inc_processing_errors();
+                    return Err(fail_err);
+                }
+
                 Ok(false)
             }
         }
     }
 
-    async fn execute_work_unit_direct(
+    pub(crate) async fn execute_work_unit_direct(
         &self,
         unit: &WorkUnit,
     ) -> Result<ProcessingResult, TikvError> {
@@ -425,14 +445,20 @@ impl Coordinator {
                     "Work unit completed"
                 );
 
-                let _ = self.complete_work(batch_id, unit_id).await;
+                if let Err(e) = self.complete_work(batch_id, unit_id).await {
+                    self.metrics.inc_processing_errors();
+                    return Err(e);
+                }
                 Ok(false)
             }
             ProcessingResult::Failed { error } => {
                 if error.contains("shutdown") {
                     return Ok(true);
                 }
-                let _ = self.fail_work(batch_id, unit_id, error).await;
+                if let Err(e) = self.fail_work(batch_id, unit_id, error).await {
+                    self.metrics.inc_processing_errors();
+                    return Err(e);
+                }
                 Ok(false)
             }
             ProcessingResult::Cancelled => Ok(false),

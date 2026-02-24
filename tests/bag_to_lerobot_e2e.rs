@@ -3,13 +3,11 @@ use std::fs;
 use std::path::Path;
 
 use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig};
-use roboflow_dataset::formats::dataset_executor::{
-    DatasetPipelineConfig, DatasetPipelineExecutor, SequentialPolicy,
-};
 use roboflow_dataset::formats::lerobot::{
     FlushingConfig, Mapping, MappingType, StreamingConfig as LerobotStreamingConfig,
 };
 use roboflow_dataset::sources::SourceConfig;
+use roboflow_pipeline::{DatasetPipelineConfig, DatasetPipelineExecutor, SequentialPolicy};
 
 // Large bag files (1.6GB/1.7GB) - used for comprehensive testing
 const _LARGE_BAG_PATH_1: &str =
