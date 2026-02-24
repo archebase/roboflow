@@ -2,6 +2,7 @@
 
 [![License: MulanPSL-2.0](https://img.shields.io/badge/License-MulanPSL--2.0-blue.svg)](http://license.coscl.org.cn/MulanPSL2)
 [![Rust](https://img.shields.io/badge/rust-1.80%2B-orange.svg)](https://www.rust-lang.org)
+[![codecov](https://codecov.io/gh/archebase/roboflow/branch/main/graph/badge.svg)](https://codecov.io/gh/archebase/roboflow)
 
 [English](README.md) | [简体中文](README_zh.md)
 
@@ -73,46 +74,52 @@ Roboflow uses a **Kubernetes-inspired distributed control plane** for fault-tole
 |-------|---------|
 | `roboflow-core` | Error types, registry, values |
 | `roboflow-storage` | S3, OSS, Local storage (always available) |
-| `roboflow-dataset` | KPS, LeRobot, streaming converters |
-| `roboflow-distributed` | TiKV client, catalog, circuit breaker |
-| `roboflow-hdf5` | Optional HDF5 format support |
+| `roboflow-executor` | Stage-based task executor for distributed pipelines |
+| `roboflow-media` | Image and video encoding/decoding for robotics datasets |
+| `roboflow-dataset` | KPS, LeRobot, streaming converters, data sources |
+| `roboflow-pipeline` | Pipeline execution and stages for dataset processing |
+| `roboflow-distributed` | TiKV client, catalog, circuit breaker, worker coordination |
 
 ## Quick Start
 
-### Submit a Conversion Job
+### Run the Unified Service
 
 ```bash
-roboflow submit \
-  --input s3://bucket/input.bag \
-  --output s3://bucket/output/ \
-  --config lerobot_config.toml
-```
-
-### Run a Worker
-
-```bash
+# Set environment variables
 export TIKV_PD_ENDPOINTS="127.0.0.1:2379"
 export AWS_ACCESS_KEY_ID="your-key"
 export AWS_SECRET_ACCESS_KEY="your-secret"
 
-roboflow worker
+# Run unified service (scanner + worker + finalizer + reaper)
+roboflow run
 ```
 
-### Run a Scanner
+### Run Specific Roles
 
 ```bash
-export SCANNER_INPUT_PREFIX="s3://bucket/input/"
-export SCANNER_OUTPUT_PREFIX="s3://bucket/jobs/"
+# Worker only - processes work units
+roboflow run --role worker
 
-roboflow scanner
+# Finalizer only - merges completed batches
+roboflow run --role finalizer
+
+# With custom pod ID
+roboflow run --pod-id my-pod-1
 ```
 
-### List Jobs
+### Submit a Conversion Job
+
+```bash
+roboflow submit s3://bucket/input.bag --output s3://bucket/output/
+```
+
+### Manage Jobs
 
 ```bash
 roboflow jobs list
 roboflow jobs get <job-id>
-roboflow jobs retry <job-id>
+roboflow batch list
+roboflow batch get <batch-id>
 ```
 
 ## Installation
@@ -166,6 +173,7 @@ encoding = "cdr"
 | `WORKER_POLL_INTERVAL_SECS` | Job poll interval | `5` |
 | `WORKER_MAX_CONCURRENT_JOBS` | Max concurrent jobs | `1` |
 | `SCANNER_SCAN_INTERVAL_SECS` | Scan interval | `60` |
+| `FINALIZER_POLL_INTERVAL_SECS` | Finalizer poll interval | `30` |
 
 ## Development
 
@@ -187,6 +195,22 @@ cargo test
 cargo fmt
 cargo clippy --all-targets -- -D warnings
 ```
+
+### Development Infrastructure
+
+Start required services with Docker Compose:
+
+```bash
+docker compose up -d       # Start all services (MinIO, TiKV, PD)
+docker compose down        # Stop all services
+```
+
+**Services:**
+| Service | Purpose | Ports |
+|---------|---------|-------|
+| MinIO | S3-compatible object storage | 9000 (API), 9001 (Console) |
+| TiKV | Distributed KV storage | 20160 |
+| PD | TiKV placement driver | 2379, 2380 |
 
 ## Contributing
 

@@ -2,6 +2,7 @@
 
 [![License: MulanPSL-2.0](https://img.shields.io/badge/License-MulanPSL--2.0-blue.svg)](http://license.coscl.org.cn/MulanPSL2)
 [![Rust](https://img.shields.io/badge/rust-1.80%2B-orange.svg)](https://www.rust-lang.org)
+[![codecov](https://codecov.io/gh/archebase/roboflow/branch/main/graph/badge.svg)](https://codecov.io/gh/archebase/roboflow)
 
 [English](README.md) | [简体中文](README_zh.md)
 
@@ -73,46 +74,52 @@ Roboflow 采用**受 Kubernetes 启发的分布式控制平面**，实现容错�
 |-------|------|
 | `roboflow-core` | 错误类型、注册表、值类型 |
 | `roboflow-storage` | S3、OSS、本地存储（始终可用） |
-| `roboflow-dataset` | KPS、LeRobot、流式转换器 |
-| `roboflow-distributed` | TiKV 客户端、目录、控制器 |
-| `roboflow-hdf5` | 可选的 HDF5 格式支持 |
+| `roboflow-executor` | 分布式流水线的阶段任务执行器 |
+| `roboflow-media` | 机器人数据集的图像和视频编解码 |
+| `roboflow-dataset` | KPS、LeRobot、流式转换器、数据源 |
+| `roboflow-pipeline` | 数据集处理的流水线执行和阶段 |
+| `roboflow-distributed` | TiKV 客户端、目录、熔断器、Worker 协调 |
 
 ## 快速开始
 
-### 提交转换任务
+### 运行统一服务
 
 ```bash
-roboflow submit \
-  --input s3://bucket/input.bag \
-  --output s3://bucket/output/ \
-  --config lerobot_config.toml
-```
-
-### 运行 Worker
-
-```bash
+# 设置环境变量
 export TIKV_PD_ENDPOINTS="127.0.0.1:2379"
 export AWS_ACCESS_KEY_ID="your-key"
 export AWS_SECRET_ACCESS_KEY="your-secret"
 
-roboflow worker
+# 运行统一服务 (scanner + worker + finalizer + reaper)
+roboflow run
 ```
 
-### 运行 Scanner
+### 运行特定角色
 
 ```bash
-export SCANNER_INPUT_PREFIX="s3://bucket/input/"
-export SCANNER_OUTPUT_PREFIX="s3://bucket/jobs/"
+# 仅 Worker - 处理工作单元
+roboflow run --role worker
 
-roboflow scanner
+# 仅 Finalizer - 合并已完成的批次
+roboflow run --role finalizer
+
+# 使用自定义 Pod ID
+roboflow run --pod-id my-pod-1
 ```
 
-### 列出任务
+### 提交转换任务
+
+```bash
+roboflow submit s3://bucket/input.bag --output s3://bucket/output/
+```
+
+### 管理任务
 
 ```bash
 roboflow jobs list
 roboflow jobs get <job-id>
-roboflow jobs retry <job-id>
+roboflow batch list
+roboflow batch get <batch-id>
 ```
 
 ## 安装
@@ -166,6 +173,7 @@ encoding = "cdr"
 | `WORKER_POLL_INTERVAL_SECS` | 任务轮询间隔 | `5` |
 | `WORKER_MAX_CONCURRENT_JOBS` | 最大并发任务数 | `1` |
 | `SCANNER_SCAN_INTERVAL_SECS` | 扫描间隔 | `60` |
+| `FINALIZER_POLL_INTERVAL_SECS` | Finalizer 轮询间隔 | `30` |
 
 ## 开发
 
@@ -187,6 +195,22 @@ cargo test
 cargo fmt
 cargo clippy --all-targets -- -D warnings
 ```
+
+### 开发基础设施
+
+使用 Docker Compose 启动所需服务：
+
+```bash
+docker compose up -d       # 启动所有服务 (MinIO, TiKV, PD)
+docker compose down        # 停止所有服务
+```
+
+**服务：**
+| 服务 | 用途 | 端口 |
+|------|------|------|
+| MinIO | S3 兼容对象存储 | 9000 (API), 9001 (控制台) |
+| TiKV | 分布式 KV 存储 | 20160 |
+| PD | TiKV 调度器 | 2379, 2380 |
 
 ## 贡献
 
