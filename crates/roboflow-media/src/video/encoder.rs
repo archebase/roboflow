@@ -459,6 +459,9 @@ impl VideoEncoder {
             ));
         }
 
+        // SAFETY: frame_data was allocated by AVFrame::get_buffer and is valid for
+        // rgb_data.len() bytes. We verified it's not null above. The copy does not
+        // overlap with the source since rgb_data is a separate buffer.
         unsafe {
             let frame_data_slice = std::slice::from_raw_parts_mut(frame_data, rgb_data.len());
             frame_data_slice.copy_from_slice(rgb_data);
@@ -478,6 +481,10 @@ impl VideoEncoder {
 
         // Convert pixel format
         if let Some(ref sws) = self.sws_context {
+            // SAFETY: sws_context was initialized with valid source and destination
+            // parameters. input_frame and yuv_frame are valid AVFrame pointers with
+            // proper buffer allocations. The FFmpeg sws_scale function is safe to call
+            // with these validated parameters.
             unsafe {
                 ffi::sws_scale(
                     sws.as_ptr() as *mut _,
@@ -721,6 +728,9 @@ impl VideoEncoder {
                     let y_data = yuv_frame.data_mut();
                     let y_ptr = y_data[0];
                     if !y_ptr.is_null() {
+                        // SAFETY: y_ptr is a valid pointer to Y plane data in yuv_frame,
+                        // allocated by FFmpeg with sufficient size for y_size bytes.
+                        // y_plane.as_ptr() points to valid source data. No overlap.
                         unsafe {
                             std::ptr::copy_nonoverlapping(y_plane.as_ptr(), y_ptr, y_size);
                         }
@@ -730,6 +740,9 @@ impl VideoEncoder {
                     let uv_data = yuv_frame.data_mut();
                     let uv_ptr = uv_data[1];
                     if !uv_ptr.is_null() {
+                        // SAFETY: uv_ptr is a valid pointer to UV plane data in yuv_frame,
+                        // allocated by FFmpeg with sufficient size for uv_plane.len() bytes.
+                        // uv_plane.as_ptr() points to valid source data. No overlap.
                         unsafe {
                             std::ptr::copy_nonoverlapping(
                                 uv_plane.as_ptr(),
@@ -757,10 +770,24 @@ impl VideoEncoder {
                 let frame_data_array = input_frame.data_mut();
                 let frame_data_ptr = frame_data_array[0];
                 let frame_data = frame.data();
+
+                if frame_data_ptr.is_null() {
+                    return Err(RoboflowError::encode(
+                        "VideoEncoder",
+                        "Input frame data pointer is null",
+                    ));
+                }
+
+                // SAFETY: frame_data_ptr was allocated by input_frame.get_buffer and is
+                // valid for frame_data.len() bytes. We verified the pointer is non-null.
+                // copy_from_slice does not overlap.
                 let frame_data_slice =
                     unsafe { std::slice::from_raw_parts_mut(frame_data_ptr, frame_data.len()) };
                 frame_data_slice.copy_from_slice(frame_data);
 
+                // SAFETY: sws_context was initialized with valid source and destination
+                // parameters. Both input_frame and yuv_frame have valid buffer allocations.
+                // The FFmpeg sws_scale function is safe with these validated parameters.
                 unsafe {
                     ffi::sws_scale(
                         sws_context.as_ptr() as *mut _,

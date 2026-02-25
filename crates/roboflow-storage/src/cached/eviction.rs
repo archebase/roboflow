@@ -36,6 +36,7 @@ impl std::fmt::Display for EvictionPolicy {
 /// Metadata for a cache entry used in eviction decisions.
 ///
 /// This is used by the `select_eviction_candidate` helper function.
+/// Currently only used in tests; kept for future cache management integration.
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct CacheEntryMeta {
@@ -55,6 +56,7 @@ pub struct CacheEntryMeta {
 ///
 /// Returns `Some((path, size))` of the entry to evict, or `None` if no
 /// suitable candidate exists (e.g., all entries have pending uploads).
+/// Currently only used in tests; kept for future cache management integration.
 #[allow(dead_code)]
 pub fn select_eviction_candidate(
     entries: &[CacheEntryMeta],
@@ -83,18 +85,6 @@ pub fn select_eviction_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[allow(dead_code)]
-    fn create_entry(path: &str, size: u64, access_count: u64) -> CacheEntryMeta {
-        let now = SystemTime::now();
-        CacheEntryMeta {
-            path: PathBuf::from(path),
-            size,
-            last_accessed: now - std::time::Duration::from_secs(access_count),
-            created_at: now - std::time::Duration::from_secs(access_count * 2),
-            access_count,
-        }
-    }
 
     #[test]
     fn test_eviction_policy_default() {

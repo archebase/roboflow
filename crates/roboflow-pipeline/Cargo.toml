@@ -9,21 +9,13 @@ description = "Pipeline execution and stages for dataset processing"
 
 [dependencies]
 roboflow-core = { workspace = true }
-roboflow-storage = { workspace = true }
 roboflow-executor = { workspace = true }
 roboflow-dataset = { workspace = true }
 roboflow-media = { workspace = true }
 robocodec = { workspace = true }
 
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-thiserror = "1.0"
 tracing = "0.1"
-tokio = { workspace = true }
 async-trait = { workspace = true }
-chrono = { workspace = true }
-rayon = "1.10"
-crossbeam-channel = "0.5"
 
 [features]
 default = []

@@ -28,6 +28,9 @@ const DEFAULT_ACTION_DIMENSION: usize = 14;
 ///
 /// This is a convenience wrapper that uses chunk index 0.
 /// For distributed processing with dynamic chunk indices, use `write_episode_parquet_with_chunk`.
+///
+/// Note: This function is kept for testing and simple use cases.
+/// Production code should use `write_episode_parquet_with_chunk` for full control.
 #[allow(dead_code)]
 pub fn write_episode_parquet(
     frame_data: &[LerobotFrame],

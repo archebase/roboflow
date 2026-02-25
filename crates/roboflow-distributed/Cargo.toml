@@ -10,7 +10,6 @@ description = "Distributed coordination for roboflow - TiKV backend"
 [dependencies]
 roboflow-core = { workspace = true }
 roboflow-storage = { workspace = true }
-roboflow-executor = { workspace = true }
 
 # TiKV
 tikv-client = "0.3"
@@ -44,7 +43,6 @@ glob = "0.3"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 sha2 = "0.10"
 gethostname = "0.4"
-lru = "0.12"
 
 # Parquet (merge operations)
 polars = { version = "0.41", features = ["parquet", "lazy", "diagonal_concat"] }
