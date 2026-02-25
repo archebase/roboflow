@@ -95,14 +95,18 @@ impl VideoComposer for RsmpegVideoComposer {
         for stream in first_input.streams().iter() {
             let mut out_stream = output_ctx.new_stream();
             // SAFETY: avcodec_parameters_alloc allocates a new parameters struct.
+            // We check for null before calling avcodec_parameters_copy.
             // avcodec_parameters_copy safely copies from the input stream's codecpar.
-            // The from_raw conversion is safe because the pointer is non-null (checked).
+            // The from_raw conversion is safe because we verified the pointer is non-null.
             let codecpar = unsafe {
                 let new_par = ffi::avcodec_parameters_alloc();
-                ffi::avcodec_parameters_copy(new_par, stream.codecpar().as_ptr() as *const _);
-                rsmpeg::avcodec::AVCodecParameters::from_raw(
-                    std::ptr::NonNull::new(new_par).unwrap(),
-                )
+                let new_par = std::ptr::NonNull::new(new_par)
+                    .ok_or_else(|| RoboflowError::other("failed to allocate codec parameters"))?;
+                ffi::avcodec_parameters_copy(
+                    new_par.as_ptr(),
+                    stream.codecpar().as_ptr() as *const _,
+                );
+                rsmpeg::avcodec::AVCodecParameters::from_raw(new_par)
             };
             out_stream.set_codecpar(codecpar);
             out_stream.set_time_base(AVRational {
