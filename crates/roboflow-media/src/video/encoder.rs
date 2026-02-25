@@ -770,9 +770,17 @@ impl VideoEncoder {
                 let frame_data_array = input_frame.data_mut();
                 let frame_data_ptr = frame_data_array[0];
                 let frame_data = frame.data();
+
+                if frame_data_ptr.is_null() {
+                    return Err(RoboflowError::encode(
+                        "VideoEncoder",
+                        "Input frame data pointer is null",
+                    ));
+                }
+
                 // SAFETY: frame_data_ptr was allocated by input_frame.get_buffer and is
-                // valid for frame_data.len() bytes. The slice creation is safe because
-                // get_buffer succeeded. copy_from_slice does not overlap.
+                // valid for frame_data.len() bytes. We verified the pointer is non-null.
+                // copy_from_slice does not overlap.
                 let frame_data_slice =
                     unsafe { std::slice::from_raw_parts_mut(frame_data_ptr, frame_data.len()) };
                 frame_data_slice.copy_from_slice(frame_data);
