@@ -1,6 +1,6 @@
 # Technical Debt Tracking
 
-Last Updated: 2026-02-24
+Last Updated: 2026-02-25
 
 ## Summary
 
@@ -14,7 +14,6 @@ This document tracks technical debt remediation progress for the Roboflow codeba
 | Unused dependencies | ~40 | ~30 | 0 | 🔄 In Progress |
 | roboflow-executor test coverage | 0% | ~80% | 80% | ✅ Fixed |
 | Duplicate dependencies | 30+ | 30+ | 0 | 📋 Transitive |
-| Feature flags for heavy deps | 0 | 1 | 3 | 🔄 In Progress |
 
 ## Completed Remediation
 
@@ -54,12 +53,6 @@ This document tracks technical debt remediation progress for the Roboflow codeba
      - `fail_merge_with_status`
      - `complete_merge_with_status`
 
-5. **Feature Flags** 🔄
-   - Added to `roboflow-dataset`:
-     - `lerobot` (default): LeRobot format support
-     - `mcap-source` (default): MCAP file reading
-     - `video`: Video encoding support
-
 ## Remaining Work
 
 ### High Priority
@@ -76,10 +69,7 @@ This document tracks technical debt remediation progress for the Roboflow codeba
 
 3. **Duplicate Dependencies**
    - Most duplicates are transitive (from tikv-client, polars, etc.)
-   - Requires upstream updates or feature flag tuning
-
-4. **Feature Flags for roboflow-media**
-   - Add `ffmpeg` feature flag for video encoding
+   - Requires upstream updates
 
 ## Prevention Strategy
 
@@ -122,8 +112,7 @@ rg "\.unwrap\(\)|\.expect\(" --type rust --stats
 
 ## Historical Changes
 
-### 2026-02-24
+### 2026-02-25
 - Added safety comments to all undocumented unsafe blocks
 - Removed ~27 unused dependencies across 4 crates
-- Added feature flags to roboflow-dataset
 - Verified existing test coverage for roboflow-executor

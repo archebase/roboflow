@@ -10,30 +10,24 @@ description = "Dataset formats and conversion for robotics training data"
 [dependencies]
 roboflow-core = { workspace = true }
 roboflow-storage = { workspace = true }
-roboflow-media = { workspace = true, optional = true }
+roboflow-media = { workspace = true }
 robocodec = { workspace = true }
 
-polars = { version = "0.41", features = ["parquet", "lazy", "diagonal_concat"], optional = true }
+polars = { version = "0.41", features = ["parquet", "lazy", "diagonal_concat"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 thiserror = "1.0"
 tracing = "0.1"
-crossbeam-channel = { version = "0.5", optional = true }
+crossbeam-channel = "0.5"
 tokio = { workspace = true }
 async-trait = { workspace = true }
 uuid = { version = "1.10", features = ["v4", "serde"] }
-mcap = { version = "0.24", optional = true }
+mcap = "0.24"
 tempfile = "3.10"
 
 [features]
-default = ["lerobot", "mcap-source"]
-# LeRobot dataset format support (includes parquet via polars)
-lerobot = ["dep:polars", "dep:roboflow-media", "dep:crossbeam-channel"]
-# MCAP file source support
-mcap-source = ["dep:mcap", "dep:crossbeam-channel"]
-# Video encoding support (requires roboflow-media)
-video = ["dep:roboflow-media", "dep:crossbeam-channel"]
+default = []
 
 [dev-dependencies]
 pretty_assertions = "1.4"
