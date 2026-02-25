@@ -12,18 +12,18 @@ This document tracks technical debt remediation progress for the Roboflow codeba
 |--------|--------|-------|--------|--------|
 | Undocumented unsafe blocks | 15 | 0 | 0 | ✅ Fixed |
 | Unused dependencies | ~40 | ~30 | 0 | 🔄 In Progress |
-| roboflow-executor test coverage | 0% | ~80% | 80% | ✅ Fixed |
+| roboflow-executor test coverage | ~80% | ~80% | 80% | ✅ Verified |
 | Duplicate dependencies | 30+ | 30+ | 0 | 📋 Transitive |
 
 ## Completed Remediation
 
 ### Phase 1: Quick Wins
 
-1. **Safety Comments for Unsafe Code** ✅
-   - `encoder.rs`: Added 6 safety comments
+1. **Safety Comments and Bug Fixes for Unsafe Code** ✅
+   - `encoder.rs`: Added 6 safety comments + fixed null pointer check
    - `arena.rs`: Added 10 safety comments
    - `codec.rs`: Added 1 safety comment
-   - `composer.rs`: Added 1 safety comment
+   - `composer.rs`: Fixed null-pointer dereference in avcodec_parameters_copy, added error checking, proper cleanup on failure
    - `ring_buffer.rs`: Already documented
 
 2. **Unused Dependencies Removed** ✅
@@ -114,5 +114,9 @@ rg "\.unwrap\(\)|\.expect\(" --type rust --stats
 
 ### 2026-02-25
 - Added safety comments to all undocumented unsafe blocks
+- Fixed null-pointer dereference in composer.rs avcodec_parameters_copy
+- Fixed memory leak on error path in composer.rs
+- Added null check for frame_data_ptr in encoder.rs
+- Added error checking for avcodec_parameters_copy return value
 - Removed ~27 unused dependencies across 4 crates
 - Verified existing test coverage for roboflow-executor
