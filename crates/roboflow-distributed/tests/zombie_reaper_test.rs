@@ -11,13 +11,16 @@
 //! 4. Failed work units can be retried
 
 mod tests {
-    use std::time::Duration;
+    use std::time::Duration as StdDuration;
 
+    use roboflow_distributed::batch::WorkUnitKeys;
+    use roboflow_distributed::tikv::key::HeartbeatKeys;
     use roboflow_distributed::{
         HeartbeatConfig, HeartbeatManager, HeartbeatRecord, ReaperConfig, ReaperMetrics,
-        ReclaimResult,
+        ReclaimResult, ZombieReaper,
     };
     use roboflow_distributed::{TikvClient, WorkerStatus};
+    use roboflow_distributed::{WorkFile, WorkUnit, WorkUnitStatus};
 
     #[tokio::test]
     async fn test_heartbeat_manager() {
@@ -33,8 +36,8 @@ mod tests {
 
         let pod_id = format!("test-worker-heartbeat-{}", uuid::Uuid::new_v4());
         let config = HeartbeatConfig::new()
-            .with_interval(Duration::from_secs(10))
-            .with_stale_threshold(Duration::from_secs(60));
+            .with_interval(StdDuration::from_secs(10))
+            .with_stale_threshold(StdDuration::from_secs(60));
 
         // Clean up any existing heartbeat first
         let key = roboflow_distributed::tikv::key::HeartbeatKeys::heartbeat(&pod_id);
@@ -132,137 +135,108 @@ mod tests {
         let _ = ReclaimResult::Skipped;
     }
 
-    // TODO: Rewrite these tests for WorkUnit-based reaping
-    // The old tests used JobRecord/JobStatus which have been removed
-    //
-    // #[tokio::test]
-    // async fn test_end_to_end_zombie_reclamation() {
-    //         // This test requires a running TiKV instance
-    //         let client = match TikvClient::from_env().await {
-    //             Ok(c) => c,
-    //             Err(_) => {
-    //                 println!("Skipping test: TiKV not available");
-    //                 return;
-    //             }
-    //         };
-    //
-    //         let pod_id = "test-worker-zombie";
-    //         let job_id = "test-job-zombie";
-    //
-    //         // Create a job in Processing state
-    //         let job = create_test_job(job_id, pod_id);
-    //         client
-    //             .put_job(&job)
-    //             .await
-    //             .expect("Failed to create test job");
-    //
-    //         // Create a heartbeat for the worker
-    //         let heartbeat = create_test_heartbeat(pod_id);
-    //         client
-    //             .update_heartbeat(pod_id, &heartbeat)
-    //             .await
-    //             .expect("Failed to create heartbeat");
-    //
-    //         // Verify job is in Processing state
-    //         let retrieved_job = client.get_job(job_id).await.expect("Failed to get job");
-    //         assert!(retrieved_job.is_some());
-    //         assert_eq!(retrieved_job.unwrap().status, JobStatus::Processing);
-    //
-    //         // Wait for heartbeat to become stale (simulation)
-    //         // In real scenario, we'd wait 5+ minutes, but for testing we use a short threshold
-    //
-    //         // Create reaper with short stale threshold
-    //         let config = ReaperConfig::new()
-    //             .with_interval(Duration::from_secs(1))
-    //             .with_stale_threshold(Duration::from_secs(0)); // Immediately stale
-    //
-    //         let reaper = ZombieReaper::new(std::sync::Arc::new(client.clone()), config);
-    //
-    //         // Run one iteration
-    //         let reclaimed_count = reaper
-    //             .run_iteration()
-    //             .await
-    //             .expect("Failed to run reaper iteration");
-    //
-    //         // Since we set stale_threshold to 0, the heartbeat should be stale
-    //         // and the job should be reclaimed
-    //         assert!(reclaimed_count <= 1);
-    //
-    //         // Verify job was reclaimed (status should be Pending)
-    //         let final_job = client.get_job(job_id).await.expect("Failed to get job");
-    //         if let Some(job) = final_job {
-    //             // Job should be in Pending state after reclamation
-    //             assert_eq!(job.status, JobStatus::Pending);
-    //             assert!(job.owner.is_none());
-    //         }
-    //
-    //         // Cleanup
-    //         let _ = client.delete(JobKeys::record(job_id)).await;
-    //         let _ = client.delete(HeartbeatKeys::heartbeat(pod_id)).await;
-    //     }
-    //
-    //     // #[tokio::test]
-    //     // async fn test_heartbeat_preserved_on_reclaim() {
-    //         // This test verifies that checkpoints are preserved during job reclamation
-    //         let client = match TikvClient::from_env().await {
-    //             Ok(c) => c,
-    //             Err(_) => {
-    //                 println!("Skipping test: TiKV not available");
-    //                 return;
-    //             }
-    //         };
-    //
-    //         use roboflow_distributed::CheckpointState;
-    //
-    //         let pod_id = "test-worker-checkpoint";
-    //         let job_id = "test-job-checkpoint";
-    //
-    //         // Create a job in Processing state
-    //         let job = create_test_job(job_id, pod_id);
-    //         client
-    //             .put_job(&job)
-    //             .await
-    //             .expect("Failed to create test job");
-    //
-    //         // Create a checkpoint for the job
-    //         let mut checkpoint = CheckpointState::new(job_id.to_string(), pod_id.to_string(), 1000);
-    //         checkpoint
-    //             .update(500, 50000)
-    //             .expect("Failed to update checkpoint");
-    //         client
-    //             .update_checkpoint(&checkpoint)
-    //             .await
-    //             .expect("Failed to create checkpoint");
-    //
-    //         // Verify checkpoint exists
-    //         let retrieved_checkpoint = client
-    //             .get_checkpoint(job_id)
-    //             .await
-    //             .expect("Failed to get checkpoint");
-    //         assert!(retrieved_checkpoint.is_some());
-    //         assert_eq!(retrieved_checkpoint.unwrap().last_frame, 500);
-    //
-    //         // Reclaim the job with stale threshold of 0
-    //         let reclaimed = client
-    //             .reclaim_job(job_id, 0)
-    //             .await
-    //             .expect("Failed to reclaim job");
-    //         assert!(reclaimed);
-    //
-    //         // Verify checkpoint still exists after reclamation
-    //         let final_checkpoint = client
-    //             .get_checkpoint(job_id)
-    //             .await
-    //             .expect("Failed to get checkpoint after reclamation");
-    //         assert!(final_checkpoint.is_some());
-    //         let cp = final_checkpoint.unwrap();
-    //         assert_eq!(
-    //             cp.last_frame, 500,
-    //             "Checkpoint should be preserved after reclamation"
-    //         );
-    //
-    //         // Cleanup
-    //         let _ = client.delete(JobKeys::record(job_id)).await;
-    //         let _ = client.delete(StateKeys::checkpoint(job_id)).await;
-    //     }
+    #[tokio::test]
+    async fn test_end_to_end_zombie_reclamation() {
+        // This test requires a running TiKV instance
+        let client = match TikvClient::from_env().await {
+            Ok(c) => c,
+            Err(_) => {
+                println!("Skipping test: TiKV not available");
+                return;
+            }
+        };
+
+        let pod_id = "test-worker-zombie";
+        let batch_id = "test-batch-zombie";
+        let unit_id = "test-unit-zombie";
+
+        // Create a work unit in Processing state
+        let mut work_unit = WorkUnit::with_id(
+            unit_id.to_string(),
+            batch_id.to_string(),
+            vec![WorkFile::new(
+                "s3://test-bucket/file.mcap".to_string(),
+                1024,
+            )],
+            "s3://test-output/".to_string(),
+            "test-config-hash".to_string(),
+        );
+        work_unit
+            .claim(pod_id.to_string())
+            .expect("Failed to claim work unit");
+        let work_unit_key = WorkUnitKeys::unit(batch_id, unit_id);
+        client
+            .put(
+                work_unit_key.clone(),
+                bincode::serialize(&work_unit).expect("Failed to serialize work unit"),
+            )
+            .await
+            .expect("Failed to create test work unit");
+
+        // Create a heartbeat for the worker with last_heartbeat in the past
+        let mut heartbeat = HeartbeatRecord::new(pod_id.to_string());
+        use chrono::{Duration, Utc};
+        heartbeat.last_heartbeat = Utc::now() - Duration::seconds(10); // 10 seconds old
+        let heartbeat_key = HeartbeatKeys::heartbeat(pod_id);
+        client
+            .put(
+                heartbeat_key.clone(),
+                bincode::serialize(&heartbeat).expect("Failed to serialize heartbeat"),
+            )
+            .await
+            .expect("Failed to create heartbeat");
+
+        // Verify work unit is in Processing state
+        let retrieved_data = client
+            .get(work_unit_key.clone())
+            .await
+            .expect("Failed to get work unit");
+        assert!(retrieved_data.is_some());
+        let retrieved_unit: WorkUnit = bincode::deserialize(&retrieved_data.unwrap())
+            .expect("Failed to deserialize work unit");
+        assert_eq!(retrieved_unit.status, WorkUnitStatus::Processing);
+        assert_eq!(retrieved_unit.owner, Some(pod_id.to_string()));
+
+        // Create reaper with short stale threshold
+        let config = ReaperConfig::new()
+            .with_interval(StdDuration::from_secs(1))
+            .with_stale_threshold(StdDuration::from_secs(5)); // Stale after 5 seconds
+
+        let reaper = ZombieReaper::new(std::sync::Arc::new(client.clone()), config);
+
+        // Run one iteration
+        let reclaimed_count = reaper
+            .run_iteration()
+            .await
+            .expect("Failed to run reaper iteration");
+
+        // Since we set stale_threshold to 0, the heartbeat should be stale
+        // and the work unit should be reclaimed
+        assert!(reclaimed_count <= 1);
+
+        // Verify work unit was reclaimed (status should be Failed)
+        let final_data = client
+            .get(work_unit_key.clone())
+            .await
+            .expect("Failed to get work unit");
+        if let Some(data) = final_data {
+            let final_unit: WorkUnit =
+                bincode::deserialize(&data).expect("Failed to deserialize work unit");
+            // Work unit should be in Failed state after reclamation (allows retry)
+            assert_eq!(final_unit.status, WorkUnitStatus::Failed);
+            assert!(final_unit.owner.is_none());
+            assert!(final_unit.error.is_some());
+            assert!(
+                final_unit
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .contains("Worker died during processing")
+            );
+        }
+
+        // Cleanup
+        let _ = client.delete(work_unit_key).await;
+        let _ = client.delete(heartbeat_key).await;
+    }
 }
