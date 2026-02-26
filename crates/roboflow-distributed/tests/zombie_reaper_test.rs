@@ -146,9 +146,9 @@ mod tests {
             }
         };
 
-        let pod_id = "test-worker-zombie";
-        let batch_id = "test-batch-zombie";
-        let unit_id = "test-unit-zombie";
+        let pod_id = format!("test-worker-zombie-{}", uuid::Uuid::new_v4());
+        let batch_id = format!("test-batch-zombie-{}", uuid::Uuid::new_v4());
+        let unit_id = format!("test-unit-zombie-{}", uuid::Uuid::new_v4());
 
         // Create a work unit in Processing state
         let mut work_unit = WorkUnit::with_id(
@@ -164,7 +164,7 @@ mod tests {
         work_unit
             .claim(pod_id.to_string())
             .expect("Failed to claim work unit");
-        let work_unit_key = WorkUnitKeys::unit(batch_id, unit_id);
+        let work_unit_key = WorkUnitKeys::unit(&batch_id, &unit_id);
         client
             .put(
                 work_unit_key.clone(),
@@ -177,7 +177,7 @@ mod tests {
         let mut heartbeat = HeartbeatRecord::new(pod_id.to_string());
         use chrono::{Duration, Utc};
         heartbeat.last_heartbeat = Utc::now() - Duration::seconds(10); // 10 seconds old
-        let heartbeat_key = HeartbeatKeys::heartbeat(pod_id);
+        let heartbeat_key = HeartbeatKeys::heartbeat(&pod_id);
         client
             .put(
                 heartbeat_key.clone(),
@@ -222,6 +222,10 @@ mod tests {
             .get(work_unit_key.clone())
             .await
             .expect("Failed to get work unit");
+        assert!(
+            final_data.is_some(),
+            "Work unit should exist after reclamation"
+        );
         if let Some(data) = final_data {
             let final_unit: WorkUnit =
                 bincode::deserialize(&data).expect("Failed to deserialize work unit");
