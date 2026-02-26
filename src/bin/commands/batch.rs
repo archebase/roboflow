@@ -784,6 +784,19 @@ fn print_status_table(batch_id: &str, status: &BatchStatus) {
         println!();
         println!("Error: {}", error);
     }
+
+    // Display failed work units with error details
+    if !status.failed_work_units.is_empty() {
+        println!();
+        println!("Failed Work Units:");
+        for unit in &status.failed_work_units {
+            println!();
+            println!("  ID:     {}", unit.id);
+            println!("  File:   {}", unit.source_file);
+            println!("  Error:  {}", unit.error);
+            println!("  Retries: {}", unit.retries);
+        }
+    }
 }
 
 /// Format a duration for display.

@@ -48,6 +48,7 @@ impl BagSource {
         }
     }
 
+    #[cfg(test)]
     fn is_cloud_url(&self) -> bool {
         self.path.starts_with("s3://") || self.path.starts_with("oss://")
     }
@@ -195,12 +196,6 @@ impl Source for BagSource {
             self.path = path.clone();
         }
 
-        if self.is_cloud_url() {
-            return Err(SourceError::InvalidConfig(
-                "Cloud URLs not yet supported for BagSource. Use local files.".to_string(),
-            ));
-        }
-
         let (metadata, rx, handle) =
             initialize_threaded_source(&self.path, "bag-decoder", |path, meta_tx, msg_tx| {
                 spawn_local_decoder(path, meta_tx, msg_tx, "bag")
@@ -308,6 +303,7 @@ impl BagSourceBatched {
         }
     }
 
+    #[cfg(test)]
     fn is_cloud_url(&self) -> bool {
         self.path.starts_with("s3://") || self.path.starts_with("oss://")
     }
@@ -470,12 +466,6 @@ impl Source for BagSourceBatched {
             self.path = path.clone();
         }
 
-        if self.is_cloud_url() {
-            return Err(SourceError::InvalidConfig(
-                "Batched mode not supported for cloud URLs yet".to_string(),
-            ));
-        }
-
         let batch_size = self.batch_size;
         let (metadata, rx, handle) = initialize_threaded_source_batched(
             &self.path,
@@ -601,6 +591,7 @@ impl BagSourceBlocking {
         }
     }
 
+    #[cfg(test)]
     fn is_cloud_url(&self) -> bool {
         self.path.starts_with("s3://") || self.path.starts_with("oss://")
     }
@@ -707,12 +698,6 @@ impl Source for BagSourceBlocking {
     async fn initialize(&mut self, config: &SourceConfig) -> SourceResult<SourceMetadata> {
         if let crate::SourceType::Bag { path } = &config.source_type {
             self.path = path.clone();
-        }
-
-        if self.is_cloud_url() {
-            return Err(SourceError::InvalidConfig(
-                "Blocking mode not supported for cloud URLs".to_string(),
-            ));
         }
 
         let batch_size = self.batch_size;
@@ -1023,5 +1008,34 @@ mod tests {
         let source = BagSource::new("C:\\Users\\test\\data.bag").unwrap();
         assert_eq!(source.path, "C:\\Users\\test\\data.bag");
         assert!(!source.is_cloud_url());
+    }
+}
+
+#[cfg(test)]
+mod s3_url_tests {
+    //! Tests verifying S3/OSS URLs are accepted (not rejected).
+    //! These tests verify that the artificial "Cloud URLs not yet supported"
+    //! restriction has been removed.
+
+    use super::*;
+
+    #[test]
+    fn test_bag_source_accepts_s3_url() {
+        let source = BagSource::new("s3://bucket/file.bag");
+        assert!(source.is_ok(), "BagSource should accept S3 URLs");
+        let source = source.unwrap();
+        assert!(source.is_cloud_url());
+    }
+
+    #[test]
+    fn test_bag_source_batched_accepts_s3_url() {
+        let source = BagSourceBatched::new("s3://bucket/file.bag", 100);
+        assert!(source.is_ok(), "BagSourceBatched should accept S3 URLs");
+    }
+
+    #[test]
+    fn test_bag_source_blocking_accepts_s3_url() {
+        let source = BagSourceBlocking::new("s3://bucket/file.bag", 100);
+        assert!(source.is_ok(), "BagSourceBlocking should accept S3 URLs");
     }
 }
