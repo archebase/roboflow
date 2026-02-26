@@ -9,7 +9,7 @@
 
 use super::key::{BatchIndexKeys, BatchKeys, WorkUnitKeys};
 use super::spec::BatchSpec;
-use super::status::{BatchPhase, BatchStatus, DiscoveryStatus};
+use super::status::{BatchPhase, BatchStatus, DiscoveryStatus, FailedWorkUnit};
 use super::work_unit::{WorkUnit, WorkUnitStatus};
 use crate::tikv::{TikvClient, TikvError};
 
@@ -373,12 +373,30 @@ impl BatchController {
         let mut completed = 0u32;
         let mut failed = 0u32;
         let mut processing = 0u32;
+        let mut failed_work_units = Vec::new();
 
         for (key, value) in work_units {
             match bincode::deserialize::<WorkUnit>(&value) {
                 Ok(unit) => match unit.status {
                     WorkUnitStatus::Complete => completed += 1,
-                    WorkUnitStatus::Failed | WorkUnitStatus::Dead => failed += 1,
+                    WorkUnitStatus::Failed | WorkUnitStatus::Dead => {
+                        failed += 1;
+                        // Collect error details from failed work units
+                        if let Some(error) = &unit.error {
+                            let source_file = unit
+                                .files
+                                .first()
+                                .map(|f| f.url.clone())
+                                .unwrap_or_else(|| "unknown".to_string());
+                            failed_work_units.push(FailedWorkUnit {
+                                id: unit.id.clone(),
+                                source_file,
+                                error: error.clone(),
+                                retries: unit.attempts,
+                                failed_at: unit.updated_at,
+                            });
+                        }
+                    }
                     WorkUnitStatus::Processing => processing += 1,
                     _ => {}
                 },
@@ -416,6 +434,7 @@ impl BatchController {
         status.files_completed = completed;
         status.files_failed = failed;
         status.files_active = processing;
+        status.failed_work_units = failed_work_units;
 
         if matches!(status.phase, BatchPhase::Failed)
             && failed == 0

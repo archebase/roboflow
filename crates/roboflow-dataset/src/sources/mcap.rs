@@ -48,6 +48,7 @@ impl McapSource {
         }
     }
 
+    #[allow(dead_code)]
     fn is_cloud_url(&self) -> bool {
         self.path.starts_with("s3://") || self.path.starts_with("oss://")
     }
@@ -193,12 +194,6 @@ impl Source for McapSource {
         // Update path from config if provided
         if let crate::SourceType::Mcap { path } = &config.source_type {
             self.path = path.clone();
-        }
-
-        if self.is_cloud_url() {
-            return Err(SourceError::InvalidConfig(
-                "Cloud URLs not yet supported for McapSource. Use local files.".to_string(),
-            ));
         }
 
         let (metadata, rx, handle) =
