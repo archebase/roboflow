@@ -373,36 +373,40 @@ impl BatchController {
         let mut completed = 0u32;
         let mut failed = 0u32;
         let mut processing = 0u32;
+        let mut scan_total = 0u32;
         let mut failed_work_units = Vec::new();
 
         for (key, value) in work_units {
             match bincode::deserialize::<WorkUnit>(&value) {
-                Ok(unit) => match unit.status {
-                    WorkUnitStatus::Complete => completed += 1,
-                    WorkUnitStatus::Failed | WorkUnitStatus::Dead => {
-                        failed += 1;
-                        // Collect error details from failed work units
-                        let error = unit
-                            .error
-                            .as_ref()
-                            .cloned()
-                            .unwrap_or_else(|| "Unknown error".to_string());
-                        let source_file = unit
-                            .files
-                            .first()
-                            .map(|f| f.url.clone())
-                            .unwrap_or_else(|| "unknown".to_string());
-                        failed_work_units.push(FailedWorkUnit {
-                            id: unit.id.clone(),
-                            source_file,
-                            error,
-                            retries: unit.attempts,
-                            failed_at: unit.updated_at,
-                        });
+                Ok(unit) => {
+                    scan_total += 1; // Count all valid work units
+                    match unit.status {
+                        WorkUnitStatus::Complete => completed += 1,
+                        WorkUnitStatus::Failed | WorkUnitStatus::Dead => {
+                            failed += 1;
+                            // Collect error details from failed work units
+                            let error = unit
+                                .error
+                                .as_ref()
+                                .cloned()
+                                .unwrap_or_else(|| "Unknown error".to_string());
+                            let source_file = unit
+                                .files
+                                .first()
+                                .map(|f| f.url.clone())
+                                .unwrap_or_else(|| "unknown".to_string());
+                            failed_work_units.push(FailedWorkUnit {
+                                id: unit.id.clone(),
+                                source_file,
+                                error,
+                                retries: unit.attempts,
+                                failed_at: unit.updated_at,
+                            });
+                        }
+                        WorkUnitStatus::Processing => processing += 1,
+                        _ => {} // Pending or other states - count in scan_total but not in other categories
                     }
-                    WorkUnitStatus::Processing => processing += 1,
-                    _ => {}
-                },
+                }
                 Err(e) => {
                     // Log corrupted work units for investigation
                     tracing::error!(
@@ -414,8 +418,6 @@ impl BatchController {
                 }
             }
         }
-
-        let scan_total = completed + failed + processing;
         tracing::info!(
             batch_id = %batch_id,
             work_units_total = status.work_units_total,
