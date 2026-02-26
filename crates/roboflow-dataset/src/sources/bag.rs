@@ -48,7 +48,7 @@ impl BagSource {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn is_cloud_url(&self) -> bool {
         self.path.starts_with("s3://") || self.path.starts_with("oss://")
     }
@@ -303,7 +303,7 @@ impl BagSourceBatched {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn is_cloud_url(&self) -> bool {
         self.path.starts_with("s3://") || self.path.starts_with("oss://")
     }
@@ -591,7 +591,7 @@ impl BagSourceBlocking {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn is_cloud_url(&self) -> bool {
         self.path.starts_with("s3://") || self.path.starts_with("oss://")
     }

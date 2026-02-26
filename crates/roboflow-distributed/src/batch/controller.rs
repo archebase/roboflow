@@ -382,20 +382,23 @@ impl BatchController {
                     WorkUnitStatus::Failed | WorkUnitStatus::Dead => {
                         failed += 1;
                         // Collect error details from failed work units
-                        if let Some(error) = &unit.error {
-                            let source_file = unit
-                                .files
-                                .first()
-                                .map(|f| f.url.clone())
-                                .unwrap_or_else(|| "unknown".to_string());
-                            failed_work_units.push(FailedWorkUnit {
-                                id: unit.id.clone(),
-                                source_file,
-                                error: error.clone(),
-                                retries: unit.attempts,
-                                failed_at: unit.updated_at,
-                            });
-                        }
+                        let error = unit
+                            .error
+                            .as_ref()
+                            .cloned()
+                            .unwrap_or_else(|| "Unknown error".to_string());
+                        let source_file = unit
+                            .files
+                            .first()
+                            .map(|f| f.url.clone())
+                            .unwrap_or_else(|| "unknown".to_string());
+                        failed_work_units.push(FailedWorkUnit {
+                            id: unit.id.clone(),
+                            source_file,
+                            error,
+                            retries: unit.attempts,
+                            failed_at: unit.updated_at,
+                        });
                     }
                     WorkUnitStatus::Processing => processing += 1,
                     _ => {}

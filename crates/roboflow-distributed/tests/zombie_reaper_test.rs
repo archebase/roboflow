@@ -210,9 +210,12 @@ mod tests {
             .await
             .expect("Failed to run reaper iteration");
 
-        // Since we set stale_threshold to 0, the heartbeat should be stale
+        // Since we set stale_threshold to 5 seconds, the heartbeat should be stale
         // and the work unit should be reclaimed
-        assert!(reclaimed_count <= 1);
+        assert_eq!(
+            reclaimed_count, 1,
+            "Expected exactly one work unit to be reclaimed"
+        );
 
         // Verify work unit was reclaimed (status should be Failed)
         let final_data = client
