@@ -225,6 +225,11 @@ impl Coordinator {
             if active_count < self.config.max_concurrent_jobs {
                 match self.claim_work().await? {
                     Some(unit) => {
+                        tracing::debug!(
+                            batch_id = %unit.batch_id,
+                            unit_id = %unit.id,
+                            "Work unit claimed, starting processing"
+                        );
                         if self.process_work_unit(&unit).await? {
                             return Ok(());
                         }
@@ -251,19 +256,45 @@ impl Coordinator {
         let batch_id = unit.batch_id.clone();
         let unit_id = unit.id.clone();
 
+        tracing::debug!(
+            batch_id = %batch_id,
+            unit_id = %unit_id,
+            "process_work_unit: starting"
+        );
+
         if self.shutdown_handler.is_requested() {
+            tracing::warn!(batch_id = %batch_id, unit_id = %unit_id, "Shutdown requested");
             return Ok(true);
         }
 
+        tracing::debug!(batch_id = %batch_id, unit_id = %unit_id, "Acquiring slot");
         let _slot_guard = match self.slot_pool.acquire().await {
-            Ok(guard) => guard,
-            Err(_) => {
+            Ok(guard) => {
+                tracing::debug!(batch_id = %batch_id, unit_id = %unit_id, "Slot acquired");
+                guard
+            }
+            Err(e) => {
+                tracing::warn!(batch_id = %batch_id, unit_id = %unit_id, error = ?e, "Failed to acquire slot");
                 self.metrics.dec_active_jobs();
                 return Ok(false);
             }
         };
 
+        tracing::info!(
+            batch_id = %batch_id,
+            unit_id = %unit_id,
+            input_files = unit.files.len(),
+            "Calling processor.process()"
+        );
+
         let result = self.processor.process(unit).await;
+
+        tracing::debug!(
+            batch_id = %batch_id,
+            unit_id = %unit_id,
+            success = result.is_ok(),
+            "processor.process() returned"
+        );
 
         match result {
             Ok(processing_result) => {

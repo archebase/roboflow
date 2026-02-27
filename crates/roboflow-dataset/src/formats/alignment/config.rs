@@ -29,7 +29,7 @@ impl StreamingConfig {
     pub fn with_fps(fps: u32) -> Self {
         Self {
             fps,
-            // Default completion window: 3 frames worth of data
+            // Default completion window: 30 frames worth of data (~1 second)
             completion_window_ns: Self::default_completion_window(fps),
             feature_requirements: HashMap::new(),
             decoder_config: None,
@@ -38,9 +38,10 @@ impl StreamingConfig {
 
     /// Calculate default completion window based on FPS.
     pub fn default_completion_window(fps: u32) -> u64 {
-        // 3 frames at the given FPS
+        // 30 frames at the given FPS (1 second window)
+        // This ensures state messages have enough time to be matched with frames
         let frame_interval_ns = 1_000_000_000u64 / fps as u64;
-        frame_interval_ns * 3
+        frame_interval_ns * 30
     }
 
     /// Get the frame interval in nanoseconds.
@@ -87,8 +88,8 @@ mod tests {
         let config = StreamingConfig::with_fps(60);
         assert_eq!(config.fps, 60);
         // 60 FPS = 16.666... ms per frame
-        // 3 frames = 49,999,998ns (1_000_000_000 / 60 * 3 with integer division)
-        assert_eq!(config.completion_window_ns, 49_999_998);
+        // 30 frames = 499,999,980ns (1_000_000_000 / 60 * 30 with integer division)
+        assert_eq!(config.completion_window_ns, 499_999_980);
     }
 
     #[test]
@@ -101,8 +102,8 @@ mod tests {
     #[test]
     fn test_completion_window_ns() {
         let config = StreamingConfig::with_fps(30);
-        // 3 frames worth = 33,333,333 * 3 = 99,999,999
-        assert_eq!(config.completion_window_ns(), 99_999_999);
+        // 30 frames worth = 33,333,333 * 30 = 999,999,990
+        assert_eq!(config.completion_window_ns(), 999_999_990);
     }
 
     #[test]

@@ -478,6 +478,13 @@ impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
             .map(|f| f.url.clone())
             .ok_or_else(|| roboflow_distributed::TikvError::Other("No input files".to_string()))?;
 
+        tracing::info!(
+            batch_id = %work_unit.batch_id,
+            unit_id = %work_unit.id,
+            input_file = %input_file,
+            "CliWorkProcessor: starting to process work unit"
+        );
+
         let output_dir = if self.config.output_prefix.starts_with("s3://")
             || self.config.output_prefix.starts_with("oss://")
         {
@@ -495,6 +502,12 @@ impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
         let allocation = allocator.allocate().await.map_err(|e| {
             roboflow_distributed::TikvError::Other(format!("Allocation failed: {e}"))
         })?;
+        tracing::debug!(
+            batch_id = %work_unit.batch_id,
+            unit_id = %work_unit.id,
+            episode_index = allocation.episode_index,
+            "Episode allocated"
+        );
 
         let source_config = if input_file.ends_with(".mcap") {
             SourceConfig::mcap(&input_file)
@@ -506,13 +519,50 @@ impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
             )));
         };
 
+        tracing::debug!(
+            batch_id = %work_unit.batch_id,
+            unit_id = %work_unit.id,
+            source_type = if input_file.ends_with(".mcap") { "mcap" } else { "bag" },
+            "Creating source"
+        );
+
         let mut source = create_source(&source_config)
             .map_err(|e| roboflow_distributed::TikvError::Other(format!("Source error: {e}")))?;
 
-        source
-            .initialize(&source_config)
-            .await
-            .map_err(|e| roboflow_distributed::TikvError::Other(format!("Init error: {e}")))?;
+        tracing::debug!(
+            batch_id = %work_unit.batch_id,
+            unit_id = %work_unit.id,
+            "About to call source.initialize()"
+        );
+
+        // Add timeout to detect hangs
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(300),
+            source.initialize(&source_config),
+        )
+        .await
+        {
+            Ok(result) => {
+                result.map_err(|e| {
+                    roboflow_distributed::TikvError::Other(format!("Init error: {e}"))
+                })?;
+                tracing::debug!(
+                    batch_id = %work_unit.batch_id,
+                    unit_id = %work_unit.id,
+                    "Source initialized successfully"
+                );
+            }
+            Err(_) => {
+                tracing::error!(
+                    batch_id = %work_unit.batch_id,
+                    unit_id = %work_unit.id,
+                    "Source initialization timed out after 300s"
+                );
+                return Err(roboflow_distributed::TikvError::Other(
+                    "Source initialization timed out".to_string(),
+                ));
+            }
+        }
 
         let mut lerobot_config = match self.tikv.get_config(&work_unit.config_hash).await {
             Ok(Some(config_record)) => LerobotConfig::from_toml(&config_record.content)
@@ -573,6 +623,11 @@ impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
             num_threads,
         );
 
+        tracing::info!(
+            batch_id = %work_unit.batch_id,
+            unit_id = %work_unit.id,
+            "Starting to read and process messages"
+        );
         loop {
             match source.read_batch(100).await {
                 Ok(Some(messages)) => {
@@ -580,7 +635,14 @@ impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
                         roboflow_distributed::TikvError::Other(format!("Pipeline error: {e}"))
                     })?;
                 }
-                Ok(None) => break,
+                Ok(None) => {
+                    tracing::debug!(
+                        batch_id = %work_unit.batch_id,
+                        unit_id = %work_unit.id,
+                        "Finished reading messages, finalizing"
+                    );
+                    break;
+                }
                 Err(e) => {
                     return Err(roboflow_distributed::TikvError::Other(format!(
                         "Read error: {e}"
@@ -840,6 +902,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             env::var("RUST_LOG").unwrap_or_else(|_| "roboflow=info,tikv_client=warn".to_string()),
         )
         .init();
+
+    // Initialize S3 environment bridge before any robocodec operations
+    // This reads RF_S3_* / AWS_* env vars and applies to AWS-standard names
+    if let Err(e) = roboflow_dataset::sources::init_s3_env_bridge() {
+        tracing::warn!(error = %e, "Failed to initialize S3 environment bridge");
+    }
 
     // Register all built-in source types (bag, mcap, rrd)
     roboflow_dataset::sources::register_builtin_sources();

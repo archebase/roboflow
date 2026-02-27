@@ -7,6 +7,7 @@
 //! Supports both local files and S3/OSS URLs via robocodec's native streaming.
 //! Uses a background decoder thread with a bounded channel for backpressure.
 
+use crate::sources::s3_env::maybe_apply_s3_env_for_url;
 use crate::sources::{
     Source, SourceConfig, SourceError, SourceMetadata, SourceResult, TopicMetadata,
 };
@@ -195,6 +196,8 @@ impl Source for McapSource {
         if let crate::SourceType::Mcap { path } = &config.source_type {
             self.path = path.clone();
         }
+
+        maybe_apply_s3_env_for_url(&self.path);
 
         let (metadata, rx, handle) =
             initialize_threaded_source(&self.path, "mcap-decoder", |path, meta_tx, msg_tx| {

@@ -604,15 +604,28 @@ impl FrameAlignmentBuffer {
         let mut to_remove = Vec::new();
 
         for (idx, partial) in self.active_frames.iter().enumerate() {
-            // Check if frame is complete by criteria
-            let is_data_complete = self
-                .completion_criteria
-                .is_complete(&partial.received_features);
+            // Check if frame is complete by explicit feature requirements
+            // (not just min_completeness - that causes immediate completion)
+            let has_required_features = !self.completion_criteria.features.is_empty()
+                && self
+                    .completion_criteria
+                    .features
+                    .iter()
+                    .all(|(feature, count)| {
+                        partial
+                            .received_features
+                            .iter()
+                            .filter(|f| *f == feature)
+                            .count()
+                            >= *count
+                    });
 
             // Check if frame is complete by time window (eligible time has passed)
             let is_time_complete = self.current_timestamp >= partial.eligible_timestamp;
 
-            if is_data_complete || is_time_complete {
+            // Only complete if required features are present OR time window expired
+            // Don't complete just for min_completeness - that causes premature completion
+            if has_required_features || is_time_complete {
                 to_remove.push(idx);
             }
         }

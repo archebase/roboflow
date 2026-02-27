@@ -3986,7 +3986,7 @@ dependencies = [
 [[package]]
 name = "robocodec"
 version = "0.1.0"
-source = "git+https://github.com/archebase/robocodec?rev=b27acf0e5881c38f8cc7f09e25c15787a440ae13#b27acf0e5881c38f8cc7f09e25c15787a440ae13"
+source = "git+https://github.com/archebase/robocodec?rev=04e7898#04e789831d9d1217c8bba6cada45193f0ef76eb2"
 dependencies = [
  "async-trait",
  "aws-config",
