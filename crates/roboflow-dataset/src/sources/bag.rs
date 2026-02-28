@@ -4,31 +4,33 @@
 
 //! ROS Bag source implementation.
 //!
-//! Supports both local files and S3/OSS URLs via temporary file download.
-//! Uses a background decoder thread with a bounded channel for backpressure.
+//! Uses robocodec's StreamingRoboReader for fast frame-aligned decoding.
+//! Supports both local files and S3/OSS URLs via robocodec's built-in streaming.
 
+use crate::formats::common::AlignedFrame;
 use crate::sources::s3_env::maybe_apply_s3_env_for_url;
 use crate::sources::{
     Source, SourceConfig, SourceError, SourceMetadata, SourceResult, TopicMetadata,
 };
+use robocodec::io::streaming::{FrameAlignmentConfig, StreamConfig, StreamingRoboReader};
 use robocodec::io::traits::FormatReader;
+use std::collections::HashMap;
+use std::path::Path;
 use roboflow_core::TimestampedMessage;
+use roboflow_media::ImageData;
 use roboflow_storage::StorageFactory;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-/// Download a file from S3/OSS to a temporary local file.
-/// Returns the path to the downloaded temp file.
+/// Download a file from S3/OSS to a temporary local file (for legacy batched/blocking decoders).
 fn download_to_temp(url: &str) -> Result<PathBuf, String> {
     tracing::info!(url = %url, "Downloading S3/OSS file to temp location");
 
-    // Create storage factory and get storage backend
     let factory = StorageFactory::from_env();
     let storage = factory
         .create(url)
         .map_err(|e| format!("Failed to create storage for {url}: {e}"))?;
 
-    // Parse the URL to get the path within the bucket
     let parsed_url: roboflow_storage::StorageUrl = url
         .parse()
         .map_err(|e| format!("Failed to parse URL {url}: {e}"))?;
@@ -38,27 +40,17 @@ fn download_to_temp(url: &str) -> Result<PathBuf, String> {
         roboflow_storage::StorageUrl::Local { path } => path.as_path(),
     };
 
-    // Create temp file path with unique name
     let temp_filename = format!("roboflow_bag_{}.bag", uuid::Uuid::new_v4().simple());
     let temp_path = std::env::temp_dir().join(&temp_filename);
 
-    tracing::debug!(
-        url = %url,
-        temp_path = %temp_path.display(),
-        "Starting download"
-    );
-
-    // Open reader from storage
     let mut reader = storage
         .reader(object_path)
         .map_err(|e| format!("Failed to open reader for {url}: {e}"))?;
 
-    // Create temp file
     let mut temp_file = std::fs::File::create(&temp_path)
         .map_err(|e| format!("Failed to create temp file {}: {e}", temp_path.display()))?;
 
-    // Stream data from storage to temp file
-    let mut buffer = vec![0u8; 8192]; // 8KB buffer
+    let mut buffer = vec![0u8; 8192];
     let mut total_bytes = 0u64;
 
     loop {
@@ -77,36 +69,25 @@ fn download_to_temp(url: &str) -> Result<PathBuf, String> {
         total_bytes += bytes_read as u64;
     }
 
-    // Ensure all data is flushed to disk
-    temp_file
-        .flush()
-        .map_err(|e| format!("Failed to flush temp file: {e}"))?;
+    temp_file.flush().map_err(|e| format!("Failed to flush: {e}"))?;
 
-    // Sync to ensure data is written to disk
     #[cfg(not(windows))]
     {
-        temp_file
-            .sync_all()
-            .map_err(|e| format!("Failed to sync temp file: {e}"))?;
+        temp_file.sync_all().map_err(|e| format!("Failed to sync: {e}"))?;
     }
 
-    tracing::info!(
-        url = %url,
-        temp_path = %temp_path.display(),
-        bytes = total_bytes,
-        "Download complete"
-    );
-
+    tracing::info!(url = %url, bytes = total_bytes, "Download complete");
     Ok(temp_path)
 }
 
 /// ROS Bag source reader.
 ///
-/// Reads robotics data from ROS bag files. Supports local files and S3/OSS URLs.
+/// Reads robotics data from ROS bag files using robocodec's StreamingRoboReader.
+/// Supports local files and S3/OSS URLs via robocodec's built-in streaming.
 pub struct BagSource {
     path: String,
     metadata: Option<SourceMetadata>,
-    receiver: Option<tokio::sync::mpsc::Receiver<TimestampedMessage>>,
+    receiver: Option<tokio::sync::mpsc::Receiver<AlignedFrame>>,
     decoder_handle: Option<tokio::task::JoinHandle<Result<usize, String>>>,
     finished: bool,
 }
@@ -155,134 +136,169 @@ impl BagSource {
     }
 }
 
-/// Spawn a decoder thread for local file decoding.
+/// Convert roboflow's AlignedFrame to a vector of TimestampedMessages.
+///
+/// This bridges the frame-aligned output from StreamingRoboReader back to
+/// the message-based Source trait interface.
+fn convert_aligned_frame_to_messages(frame: AlignedFrame) -> Vec<TimestampedMessage> {
+    use robocodec::CodecValue;
+
+    let mut messages = Vec::new();
+
+    // Convert images to TimestampedMessage
+    for (feature_name, image_data) in frame.images {
+        let mut fields = HashMap::new();
+        fields.insert("width".to_string(), CodecValue::UInt32(image_data.width));
+        fields.insert("height".to_string(), CodecValue::UInt32(image_data.height));
+        fields.insert(
+            "data".to_string(),
+            CodecValue::Bytes(image_data.data.clone()),
+        );
+        fields.insert("is_encoded".to_string(), CodecValue::Bool(image_data.is_encoded));
+        fields.insert("is_depth".to_string(), CodecValue::Bool(image_data.is_depth));
+        fields.insert(
+            "original_timestamp".to_string(),
+            CodecValue::UInt64(image_data.original_timestamp),
+        );
+
+        let data = CodecValue::Struct(fields);
+
+        messages.push(TimestampedMessage {
+            topic: feature_name,
+            log_time: frame.timestamp,
+            data,
+        });
+    }
+
+    // Convert states to TimestampedMessage
+    for (feature_name, state_data) in frame.states {
+        let data = CodecValue::Array(
+            state_data.into_iter().map(CodecValue::Float32).collect(),
+        );
+        messages.push(TimestampedMessage {
+            topic: feature_name,
+            log_time: frame.timestamp,
+            data,
+        });
+    }
+
+    messages
+}
+
+/// Convert robocodec's AlignedFrame to roboflow's AlignedFrame.
+fn convert_codec_frame_to_roboflow_frame(
+    codec_frame: robocodec::io::streaming::AlignedFrame,
+) -> Result<AlignedFrame, Box<dyn std::error::Error>> {
+    let mut frame = AlignedFrame::new(codec_frame.frame_index, codec_frame.timestamp);
+
+    // Convert images
+    for (name, img) in codec_frame.images {
+        let image_data = ImageData::encoded(img.width, img.height, img.data);
+        frame.add_image(name, image_data);
+    }
+
+    // Convert states
+    for (name, state) in codec_frame.states {
+        frame.add_state(name, state);
+    }
+
+    Ok(frame)
+}
+
+/// Spawn a decoder thread using robocodec's StreamingRoboReader with frame alignment.
 fn spawn_local_decoder(
     path: String,
     meta_tx: tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
-    msg_tx: tokio::sync::mpsc::Sender<TimestampedMessage>,
+    frame_tx: tokio::sync::mpsc::Sender<AlignedFrame>,
     format_name: &'static str,
 ) -> Result<usize, String> {
     tracing::info!(
         path = %path,
         format = format_name,
-        "spawn_local_decoder: starting"
+        "spawn_local_decoder: starting with StreamingRoboReader"
     );
 
-    // For S3/OSS URLs, download to temp file first
-    let local_path = if path.starts_with("s3://") || path.starts_with("oss://") {
-        match download_to_temp(&path) {
-            Ok(temp_path) => temp_path.to_string_lossy().to_string(),
-            Err(e) => {
-                let err = SourceError::OpenFailed {
-                    path: std::path::PathBuf::from(&path),
-                    error: Box::new(std::io::Error::other(e.clone())),
-                };
-                let _ = meta_tx.send(Err(err));
-                return Err(format!(
-                    "Failed to download {format_name} file from {path}: {e}"
-                ));
-            }
-        }
-    } else {
-        path.clone()
-    };
+    // Create tokio runtime for async streaming reader
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("Failed to create runtime: {e}"))?;
 
-    tracing::debug!(path = %path, local_path = %local_path, "Opening file with RoboReader");
+    rt.block_on(async {
+        let config = StreamConfig::new();
+        let reader = StreamingRoboReader::open(&path, config)
+            .await
+            .map_err(|e| format!("Failed to open: {e}"))?;
 
-    let reader_result = robocodec::RoboReader::open(&local_path);
+        // Get metadata from reader
+        let message_count = reader.message_count();
+        let channels = reader.channels();
+        let topics: Vec<TopicMetadata> = channels
+            .values()
+            .map(|ch| TopicMetadata::new(ch.topic.clone(), ch.message_type.clone()))
+            .collect();
 
-    let reader = match reader_result {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!(
-                path = %path,
-                local_path = %local_path,
-                format = format_name,
-                error = %e,
-                "RoboReader::open() failed"
-            );
-            let err = SourceError::OpenFailed {
-                path: std::path::PathBuf::from(&local_path),
-                error: Box::new(e),
-            };
-            let _ = meta_tx.send(Err(err));
-            return Err(format!("Failed to open {format_name} file: {local_path}"));
-        }
-    };
-    tracing::info!(
-        path = %path,
-        message_count = reader.message_count(),
-        "RoboReader opened successfully"
-    );
+        let metadata = SourceMetadata::new(format_name.to_string(), path.clone())
+            .with_message_count(message_count)
+            .with_topics(topics);
 
-    tracing::debug!(path = %path, "Preparing metadata");
-
-    let message_count = reader.message_count();
-    let channels = reader.channels();
-    let topics: Vec<TopicMetadata> = channels
-        .values()
-        .map(|ch| TopicMetadata::new(ch.topic.clone(), ch.message_type.clone()))
-        .collect();
-
-    let metadata = SourceMetadata::new(format_name.to_string(), path.clone())
-        .with_message_count(message_count)
-        .with_topics(topics);
-
-    if meta_tx.send(Ok(metadata)).is_err() {
-        return Err("Metadata receiver dropped".to_string());
-    }
-    tracing::debug!(path = %path, "Metadata sent, starting decode loop");
-
-    let iter = match reader.decoded() {
-        Ok(iter) => iter,
-        Err(e) => return Err(format!("Failed to get decoded iterator: {e}")),
-    };
-    tracing::debug!(path = %path, "Got decoded iterator, starting message processing");
-
-    let mut count = 0usize;
-    for msg_result in iter {
-        let msg = match msg_result {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::warn!(error = %e, offset = count, "Skipping decode error");
-                continue;
-            }
-        };
-
-        let timestamped = TimestampedMessage::from(msg);
-
-        if msg_tx.blocking_send(timestamped).is_err() {
-            tracing::debug!(count, "Receiver dropped, stopping decoder");
-            break;
+        if meta_tx.send(Ok(metadata)).is_err() {
+            return Err("Metadata receiver dropped".to_string());
         }
 
-        count += 1;
-        if count.is_multiple_of(10_000) {
-            tracing::debug!(messages = count, "{format_name} decoder progress");
-        }
-    }
+        tracing::debug!(path = %path, "Metadata sent, starting frame processing");
 
-    tracing::debug!(messages = count, "Local {format_name} decode complete");
-    Ok(count)
+        // Use frame alignment config - these could be made configurable
+        let frame_config = FrameAlignmentConfig::new(30)
+            .with_image_topic("/cam_l/color/image_raw/compressed")
+            .with_state_topic("/kuavo_arm_traj")
+            .with_max_latency(50_000_000); // 50ms in nanoseconds
+
+        let mut frame_count = 0usize;
+
+        reader
+            .process_frames(frame_config, |codec_frame| {
+                // Convert robocodec frame to roboflow frame
+                let frame = convert_codec_frame_to_roboflow_frame(codec_frame)
+                    .map_err(|e| robocodec::CodecError::Other(format!("Frame conversion: {e}")))?;
+
+                if frame_tx.blocking_send(frame).is_err() {
+                    return Err(robocodec::CodecError::Other("Channel closed".into()));
+                }
+
+                frame_count += 1;
+                if frame_count.is_multiple_of(1000) {
+                    tracing::debug!(frames = frame_count, "{format_name} decoder progress");
+                }
+
+                Ok(())
+            })
+            .map_err(|e| format!("Frame processing error: {e}"))?;
+
+        tracing::debug!(frames = frame_count, "Local {format_name} decode complete");
+        Ok(frame_count)
+    })
 }
 
 /// Initialize a threaded source with a decoder function using tokio::task::spawn_blocking.
+///
+/// Uses robocodec's StreamingRoboReader for frame-aligned decoding.
 async fn initialize_threaded_source(
     path: &str,
     _thread_name: &str,
     decoder_fn: impl FnOnce(
         String,
         tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
-        tokio::sync::mpsc::Sender<TimestampedMessage>,
+        tokio::sync::mpsc::Sender<AlignedFrame>,
     ) -> Result<usize, String>
     + Send
     + 'static,
 ) -> SourceResult<(
     SourceMetadata,
-    tokio::sync::mpsc::Receiver<TimestampedMessage>,
+    tokio::sync::mpsc::Receiver<AlignedFrame>,
     tokio::task::JoinHandle<Result<usize, String>>,
 )> {
-    let (tx, rx) = tokio::sync::mpsc::channel(8192);
+    let (tx, rx) = tokio::sync::mpsc::channel(1024);
     let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
 
     let path_owned = path.to_string();
@@ -358,8 +374,12 @@ impl Source for BagSource {
 
         let mut batch = Vec::with_capacity(batch_size.min(1024));
 
+        // Receive AlignedFrame and convert to TimestampedMessage
         match receiver.recv().await {
-            Some(msg) => batch.push(msg),
+            Some(frame) => {
+                let messages = convert_aligned_frame_to_messages(frame);
+                batch.extend(messages);
+            }
             None => {
                 self.finished = true;
                 self.check_decoder_result().await?;
@@ -367,9 +387,13 @@ impl Source for BagSource {
             }
         }
 
+        // Try to fill the batch with more frames
         while batch.len() < batch_size {
             match receiver.try_recv() {
-                Ok(msg) => batch.push(msg),
+                Ok(frame) => {
+                    let messages = convert_aligned_frame_to_messages(frame);
+                    batch.extend(messages);
+                }
                 Err(_) => break,
             }
         }
