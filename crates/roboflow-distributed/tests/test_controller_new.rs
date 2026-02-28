@@ -166,8 +166,6 @@ async fn test_scan_total_calculation() {
     let _ = tikv.delete(BatchIndexKeys::phase(BatchPhase::Pending, &batch_id)).await;
     let _ = tikv.delete(BatchIndexKeys::phase(BatchPhase::Running, &batch_id)).await;
 }
-    }
-}
 
 #[tokio::test]
 async fn test_reconcile_populates_failed_work_units_with_error_details() {
