@@ -19,7 +19,7 @@ pub fn build_video_frame_buffer(images: &[ImageData]) -> Result<(VideoFrameBuffe
     let mut skipped = 0usize;
 
     for img in images {
-        if img.width == 0 || img.height == 0 {
+        if !img.is_encoded && (img.width == 0 || img.height == 0) {
             skipped += 1;
             continue;
         }

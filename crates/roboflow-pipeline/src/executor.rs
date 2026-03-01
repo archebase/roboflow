@@ -43,6 +43,7 @@ use std::time::Instant;
 
 use robocodec::CodecValue;
 use roboflow_core::{Result, TimestampedMessage};
+use roboflow_media::image::ImageFormat;
 use tracing::{debug, info, trace, warn};
 
 use roboflow_dataset::core::traits::{AlignedFrame, FormatWriter};
@@ -156,6 +157,65 @@ impl DatasetPipelineConfig {
 impl Default for DatasetPipelineConfig {
     fn default() -> Self {
         Self::with_fps(30)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageEncodingHint {
+    Encoded,
+    Raw,
+    Unknown,
+}
+
+fn extract_bool(value: &CodecValue) -> Option<bool> {
+    match value {
+        CodecValue::Bool(v) => Some(*v),
+        _ => None,
+    }
+}
+
+fn detect_image_encoding_hint(
+    map: &HashMap<String, CodecValue>,
+    image_bytes: &[u8],
+) -> ImageEncodingHint {
+    if let Some(is_encoded) = map.get("is_encoded").and_then(extract_bool) {
+        return if is_encoded {
+            ImageEncodingHint::Encoded
+        } else {
+            ImageEncodingHint::Raw
+        };
+    }
+
+    if let Some(CodecValue::String(format_str)) = map.get("format") {
+        let format = ImageFormat::from_ros_format(format_str);
+        if format.is_encoded() {
+            return ImageEncodingHint::Encoded;
+        }
+        if format != ImageFormat::Unknown {
+            return ImageEncodingHint::Raw;
+        }
+    }
+
+    if ImageFormat::from_magic_bytes(image_bytes).is_encoded() {
+        return ImageEncodingHint::Encoded;
+    }
+
+    ImageEncodingHint::Unknown
+}
+
+fn resolve_encoded_dimensions(
+    width: Option<u32>,
+    height: Option<u32>,
+    image_bytes: &[u8],
+) -> (u32, u32) {
+    match (width, height) {
+        (Some(w), Some(h)) if w > 0 && h > 0 => (w, h),
+        _ => {
+            let detected_format = ImageFormat::from_magic_bytes(image_bytes);
+            detected_format
+                .extract_dimensions(image_bytes)
+                .unwrap_or((0, 0))
+        }
     }
 }
 
@@ -461,49 +521,33 @@ impl<W: FormatWriter, P: ExecutionPolicy> DatasetPipelineExecutor<W, P> {
                     return Ok(());
                 }
 
-                // Check for ROS CompressedImage
-                if let (Some(_format), Some(image_bytes)) = (
-                    map.get("format").and_then(|v| {
-                        if let CodecValue::String(s) = v {
-                            Some(s.as_str())
-                        } else {
-                            None
+                if let Some(image_bytes) = extract_image_bytes(map) {
+                    let width = map.get("width").and_then(extract_u32);
+                    let height = map.get("height").and_then(extract_u32);
+
+                    match detect_image_encoding_hint(map, &image_bytes) {
+                        ImageEncodingHint::Encoded => {
+                            let (resolved_width, resolved_height) =
+                                resolve_encoded_dimensions(width, height, &image_bytes);
+                            let image_data =
+                                ImageData::encoded(resolved_width, resolved_height, image_bytes);
+                            frame.add_image(feature_name, image_data);
+                            return Ok(());
                         }
-                    }),
-                    extract_image_bytes(map),
-                ) {
-                    let detected_format =
-                        roboflow_media::image::ImageFormat::from_magic_bytes(&image_bytes);
-                    let (width, height) = detected_format
-                        .extract_dimensions(&image_bytes)
-                        .unwrap_or((0, 0));
-
-                    let image_data = ImageData::encoded(width, height, image_bytes);
-                    frame.add_image(feature_name.clone(), image_data);
-                    return Ok(());
-                }
-
-                // Check for regular image data
-                if let (Some(width), Some(height), Some(image_bytes)) = (
-                    map.get("width").and_then(extract_u32),
-                    map.get("height").and_then(extract_u32),
-                    extract_image_bytes(map),
-                ) {
-                    let expected_rgb_size = (width as usize) * (height as usize) * 3;
-                    let is_compressed = image_bytes.len() < expected_rgb_size;
-
-                    let image_data = if is_compressed {
-                        ImageData::encoded(width, height, image_bytes)
-                    } else {
-                        ImageData::new_rgb(width, height, image_bytes).map_err(|e| {
-                            roboflow_core::RoboflowError::other(format!(
-                                "Invalid image data: {}",
-                                e
-                            ))
-                        })?
-                    };
-                    frame.add_image(feature_name, image_data);
-                    return Ok(());
+                        ImageEncodingHint::Raw | ImageEncodingHint::Unknown => {
+                            if let (Some(width), Some(height)) = (width, height) {
+                                let image_data = ImageData::new_rgb(width, height, image_bytes)
+                                    .map_err(|e| {
+                                        roboflow_core::RoboflowError::other(format!(
+                                            "Invalid image data: {}",
+                                            e
+                                        ))
+                                    })?;
+                                frame.add_image(feature_name, image_data);
+                                return Ok(());
+                            }
+                        }
+                    }
                 }
 
                 // Check for state data in struct
@@ -672,6 +716,7 @@ impl<W: FormatWriter, P: ExecutionPolicy> DatasetPipelineExecutor<W, P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use robocodec::CodecValue;
     use roboflow_dataset::core::stats::EpisodeStats;
     use roboflow_dataset::core::traits::WriterStats;
     use std::any::Any;
@@ -774,5 +819,93 @@ mod tests {
     fn test_episode_strategy_default() {
         let strategy = EpisodeStrategy::default();
         assert!(matches!(strategy, EpisodeStrategy::Single));
+    }
+
+    fn make_executor_for_tests() -> DatasetPipelineExecutor<MockWriter, SequentialPolicy> {
+        let writer = MockWriter::new();
+        let config = DatasetPipelineConfig::with_fps(30);
+        DatasetPipelineExecutor::sequential(writer, config)
+    }
+
+    #[test]
+    fn test_struct_image_is_encoded_authoritative_accepts_zero_dims() {
+        let executor = make_executor_for_tests();
+        let mut frame = AlignedFrame::new(0, 0);
+
+        let mut image_map = HashMap::new();
+        image_map.insert("width".to_string(), CodecValue::UInt32(0));
+        image_map.insert("height".to_string(), CodecValue::UInt32(0));
+        image_map.insert("is_encoded".to_string(), CodecValue::Bool(true));
+        image_map.insert(
+            "data".to_string(),
+            CodecValue::Bytes(vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]),
+        );
+
+        let msg = TimestampedMessage {
+            topic: "/camera/image".to_string(),
+            log_time: 0,
+            data: CodecValue::Struct(image_map),
+        };
+
+        executor
+            .process_message_for_frame(&mut frame, &msg)
+            .expect("encoded message should be accepted");
+
+        let image = frame
+            .images
+            .get("camera.image")
+            .expect("expected image in frame");
+        assert!(image.is_encoded);
+    }
+
+    #[test]
+    fn test_struct_image_raw_rgb_size_mismatch_fails() {
+        let executor = make_executor_for_tests();
+        let mut frame = AlignedFrame::new(0, 0);
+
+        let mut image_map = HashMap::new();
+        image_map.insert("width".to_string(), CodecValue::UInt32(2));
+        image_map.insert("height".to_string(), CodecValue::UInt32(2));
+        image_map.insert("data".to_string(), CodecValue::Bytes(vec![42; 10]));
+
+        let msg = TimestampedMessage {
+            topic: "/camera/image".to_string(),
+            log_time: 0,
+            data: CodecValue::Struct(image_map),
+        };
+
+        let err = executor
+            .process_message_for_frame(&mut frame, &msg)
+            .expect_err("mismatched RGB size should fail");
+        assert!(err.to_string().contains("Invalid image data"));
+    }
+
+    #[test]
+    fn test_struct_image_format_hint_jpeg_treated_as_encoded_without_dims() {
+        let executor = make_executor_for_tests();
+        let mut frame = AlignedFrame::new(0, 0);
+
+        let mut image_map = HashMap::new();
+        image_map.insert("format".to_string(), CodecValue::String("jpeg".to_string()));
+        image_map.insert(
+            "data".to_string(),
+            CodecValue::Bytes(vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]),
+        );
+
+        let msg = TimestampedMessage {
+            topic: "/camera/image".to_string(),
+            log_time: 0,
+            data: CodecValue::Struct(image_map),
+        };
+
+        executor
+            .process_message_for_frame(&mut frame, &msg)
+            .expect("jpeg format hint should be treated as encoded");
+
+        let image = frame
+            .images
+            .get("camera.image")
+            .expect("expected image in frame");
+        assert!(image.is_encoded);
     }
 }

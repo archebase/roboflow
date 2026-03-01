@@ -58,6 +58,59 @@ pub struct WorkUnit {
     /// Priority (inherited from batch, can be overridden).
     #[serde(default)]
     pub priority: i32,
+
+    /// Persisted episode index allocation for retry-safe processing.
+    #[serde(default)]
+    pub episode_index: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyWorkUnit {
+    pub id: String,
+    pub batch_id: String,
+    pub files: Vec<WorkFile>,
+    pub output_path: String,
+    pub config_hash: String,
+    pub status: WorkUnitStatus,
+    pub owner: Option<String>,
+    pub attempts: u32,
+    pub max_attempts: u32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub error: Option<String>,
+    pub priority: i32,
+}
+
+impl From<LegacyWorkUnit> for WorkUnit {
+    fn from(legacy: LegacyWorkUnit) -> Self {
+        Self {
+            id: legacy.id,
+            batch_id: legacy.batch_id,
+            files: legacy.files,
+            output_path: legacy.output_path,
+            config_hash: legacy.config_hash,
+            status: legacy.status,
+            owner: legacy.owner,
+            attempts: legacy.attempts,
+            max_attempts: legacy.max_attempts,
+            created_at: legacy.created_at,
+            updated_at: legacy.updated_at,
+            error: legacy.error,
+            priority: legacy.priority,
+            episode_index: None,
+        }
+    }
+}
+
+/// Deserialize a work unit with backward compatibility.
+///
+/// Tries the current `WorkUnit` layout first, then falls back to the legacy
+/// pre-`episode_index` layout.
+pub fn deserialize_work_unit_compat(data: &[u8]) -> Result<WorkUnit, bincode::Error> {
+    match bincode::deserialize::<WorkUnit>(data) {
+        Ok(unit) => Ok(unit),
+        Err(_) => bincode::deserialize::<LegacyWorkUnit>(data).map(WorkUnit::from),
+    }
 }
 
 fn default_max_attempts() -> u32 {
@@ -194,6 +247,7 @@ impl WorkUnit {
             updated_at: Utc::now(),
             error: None,
             priority: 0,
+            episode_index: None,
         }
     }
 
@@ -219,6 +273,7 @@ impl WorkUnit {
             updated_at: Utc::now(),
             error: None,
             priority: 0,
+            episode_index: None,
         }
     }
 
@@ -595,6 +650,58 @@ mod tests {
     }
 
     #[test]
+    fn test_deserialize_work_unit_compat_with_current_payload() {
+        let mut unit = WorkUnit::new(
+            "batch-123".to_string(),
+            vec![WorkFile::new("s3://bucket/file.mcap".to_string(), 1024)],
+            "s3://output/".to_string(),
+            "config-hash".to_string(),
+        );
+        unit.episode_index = Some(7);
+
+        let serialized = bincode::serialize(&unit).unwrap();
+        let decoded = deserialize_work_unit_compat(&serialized).unwrap();
+
+        assert_eq!(decoded.id, unit.id);
+        assert_eq!(decoded.batch_id, unit.batch_id);
+        assert_eq!(decoded.episode_index, Some(7));
+    }
+
+    #[test]
+    fn test_deserialize_work_unit_compat_with_legacy_payload() {
+        let unit = WorkUnit::new(
+            "batch-legacy".to_string(),
+            vec![WorkFile::new("s3://bucket/legacy.mcap".to_string(), 2048)],
+            "s3://output/".to_string(),
+            "legacy-config".to_string(),
+        );
+
+        let legacy = LegacyWorkUnit {
+            id: unit.id.clone(),
+            batch_id: unit.batch_id.clone(),
+            files: unit.files.clone(),
+            output_path: unit.output_path.clone(),
+            config_hash: unit.config_hash.clone(),
+            status: unit.status,
+            owner: unit.owner.clone(),
+            attempts: unit.attempts,
+            max_attempts: unit.max_attempts,
+            created_at: unit.created_at,
+            updated_at: unit.updated_at,
+            error: unit.error.clone(),
+            priority: unit.priority,
+        };
+
+        let serialized = bincode::serialize(&legacy).unwrap();
+        let decoded = deserialize_work_unit_compat(&serialized).unwrap();
+
+        assert_eq!(decoded.id, unit.id);
+        assert_eq!(decoded.batch_id, unit.batch_id);
+        assert_eq!(decoded.status, unit.status);
+        assert_eq!(decoded.episode_index, None);
+    }
+
+    #[test]
     fn test_work_unit_summary() {
         let files = vec![
             WorkFile::new("file1.mcap".to_string(), 1000),
@@ -794,5 +901,24 @@ mod tests {
             }
             _ => panic!("Expected NotClaimable error"),
         }
+    }
+
+    #[test]
+    fn test_work_unit_retry_preserves_episode_index() {
+        let mut unit = WorkUnit::new(
+            "batch-123".to_string(),
+            vec![WorkFile::new("s3://bucket/file.mcap".to_string(), 1024)],
+            "s3://output/".to_string(),
+            "config-hash".to_string(),
+        );
+        unit.episode_index = Some(42);
+
+        unit.claim("worker-1".to_string()).unwrap();
+        unit.fail("transient error".to_string());
+        unit.claim("worker-2".to_string()).unwrap();
+
+        assert_eq!(unit.episode_index, Some(42));
+        assert_eq!(unit.attempts, 2);
+        assert_eq!(unit.status, WorkUnitStatus::Processing);
     }
 }

@@ -31,7 +31,7 @@ export ROBOFLOW_USER="${ROBOFLOW_USER:-$(whoami)}"
 export ROBOFLOW_OUTPUT_PREFIX="${ROBOFLOW_OUTPUT_PREFIX:-s3://roboflow-output/}"
 
 # Logging
-export RUST_LOG="${RUST_LOG:-roboflow=debug,roboflow_distributed=debug,tikv_client=warn}"
+export RUST_LOG="${RUST_LOG:-roboflow=info,roboflow_distributed=info,roboflow_distributed::batch::controller=warn,tikv_client=warn}"
 
 # =============================================================================
 # Helper Functions

@@ -31,7 +31,7 @@ export ROBOFLOW_USER="${ROBOFLOW_USER:-$(whoami)}"
 export ROBOFLOW_OUTPUT_PREFIX="${ROBOFLOW_OUTPUT_PREFIX:-s3://roboflow-datasets/}"
 
 # Logging
-export RUST_LOG="${RUST_LOG:-roboflow=debug,roboflow_distributed=debug,tikv_client=warn}"
+export RUST_LOG="${RUST_LOG:-roboflow=info,roboflow_distributed=info,roboflow_distributed::batch::controller=warn,tikv_client=warn}"
 
 ROBOFLOW_BIN="${PROJECT_ROOT}/target/debug/roboflow"
 CONFIG_FILE="${CONFIG_FILE:-examples/rust/lerobot_config.toml}"
@@ -99,7 +99,7 @@ ENVIRONMENT (can be set before running):
     AWS_SECRET_ACCESS_KEY   S3/MinIO secret key (default: minioadmin)
     AWS_ENDPOINT_URL        S3/MinIO endpoint (default: http://127.0.0.1:9000)
     TIKV_PD_ENDPOINTS       TiKV PD endpoints (default: 127.0.0.1:2379)
-    RUST_LOG                Logging level (default: roboflow=debug)
+    RUST_LOG                Logging level (default: roboflow=info,roboflow_distributed=info,roboflow_distributed::batch::controller=warn,tikv_client=warn)
 EOF
 }
 

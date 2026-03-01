@@ -436,17 +436,18 @@ impl ParallelMultipartUploader {
             cb(file_size as u64, file_size as u64);
         }
 
-        // Upload as single chunk
-        upload.write(&buffer);
-
-        // Complete the upload
-        let duration = self.start_time.elapsed().unwrap_or(Duration::from_secs(0));
-
+        // Upload as single chunk - must be in async context for WriteMultipart
+        // because it internally spawns async upload tasks
         self.runtime.block_on(async {
+            upload.write(&buffer);
+
+            // Complete the upload
             upload.finish().await.map_err(|e| {
                 StorageError::Cloud(format!("Failed to complete multipart upload: {}", e))
             })
         })?;
+
+        let duration = self.start_time.elapsed().unwrap_or(Duration::from_secs(0));
 
         Ok(
             ParallelMultipartStats::new(file_size as u64, 1, duration, self.config.concurrency)

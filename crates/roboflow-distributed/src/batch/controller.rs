@@ -10,7 +10,7 @@
 use super::key::{BatchIndexKeys, BatchKeys, WorkUnitKeys};
 use super::spec::BatchSpec;
 use super::status::{BatchPhase, BatchStatus, DiscoveryStatus, FailedWorkUnit};
-use super::work_unit::{WorkUnit, WorkUnitStatus};
+use super::work_unit::{WorkUnit, WorkUnitStatus, deserialize_work_unit_compat};
 use crate::tikv::{TikvClient, TikvError};
 
 use std::sync::Arc;
@@ -228,7 +228,7 @@ impl BatchController {
 
         let old_phase = status.phase;
 
-        tracing::info!(
+        tracing::debug!(
             batch_id = %batch_id,
             phase = ?old_phase,
             work_units_total = status.work_units_total,
@@ -377,7 +377,7 @@ impl BatchController {
         let mut failed_work_units = Vec::new();
 
         for (key, value) in work_units {
-            match bincode::deserialize::<WorkUnit>(&value) {
+            match deserialize_work_unit_compat(&value) {
                 Ok(unit) => {
                     scan_total += 1; // Count all valid work units
                     match unit.status {
@@ -413,12 +413,12 @@ impl BatchController {
                         error = %e,
                         key = %String::from_utf8_lossy(&key),
                         work_unit_id = %String::from_utf8_lossy(&key),
-                        "Failed to deserialize work unit, skipping. Batch completion counts may be incorrect."
+                        "Failed to deserialize work unit after compatibility decode; record may be legacy/corrupt. Skipping entry and continuing scan."
                     );
                 }
             }
         }
-        tracing::info!(
+        tracing::debug!(
             batch_id = %batch_id,
             work_units_total = status.work_units_total,
             scan_total = scan_total,
@@ -638,7 +638,7 @@ impl BatchController {
     ///
     /// Pending key format: `/roboflow/v1/batch/pending/{batch_id}/{unit_id}`
     pub async fn claim_work_unit(&self, worker_id: &str) -> Result<Option<WorkUnit>, TikvError> {
-        use bincode::{deserialize, serialize};
+        use bincode::serialize;
 
         // Scan for the first pending work unit key
         let pending_prefix_bytes = WorkUnitKeys::pending_prefix();
@@ -695,7 +695,7 @@ impl BatchController {
 
         // Pre-flight check: read work unit status before transaction
         match self.client.get(work_unit_key.clone()).await? {
-            Some(data) => match deserialize::<WorkUnit>(&data) {
+            Some(data) => match deserialize_work_unit_compat(&data) {
                 Ok(unit) => {
                     tracing::info!(
                         batch_id = %batch_id,
@@ -728,7 +728,7 @@ impl BatchController {
                     Box<dyn std::error::Error + Send + Sync>,
                 > {
                     // Deserialize the work unit
-                    let mut unit: WorkUnit = deserialize(data)
+                    let mut unit = deserialize_work_unit_compat(data)
                         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
                     // Try to claim the work unit
@@ -762,7 +762,7 @@ impl BatchController {
         );
 
         // Deserialize the claimed work unit
-        let unit: WorkUnit = match deserialize(&data) {
+        let unit: WorkUnit = match deserialize_work_unit_compat(&data) {
             Ok(u) => u,
             Err(e) => {
                 tracing::error!(
@@ -797,11 +797,18 @@ impl BatchController {
 
         let data = match data {
             Some(d) => d,
-            None => return Ok(false),
+            None => {
+                tracing::warn!(
+                    batch_id = %batch_id,
+                    unit_id = %unit_id,
+                    "complete_work_unit: work unit key not found"
+                );
+                return Ok(false);
+            }
         };
 
-        let mut unit: WorkUnit =
-            bincode::deserialize(&data).map_err(|e| TikvError::Deserialization(e.to_string()))?;
+        let mut unit: WorkUnit = deserialize_work_unit_compat(&data)
+            .map_err(|e| TikvError::Deserialization(e.to_string()))?;
 
         unit.complete();
 
@@ -828,11 +835,18 @@ impl BatchController {
 
         let data = match data {
             Some(d) => d,
-            None => return Ok(false),
+            None => {
+                tracing::warn!(
+                    batch_id = %batch_id,
+                    unit_id = %unit_id,
+                    "fail_work_unit: work unit key not found"
+                );
+                return Ok(false);
+            }
         };
 
-        let mut unit: WorkUnit =
-            bincode::deserialize(&data).map_err(|e| TikvError::Deserialization(e.to_string()))?;
+        let mut unit: WorkUnit = deserialize_work_unit_compat(&data)
+            .map_err(|e| TikvError::Deserialization(e.to_string()))?;
 
         unit.fail(error);
 

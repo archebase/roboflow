@@ -355,6 +355,12 @@ impl Coordinator {
                     .await
             }
             Err(e) => {
+                tracing::error!(
+                    batch_id = %batch_id,
+                    unit_id = %unit_id,
+                    error = %e,
+                    "processor.process() failed"
+                );
                 if let Err(fail_err) = self
                     .fail_work(&batch_id, &unit_id, format!("Execution error: {}", e))
                     .await
@@ -410,6 +416,12 @@ impl Coordinator {
                 if error.contains("shutdown") {
                     return Ok(true);
                 }
+                tracing::error!(
+                    batch_id = %batch_id,
+                    unit_id = %unit_id,
+                    error = %error,
+                    "Work unit processing reported failure"
+                );
                 if let Err(e) = self.fail_work(batch_id, unit_id, error).await {
                     self.metrics.inc_processing_errors();
                     return Err(e);

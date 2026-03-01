@@ -11,7 +11,8 @@ use super::schema::MergeState;
 use crate::tikv::error::TikvError;
 use polars::prelude::*;
 use roboflow_storage::{Storage, StorageFactory, StorageUrl};
-use std::io::BufWriter;
+use std::collections::HashMap;
+use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -29,7 +30,7 @@ pub struct DefaultStorageFactory;
 
 impl StorageFactoryTrait for DefaultStorageFactory {
     fn create(&self, url: &str) -> roboflow_storage::StorageResult<Arc<dyn Storage>> {
-        let factory = StorageFactory::new();
+        let factory = StorageFactory::from_env();
         factory.create(url)
     }
 }
@@ -107,16 +108,17 @@ impl ParquetMergeExecutor {
             "Discovered parquet files for merging"
         );
 
-        // Step 2: Read and collect all dataframes with sequential episode_index
-        let merged_df = self.merge_parquet_files(&parquet_files).await?;
+        // Step 2: Read and collect all dataframes with sequential episode_index.
+        // Also compute staged media copy tasks with remapped episode paths.
+        let (merged_df, media_copy_tasks) = self.merge_parquet_files(&parquet_files).await?;
 
         let total_frames = merged_df.height() as u64;
 
         // Step 3: Write merged parquet to output path
         self.write_merged_parquet(&merged_df).await?;
 
-        // Step 4: Update video paths to point to merged location
-        // (This is handled by the path references in the parquet file itself)
+        // Step 4: Copy staged media files to final dataset output paths.
+        self.copy_media_assets(&media_copy_tasks)?;
 
         info!(
             job_id = %state.job_id,
@@ -159,8 +161,9 @@ impl ParquetMergeExecutor {
                 ))
             })?;
 
-            // Build the prefix for listing: staging_path/data/chunk-000/
-            let list_prefix = format!("{}/data/chunk-000/", staging_url.path());
+            // Build the prefix for listing all staged parquet chunks.
+            // Supports data/chunk-000, data/chunk-001, ...
+            let list_prefix = format!("{}/data/", staging_url.path());
             let prefix_path = Path::new(&list_prefix);
 
             debug!(
@@ -178,36 +181,45 @@ impl ParquetMergeExecutor {
             let worker_files: Vec<StagedParquetFile> = spawn_blocking(move || {
                 let mut files = Vec::new();
 
-                match storage_clone.list(&prefix_path) {
-                    Ok(objects) => {
-                        for obj in objects {
-                            // Filter for .parquet extension
-                            if obj.path.ends_with(".parquet") {
-                                // Extract episode number from filename
-                                let episode_num = extract_episode_number_from_str(&obj.path);
+                // Storage::list is one-level listing for both local and S3 backends.
+                // Traverse recursively to discover parquet files under data/chunk-*/.
+                let mut dirs_to_visit = vec![prefix_path.clone()];
 
-                                files.push(StagedParquetFile {
-                                    path: obj.path.clone(),
-                                    worker_id: worker_id.clone(),
-                                    episode_index: episode_num,
-                                });
+                while let Some(dir) = dirs_to_visit.pop() {
+                    match storage_clone.list(&dir) {
+                        Ok(objects) => {
+                            for obj in objects {
+                                if obj.is_dir {
+                                    dirs_to_visit.push(PathBuf::from(&obj.path));
+                                    continue;
+                                }
 
-                                debug!(
-                                    worker_id = %worker_id,
-                                    path = %obj.path,
-                                    episode_index = episode_num,
-                                    "Found parquet file"
-                                );
+                                if obj.path.ends_with(".parquet") {
+                                    let episode_num = extract_episode_number_from_str(&obj.path);
+
+                                    files.push(StagedParquetFile {
+                                        path: obj.path.clone(),
+                                        worker_id: worker_id.clone(),
+                                        episode_index: episode_num,
+                                    });
+
+                                    debug!(
+                                        worker_id = %worker_id,
+                                        path = %obj.path,
+                                        episode_index = episode_num,
+                                        "Found parquet file"
+                                    );
+                                }
                             }
                         }
-                    }
-                    Err(e) => {
-                        warn!(
-                            worker_id = %worker_id,
-                            prefix = %prefix_path.display(),
-                            error = %e,
-                            "Failed to list files in staging path"
-                        );
+                        Err(e) => {
+                            warn!(
+                                worker_id = %worker_id,
+                                prefix = %dir.display(),
+                                error = %e,
+                                "Failed to list files in staging path"
+                            );
+                        }
                     }
                 }
 
@@ -234,10 +246,11 @@ impl ParquetMergeExecutor {
     async fn merge_parquet_files(
         &self,
         files: &[StagedParquetFile],
-    ) -> Result<DataFrame, TikvError> {
+    ) -> Result<(DataFrame, Vec<MediaCopyTask>), TikvError> {
         use tokio::task::spawn_blocking;
 
         let mut all_dataframes: Vec<DataFrame> = Vec::new();
+        let mut media_tasks: HashMap<String, MediaCopyTask> = HashMap::new();
         let mut current_episode_index: i64 = 0;
         let mut current_frame_index: i64 = 0;
         let mut current_global_index: i64 = 0;
@@ -250,18 +263,29 @@ impl ParquetMergeExecutor {
                 "Reading parquet file"
             );
 
-            // Read parquet file using blocking I/O in a separate thread
+            // Read parquet via storage backend and parse from bytes in a blocking thread.
+            // This supports cloud paths (S3 keys) and local files uniformly.
             let df = spawn_blocking({
+                let storage = Arc::clone(&self.storage);
                 let path_str = file.path.clone();
                 move || {
-                    let path = Path::new(&path_str);
-                    let lf = LazyFrame::scan_parquet(path, Default::default()).map_err(|e| {
+                    let mut reader = storage.reader(Path::new(&path_str)).map_err(|e| {
                         TikvError::Serialization(format!(
                             "Failed to read parquet '{}': {}",
                             path_str, e
                         ))
                     })?;
-                    lf.collect().map_err(|e| {
+
+                    let mut parquet_bytes = Vec::new();
+                    reader.read_to_end(&mut parquet_bytes).map_err(|e| {
+                        TikvError::Serialization(format!(
+                            "Failed to read parquet bytes '{}': {}",
+                            path_str, e
+                        ))
+                    })?;
+
+                    let cursor = std::io::Cursor::new(parquet_bytes);
+                    ParquetReader::new(cursor).finish().map_err(|e| {
                         TikvError::Serialization(format!("Failed to collect dataframe: {}", e))
                     })
                 }
@@ -275,6 +299,12 @@ impl ParquetMergeExecutor {
             }
 
             let n_rows = df.height();
+            let staging_prefix = staging_prefix_from_parquet_path(&file.path).ok_or_else(|| {
+                TikvError::Serialization(format!(
+                    "Invalid staged parquet path (missing /data/ segment): {}",
+                    file.path
+                ))
+            })?;
 
             // Create new index columns with sequential values
             let new_episode_index: Vec<i64> = (0..n_rows).map(|_| current_episode_index).collect();
@@ -297,6 +327,59 @@ impl ParquetMergeExecutor {
             );
             let _ = df_modified.replace("frame_index", Series::new("frame_index", new_frame_index));
             let _ = df_modified.replace("index", Series::new("index", new_index));
+
+            // Rewrite video path columns to sequential episode paths and collect
+            // media copy tasks from worker staging to final output.
+            let column_names: Vec<String> = df_modified
+                .get_column_names()
+                .into_iter()
+                .map(|n| n.to_string())
+                .collect();
+
+            for col_name in column_names {
+                if !col_name.ends_with("_path") {
+                    continue;
+                }
+
+                let series = match df_modified.column(&col_name) {
+                    Ok(s) => s.clone(),
+                    Err(_) => continue,
+                };
+
+                let utf8 = match series.str() {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                let remapped_values: Vec<Option<String>> = utf8
+                    .into_iter()
+                    .map(|opt| {
+                        opt.map(|src_path| {
+                            let dst_path =
+                                remap_episode_video_path(src_path, current_episode_index);
+
+                            let src_key = format!(
+                                "{}/{}",
+                                staging_prefix.trim_end_matches('/'),
+                                src_path.trim_start_matches('/'),
+                            );
+                            let task_key = format!("{}|{}", src_key, dst_path);
+
+                            media_tasks
+                                .entry(task_key)
+                                .or_insert_with(|| MediaCopyTask {
+                                    source_key: src_key,
+                                    dest_key: dst_path.clone(),
+                                });
+
+                            dst_path
+                        })
+                    })
+                    .collect();
+
+                let _ =
+                    df_modified.replace(&col_name, Series::new(col_name.as_str(), remapped_values));
+            }
 
             all_dataframes.push(df_modified);
 
@@ -337,7 +420,55 @@ impl ParquetMergeExecutor {
             "Merged all parquet files"
         );
 
-        Ok(merged)
+        Ok((merged, media_tasks.into_values().collect()))
+    }
+
+    /// Copy staged media assets into final dataset output paths.
+    fn copy_media_assets(&self, tasks: &[MediaCopyTask]) -> Result<(), TikvError> {
+        let mut copied_files = 0usize;
+
+        for task in tasks {
+            let mut reader = self
+                .storage
+                .reader(Path::new(&task.source_key))
+                .map_err(|e| {
+                    TikvError::Serialization(format!(
+                        "Failed to read staged media '{}': {}",
+                        task.source_key, e
+                    ))
+                })?;
+
+            let mut writer = self
+                .storage
+                .writer(Path::new(&task.dest_key))
+                .map_err(|e| {
+                    TikvError::Serialization(format!(
+                        "Failed to create merged media '{}': {}",
+                        task.dest_key, e
+                    ))
+                })?;
+
+            std::io::copy(&mut reader, &mut writer).map_err(|e| {
+                TikvError::Serialization(format!(
+                    "Failed to copy staged media '{}' to '{}': {}",
+                    task.source_key, task.dest_key, e
+                ))
+            })?;
+            writer.flush().map_err(|e| {
+                TikvError::Serialization(format!(
+                    "Failed to flush merged media '{}': {}",
+                    task.dest_key, e
+                ))
+            })?;
+
+            copied_files += 1;
+        }
+
+        info!(
+            copied_files,
+            "Copied staged media assets into merged dataset output"
+        );
+        Ok(())
     }
 
     /// Write the merged parquet file to storage.
@@ -437,6 +568,29 @@ struct StagedParquetFile {
 
     /// Episode index from the worker.
     episode_index: i64,
+}
+
+#[derive(Debug, Clone)]
+struct MediaCopyTask {
+    source_key: String,
+    dest_key: String,
+}
+
+fn staging_prefix_from_parquet_path(path: &str) -> Option<String> {
+    path.rfind("/data/").map(|idx| path[..idx].to_string())
+}
+
+fn remap_episode_video_path(path: &str, episode_index: i64) -> String {
+    let Some(slash_idx) = path.rfind('/') else {
+        return path.to_string();
+    };
+
+    let (dir, file) = path.split_at(slash_idx + 1);
+    if file.starts_with("episode_") && file.ends_with(".mp4") {
+        format!("{}episode_{:06}.mp4", dir, episode_index)
+    } else {
+        path.to_string()
+    }
 }
 
 /// Extract episode number from a parquet filename string.
