@@ -43,7 +43,7 @@ use crate::traits::{Storage, StreamingRead};
 /// // assert_eq!(buf, "hello");
 /// # Ok::<(), roboflow_storage::StorageError>(())
 /// ```
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MockStorage {
     data: Arc<RwLock<HashMap<String, Vec<u8>>>>,
 }

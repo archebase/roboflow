@@ -41,6 +41,7 @@
 //! - `WORKER_CHECKPOINT_INTERVAL_FRAMES` - Checkpoint interval in frames (default: 100)
 //! - `WORKER_CHECKPOINT_INTERVAL_SECS` - Checkpoint interval in seconds (default: 10)
 //! - `WORKER_OUTPUT_PREFIX` - Fallback output prefix (default: output/) - only used if Batch output_path is empty
+//! - `SOURCE_INIT_TIMEOUT_SECS` - Source initialization timeout (default: 300)
 //!
 //! ### Finalizer Configuration (ROLE=finalizer or unified)
 //! - `FINALIZER_POLL_INTERVAL_SECS` - Poll interval for completed batches (default: 30)
@@ -441,6 +442,7 @@ async fn run_health_check() -> HealthCheckResult {
 struct CliWorkProcessor {
     pod_id: String,
     tikv: Arc<roboflow_distributed::TikvClient>,
+    merge_coordinator: Arc<roboflow_distributed::MergeCoordinator>,
     config: WorkerConfig,
 }
 
@@ -448,11 +450,13 @@ impl CliWorkProcessor {
     fn new(
         pod_id: String,
         tikv: Arc<roboflow_distributed::TikvClient>,
+        merge_coordinator: Arc<roboflow_distributed::MergeCoordinator>,
         config: WorkerConfig,
     ) -> Self {
         Self {
             pod_id,
             tikv,
+            merge_coordinator,
             config,
         }
     }
@@ -465,12 +469,17 @@ impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
         work_unit: &roboflow_distributed::WorkUnit,
     ) -> Result<roboflow_distributed::ProcessingResult, roboflow_distributed::TikvError> {
         use roboflow_dataset::formats::common::DatasetBaseConfig;
+        use roboflow_dataset::formats::common::config::MappingType;
         use roboflow_dataset::formats::lerobot::{
             DatasetConfig, LerobotConfig, LerobotWriterConfig, VideoConfig, create_lerobot_writer,
         };
         use roboflow_dataset::sources::{SourceConfig, create_source};
         use roboflow_distributed::EpisodeAllocator;
         use roboflow_pipeline::{DatasetPipelineConfig, DatasetPipelineExecutor};
+
+        // 1. Determine output mode (S3 vs local) from work_unit.output_path
+        let is_cloud = work_unit.output_path.starts_with("s3://")
+            || work_unit.output_path.starts_with("oss://");
 
         let input_file = work_unit
             .files
@@ -482,16 +491,29 @@ impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
             batch_id = %work_unit.batch_id,
             unit_id = %work_unit.id,
             input_file = %input_file,
+            is_cloud = is_cloud,
             "CliWorkProcessor: starting to process work unit"
         );
 
-        let output_dir = if self.config.output_prefix.starts_with("s3://")
-            || self.config.output_prefix.starts_with("oss://")
-        {
-            std::env::temp_dir().join(format!("roboflow_{}", self.pod_id))
+        // 2. Create local temp directory for processing
+        let local_temp = std::env::temp_dir().join(format!(
+            "roboflow_worker_{}_{}",
+            self.pod_id,
+            work_unit.id.replace(|c: char| !c.is_alphanumeric(), "_")
+        ));
+
+        let output_dir = if is_cloud {
+            local_temp.clone()
         } else {
-            std::path::PathBuf::from(&self.config.output_prefix)
+            std::path::PathBuf::from(&work_unit.output_path)
         };
+
+        // Create temp directory if it doesn't exist
+        if is_cloud {
+            std::fs::create_dir_all(&local_temp).map_err(|e| {
+                roboflow_distributed::TikvError::Other(format!("Temp dir error: {e}"))
+            })?;
+        }
 
         let allocator = roboflow_distributed::TiKVEpisodeAllocator::new(
             self.tikv.clone(),
@@ -509,62 +531,8 @@ impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
             "Episode allocated"
         );
 
-        let source_config = if input_file.ends_with(".mcap") {
-            SourceConfig::mcap(&input_file)
-        } else if input_file.ends_with(".bag") {
-            SourceConfig::bag(&input_file)
-        } else {
-            return Err(roboflow_distributed::TikvError::Other(format!(
-                "Unsupported input source: {input_file}"
-            )));
-        };
-
-        tracing::debug!(
-            batch_id = %work_unit.batch_id,
-            unit_id = %work_unit.id,
-            source_type = if input_file.ends_with(".mcap") { "mcap" } else { "bag" },
-            "Creating source"
-        );
-
-        let mut source = create_source(&source_config)
-            .map_err(|e| roboflow_distributed::TikvError::Other(format!("Source error: {e}")))?;
-
-        tracing::debug!(
-            batch_id = %work_unit.batch_id,
-            unit_id = %work_unit.id,
-            "About to call source.initialize()"
-        );
-
-        // Add timeout to detect hangs
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(300),
-            source.initialize(&source_config),
-        )
-        .await
-        {
-            Ok(result) => {
-                result.map_err(|e| {
-                    roboflow_distributed::TikvError::Other(format!("Init error: {e}"))
-                })?;
-                tracing::debug!(
-                    batch_id = %work_unit.batch_id,
-                    unit_id = %work_unit.id,
-                    "Source initialized successfully"
-                );
-            }
-            Err(_) => {
-                tracing::error!(
-                    batch_id = %work_unit.batch_id,
-                    unit_id = %work_unit.id,
-                    "Source initialization timed out after 300s"
-                );
-                return Err(roboflow_distributed::TikvError::Other(
-                    "Source initialization timed out".to_string(),
-                ));
-            }
-        }
-
-        let mut lerobot_config = match self.tikv.get_config(&work_unit.config_hash).await {
+        // Load lerobot config FIRST to get topic mappings for the source
+        let lerobot_config = match self.tikv.get_config(&work_unit.config_hash).await {
             Ok(Some(config_record)) => LerobotConfig::from_toml(&config_record.content)
                 .unwrap_or_else(|_| LerobotConfig {
                     dataset: DatasetConfig {
@@ -598,6 +566,99 @@ impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
             },
         };
 
+        // Extract image and state topics from mappings for frame alignment
+        let image_topics: Vec<String> = lerobot_config
+            .mappings
+            .iter()
+            .filter(|m| m.mapping_type == MappingType::Image)
+            .map(|m| m.topic.clone())
+            .collect();
+        let state_topics: Vec<String> = lerobot_config
+            .mappings
+            .iter()
+            .filter(|m| m.mapping_type == MappingType::State)
+            .map(|m| m.topic.clone())
+            .collect();
+
+        tracing::debug!(
+            batch_id = %work_unit.batch_id,
+            unit_id = %work_unit.id,
+            image_topics = ?image_topics,
+            state_topics = ?state_topics,
+            "Extracted topics from config"
+        );
+
+        let source_config = if input_file.ends_with(".mcap") {
+            SourceConfig::mcap(&input_file)
+        } else if input_file.ends_with(".bag") {
+            let mut config = SourceConfig::bag(&input_file);
+            // Pass topics to the bag source for frame alignment
+            if !image_topics.is_empty() {
+                config = config.with_option("image_topics", serde_json::json!(image_topics));
+            }
+            if !state_topics.is_empty() {
+                config = config.with_option("state_topics", serde_json::json!(state_topics));
+            }
+            config = config.with_option("fps", serde_json::json!(lerobot_config.dataset.fps));
+            config
+        } else {
+            return Err(roboflow_distributed::TikvError::Other(format!(
+                "Unsupported input source: {input_file}"
+            )));
+        };
+
+        tracing::debug!(
+            batch_id = %work_unit.batch_id,
+            unit_id = %work_unit.id,
+            source_type = if input_file.ends_with(".mcap") { "mcap" } else { "bag" },
+            "Creating source"
+        );
+
+        let mut source = create_source(&source_config)
+            .map_err(|e| roboflow_distributed::TikvError::Other(format!("Source error: {e}")))?;
+
+        tracing::debug!(
+            batch_id = %work_unit.batch_id,
+            unit_id = %work_unit.id,
+            "About to call source.initialize()"
+        );
+
+        // Add timeout to detect hangs (configurable via SOURCE_INIT_TIMEOUT_SECS)
+        let init_timeout_secs: u64 = env::var("SOURCE_INIT_TIMEOUT_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(300);
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(init_timeout_secs),
+            source.initialize(&source_config),
+        )
+        .await
+        {
+            Ok(result) => {
+                result.map_err(|e| {
+                    roboflow_distributed::TikvError::Other(format!("Init error: {e}"))
+                })?;
+                tracing::debug!(
+                    batch_id = %work_unit.batch_id,
+                    unit_id = %work_unit.id,
+                    "Source initialized successfully"
+                );
+            }
+            Err(_) => {
+                tracing::error!(
+                    batch_id = %work_unit.batch_id,
+                    unit_id = %work_unit.id,
+                    timeout_secs = init_timeout_secs,
+                    "Source initialization timed out"
+                );
+                return Err(roboflow_distributed::TikvError::Other(
+                    "Source initialization timed out".to_string(),
+                ));
+            }
+        }
+
+        // lerobot_config already loaded above before source creation
+        let mut lerobot_config = lerobot_config;
         lerobot_config.streaming.finalize_metadata_in_coordinator = true;
 
         let episode_output_dir =
@@ -628,17 +689,38 @@ impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
             unit_id = %work_unit.id,
             "Starting to read and process messages"
         );
+
+        let mut total_messages: u64 = 0;
+        let mut last_log_time = std::time::Instant::now();
+        let log_interval = std::time::Duration::from_secs(10);
+
         loop {
             match source.read_batch(100).await {
                 Ok(Some(messages)) => {
+                    let msg_count = messages.len() as u64;
+                    total_messages += msg_count;
+
+                    let now = std::time::Instant::now();
+                    if now.duration_since(last_log_time) >= log_interval {
+                        tracing::info!(
+                            batch_id = %work_unit.batch_id,
+                            unit_id = %work_unit.id,
+                            total_messages = total_messages,
+                            batch_size = msg_count,
+                            "Processing progress"
+                        );
+                        last_log_time = now;
+                    }
+
                     executor.process_messages(messages).map_err(|e| {
                         roboflow_distributed::TikvError::Other(format!("Pipeline error: {e}"))
                     })?;
                 }
                 Ok(None) => {
-                    tracing::debug!(
+                    tracing::info!(
                         batch_id = %work_unit.batch_id,
                         unit_id = %work_unit.id,
+                        total_messages = total_messages,
                         "Finished reading messages, finalizing"
                     );
                     break;
@@ -651,21 +733,101 @@ impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
             }
         }
 
+        // 4. Finalize processing
         let pipeline_stats = executor
             .finalize()
             .map_err(|e| roboflow_distributed::TikvError::Other(format!("Finalize error: {e}")))?;
 
-        Ok(roboflow_distributed::ProcessingResult::Success {
-            episode_index: allocation.episode_index,
-            frame_count: pipeline_stats.frames_written as u64,
-            episode_stats: Some(roboflow_distributed::EpisodeStats {
-                episode_index: allocation.episode_index as usize,
-                frame_count: pipeline_stats.frames_written,
-                feature_stats: std::collections::HashMap::new(),
-                task_indices: Vec::new(),
-                recorded_at: Some(chrono::Utc::now().timestamp()),
-            }),
-        })
+        let frame_count = pipeline_stats.frames_written as u64;
+
+        // 5. If S3/cloud mode: upload to staging and register
+        if is_cloud {
+            // Create storage factory and storage for upload
+            let storage_factory = create_storage_factory();
+            let storage = storage_factory
+                .create(&work_unit.output_path)
+                .map_err(|e| {
+                    roboflow_distributed::TikvError::Other(format!("Storage error: {e}"))
+                })?;
+
+            // Build staging path: {output_path}/staging/{batch_id}/{worker_id}/{unit_id}
+            let staging_path = format!(
+                "{}/staging/{}/worker_{}/unit_{}",
+                work_unit.output_path.trim_end_matches('/'),
+                work_unit.batch_id,
+                self.pod_id,
+                work_unit.id
+            );
+
+            tracing::info!(
+                batch_id = %work_unit.batch_id,
+                unit_id = %work_unit.id,
+                staging_path = %staging_path,
+                "Uploading to cloud storage staging"
+            );
+
+            // Upload the local temp directory to cloud staging
+            let uploaded = roboflow_storage::upload::upload_directory_recursive(
+                storage,
+                &episode_output_dir,
+                std::path::Path::new(&staging_path),
+            )
+            .map_err(|e| roboflow_distributed::TikvError::Other(format!("Upload error: {e}")))?;
+
+            tracing::info!(
+                batch_id = %work_unit.batch_id,
+                unit_id = %work_unit.id,
+                staging_path = %staging_path,
+                files_uploaded = uploaded.len(),
+                total_frames = frame_count,
+                "Staging upload complete, registering with merge coordinator"
+            );
+
+            // Register with merge coordinator
+            self.merge_coordinator
+                .register_staging_complete(
+                    &work_unit.batch_id,
+                    &self.pod_id,
+                    staging_path.clone(),
+                    frame_count,
+                )
+                .await?;
+
+            // Clean up local temp directory
+            if let Err(e) = std::fs::remove_dir_all(&local_temp) {
+                tracing::warn!(
+                    batch_id = %work_unit.batch_id,
+                    unit_id = %work_unit.id,
+                    temp_dir = %local_temp.display(),
+                    error = %e,
+                    "Failed to clean up temp directory"
+                );
+            }
+
+            Ok(roboflow_distributed::ProcessingResult::Success {
+                episode_index: allocation.episode_index,
+                frame_count,
+                episode_stats: Some(roboflow_distributed::EpisodeStats {
+                    episode_index: allocation.episode_index as usize,
+                    frame_count: pipeline_stats.frames_written,
+                    feature_stats: std::collections::HashMap::new(),
+                    task_indices: Vec::new(),
+                    recorded_at: Some(chrono::Utc::now().timestamp()),
+                }),
+            })
+        } else {
+            Ok(roboflow_distributed::ProcessingResult::Success {
+                episode_index: allocation.episode_index,
+                frame_count,
+                episode_stats: Some(roboflow_distributed::EpisodeStats {
+                    episode_index: allocation.episode_index as usize,
+                    frame_count: pipeline_stats.frames_written,
+                    feature_stats: std::collections::HashMap::new(),
+                    task_indices: Vec::new(),
+                    recorded_at: Some(chrono::Utc::now().timestamp()),
+                }),
+            })
+        }
     }
 }
 
@@ -675,9 +837,14 @@ async fn run_worker(
     tikv: Arc<roboflow_distributed::TikvClient>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = WorkerConfig::new();
-    let processor: roboflow_distributed::worker::SharedWorkProcessor = Arc::new(
-        CliWorkProcessor::new(pod_id.clone(), tikv.clone(), config.clone()),
-    );
+    let merge_coordinator = Arc::new(MergeCoordinator::new(tikv.clone()));
+    let processor: roboflow_distributed::worker::SharedWorkProcessor =
+        Arc::new(CliWorkProcessor::new(
+            pod_id.clone(),
+            tikv.clone(),
+            merge_coordinator,
+            config.clone(),
+        ));
     let mut worker = Worker::with_processor(pod_id, tikv, config, processor)?;
 
     worker.run().await.map_err(|e| e.into())
@@ -716,9 +883,13 @@ async fn run_unified(
 
     // Create worker, finalizer, and reaper
     let worker_pod_id = format!("{}-worker", pod_id);
-    let worker_processor: roboflow_distributed::worker::SharedWorkProcessor = Arc::new(
-        CliWorkProcessor::new(worker_pod_id.clone(), tikv.clone(), worker_config.clone()),
-    );
+    let worker_processor: roboflow_distributed::worker::SharedWorkProcessor =
+        Arc::new(CliWorkProcessor::new(
+            worker_pod_id.clone(),
+            tikv.clone(),
+            merge_coordinator.clone(),
+            worker_config.clone(),
+        ));
     let mut worker =
         Worker::with_processor(worker_pod_id, tikv.clone(), worker_config, worker_processor)?;
 

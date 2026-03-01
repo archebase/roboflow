@@ -849,6 +849,12 @@ impl Scanner {
 
                 let pending_key = WorkUnitKeys::pending(batch_id, &work_unit.id);
                 let pending_data = work_unit.batch_id.as_bytes().to_vec();
+                tracing::debug!(
+                    batch_id = %batch_id,
+                    unit_id = %work_unit.id,
+                    pending_key = %String::from_utf8_lossy(&pending_key),
+                    "Created pending key for work unit"
+                );
                 pending_pairs.push((pending_key, pending_data));
             }
 
@@ -857,7 +863,17 @@ impl Scanner {
                 .chain(pending_pairs.clone())
                 .collect();
 
+            tracing::info!(
+                batch_id = %batch_id,
+                work_units = all_pairs.len() / 2,
+                "Writing work units and pending entries to TiKV"
+            );
             self.tikv.batch_put(all_pairs).await?;
+            tracing::info!(
+                batch_id = %batch_id,
+                pending_entries = pending_pairs.len(),
+                "Successfully wrote pending entries"
+            );
             created += chunk.len() as u64;
         }
 
@@ -882,6 +898,11 @@ impl Scanner {
     /// and creates jobs for discovered files.
     async fn scan_cycle(&self) -> Result<ScanStats, TikvError> {
         let start = SystemTime::now();
+
+        tracing::info!(
+            pod_id = %self.pod_id,
+            "=== SCANNER CYCLE START ==="
+        );
 
         // Get pending batches
         let batches = self.get_pending_batches().await?;
@@ -939,7 +960,7 @@ impl Scanner {
             jobs_created = total_stats.jobs_created,
             duplicates_skipped = total_stats.duplicates_skipped,
             duration_ms = duration,
-            "Scan cycle completed"
+            "=== SCANNER CYCLE END ==="
         );
 
         Ok(total_stats)

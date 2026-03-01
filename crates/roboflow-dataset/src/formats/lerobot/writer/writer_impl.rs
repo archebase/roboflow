@@ -779,6 +779,57 @@ impl LerobotWriter {
         Ok(self.total_frames)
     }
 
+    /// Finalize the dataset and upload all files to cloud storage.
+    ///
+    /// This method:
+    /// 1. Calls `finalize()` to complete local processing
+    /// 2. Uploads all files from the local output directory to a cloud storage staging path
+    /// 3. Returns the total frames and the list of uploaded files
+    ///
+    /// # Arguments
+    ///
+    /// * `storage` - The storage backend to upload to
+    /// * `staging_prefix` - Destination prefix in storage for uploaded files
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (total_frames, uploaded_files_metadata)
+    pub fn finalize_with_upload<S>(
+        self,
+        storage: &S,
+        staging_prefix: &std::path::Path,
+    ) -> Result<(usize, Vec<roboflow_storage::ObjectMetadata>)>
+    where
+        S: roboflow_storage::Storage + Clone + Send + 'static,
+    {
+        // Get output_dir before finalize consumes self
+        let output_dir = self.output_dir.clone();
+
+        // Step 1: Call finalize() to complete local processing
+        let total_frames = self.finalize()?;
+
+        // Step 2: Upload all files from the local output directory
+        // Use Arc to wrap the storage reference for trait object compatibility
+        let storage_arc = std::sync::Arc::new(storage.clone());
+        let uploaded = roboflow_storage::upload::upload_directory_recursive(
+            storage_arc,
+            &output_dir,
+            staging_prefix,
+        )
+        .map_err(|e| roboflow_core::RoboflowError::storage("upload", e.to_string(), false))?;
+
+        tracing::info!(
+            output_dir = %output_dir.display(),
+            staging_prefix = %staging_prefix.display(),
+            file_count = uploaded.len(),
+            total_frames,
+            "Uploaded dataset to cloud storage"
+        );
+
+        // Step 3: Return the frame count and upload metadata
+        Ok((total_frames, uploaded))
+    }
+
     /// Merge all pending video segments into final episode files.
     ///
     /// This method is called during finalization to compose all temporary
@@ -1594,5 +1645,70 @@ mod tests {
                 .image_frames
                 .contains_key("observation.images.front")
         );
+    }
+
+    #[test]
+    fn test_finalize_with_upload() {
+        use roboflow_storage::mock::MockStorage;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = MockStorage::new();
+
+        let mut writer =
+            LerobotWriter::new_local(tmp.path(), test_config(FlushingConfig::default())).unwrap();
+
+        // Write 3 frames
+        for i in 0..3 {
+            writer.write_frame(&make_frame(i)).unwrap();
+        }
+
+        // Finalize with upload
+        let staging_prefix = std::path::Path::new("datasets/test_episode");
+        let (total_frames, uploaded) = writer
+            .finalize_with_upload(&storage, staging_prefix)
+            .unwrap();
+
+        // Verify frame count
+        assert_eq!(total_frames, 3, "Expected 3 total frames");
+
+        // Verify files were uploaded
+        assert!(!uploaded.is_empty(), "Expected uploaded files");
+
+        // Check that parquet file was uploaded
+        let parquet_uploaded = uploaded
+            .iter()
+            .any(|meta| meta.path.contains("episode_000000.parquet"));
+        assert!(
+            parquet_uploaded,
+            "Expected parquet file to be uploaded: {:?}",
+            uploaded
+        );
+
+        // Check that video file was uploaded
+        let video_uploaded = uploaded
+            .iter()
+            .any(|meta| meta.path.contains("episode_000000.mp4"));
+        assert!(
+            video_uploaded,
+            "Expected video file to be uploaded: {:?}",
+            uploaded
+        );
+
+        // Verify metadata files were uploaded
+        let info_uploaded = uploaded.iter().any(|meta| meta.path.contains("info.json"));
+        assert!(
+            info_uploaded,
+            "Expected info.json to be uploaded: {:?}",
+            uploaded
+        );
+
+        // Verify all uploaded paths contain the staging prefix
+        for meta in &uploaded {
+            assert!(
+                meta.path.starts_with("datasets/test_episode"),
+                "Uploaded path should start with staging prefix: {}",
+                meta.path
+            );
+        }
     }
 }

@@ -86,11 +86,9 @@ impl S3BridgeConfig {
     /// Uses `unsafe` set_var as required by Rust 2024 edition.
     pub fn apply_to_aws_env_if_missing(&self) {
         fn set_if_missing(key: &str, val: &Option<String>) {
-            if std::env::var_os(key).is_none() {
-                if let Some(v) = val {
-                    // Rust 2024: std::env::set_var is unsafe
-                    unsafe { std::env::set_var(key, v) };
-                }
+            if let (true, Some(v)) = (std::env::var_os(key).is_none(), val) {
+                // Rust 2024: std::env::set_var is unsafe
+                unsafe { std::env::set_var(key, v) };
             }
         }
 
@@ -146,11 +144,12 @@ pub fn init_s3_env_bridge() -> Result<(), String> {
         let mut config = S3BridgeConfig::from_outer_env();
 
         // 2. If RF_S3_* not set, try loading from roboflow config file
-        if config.is_empty() {
-            if let Ok(Some(cfg)) = roboflow_storage::RoboflowConfig::load_default() {
-                config = S3BridgeConfig::from_roboflow_config(&cfg);
-                tracing::debug!("Loaded S3 configuration from roboflow config file");
-            }
+        if let (true, Ok(Some(cfg))) = (
+            config.is_empty(),
+            roboflow_storage::RoboflowConfig::load_default(),
+        ) {
+            config = S3BridgeConfig::from_roboflow_config(&cfg);
+            tracing::debug!("Loaded S3 configuration from roboflow config file");
         }
 
         // 3. Validate
@@ -173,10 +172,12 @@ pub fn init_s3_env_bridge() -> Result<(), String> {
 /// This is a convenience wrapper that calls `init_s3_env_bridge()` lazily.
 /// For explicit control, call `init_s3_env_bridge()` once at startup instead.
 pub fn maybe_apply_s3_env_for_url(url: &str) {
-    if is_cloud_url(url) {
-        if let Err(e) = init_s3_env_bridge() {
-            tracing::warn!(error = %e, "S3 env bridge initialization failed");
-        }
+    if !is_cloud_url(url) {
+        return;
+    }
+
+    if let Err(e) = init_s3_env_bridge() {
+        tracing::warn!(error = %e, "S3 env bridge initialization failed");
     }
 }
 

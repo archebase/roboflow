@@ -537,19 +537,26 @@ impl MergeCoordinator {
             expected_workers = state.expected_workers,
             completed_workers = state.completed_workers,
             total_frames = state.total_frames,
-            "Merge execution started"
+            "=== MERGE EXECUTION START ==="
         );
 
         // Execute merge
+        let merge_start = Instant::now();
         let actual_frames = match self.execute_merge(&state).await {
             Ok(frames) => frames,
             Err(e) => {
                 let _ = self.fail_merge_with_status(job_id, &e.to_string()).await;
+                tracing::error!(
+                    job_id = %job_id,
+                    error = %e,
+                    "=== MERGE EXECUTION FAILED ==="
+                );
                 return Ok(MergeResult::Failed {
                     error: e.to_string(),
                 });
             }
         };
+        let merge_duration = merge_start.elapsed();
 
         // Complete the merge
         match self
@@ -558,14 +565,28 @@ impl MergeCoordinator {
         {
             Ok(()) => {
                 self.semaphore.record_success();
+                info!(
+                    job_id = %job_id,
+                    total_frames = actual_frames,
+                    duration_secs = merge_duration.as_secs_f64(),
+                    "=== MERGE EXECUTION END (SUCCESS) ==="
+                );
                 Ok(MergeResult::Success {
                     output_path: state.output_path,
                     total_frames: actual_frames,
                 })
             }
-            Err(e) => Ok(MergeResult::Failed {
-                error: e.to_string(),
-            }),
+            Err(e) => {
+                tracing::error!(
+                    job_id = %job_id,
+                    error = %e,
+                    duration_secs = merge_duration.as_secs_f64(),
+                    "=== MERGE EXECUTION END (FAILED) ==="
+                );
+                Ok(MergeResult::Failed {
+                    error: e.to_string(),
+                })
+            }
         }
     }
 

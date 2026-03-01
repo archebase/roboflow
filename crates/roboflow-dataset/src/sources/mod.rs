@@ -7,7 +7,6 @@ pub mod registry;
 pub mod rrd;
 pub mod s3_env;
 pub mod s3_prefix;
-pub mod streaming_bridge;
 
 pub use bag::{BagSource, BagSourceBatched, BagSourceBlocking};
 pub use config::{SourceConfig, SourceType};

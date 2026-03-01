@@ -10,11 +10,29 @@
 use super::schema::MergeState;
 use crate::tikv::error::TikvError;
 use polars::prelude::*;
-use roboflow_storage::{Storage, StorageUrl};
+use roboflow_storage::{Storage, StorageFactory, StorageUrl};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
+
+/// Factory for creating storage backends from URLs.
+///
+/// This trait allows dependency injection for testing.
+pub trait StorageFactoryTrait: Send + Sync {
+    /// Create a storage backend for the given URL.
+    fn create(&self, url: &str) -> roboflow_storage::StorageResult<Arc<dyn Storage>>;
+}
+
+/// Default implementation using StorageFactory.
+pub struct DefaultStorageFactory;
+
+impl StorageFactoryTrait for DefaultStorageFactory {
+    fn create(&self, url: &str) -> roboflow_storage::StorageResult<Arc<dyn Storage>> {
+        let factory = StorageFactory::new();
+        factory.create(url)
+    }
+}
 
 /// Parquet merge executor.
 ///
@@ -29,6 +47,9 @@ pub struct ParquetMergeExecutor {
 
     /// Temporary directory for merge operations.
     temp_dir: PathBuf,
+
+    /// Factory for creating storage backends from URLs.
+    storage_factory: Box<dyn StorageFactoryTrait>,
 }
 
 impl ParquetMergeExecutor {
@@ -38,6 +59,23 @@ impl ParquetMergeExecutor {
             storage,
             output_path,
             temp_dir,
+            storage_factory: Box::new(DefaultStorageFactory),
+        }
+    }
+
+    /// Create a new merge executor with a custom storage factory (for testing).
+    #[cfg(test)]
+    pub fn with_factory(
+        storage: Arc<dyn Storage>,
+        output_path: String,
+        temp_dir: PathBuf,
+        factory: Box<dyn StorageFactoryTrait>,
+    ) -> Self {
+        Self {
+            storage,
+            output_path,
+            temp_dir,
+            storage_factory: factory,
         }
     }
 
@@ -91,44 +129,103 @@ impl ParquetMergeExecutor {
     }
 
     /// Discover all parquet files in the staging paths.
+    ///
+    /// Supports both local filesystem and cloud storage (S3, etc.) via StorageUrl parsing.
     async fn discover_parquet_files(
         &self,
         state: &MergeState,
     ) -> Result<Vec<StagedParquetFile>, TikvError> {
+        use tokio::task::spawn_blocking;
+
         let mut files = Vec::new();
 
         for (worker_id, staging_path) in &state.staging_paths {
-            let staging_prefix = Path::new(staging_path);
+            // Parse the staging path as a StorageUrl
+            let staging_url: StorageUrl =
+                staging_path
+                    .parse()
+                    .map_err(|e: roboflow_storage::StorageError| {
+                        TikvError::Serialization(format!(
+                            "Failed to parse staging path '{}': {}",
+                            staging_path, e
+                        ))
+                    })?;
 
-            // List parquet files in the staging path
-            // Pattern: staging_path/data/chunk-000/episode_*.parquet
-            let pattern = staging_prefix.join("data/chunk-000/*.parquet");
+            // Create storage backend for this staging path using the factory
+            let storage = self.storage_factory.create(staging_path).map_err(|e| {
+                TikvError::Serialization(format!(
+                    "Failed to create storage for '{}': {}",
+                    staging_path, e
+                ))
+            })?;
+
+            // Build the prefix for listing: staging_path/data/chunk-000/
+            let list_prefix = format!("{}/data/chunk-000/", staging_url.path());
+            let prefix_path = Path::new(&list_prefix);
 
             debug!(
                 worker_id = %worker_id,
-                pattern = %pattern.display(),
+                staging_path = %staging_path,
+                list_prefix = %list_prefix,
                 "Searching for parquet files"
             );
 
-            // Use glob to find parquet files
-            if let Ok(matches) = glob::glob(pattern.to_str().unwrap_or("")) {
-                for entry in matches.flatten() {
-                    if entry.extension().is_some_and(|e| e == "parquet") {
-                        // Extract episode number from filename
-                        let episode_num = extract_episode_number(&entry);
+            // List files with prefix using blocking I/O
+            let storage_clone = Arc::clone(&storage);
+            let prefix_path = prefix_path.to_path_buf();
+            let worker_id = worker_id.clone();
 
-                        files.push(StagedParquetFile {
-                            path: entry.clone(),
-                            worker_id: worker_id.clone(),
-                            episode_index: episode_num,
-                        });
+            let worker_files: Vec<StagedParquetFile> = spawn_blocking(move || {
+                let mut files = Vec::new();
+
+                match storage_clone.list(&prefix_path) {
+                    Ok(objects) => {
+                        for obj in objects {
+                            // Filter for .parquet extension
+                            if obj.path.ends_with(".parquet") {
+                                // Extract episode number from filename
+                                let episode_num = extract_episode_number_from_str(&obj.path);
+
+                                files.push(StagedParquetFile {
+                                    path: obj.path.clone(),
+                                    worker_id: worker_id.clone(),
+                                    episode_index: episode_num,
+                                });
+
+                                debug!(
+                                    worker_id = %worker_id,
+                                    path = %obj.path,
+                                    episode_index = episode_num,
+                                    "Found parquet file"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            worker_id = %worker_id,
+                            prefix = %prefix_path.display(),
+                            error = %e,
+                            "Failed to list files in staging path"
+                        );
                     }
                 }
-            }
+
+                files
+            })
+            .await
+            .map_err(|e| TikvError::Serialization(format!("Task join failed: {}", e)))?;
+
+            files.extend(worker_files);
         }
 
         // Sort by episode_index to maintain order
         files.sort_by_key(|f| f.episode_index);
+
+        info!(
+            total_files = files.len(),
+            "Discovered parquet files from all staging paths"
+        );
 
         Ok(files)
     }
@@ -148,17 +245,21 @@ impl ParquetMergeExecutor {
         for file in files {
             debug!(
                 worker_id = %file.worker_id,
-                path = %file.path.display(),
+                path = %file.path,
                 episode_index = file.episode_index,
                 "Reading parquet file"
             );
 
             // Read parquet file using blocking I/O in a separate thread
             let df = spawn_blocking({
-                let path = file.path.clone();
+                let path_str = file.path.clone();
                 move || {
-                    let lf = LazyFrame::scan_parquet(&path, Default::default()).map_err(|e| {
-                        TikvError::Serialization(format!("Failed to read parquet: {}", e))
+                    let path = Path::new(&path_str);
+                    let lf = LazyFrame::scan_parquet(path, Default::default()).map_err(|e| {
+                        TikvError::Serialization(format!(
+                            "Failed to read parquet '{}': {}",
+                            path_str, e
+                        ))
                     })?;
                     lf.collect().map_err(|e| {
                         TikvError::Serialization(format!("Failed to collect dataframe: {}", e))
@@ -328,8 +429,8 @@ impl ParquetMergeExecutor {
 /// Represents a staged parquet file from a worker.
 #[derive(Debug, Clone)]
 struct StagedParquetFile {
-    /// Path to the parquet file.
-    path: PathBuf,
+    /// Path to the parquet file (can be local path or S3 key).
+    path: String,
 
     /// Worker ID that created this file.
     worker_id: String,
@@ -338,10 +439,13 @@ struct StagedParquetFile {
     episode_index: i64,
 }
 
-/// Extract episode number from a parquet file path.
+/// Extract episode number from a parquet filename string.
 /// Handles patterns like "episode_000123.parquet" or "episode_123.parquet".
-fn extract_episode_number(path: &Path) -> i64 {
-    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+fn extract_episode_number_from_str(path_str: &str) -> i64 {
+    // Get the filename from the path (handle both "/" and "\" separators)
+    let filename = path_str
+        .rfind(['/', '\\'])
+        .map_or(path_str, |idx| &path_str[idx + 1..]);
 
     // Extract number from episode_NNNNNN.parquet
     if let Some(rest) = filename.strip_prefix("episode_")
@@ -360,18 +464,18 @@ mod tests {
     #[test]
     fn test_extract_episode_number() {
         assert_eq!(
-            extract_episode_number(Path::new("episode_000123.parquet")),
+            extract_episode_number_from_str("episode_000123.parquet"),
             123
         );
-        assert_eq!(extract_episode_number(Path::new("episode_0.parquet")), 0);
-        assert_eq!(extract_episode_number(Path::new("episode_42.parquet")), 42);
-        assert_eq!(extract_episode_number(Path::new("invalid.parquet")), 0);
+        assert_eq!(extract_episode_number_from_str("episode_0.parquet"), 0);
+        assert_eq!(extract_episode_number_from_str("episode_42.parquet"), 42);
+        assert_eq!(extract_episode_number_from_str("invalid.parquet"), 0);
     }
 
     #[test]
     fn test_extract_episode_number_large() {
         assert_eq!(
-            extract_episode_number(Path::new("episode_999999.parquet")),
+            extract_episode_number_from_str("episode_999999.parquet"),
             999999
         );
     }
@@ -379,11 +483,11 @@ mod tests {
     #[test]
     fn test_extract_episode_number_with_path() {
         assert_eq!(
-            extract_episode_number(Path::new("/some/path/episode_00123.parquet")),
+            extract_episode_number_from_str("/some/path/episode_00123.parquet"),
             123
         );
         assert_eq!(
-            extract_episode_number(Path::new("relative/path/episode_42.parquet")),
+            extract_episode_number_from_str("relative/path/episode_42.parquet"),
             42
         );
     }
@@ -391,17 +495,17 @@ mod tests {
     #[test]
     fn test_extract_episode_number_edge_cases() {
         // Missing prefix
-        assert_eq!(extract_episode_number(Path::new("000123.parquet")), 0);
+        assert_eq!(extract_episode_number_from_str("000123.parquet"), 0);
         // Missing suffix
-        assert_eq!(extract_episode_number(Path::new("episode_123")), 0);
+        assert_eq!(extract_episode_number_from_str("episode_123"), 0);
         // Empty path
-        assert_eq!(extract_episode_number(Path::new("")), 0);
+        assert_eq!(extract_episode_number_from_str(""), 0);
     }
 
     #[test]
     fn test_staged_parquet_file_debug() {
         let file = StagedParquetFile {
-            path: PathBuf::from("/path/to/file.parquet"),
+            path: "/path/to/file.parquet".to_string(),
             worker_id: "worker-1".to_string(),
             episode_index: 42,
         };
@@ -413,7 +517,7 @@ mod tests {
     #[test]
     fn test_staged_parquet_file_clone() {
         let file = StagedParquetFile {
-            path: PathBuf::from("/path/to/file.parquet"),
+            path: "/path/to/file.parquet".to_string(),
             worker_id: "worker-1".to_string(),
             episode_index: 42,
         };
@@ -427,17 +531,17 @@ mod tests {
     fn test_staged_parquet_file_sorting() {
         let mut files = [
             StagedParquetFile {
-                path: PathBuf::from("episode_3.parquet"),
+                path: "episode_3.parquet".to_string(),
                 worker_id: "w1".to_string(),
                 episode_index: 3,
             },
             StagedParquetFile {
-                path: PathBuf::from("episode_1.parquet"),
+                path: "episode_1.parquet".to_string(),
                 worker_id: "w1".to_string(),
                 episode_index: 1,
             },
             StagedParquetFile {
-                path: PathBuf::from("episode_2.parquet"),
+                path: "episode_2.parquet".to_string(),
                 worker_id: "w2".to_string(),
                 episode_index: 2,
             },
@@ -453,30 +557,24 @@ mod tests {
     #[test]
     fn test_extract_episode_number_various_patterns() {
         // Standard patterns
+        assert_eq!(extract_episode_number_from_str("episode_000000.parquet"), 0);
+        assert_eq!(extract_episode_number_from_str("episode_000001.parquet"), 1);
         assert_eq!(
-            extract_episode_number(Path::new("episode_000000.parquet")),
-            0
-        );
-        assert_eq!(
-            extract_episode_number(Path::new("episode_000001.parquet")),
-            1
-        );
-        assert_eq!(
-            extract_episode_number(Path::new("episode_999999.parquet")),
+            extract_episode_number_from_str("episode_999999.parquet"),
             999999
         );
 
         // With different padding
-        assert_eq!(extract_episode_number(Path::new("episode_1.parquet")), 1);
-        assert_eq!(extract_episode_number(Path::new("episode_42.parquet")), 42);
+        assert_eq!(extract_episode_number_from_str("episode_1.parquet"), 1);
+        assert_eq!(extract_episode_number_from_str("episode_42.parquet"), 42);
 
         // With path prefix
         assert_eq!(
-            extract_episode_number(Path::new("/data/chunk-000/episode_00123.parquet")),
+            extract_episode_number_from_str("/data/chunk-000/episode_00123.parquet"),
             123
         );
         assert_eq!(
-            extract_episode_number(Path::new("staging/worker-1/episode_456.parquet")),
+            extract_episode_number_from_str("staging/worker-1/episode_456.parquet"),
             456
         );
     }
@@ -484,17 +582,14 @@ mod tests {
     #[test]
     fn test_extract_episode_number_invalid_patterns() {
         // Invalid patterns
-        assert_eq!(extract_episode_number(Path::new("data.parquet")), 0);
-        assert_eq!(extract_episode_number(Path::new("episode_.parquet")), 0);
-        assert_eq!(extract_episode_number(Path::new("episode_.txt")), 0);
-        assert_eq!(extract_episode_number(Path::new("episode_abc.parquet")), 0);
+        assert_eq!(extract_episode_number_from_str("data.parquet"), 0);
+        assert_eq!(extract_episode_number_from_str("episode_.parquet"), 0);
+        assert_eq!(extract_episode_number_from_str("episode_.txt"), 0);
+        assert_eq!(extract_episode_number_from_str("episode_abc.parquet"), 0);
 
         // Mixed formats
-        assert_eq!(
-            extract_episode_number(Path::new("my_episode_123.parquet")),
-            0
-        );
-        assert_eq!(extract_episode_number(Path::new("episode-123.parquet")), 0);
+        assert_eq!(extract_episode_number_from_str("my_episode_123.parquet"), 0);
+        assert_eq!(extract_episode_number_from_str("episode-123.parquet"), 0);
     }
 
     #[test]
@@ -536,13 +631,13 @@ mod tests {
     #[test]
     fn test_staged_parquet_file_equality() {
         let file1 = StagedParquetFile {
-            path: PathBuf::from("episode_1.parquet"),
+            path: "episode_1.parquet".to_string(),
             worker_id: "worker-1".to_string(),
             episode_index: 1,
         };
 
         let file2 = StagedParquetFile {
-            path: PathBuf::from("episode_1.parquet"),
+            path: "episode_1.parquet".to_string(),
             worker_id: "worker-1".to_string(),
             episode_index: 1,
         };
@@ -556,13 +651,13 @@ mod tests {
     #[test]
     fn test_staged_parquet_file_different_workers() {
         let file1 = StagedParquetFile {
-            path: PathBuf::from("episode_1.parquet"),
+            path: "episode_1.parquet".to_string(),
             worker_id: "worker-1".to_string(),
             episode_index: 1,
         };
 
         let file2 = StagedParquetFile {
-            path: PathBuf::from("episode_1.parquet"),
+            path: "episode_1.parquet".to_string(),
             worker_id: "worker-2".to_string(),
             episode_index: 1,
         };
@@ -575,16 +670,13 @@ mod tests {
     #[test]
     fn test_extract_episode_number_unicode() {
         // Test with non-ASCII characters - should return 0
-        assert_eq!(
-            extract_episode_number(Path::new("episode_一二三.parquet")),
-            0
-        );
+        assert_eq!(extract_episode_number_from_str("episode_一二三.parquet"), 0);
     }
 
     #[test]
     fn test_extract_episode_number_negative() {
         // Negative numbers are parsed as-is (the function doesn't validate)
-        let result = extract_episode_number(Path::new("episode_-1.parquet"));
+        let result = extract_episode_number_from_str("episode_-1.parquet");
         // The function will parse "-1" as a valid i64
         assert_eq!(result, -1);
     }
@@ -592,7 +684,7 @@ mod tests {
     #[test]
     fn test_extract_episode_number_overflow() {
         // Very large numbers
-        let result = extract_episode_number(Path::new("episode_999999999999.parquet"));
+        let result = extract_episode_number_from_str("episode_999999999999.parquet");
         // Should parse or return 0 if it overflows
         assert!(result >= 0);
     }
@@ -600,11 +692,11 @@ mod tests {
     #[test]
     fn test_extract_episode_number_leading_zeros() {
         assert_eq!(
-            extract_episode_number(Path::new("episode_0000000001.parquet")),
+            extract_episode_number_from_str("episode_0000000001.parquet"),
             1
         );
         assert_eq!(
-            extract_episode_number(Path::new("episode_0000000000.parquet")),
+            extract_episode_number_from_str("episode_0000000000.parquet"),
             0
         );
     }
@@ -612,17 +704,14 @@ mod tests {
     #[test]
     fn test_extract_episode_number_case_sensitivity() {
         // Should be case sensitive - Episode vs episode
-        assert_eq!(extract_episode_number(Path::new("Episode_123.parquet")), 0);
-        assert_eq!(
-            extract_episode_number(Path::new("episode_123.parquet")),
-            123
-        );
+        assert_eq!(extract_episode_number_from_str("Episode_123.parquet"), 0);
+        assert_eq!(extract_episode_number_from_str("episode_123.parquet"), 123);
     }
 
     #[test]
     fn test_staged_parquet_file_zero_episode() {
         let file = StagedParquetFile {
-            path: PathBuf::from("episode_0.parquet"),
+            path: "episode_0.parquet".to_string(),
             worker_id: "worker-1".to_string(),
             episode_index: 0,
         };
@@ -633,7 +722,7 @@ mod tests {
     #[test]
     fn test_staged_parquet_file_large_episode() {
         let file = StagedParquetFile {
-            path: PathBuf::from("episode_999999.parquet"),
+            path: "episode_999999.parquet".to_string(),
             worker_id: "worker-1".to_string(),
             episode_index: 999999,
         };
@@ -645,8 +734,251 @@ mod tests {
     fn test_extract_episode_number_with_query_string() {
         // URLs with query strings
         assert_eq!(
-            extract_episode_number(Path::new("episode_123.parquet?version=1")),
+            extract_episode_number_from_str("episode_123.parquet?version=1"),
             0
         );
+    }
+
+    #[test]
+    fn test_extract_episode_number_from_str() {
+        // Basic patterns
+        assert_eq!(
+            extract_episode_number_from_str("episode_000123.parquet"),
+            123
+        );
+        assert_eq!(extract_episode_number_from_str("episode_0.parquet"), 0);
+        assert_eq!(extract_episode_number_from_str("episode_42.parquet"), 42);
+        assert_eq!(extract_episode_number_from_str("invalid.parquet"), 0);
+
+        // With path prefixes
+        assert_eq!(
+            extract_episode_number_from_str("/some/path/episode_00123.parquet"),
+            123
+        );
+        assert_eq!(
+            extract_episode_number_from_str("relative/path/episode_42.parquet"),
+            42
+        );
+        assert_eq!(
+            extract_episode_number_from_str(
+                "s3://bucket/staging/job-001/data/chunk-000/episode_005.parquet"
+            ),
+            5
+        );
+    }
+
+    #[test]
+    fn test_extract_episode_number_from_str_edge_cases() {
+        // Missing prefix
+        assert_eq!(extract_episode_number_from_str("000123.parquet"), 0);
+        // Missing suffix
+        assert_eq!(extract_episode_number_from_str("episode_123"), 0);
+        // Empty string
+        assert_eq!(extract_episode_number_from_str(""), 0);
+        // Just filename
+        assert_eq!(extract_episode_number_from_str("episode_999.parquet"), 999);
+    }
+
+    // Mock storage factory for testing
+    struct MockStorageFactory {
+        storage: Arc<dyn Storage>,
+    }
+
+    impl MockStorageFactory {
+        fn new(storage: Arc<dyn Storage>) -> Self {
+            Self { storage }
+        }
+    }
+
+    impl StorageFactoryTrait for MockStorageFactory {
+        fn create(&self, _url: &str) -> roboflow_storage::StorageResult<Arc<dyn Storage>> {
+            Ok(Arc::clone(&self.storage))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_merge_with_s3_staging() {
+        use roboflow_storage::mock::MockStorage;
+
+        // Create a mock storage with pre-populated parquet files
+        let mock_storage = Arc::new(MockStorage::with_data(vec![
+            (
+                "staging/job-001/worker-1/data/chunk-000/episode_001.parquet",
+                b"FAKE_PARQUET_1",
+            ),
+            (
+                "staging/job-001/worker-1/data/chunk-000/episode_002.parquet",
+                b"FAKE_PARQUET_2",
+            ),
+            (
+                "staging/job-001/worker-2/data/chunk-000/episode_001.parquet",
+                b"FAKE_PARQUET_3",
+            ),
+            (
+                "staging/job-001/worker-2/data/chunk-000/episode_003.parquet",
+                b"FAKE_PARQUET_4",
+            ),
+        ]));
+
+        // Create merge state with S3-style staging paths
+        let mut state = MergeState::new("job-001".to_string(), 2, "s3://bucket/output".to_string());
+        state.add_worker(
+            "worker-1".to_string(),
+            "s3://bucket/staging/job-001/worker-1".to_string(),
+            100,
+        );
+        state.add_worker(
+            "worker-2".to_string(),
+            "s3://bucket/staging/job-001/worker-2".to_string(),
+            150,
+        );
+
+        // Create executor with mock storage factory
+        let temp_dir = std::env::temp_dir();
+        let base_storage = Arc::new(MockStorage::new());
+        let executor = ParquetMergeExecutor::with_factory(
+            base_storage,
+            "s3://bucket/output/dataset".to_string(),
+            temp_dir,
+            Box::new(MockStorageFactory::new(mock_storage)),
+        );
+
+        // Test discover_parquet_files
+        let files = executor.discover_parquet_files(&state).await.unwrap();
+
+        // Should find 4 files total (2 from each worker)
+        assert_eq!(files.len(), 4, "Expected 4 parquet files");
+
+        // Verify files are sorted by episode_index
+        // Note: Files will be sorted by episode_index, so order depends on episode numbers
+        let episode_indices: Vec<i64> = files.iter().map(|f| f.episode_index).collect();
+        assert_eq!(
+            episode_indices,
+            vec![1, 1, 2, 3],
+            "Files should be sorted by episode index"
+        );
+
+        // Verify worker assignments
+        let worker1_files: Vec<&StagedParquetFile> =
+            files.iter().filter(|f| f.worker_id == "worker-1").collect();
+        let worker2_files: Vec<&StagedParquetFile> =
+            files.iter().filter(|f| f.worker_id == "worker-2").collect();
+
+        assert_eq!(worker1_files.len(), 2, "Worker 1 should have 2 files");
+        assert_eq!(worker2_files.len(), 2, "Worker 2 should have 2 files");
+
+        // Verify paths contain S3-style keys
+        for file in &files {
+            assert!(
+                file.path.contains("staging/job-001/"),
+                "Path should contain staging prefix: {}",
+                file.path
+            );
+            assert!(
+                file.path.ends_with(".parquet"),
+                "Path should end with .parquet: {}",
+                file.path
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_merge_with_s3_staging_empty() {
+        use roboflow_storage::mock::MockStorage;
+
+        // Create empty mock storage
+        let mock_storage = Arc::new(MockStorage::new());
+
+        // Create merge state with S3-style staging paths
+        let mut state = MergeState::new("job-002".to_string(), 1, "s3://bucket/output".to_string());
+        state.add_worker(
+            "worker-1".to_string(),
+            "s3://bucket/staging/job-002/worker-1".to_string(),
+            0,
+        );
+
+        // Create executor with mock storage factory
+        let temp_dir = std::env::temp_dir();
+        let base_storage = Arc::new(MockStorage::new());
+        let executor = ParquetMergeExecutor::with_factory(
+            base_storage,
+            "s3://bucket/output/dataset".to_string(),
+            temp_dir,
+            Box::new(MockStorageFactory::new(mock_storage)),
+        );
+
+        // Test discover_parquet_files with empty storage
+        let files = executor.discover_parquet_files(&state).await.unwrap();
+
+        // Should find no files
+        assert!(
+            files.is_empty(),
+            "Expected no parquet files in empty storage"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_merge_with_s3_staging_mixed_extensions() {
+        use roboflow_storage::mock::MockStorage;
+
+        // Create mock storage with mixed file types
+        let mock_storage = Arc::new(MockStorage::with_data(vec![
+            (
+                "staging/job-003/worker-1/data/chunk-000/episode_001.parquet",
+                b"FAKE_PARQUET",
+            ),
+            (
+                "staging/job-003/worker-1/data/chunk-000/episode_002.txt",
+                b"NOT_PARQUET",
+            ),
+            (
+                "staging/job-003/worker-1/data/chunk-000/episode_003.parquet",
+                b"FAKE_PARQUET_2",
+            ),
+            (
+                "staging/job-003/worker-1/data/chunk-000/metadata.json",
+                b"{}",
+            ),
+        ]));
+
+        // Create merge state
+        let mut state = MergeState::new("job-003".to_string(), 1, "s3://bucket/output".to_string());
+        state.add_worker(
+            "worker-1".to_string(),
+            "s3://bucket/staging/job-003/worker-1".to_string(),
+            50,
+        );
+
+        // Create executor with mock storage factory
+        let temp_dir = std::env::temp_dir();
+        let base_storage = Arc::new(MockStorage::new());
+        let executor = ParquetMergeExecutor::with_factory(
+            base_storage,
+            "s3://bucket/output/dataset".to_string(),
+            temp_dir,
+            Box::new(MockStorageFactory::new(mock_storage)),
+        );
+
+        // Test discover_parquet_files - should only find .parquet files
+        let files = executor.discover_parquet_files(&state).await.unwrap();
+
+        // Should find only 2 parquet files
+        assert_eq!(
+            files.len(),
+            2,
+            "Expected 2 parquet files (filtered by extension)"
+        );
+
+        // Verify only parquet files were found
+        for file in &files {
+            assert!(
+                file.path.ends_with(".parquet"),
+                "Only .parquet files should be found"
+            );
+        }
+
+        // Verify episode indices
+        let episode_indices: Vec<i64> = files.iter().map(|f| f.episode_index).collect();
+        assert_eq!(episode_indices, vec![1, 3], "Should find episodes 1 and 3");
     }
 }

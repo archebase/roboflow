@@ -14,12 +14,12 @@ use crate::sources::{
 };
 use robocodec::io::streaming::{FrameAlignmentConfig, StreamConfig, StreamingRoboReader};
 use robocodec::io::traits::FormatReader;
-use std::collections::HashMap;
-use std::path::Path;
 use roboflow_core::TimestampedMessage;
 use roboflow_media::ImageData;
 use roboflow_storage::StorageFactory;
+use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::Path;
 use std::path::PathBuf;
 
 /// Download a file from S3/OSS to a temporary local file (for legacy batched/blocking decoders).
@@ -50,7 +50,8 @@ fn download_to_temp(url: &str) -> Result<PathBuf, String> {
     let mut temp_file = std::fs::File::create(&temp_path)
         .map_err(|e| format!("Failed to create temp file {}: {e}", temp_path.display()))?;
 
-    let mut buffer = vec![0u8; 8192];
+    // Use 64KB buffer for better throughput on large files
+    let mut buffer = vec![0u8; 65536];
     let mut total_bytes = 0u64;
 
     loop {
@@ -69,11 +70,15 @@ fn download_to_temp(url: &str) -> Result<PathBuf, String> {
         total_bytes += bytes_read as u64;
     }
 
-    temp_file.flush().map_err(|e| format!("Failed to flush: {e}"))?;
+    temp_file
+        .flush()
+        .map_err(|e| format!("Failed to flush: {e}"))?;
 
     #[cfg(not(windows))]
     {
-        temp_file.sync_all().map_err(|e| format!("Failed to sync: {e}"))?;
+        temp_file
+            .sync_all()
+            .map_err(|e| format!("Failed to sync: {e}"))?;
     }
 
     tracing::info!(url = %url, bytes = total_bytes, "Download complete");
@@ -154,8 +159,14 @@ fn convert_aligned_frame_to_messages(frame: AlignedFrame) -> Vec<TimestampedMess
             "data".to_string(),
             CodecValue::Bytes(image_data.data.clone()),
         );
-        fields.insert("is_encoded".to_string(), CodecValue::Bool(image_data.is_encoded));
-        fields.insert("is_depth".to_string(), CodecValue::Bool(image_data.is_depth));
+        fields.insert(
+            "is_encoded".to_string(),
+            CodecValue::Bool(image_data.is_encoded),
+        );
+        fields.insert(
+            "is_depth".to_string(),
+            CodecValue::Bool(image_data.is_depth),
+        );
         fields.insert(
             "original_timestamp".to_string(),
             CodecValue::UInt64(image_data.original_timestamp),
@@ -172,9 +183,7 @@ fn convert_aligned_frame_to_messages(frame: AlignedFrame) -> Vec<TimestampedMess
 
     // Convert states to TimestampedMessage
     for (feature_name, state_data) in frame.states {
-        let data = CodecValue::Array(
-            state_data.into_iter().map(CodecValue::Float32).collect(),
-        );
+        let data = CodecValue::Array(state_data.into_iter().map(CodecValue::Float32).collect());
         messages.push(TimestampedMessage {
             topic: feature_name,
             log_time: frame.timestamp,
@@ -211,6 +220,9 @@ fn spawn_local_decoder(
     meta_tx: tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
     frame_tx: tokio::sync::mpsc::Sender<AlignedFrame>,
     format_name: &'static str,
+    image_topics: Vec<String>,
+    state_topics: Vec<String>,
+    fps: u32,
 ) -> Result<usize, String> {
     tracing::info!(
         path = %path,
@@ -218,17 +230,24 @@ fn spawn_local_decoder(
         "spawn_local_decoder: starting with StreamingRoboReader"
     );
 
+    // Apply S3 environment variables for cloud streaming
+    maybe_apply_s3_env_for_url(&path);
+
     // Create tokio runtime for async streaming reader
+    tracing::info!("Creating tokio runtime for decoder");
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| format!("Failed to create runtime: {e}"))?;
+    tracing::info!("Runtime created successfully");
 
     rt.block_on(async {
         let config = StreamConfig::new();
+        tracing::info!(path = %path, "Opening StreamingRoboReader...");
         let reader = StreamingRoboReader::open(&path, config)
             .await
             .map_err(|e| format!("Failed to open: {e}"))?;
+        tracing::info!("StreamingRoboReader opened successfully");
 
         // Get metadata from reader
         let message_count = reader.message_count();
@@ -237,22 +256,45 @@ fn spawn_local_decoder(
             .values()
             .map(|ch| TopicMetadata::new(ch.topic.clone(), ch.message_type.clone()))
             .collect();
+        let topics_len = topics.len();
 
         let metadata = SourceMetadata::new(format_name.to_string(), path.clone())
             .with_message_count(message_count)
             .with_topics(topics);
 
+        tracing::info!(
+            "Metadata extracted: {} topics, {} messages",
+            topics_len,
+            message_count
+        );
+        tracing::info!("Sending metadata to channel...");
         if meta_tx.send(Ok(metadata)).is_err() {
             return Err("Metadata receiver dropped".to_string());
         }
+        tracing::info!("Metadata sent successfully");
 
         tracing::debug!(path = %path, "Metadata sent, starting frame processing");
 
-        // Use frame alignment config - these could be made configurable
-        let frame_config = FrameAlignmentConfig::new(30)
-            .with_image_topic("/cam_l/color/image_raw/compressed")
-            .with_state_topic("/kuavo_arm_traj")
-            .with_max_latency(50_000_000); // 50ms in nanoseconds
+        // Use frame alignment config with topics from configuration
+        let mut frame_config = FrameAlignmentConfig::new(fps).with_max_latency(50_000_000); // 50ms in nanoseconds
+
+        // Add image topics from config (use defaults if none provided)
+        if image_topics.is_empty() {
+            frame_config = frame_config.with_image_topic("/cam_l/color/image_raw/compressed");
+        } else {
+            for topic in image_topics {
+                frame_config = frame_config.with_image_topic(topic);
+            }
+        }
+
+        // Add state topics from config (use defaults if none provided)
+        if state_topics.is_empty() {
+            frame_config = frame_config.with_state_topic("/kuavo_arm_traj");
+        } else {
+            for topic in state_topics {
+                frame_config = frame_config.with_state_topic(topic);
+            }
+        }
 
         let mut frame_count = 0usize;
 
@@ -330,6 +372,143 @@ async fn initialize_threaded_source(
     Ok((metadata, rx, handle))
 }
 
+/// Initialize a streaming source directly in async context (for S3 streaming).
+///
+/// Unlike initialize_threaded_source, this doesn't use spawn_blocking,
+/// allowing robocodec's AWS SDK to work correctly with S3 URLs.
+async fn initialize_streaming_source(
+    path: &str,
+    image_topics: Vec<String>,
+    state_topics: Vec<String>,
+    fps: u32,
+) -> SourceResult<(
+    SourceMetadata,
+    tokio::sync::mpsc::Receiver<AlignedFrame>,
+    tokio::task::JoinHandle<Result<usize, String>>,
+)> {
+    let (tx, rx) = tokio::sync::mpsc::channel(1024);
+    let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
+
+    let path_owned = path.to_string();
+    let handle = tokio::spawn(async move {
+        spawn_streaming_decoder(
+            path_owned,
+            meta_tx,
+            tx,
+            "bag",
+            image_topics,
+            state_topics,
+            fps,
+        )
+        .await
+    });
+
+    let metadata = match meta_rx.await {
+        Ok(Ok(metadata)) => metadata,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            return Err(SourceError::ReadFailed(
+                "Decoder exited before sending metadata".to_string(),
+            ));
+        }
+    };
+
+    Ok((metadata, rx, handle))
+}
+
+/// Spawn a streaming decoder directly in async context.
+async fn spawn_streaming_decoder(
+    path: String,
+    meta_tx: tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
+    frame_tx: tokio::sync::mpsc::Sender<AlignedFrame>,
+    format_name: &'static str,
+    image_topics: Vec<String>,
+    state_topics: Vec<String>,
+    fps: u32,
+) -> Result<usize, String> {
+    tracing::info!(
+        path = %path,
+        format = format_name,
+        "spawn_streaming_decoder: starting"
+    );
+
+    let config = StreamConfig::new();
+    tracing::info!("Opening StreamingRoboReader...");
+    let reader = StreamingRoboReader::open(&path, config)
+        .await
+        .map_err(|e| format!("Failed to open: {e}"))?;
+    tracing::info!("StreamingRoboReader opened successfully");
+
+    // Get metadata from reader
+    let message_count = reader.message_count();
+    let channels = reader.channels();
+    let topics: Vec<TopicMetadata> = channels
+        .values()
+        .map(|ch| TopicMetadata::new(ch.topic.clone(), ch.message_type.clone()))
+        .collect();
+    let topics_len = topics.len();
+
+    let metadata = SourceMetadata::new(format_name.to_string(), path.clone())
+        .with_message_count(message_count)
+        .with_topics(topics);
+
+    tracing::info!(
+        "Metadata extracted: {} topics, {} messages",
+        topics_len,
+        message_count
+    );
+
+    if meta_tx.send(Ok(metadata)).is_err() {
+        return Err("Metadata receiver dropped".to_string());
+    }
+    tracing::info!("Metadata sent, starting frame processing");
+
+    // Use frame alignment config with topics from configuration
+    let mut frame_config = FrameAlignmentConfig::new(fps).with_max_latency(50_000_000);
+
+    // Add image topics from config
+    if image_topics.is_empty() {
+        frame_config = frame_config.with_image_topic("/cam_l/color/image_raw/compressed");
+    } else {
+        for topic in image_topics {
+            frame_config = frame_config.with_image_topic(topic);
+        }
+    }
+
+    // Add state topics from config
+    if state_topics.is_empty() {
+        frame_config = frame_config.with_state_topic("/kuavo_arm_traj");
+    } else {
+        for topic in state_topics {
+            frame_config = frame_config.with_state_topic(topic);
+        }
+    }
+
+    let mut frame_count = 0usize;
+
+    reader
+        .process_frames(frame_config, |codec_frame| {
+            let frame = convert_codec_frame_to_roboflow_frame(codec_frame)
+                .map_err(|e| robocodec::CodecError::Other(format!("Frame conversion: {e}")))?;
+
+            // Use try_send to avoid blocking
+            if frame_tx.try_send(frame).is_err() {
+                return Err(robocodec::CodecError::Other("Channel closed".into()));
+            }
+
+            frame_count += 1;
+            if frame_count.is_multiple_of(1000) {
+                tracing::debug!(frames = frame_count, "{} decoder progress", format_name);
+            }
+
+            Ok(())
+        })
+        .map_err(|e| format!("Frame processing error: {e}"))?;
+
+    tracing::info!(frames = frame_count, "Streaming decode complete");
+    Ok(frame_count)
+}
+
 #[async_trait::async_trait]
 impl Source for BagSource {
     async fn initialize(&mut self, config: &SourceConfig) -> SourceResult<SourceMetadata> {
@@ -340,11 +519,43 @@ impl Source for BagSource {
 
         maybe_apply_s3_env_for_url(&self.path);
 
-        let (metadata, rx, handle) =
-            initialize_threaded_source(&self.path, "bag-decoder", |path, meta_tx, msg_tx| {
-                spawn_local_decoder(path, meta_tx, msg_tx, "bag")
+        // Extract topics from config options
+        let image_topics: Vec<String> = config
+            .get_option::<Vec<String>>("image_topics")
+            .unwrap_or_default();
+        let state_topics: Vec<String> = config
+            .get_option::<Vec<String>>("state_topics")
+            .unwrap_or_default();
+        let fps: u32 = config.get_option::<u32>("fps").unwrap_or(30);
+
+        tracing::debug!(
+            path = %self.path,
+            image_topics = ?image_topics,
+            state_topics = ?state_topics,
+            fps = fps,
+            "Initializing bag source with configured topics"
+        );
+
+        let (metadata, rx, handle) = if self.path.starts_with("s3://")
+            || self.path.starts_with("oss://")
+        {
+            // Use async streaming for S3 (no spawn_blocking)
+            initialize_streaming_source(&self.path, image_topics, state_topics, fps).await?
+        } else {
+            // Use threaded source for local files
+            initialize_threaded_source(&self.path, "bag-decoder", move |path, meta_tx, msg_tx| {
+                spawn_local_decoder(
+                    path,
+                    meta_tx,
+                    msg_tx,
+                    "bag",
+                    image_topics,
+                    state_topics,
+                    fps,
+                )
             })
-            .await?;
+            .await?
+        };
 
         self.metadata = Some(metadata.clone());
         self.receiver = Some(rx);

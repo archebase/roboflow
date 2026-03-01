@@ -92,14 +92,31 @@ impl Coordinator {
     }
 
     pub async fn claim_work(&self) -> Result<Option<WorkUnit>, TikvError> {
+        tracing::debug!(pod_id = %self.pod_id, "=== WORKER CLAIM START ===");
         match self.batch_controller.claim_work_unit(&self.pod_id).await {
             Ok(Some(unit)) => {
+                tracing::info!(
+                    pod_id = %self.pod_id,
+                    unit_id = %unit.id,
+                    batch_id = %unit.batch_id,
+                    "=== WORKER CLAIM SUCCESS ==="
+                );
                 self.metrics.inc_jobs_claimed();
                 self.metrics.inc_active_jobs();
                 Ok(Some(unit))
             }
-            Ok(None) => Ok(None),
-            Err(e) => Err(e),
+            Ok(None) => {
+                tracing::debug!(pod_id = %self.pod_id, "=== WORKER CLAIM: NO WORK AVAILABLE ===");
+                Ok(None)
+            }
+            Err(e) => {
+                tracing::error!(
+                    pod_id = %self.pod_id,
+                    error = %e,
+                    "=== WORKER CLAIM FAILED ==="
+                );
+                Err(e)
+            }
         }
     }
 
@@ -170,6 +187,13 @@ impl Coordinator {
     }
 
     pub async fn run(&mut self) -> Result<(), TikvError> {
+        tracing::info!(
+            pod_id = %self.pod_id,
+            max_concurrent = self.config.max_concurrent_jobs,
+            poll_interval_secs = self.config.poll_interval.as_secs(),
+            "=== WORKER RUN START ==="
+        );
+
         let mut shutdown_rx = self.shutdown_handler.start_signal_handler();
         let shutdown_tx = self.shutdown_handler.sender();
 
@@ -185,6 +209,12 @@ impl Coordinator {
         let heartbeat_handle = self.spawn_heartbeat_task(shutdown_tx.subscribe());
         let loop_result = self.run_main_loop(&mut shutdown_rx).await;
         let _ = heartbeat_handle.await;
+
+        tracing::info!(
+            pod_id = %self.pod_id,
+            result = ?loop_result,
+            "=== WORKER RUN END ==="
+        );
 
         loop_result
     }
@@ -221,20 +251,35 @@ impl Coordinator {
     ) -> Result<(), TikvError> {
         loop {
             let active_count = self.metrics.active_jobs.load(Ordering::Relaxed) as usize;
+            let max_jobs = self.config.max_concurrent_jobs;
 
-            if active_count < self.config.max_concurrent_jobs {
+            tracing::debug!(
+                pod_id = %self.pod_id,
+                active_jobs = active_count,
+                max_concurrent = max_jobs,
+                "=== WORKER MAIN LOOP ITERATION ==="
+            );
+
+            if active_count < max_jobs {
+                tracing::debug!(pod_id = %self.pod_id, "Worker has capacity, attempting to claim work");
                 match self.claim_work().await? {
                     Some(unit) => {
-                        tracing::debug!(
+                        tracing::info!(
+                            pod_id = %self.pod_id,
                             batch_id = %unit.batch_id,
                             unit_id = %unit.id,
-                            "Work unit claimed, starting processing"
+                            "=== WORKER PROCESSING START ==="
                         );
                         if self.process_work_unit(&unit).await? {
                             return Ok(());
                         }
                     }
                     None => {
+                        tracing::debug!(
+                            pod_id = %self.pod_id,
+                            poll_interval_secs = self.config.poll_interval.as_secs(),
+                            "No work available, waiting before retry"
+                        );
                         if self
                             .wait_with_shutdown(shutdown_rx, self.config.poll_interval)
                             .await?
@@ -243,11 +288,19 @@ impl Coordinator {
                         }
                     }
                 }
-            } else if self
-                .wait_with_shutdown(shutdown_rx, Duration::from_millis(100))
-                .await?
-            {
-                return Ok(());
+            } else {
+                tracing::debug!(
+                    pod_id = %self.pod_id,
+                    active_jobs = active_count,
+                    max_concurrent = max_jobs,
+                    "Worker at capacity, waiting for slot"
+                );
+                if self
+                    .wait_with_shutdown(shutdown_rx, Duration::from_millis(100))
+                    .await?
+                {
+                    return Ok(());
+                }
             }
         }
     }

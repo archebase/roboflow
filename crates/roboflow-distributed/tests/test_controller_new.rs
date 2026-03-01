@@ -113,47 +113,99 @@ async fn test_scan_total_calculation() {
     let failed_key = WorkUnitKeys::unit(&batch_id, failed_unit_id);
     let processing_key = WorkUnitKeys::unit(&batch_id, processing_unit_id);
     let dead_key = WorkUnitKeys::unit(&batch_id, dead_unit_id);
-    
-    tikv.put(pending_key.clone(), bincode::serialize(&pending_unit).unwrap()).await.unwrap();
-    tikv.put(complete_key.clone(), bincode::serialize(&complete_unit).unwrap()).await.unwrap();
-    tikv.put(failed_key.clone(), bincode::serialize(&failed_unit).unwrap()).await.unwrap();
-    tikv.put(processing_key.clone(), bincode::serialize(&processing_unit).unwrap()).await.unwrap();
-    tikv.put(dead_key.clone(), bincode::serialize(&dead_unit).unwrap()).await.unwrap();
+
+    tikv.put(
+        pending_key.clone(),
+        bincode::serialize(&pending_unit).unwrap(),
+    )
+    .await
+    .unwrap();
+    tikv.put(
+        complete_key.clone(),
+        bincode::serialize(&complete_unit).unwrap(),
+    )
+    .await
+    .unwrap();
+    tikv.put(
+        failed_key.clone(),
+        bincode::serialize(&failed_unit).unwrap(),
+    )
+    .await
+    .unwrap();
+    tikv.put(
+        processing_key.clone(),
+        bincode::serialize(&processing_unit).unwrap(),
+    )
+    .await
+    .unwrap();
+    tikv.put(dead_key.clone(), bincode::serialize(&dead_unit).unwrap())
+        .await
+        .unwrap();
 
     // Transition batch to Running phase
     let mut status = BatchStatus::new();
     status.transition_to(BatchPhase::Running);
     status.set_work_units_total(3); // Initially incorrect value
     let status_key = BatchKeys::status(&batch_id);
-    tikv.put(status_key.clone(), bincode::serialize(&status).unwrap()).await.unwrap();
+    tikv.put(status_key.clone(), bincode::serialize(&status).unwrap())
+        .await
+        .unwrap();
 
     // Trigger reconciliation
     let result = controller.reconcile_batch_id(&batch_id).await;
     assert!(result.is_ok(), "Reconciliation should succeed");
 
     // Get updated status
-    let updated_status = controller.get_batch_status(&batch_id).await.unwrap().unwrap();
+    let updated_status = controller
+        .get_batch_status(&batch_id)
+        .await
+        .unwrap()
+        .unwrap();
 
     // Verify scan_total matches total valid work units (5 units)
     assert_eq!(
-        updated_status.work_units_total,
-        5,
+        updated_status.work_units_total, 5,
         "scan_total should count all 5 valid work units"
     );
 
     // Verify individual status counts
-    assert_eq!(updated_status.work_units_completed, 1, "Should have 1 complete unit");
-    assert_eq!(updated_status.work_units_failed, 2, "Should have 2 failed units (Failed + Dead)");
-    assert_eq!(updated_status.work_units_active, 1, "Should have 1 processing unit");
+    assert_eq!(
+        updated_status.work_units_completed, 1,
+        "Should have 1 complete unit"
+    );
+    assert_eq!(
+        updated_status.work_units_failed, 2,
+        "Should have 2 failed units (Failed + Dead)"
+    );
+    assert_eq!(
+        updated_status.work_units_active, 1,
+        "Should have 1 processing unit"
+    );
 
     // Verify files counts match work unit counts (1 file per work unit)
-    assert_eq!(updated_status.files_total, 5, "Files total should match work units total");
-    assert_eq!(updated_status.files_completed, 1, "Files completed should match work units completed");
-    assert_eq!(updated_status.files_failed, 2, "Files failed should match work units failed");
-    assert_eq!(updated_status.files_active, 1, "Files active should match work units active");
+    assert_eq!(
+        updated_status.files_total, 5,
+        "Files total should match work units total"
+    );
+    assert_eq!(
+        updated_status.files_completed, 1,
+        "Files completed should match work units completed"
+    );
+    assert_eq!(
+        updated_status.files_failed, 2,
+        "Files failed should match work units failed"
+    );
+    assert_eq!(
+        updated_status.files_active, 1,
+        "Files active should match work units active"
+    );
 
     // Verify failed work units collection
-    assert_eq!(updated_status.failed_work_units.len(), 2, "Should collect 2 failed work units");
+    assert_eq!(
+        updated_status.failed_work_units.len(),
+        2,
+        "Should collect 2 failed work units"
+    );
 
     // Cleanup
     let _ = tikv.delete(BatchKeys::spec(&batch_id)).await;
@@ -163,8 +215,12 @@ async fn test_scan_total_calculation() {
     let _ = tikv.delete(failed_key).await;
     let _ = tikv.delete(processing_key).await;
     let _ = tikv.delete(dead_key).await;
-    let _ = tikv.delete(BatchIndexKeys::phase(BatchPhase::Pending, &batch_id)).await;
-    let _ = tikv.delete(BatchIndexKeys::phase(BatchPhase::Running, &batch_id)).await;
+    let _ = tikv
+        .delete(BatchIndexKeys::phase(BatchPhase::Pending, &batch_id))
+        .await;
+    let _ = tikv
+        .delete(BatchIndexKeys::phase(BatchPhase::Running, &batch_id))
+        .await;
 }
 
 #[tokio::test]

@@ -652,10 +652,15 @@ impl BatchController {
         tracing::debug!(results = pending.len(), "claim_work_unit: scan completed");
 
         if pending.is_empty() {
+            tracing::debug!("claim_work_unit: no pending work units found");
             return Ok(None);
         }
 
         let (pending_key, _batch_id_bytes) = &pending[0];
+        tracing::info!(
+            pending_key = %String::from_utf8_lossy(pending_key),
+            "claim_work_unit: found pending entry"
+        );
 
         // Parse batch_id and unit_id from the pending key.
         // Key format: /roboflow/v1/batch/pending/{batch_id}/{unit_id}
@@ -688,6 +693,29 @@ impl BatchController {
 
         let work_unit_key = WorkUnitKeys::unit(batch_id, unit_id);
 
+        // Pre-flight check: read work unit status before transaction
+        match self.client.get(work_unit_key.clone()).await? {
+            Some(data) => match deserialize::<WorkUnit>(&data) {
+                Ok(unit) => {
+                    tracing::info!(
+                        batch_id = %batch_id,
+                        unit_id = %unit_id,
+                        status = ?unit.status,
+                        attempts = unit.attempts,
+                        max_attempts = unit.max_attempts,
+                        is_claimable = unit.is_claimable(),
+                        "claim_work_unit: pre-flight work unit check"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "claim_work_unit: failed to deserialize work unit in pre-flight")
+                }
+            },
+            None => {
+                tracing::warn!(batch_id = %batch_id, unit_id = %unit_id, "claim_work_unit: work unit not found in pre-flight")
+            }
+        }
+
         // Use transaction helper for atomic claim operation
         let result = self
             .client
@@ -718,18 +746,41 @@ impl BatchController {
             .await?;
 
         let Some(data) = result else {
+            tracing::warn!(
+                batch_id = %batch_id,
+                unit_id = %unit_id,
+                "claim_work_unit: transaction returned None - work unit may already be claimed"
+            );
             return Ok(None);
         };
 
-        // Deserialize the claimed work unit
-        let unit: WorkUnit = deserialize(&data)
-            .map_err(|e| TikvError::Deserialization(format!("work unit: {}", e)))?;
+        tracing::info!(
+            batch_id = %batch_id,
+            unit_id = %unit_id,
+            bytes = data.len(),
+            "claim_work_unit: transaction succeeded, deserializing work unit"
+        );
 
-        tracing::debug!(
+        // Deserialize the claimed work unit
+        let unit: WorkUnit = match deserialize(&data) {
+            Ok(u) => u,
+            Err(e) => {
+                tracing::error!(
+                    batch_id = %batch_id,
+                    unit_id = %unit_id,
+                    error = %e,
+                    "claim_work_unit: failed to deserialize work unit after claim"
+                );
+                return Err(TikvError::Deserialization(format!("work unit: {}", e)));
+            }
+        };
+
+        tracing::info!(
             unit_id = %unit.id,
             batch_id = %unit.batch_id,
             worker_id = %worker_id,
-            "Work unit claimed"
+            status = ?unit.status,
+            "=== WORK UNIT CLAIMED SUCCESSFULLY ==="
         );
 
         Ok(Some(unit))

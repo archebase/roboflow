@@ -23,7 +23,7 @@ roboflow-distributed = { path = "crates/roboflow-distributed", version = "0.2.0"
 
 # External dependencies
 # Pinned to specific commit for reproducible builds
-robocodec = { git = "https://github.com/archebase/robocodec", rev = "31e7722" }
+robocodec = { git = "https://github.com/archebase/robocodec", rev = "2a6e2a941fea659aaf214f137b998ff0f0730ce8" }
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 tokio = { version = "1.40", features = ["rt-multi-thread", "sync"] }
