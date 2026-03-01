@@ -99,8 +99,9 @@ impl ParquetMergeExecutor {
         let parquet_files = self.discover_parquet_files(state).await?;
 
         if parquet_files.is_empty() {
-            warn!("No parquet files found in staging paths");
-            return Ok(0);
+            return Err(TikvError::Serialization(
+                "No parquet files found in staging paths".to_string(),
+            ));
         }
 
         info!(
@@ -426,6 +427,15 @@ impl ParquetMergeExecutor {
     /// Copy staged media assets into final dataset output paths.
     fn copy_media_assets(&self, tasks: &[MediaCopyTask]) -> Result<(), TikvError> {
         let mut copied_files = 0usize;
+        let output_prefix = self
+            .output_path
+            .parse::<StorageUrl>()
+            .map_err(|e: roboflow_storage::StorageError| {
+                TikvError::Serialization(format!("Failed to parse output path: {}", e))
+            })?
+            .path()
+            .trim_start_matches('/')
+            .to_string();
 
         for task in tasks {
             let mut reader = self
@@ -438,26 +448,36 @@ impl ParquetMergeExecutor {
                     ))
                 })?;
 
+            let destination_key = if output_prefix.is_empty() {
+                task.dest_key.clone()
+            } else {
+                format!(
+                    "{}/{}",
+                    output_prefix.trim_end_matches('/'),
+                    task.dest_key.trim_start_matches('/'),
+                )
+            };
+
             let mut writer = self
                 .storage
-                .writer(Path::new(&task.dest_key))
+                .writer(Path::new(&destination_key))
                 .map_err(|e| {
                     TikvError::Serialization(format!(
                         "Failed to create merged media '{}': {}",
-                        task.dest_key, e
+                        destination_key, e
                     ))
                 })?;
 
             std::io::copy(&mut reader, &mut writer).map_err(|e| {
                 TikvError::Serialization(format!(
                     "Failed to copy staged media '{}' to '{}': {}",
-                    task.source_key, task.dest_key, e
+                    task.source_key, destination_key, e
                 ))
             })?;
             writer.flush().map_err(|e| {
                 TikvError::Serialization(format!(
                     "Failed to flush merged media '{}': {}",
-                    task.dest_key, e
+                    destination_key, e
                 ))
             })?;
 

@@ -854,14 +854,14 @@ impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
                     roboflow_distributed::TikvError::Other(format!("Storage error: {e}"))
                 })?;
 
-            // Build staging path: {output_path}/staging/{batch_id}/{worker_id}/{unit_id}
-            let staging_path = format!(
-                "{}/staging/{}/worker_{}/unit_{}",
-                work_unit.output_path.trim_end_matches('/'),
-                work_unit.batch_id,
-                self.pod_id,
-                work_unit.id
-            );
+            // Build staging path with bucket-root separation for remote outputs.
+            let staging_path = roboflow_distributed::build_staging_path(
+                &work_unit.output_path,
+                &work_unit.batch_id,
+                &self.pod_id,
+                &work_unit.id,
+            )
+            .map_err(roboflow_distributed::TikvError::Other)?;
 
             tracing::info!(
                 batch_id = %work_unit.batch_id,

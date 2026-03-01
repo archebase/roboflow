@@ -12,6 +12,7 @@ pub mod config;
 use super::batch::{BatchController, BatchKeys, BatchPhase, BatchSpec, BatchStatus, BatchSummary};
 use super::merge::MergeCoordinator;
 use super::metadata::{DatasetMetadataRegistry, GlobalMetadataAssembler};
+use super::output_path::resolve_batch_output_path;
 use super::tikv::TikvClient;
 use crate::stats::StatsCollector;
 use crate::tikv::TikvError;
@@ -296,7 +297,8 @@ impl Finalizer {
             "=== FINALIZER BATCH START ==="
         );
 
-        let output_path = &spec.spec.output;
+        let resolved_output_path = resolve_batch_output_path(spec);
+        let output_path = &resolved_output_path;
 
         // Assemble and write LeRobot metadata files if storage is configured
         if let Some(storage) = &self.storage {
