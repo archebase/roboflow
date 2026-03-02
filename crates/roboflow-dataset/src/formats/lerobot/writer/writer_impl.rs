@@ -449,7 +449,7 @@ impl LerobotWriter {
 
     /// Finish the current episode and write its data.
     pub fn finish_episode(&mut self, task_index: Option<usize>) -> Result<()> {
-        if self.is_streaming_pipeline_mode() {
+        if self.config.flushing.incremental_video_encoding {
             // Flush remaining buffered video/parquet data and merge to final episode files.
             if !self.image_buffers.values().all(|v| v.is_empty()) {
                 self.flush_video_segment()?;
@@ -684,14 +684,6 @@ impl LerobotWriter {
         );
 
         Ok(())
-    }
-
-    /// Whether writer runs in streaming pipeline mode.
-    ///
-    /// In distributed pipeline mode, metadata is finalized by coordinator and
-    /// worker should keep memory bounded by flushing parquet/video segments.
-    fn is_streaming_pipeline_mode(&self) -> bool {
-        true
     }
 
     /// Flush current frame buffer as a parquet segment to temporary storage.
@@ -1294,7 +1286,7 @@ impl DatasetWriter for LerobotWriter {
 
         // In streaming pipeline mode, flush parquet segments independently from
         // video flush decisions so row buffering remains bounded.
-        if self.is_streaming_pipeline_mode() {
+        if self.config.flushing.incremental_video_encoding {
             let should_flush_parquet = (self.config.flushing.max_frames_per_chunk > 0
                 && self.frame_data.len() >= self.config.flushing.max_frames_per_chunk)
                 || (self.config.flushing.max_memory_bytes > 0
@@ -1309,7 +1301,7 @@ impl DatasetWriter for LerobotWriter {
     }
 
     fn finalize(&mut self) -> Result<WriterStats> {
-        if self.is_streaming_pipeline_mode() {
+        if self.config.flushing.incremental_video_encoding {
             if !self.image_buffers.values().all(|v| v.is_empty()) {
                 self.flush_video_segment()?;
             }
