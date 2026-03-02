@@ -10,6 +10,8 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::fs::File;
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -18,6 +20,7 @@ use crate::formats::lerobot::config::LerobotConfig;
 use crate::formats::lerobot::metadata::MetadataCollector;
 use crate::formats::lerobot::trait_impl::{FromAlignedFrame, LerobotWriterTrait};
 use crate::formats::lerobot::video_profiles::resolve_video_config;
+use polars::prelude::{DataFrame, ParquetReader, ParquetWriter, SerReader};
 use roboflow_core::Result;
 use roboflow_media::video::{
     EncodeStats, RsmpegVideoComposer, VideoComposer, build_frame_buffer_static, encode_videos,
@@ -57,6 +60,12 @@ pub struct LerobotWriter {
     /// Pending segment paths per camera, to be merged on finalize
     /// Maps camera_name -> list of segment paths in temp storage
     pending_segments: HashMap<String, Vec<PathBuf>>,
+
+    /// Pending parquet segment paths (streaming writes), merged on finalize.
+    pending_parquet_segments: Vec<PathBuf>,
+
+    /// Parquet segment sequence counter.
+    parquet_segment_index: u32,
 
     /// Number of episodes per chunk for LeRobot v2.1 format.
     /// Episodes 0 to episodes_per_chunk-1 go to chunk-000,
@@ -186,6 +195,8 @@ impl LerobotWriter {
             segment_index: 0,
             session_id: uuid::Uuid::new_v4().to_string(),
             pending_segments: HashMap::new(),
+            pending_parquet_segments: Vec::new(),
+            parquet_segment_index: 0,
             episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
             image_buffers: HashMap::new(),
@@ -267,6 +278,8 @@ impl LerobotWriter {
             segment_index: 0,
             session_id: uuid::Uuid::new_v4().to_string(),
             pending_segments: HashMap::new(),
+            pending_parquet_segments: Vec::new(),
+            parquet_segment_index: 0,
             episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
             image_buffers: HashMap::new(),
@@ -436,6 +449,29 @@ impl LerobotWriter {
 
     /// Finish the current episode and write its data.
     pub fn finish_episode(&mut self, task_index: Option<usize>) -> Result<()> {
+        if self.is_streaming_pipeline_mode() {
+            // Flush remaining buffered video/parquet data and merge to final episode files.
+            if !self.image_buffers.values().all(|v| v.is_empty()) {
+                self.flush_video_segment()?;
+            }
+            if !self.frame_data.is_empty() {
+                self.flush_parquet_segment()?;
+            }
+
+            self.merge_pending_parquet_segments()?;
+            self.merge_pending_segments()?;
+
+            let tasks = task_index.map(|t| vec![t]).unwrap_or_default();
+            self.metadata
+                .add_episode(self.episode_index, self.frame_count(), tasks);
+
+            for buffer in self.image_buffers.values_mut() {
+                buffer.clear();
+            }
+
+            return Ok(());
+        }
+
         if self.frame_data.is_empty() {
             return Ok(());
         }
@@ -647,6 +683,119 @@ impl LerobotWriter {
             "Video segment flushed to temporary storage"
         );
 
+        Ok(())
+    }
+
+    /// Whether writer runs in streaming pipeline mode.
+    ///
+    /// In distributed pipeline mode, metadata is finalized by coordinator and
+    /// worker should keep memory bounded by flushing parquet/video segments.
+    fn is_streaming_pipeline_mode(&self) -> bool {
+        true
+    }
+
+    /// Flush current frame buffer as a parquet segment to temporary storage.
+    fn flush_parquet_segment(&mut self) -> Result<()> {
+        if self.frame_data.is_empty() {
+            return Ok(());
+        }
+
+        let temp_base = self.output_dir.join("temp").join(&self.session_id);
+        let parquet_segment_dir = temp_base.join("parquet_segments");
+        fs::create_dir_all(&parquet_segment_dir)?;
+        fs::create_dir_all(parquet_segment_dir.join("data").join(self.chunk_dir_name()))?;
+
+        let segment_path =
+            parquet_segment_dir.join(format!("segment_{:06}.parquet", self.parquet_segment_index));
+
+        let (tmp_path, _size) = super::parquet::write_episode_parquet_with_chunk(
+            &self.frame_data,
+            self.episode_index,
+            self.chunk_index(),
+            &parquet_segment_dir,
+        )?;
+
+        // Rename generated episode parquet to ordered segment path.
+        fs::rename(&tmp_path, &segment_path).map_err(|e| {
+            roboflow_core::RoboflowError::io(format!(
+                "Failed to rename parquet segment {} -> {}: {}",
+                tmp_path.display(),
+                segment_path.display(),
+                e
+            ))
+        })?;
+
+        self.pending_parquet_segments.push(segment_path);
+        self.total_frames += self.frame_data.len();
+        self.frame_data.clear();
+        self.parquet_segment_index += 1;
+
+        Ok(())
+    }
+
+    /// Merge all parquet segments into final episode parquet path.
+    fn merge_pending_parquet_segments(&mut self) -> Result<()> {
+        if self.pending_parquet_segments.is_empty() {
+            return Ok(());
+        }
+
+        fs::create_dir_all(self.data_chunk_dir())?;
+        let final_path = self
+            .data_chunk_dir()
+            .join(format!("episode_{:06}.parquet", self.episode_index));
+
+        if self.pending_parquet_segments.len() == 1 {
+            let src = &self.pending_parquet_segments[0];
+            fs::copy(src, &final_path).map_err(|e| {
+                roboflow_core::RoboflowError::io(format!(
+                    "Failed to copy parquet segment {} -> {}: {}",
+                    src.display(),
+                    final_path.display(),
+                    e
+                ))
+            })?;
+        } else {
+            let mut dataframes = Vec::<DataFrame>::new();
+            for segment in &self.pending_parquet_segments {
+                let file = File::open(segment)?;
+                let df = ParquetReader::new(file).finish().map_err(|e| {
+                    roboflow_core::RoboflowError::parse(
+                        "Parquet",
+                        format!(
+                            "Failed to read parquet segment {}: {}",
+                            segment.display(),
+                            e
+                        ),
+                    )
+                })?;
+                dataframes.push(df);
+            }
+
+            let mut merged = dataframes.remove(0);
+            for df in dataframes {
+                merged.vstack_mut(&df).map_err(|e| {
+                    roboflow_core::RoboflowError::parse(
+                        "Parquet",
+                        format!("Failed to concat parquet segments: {}", e),
+                    )
+                })?;
+            }
+
+            let file = File::create(&final_path)?;
+            let mut writer = BufWriter::new(file);
+            ParquetWriter::new(&mut writer)
+                .finish(&mut merged)
+                .map_err(|e| {
+                    roboflow_core::RoboflowError::parse(
+                        "Parquet",
+                        format!("Failed to write merged parquet: {}", e),
+                    )
+                })?;
+        }
+
+        self.output_bytes += fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
+
+        self.pending_parquet_segments.clear();
         Ok(())
     }
 
@@ -1068,6 +1217,8 @@ impl LerobotWriter {
             segment_index: 0,
             session_id: uuid::Uuid::new_v4().to_string(),
             pending_segments: HashMap::new(),
+            pending_parquet_segments: Vec::new(),
+            parquet_segment_index: 0,
             episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
             image_buffers: HashMap::new(),
@@ -1119,11 +1270,12 @@ impl DatasetWriter for LerobotWriter {
         // flush on every frame after the threshold is reached. frame_data is cumulative
         // and never cleared, while images_since_flush is reset after each flush.
         let memory_bytes = self.estimate_memory_bytes();
-        if self
+        let should_flush_video = self
             .config
             .flushing
-            .should_flush(self.images_since_flush, memory_bytes)
-        {
+            .should_flush(self.images_since_flush, memory_bytes);
+
+        if should_flush_video {
             tracing::info!(
                 images_since_flush = self.images_since_flush,
                 total_frames = self.frame_data.len(),
@@ -1140,10 +1292,70 @@ impl DatasetWriter for LerobotWriter {
             }
         }
 
+        // In streaming pipeline mode, flush parquet segments independently from
+        // video flush decisions so row buffering remains bounded.
+        if self.is_streaming_pipeline_mode() {
+            let should_flush_parquet = (self.config.flushing.max_frames_per_chunk > 0
+                && self.frame_data.len() >= self.config.flushing.max_frames_per_chunk)
+                || (self.config.flushing.max_memory_bytes > 0
+                    && memory_bytes >= self.config.flushing.max_memory_bytes);
+
+            if should_flush_parquet {
+                self.flush_parquet_segment()?;
+            }
+        }
+
         Ok(())
     }
 
     fn finalize(&mut self) -> Result<WriterStats> {
+        if self.is_streaming_pipeline_mode() {
+            if !self.image_buffers.values().all(|v| v.is_empty()) {
+                self.flush_video_segment()?;
+            }
+
+            if !self.frame_data.is_empty() {
+                self.flush_parquet_segment()?;
+            }
+
+            self.merge_pending_parquet_segments()?;
+            self.merge_pending_segments()?;
+            self.write_camera_parameters()?;
+
+            if self.config.streaming.finalize_metadata_in_coordinator {
+                tracing::info!(
+                    output_dir = %self.output_dir.display(),
+                    "Skipping local metadata write; coordinator finalizes metadata"
+                );
+            } else {
+                self.metadata.write_all(&self.output_dir, &self.config)?;
+            }
+
+            let duration = self
+                .start_time
+                .map(|t| t.elapsed().as_secs_f64())
+                .unwrap_or(0.0);
+
+            tracing::info!(
+                output_dir = %self.output_dir.display(),
+                episodes = self.episode_index,
+                frames = self.total_frames,
+                images_encoded = self.images_encoded,
+                skipped_frames = self.skipped_frames,
+                output_bytes = self.output_bytes,
+                duration_sec = duration,
+                "Finalized LeRobot v2.1 dataset"
+            );
+
+            return Ok(WriterStats {
+                frames_written: self.total_frames,
+                images_encoded: self.images_encoded,
+                state_records: self.total_frames,
+                duration_sec: duration,
+                output_bytes: self.output_bytes,
+            });
+        }
+
         // Flush any remaining video buffers
         if !self.image_buffers.values().all(|v| v.is_empty()) {
             self.flush_video_segment()?;
@@ -1476,6 +1688,39 @@ mod tests {
             "Temp directory should be cleaned up after merge: {:?}",
             temp_dir
         );
+    }
+
+    #[test]
+    fn test_streaming_mode_flushes_parquet_segments_during_processing() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let flushing = FlushingConfig {
+            max_frames_per_chunk: 0,
+            max_memory_bytes: 1,
+            incremental_video_encoding: true,
+        };
+        let mut config = test_config(flushing);
+        config.streaming.finalize_metadata_in_coordinator = true;
+
+        let mut writer = LerobotWriter::new_local(tmp.path(), config).unwrap();
+
+        for i in 0..12 {
+            writer.write_frame(&make_frame(i)).unwrap();
+        }
+
+        // In streaming mode, flush should keep frame_data bounded and persisted as segments.
+        assert_eq!(writer.frame_data.len(), 0);
+        assert!(!writer.pending_parquet_segments.is_empty());
+
+        let stats = <LerobotWriter as DatasetWriter>::finalize(&mut writer).unwrap();
+        assert_eq!(stats.frames_written, 12);
+
+        let parquet = tmp.path().join("data/chunk-000/episode_000000.parquet");
+        assert!(parquet.exists(), "final merged parquet should exist");
+
+        let file = std::fs::File::open(&parquet).unwrap();
+        let df = ParquetReader::new(file).finish().unwrap();
+        assert_eq!(df.height(), 12);
     }
 
     #[test]
