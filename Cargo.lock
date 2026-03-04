@@ -4209,12 +4209,19 @@ name = "roboflow-pipeline"
 version = "0.2.0"
 dependencies = [
  "async-trait",
+ "bincode",
+ "chrono",
  "robocodec",
  "roboflow-core",
  "roboflow-dataset",
+ "roboflow-distributed",
  "roboflow-executor",
  "roboflow-media",
+ "roboflow-storage",
+ "serde_json",
+ "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

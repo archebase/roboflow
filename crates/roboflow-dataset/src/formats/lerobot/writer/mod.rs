@@ -42,6 +42,7 @@
 //! - [`LerobotFrame`] - Frame data structure
 //! - [`CameraIntrinsic`], [`CameraExtrinsic`], [`ExtrinsicData`] - Camera calibration types
 
+pub(crate) mod background_encoder;
 mod builder;
 mod episode_writer;
 mod frame;

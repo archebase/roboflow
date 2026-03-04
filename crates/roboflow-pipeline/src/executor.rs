@@ -68,6 +68,12 @@ pub struct DatasetPipelineStats {
     pub fps: f64,
     /// Name of the execution policy used
     pub policy_name: &'static str,
+    /// State/action feature dimensions (feature_name -> dim)
+    pub state_dims: HashMap<String, usize>,
+    /// Image feature shapes (feature_name -> (height, width))
+    pub image_shapes: HashMap<String, (usize, usize)>,
+    /// Per-feature statistics (serialized JSON values for cross-crate compatibility)
+    pub feature_stats: HashMap<String, serde_json::Value>,
 }
 
 /// Episode management strategy.
@@ -661,6 +667,26 @@ impl<W: FormatWriter, P: ExecutionPolicy> DatasetPipelineExecutor<W, P> {
         // Finish current episode
         if self.state.episode_started {
             self.finish_episode()?;
+        }
+
+        // Extract metadata from writer before finalize (if it's a LerobotWriter)
+        if let Some(lerobot_writer) =
+            self.writer
+                .as_any()
+                .downcast_ref::<roboflow_dataset::formats::lerobot::writer::LerobotWriter>()
+        {
+            let metadata = lerobot_writer.metadata();
+            self.stats.state_dims = metadata.state_dims.clone();
+            self.stats.image_shapes = metadata.image_shapes.clone();
+
+            // Extract feature stats from the last episode (most recent stats)
+            if let Some(last_stats) = metadata.episode_stats.last()
+                && let Some(map) = last_stats.stats.as_object()
+            {
+                for (key, value) in map {
+                    self.stats.feature_stats.insert(key.clone(), value.clone());
+                }
+            }
         }
 
         // Finalize writer
