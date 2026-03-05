@@ -42,7 +42,7 @@
 //! - [`LerobotFrame`] - Frame data structure
 //! - [`CameraIntrinsic`], [`CameraExtrinsic`], [`ExtrinsicData`] - Camera calibration types
 
-pub(crate) mod background_encoder;
+pub mod background_encoder;
 mod builder;
 mod episode_writer;
 mod frame;
@@ -51,6 +51,7 @@ mod stats;
 mod writer_impl;
 
 // Re-export public API
+pub use background_encoder::{BackgroundEncoderResult, BackgroundVideoEncoder, EncodeRequest};
 pub use builder::LerobotWriterBuilder;
 pub use episode_writer::EpisodeWriter;
 pub use frame::LerobotFrame;

@@ -10,6 +10,8 @@
 use super::schema::MergeState;
 use crate::tikv::error::TikvError;
 use polars::prelude::*;
+use roboflow_dataset::formats::lerobot::config::LerobotConfig;
+use roboflow_dataset::formats::lerobot::metadata::MetadataCollector;
 use roboflow_storage::{Storage, StorageFactory, StorageUrl};
 use std::collections::HashMap;
 use std::io::{BufWriter, Read, Write};
@@ -84,10 +86,15 @@ impl ParquetMergeExecutor {
     ///
     /// # Arguments
     /// * `state` - The merge state containing staging paths from all workers
+    /// * `config` - Optional LeRobot configuration for metadata generation
     ///
     /// # Returns
     /// The total number of frames merged
-    pub async fn execute(&self, state: &MergeState) -> Result<u64, TikvError> {
+    pub async fn execute(
+        &self,
+        state: &MergeState,
+        config: Option<&LerobotConfig>,
+    ) -> Result<u64, TikvError> {
         info!(
             job_id = %state.job_id,
             workers = state.completed_workers,
@@ -120,6 +127,16 @@ impl ParquetMergeExecutor {
 
         // Step 4: Copy staged media files to final dataset output paths.
         self.copy_media_assets(&media_copy_tasks)?;
+
+        // Step 5: Generate LeRobot v2.1 metadata files if config is provided
+        if let Some(lerobot_config) = config {
+            self.write_metadata(&merged_df, lerobot_config).await?;
+        } else {
+            warn!(
+                job_id = %state.job_id,
+                "No LeRobot config provided - skipping metadata generation"
+            );
+        }
 
         info!(
             job_id = %state.job_id,
@@ -572,6 +589,99 @@ impl ParquetMergeExecutor {
                 "Wrote merged parquet file"
             );
         }
+
+        Ok(())
+    }
+
+    /// Write LeRobot v2.1 metadata files.
+    ///
+    /// Generates meta/info.json, meta/episodes.jsonl, and meta/episodes_stats.jsonl
+    /// from the merged parquet data.
+    async fn write_metadata(
+        &self,
+        merged_df: &DataFrame,
+        config: &LerobotConfig,
+    ) -> Result<(), TikvError> {
+        info!("Generating LeRobot v2.1 metadata files");
+
+        let mut collector = MetadataCollector::new();
+
+        // Extract episode information from the merged DataFrame
+        let episode_index_col = merged_df
+            .column("episode_index")
+            .map_err(|e| TikvError::Other(format!("Missing episode_index column: {}", e)))?;
+
+        let episode_indices = episode_index_col
+            .i64()
+            .map_err(|e| TikvError::Other(format!("episode_index is not i64: {}", e)))?;
+
+        // Group by episode_index to get frame counts per episode
+        let mut episode_frame_counts: HashMap<i64, usize> = HashMap::new();
+        for idx in episode_indices.into_iter().flatten() {
+            *episode_frame_counts.entry(idx).or_insert(0) += 1;
+        }
+
+        // Sort episodes by index
+        let mut sorted_episodes: Vec<_> = episode_frame_counts.into_iter().collect();
+        sorted_episodes.sort_by_key(|(idx, _)| *idx);
+
+        // Add episodes to collector
+        for (episode_idx, frame_count) in sorted_episodes {
+            collector.add_episode(episode_idx as usize, frame_count, vec![]);
+        }
+
+        // Extract feature dimensions from DataFrame schema
+        for field in merged_df.schema().iter_fields() {
+            let name = field.name();
+
+            // Skip metadata columns
+            if name == "episode_index"
+                || name == "frame_index"
+                || name == "timestamp"
+                || name == "index"
+            {
+                continue;
+            }
+
+            // Video path columns (e.g., observation.images.cam_left_path)
+            if name.ends_with("_path") {
+                let feature_name = name.trim_end_matches("_path");
+                // Assume standard video dimensions (will be overridden if we can extract from config)
+                collector.update_image_shape(feature_name.to_string(), 640, 480);
+            }
+            // State columns (float arrays)
+            else if matches!(field.data_type(), DataType::List(_)) {
+                // Try to infer dimension from first non-null value
+                if let Ok(col) = merged_df.column(name)
+                    && let Ok(list_col) = col.list()
+                    && let Some(series) = list_col.into_iter().flatten().next()
+                {
+                    let dim = series.len();
+                    collector.update_state_dim(name.to_string(), dim);
+                }
+            }
+        }
+
+        // Parse output path to get storage prefix
+        let output_url: StorageUrl =
+            self.output_path
+                .parse()
+                .map_err(|e: roboflow_storage::StorageError| {
+                    TikvError::Other(format!("Invalid output path '{}': {}", self.output_path, e))
+                })?;
+
+        let output_prefix = output_url.path().trim_start_matches('/').to_string();
+
+        // Write metadata to storage
+        collector
+            .write_all_to_storage(&self.storage, &output_prefix, config)
+            .map_err(|e| TikvError::Other(format!("Failed to write metadata: {}", e)))?;
+
+        info!(
+            output_path = %self.output_path,
+            episodes = collector.episodes.len(),
+            "LeRobot v2.1 metadata files written successfully"
+        );
 
         Ok(())
     }
@@ -1154,5 +1264,349 @@ mod tests {
         // Verify episode indices
         let episode_indices: Vec<i64> = files.iter().map(|f| f.episode_index).collect();
         assert_eq!(episode_indices, vec![1, 3], "Should find episodes 1 and 3");
+    }
+
+    /// Helper to build a test LerobotConfig.
+    fn test_lerobot_config() -> LerobotConfig {
+        use roboflow_dataset::formats::common::DatasetBaseConfig;
+        use roboflow_dataset::formats::lerobot::config::{DatasetConfig, VideoConfig};
+
+        LerobotConfig {
+            dataset: DatasetConfig {
+                base: DatasetBaseConfig {
+                    name: "test_dataset".to_string(),
+                    fps: 30,
+                    robot_type: Some("so100".to_string()),
+                },
+                env_type: None,
+            },
+            mappings: vec![],
+            video: VideoConfig::default(),
+            annotation_file: None,
+            flushing: Default::default(),
+            streaming: Default::default(),
+        }
+    }
+
+    /// Helper to build a merged DataFrame with the given episodes and frame counts.
+    fn build_test_dataframe(episodes: &[(i64, usize)]) -> DataFrame {
+        let mut episode_indices: Vec<i64> = Vec::new();
+        let mut frame_indices: Vec<i64> = Vec::new();
+        let mut timestamps: Vec<f64> = Vec::new();
+
+        for &(ep_idx, frame_count) in episodes {
+            for f in 0..frame_count {
+                episode_indices.push(ep_idx);
+                frame_indices.push(f as i64);
+                timestamps.push(f as f64 / 30.0);
+            }
+        }
+
+        DataFrame::new::<Series>(vec![
+            Series::new("episode_index".into(), &episode_indices),
+            Series::new("frame_index".into(), &frame_indices),
+            Series::new("timestamp".into(), &timestamps),
+        ])
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_write_metadata_single_episode() {
+        use roboflow_storage::mock::MockStorage;
+
+        let mock_storage = Arc::new(MockStorage::new());
+        let executor = ParquetMergeExecutor::new(
+            Arc::clone(&mock_storage) as Arc<dyn Storage>,
+            "s3://bucket/datasets/test001".to_string(),
+            std::env::temp_dir(),
+        );
+
+        let df = build_test_dataframe(&[(0, 100)]);
+        let config = test_lerobot_config();
+
+        executor.write_metadata(&df, &config).await.unwrap();
+
+        // Verify meta/info.json was written
+        assert!(
+            mock_storage.exists(Path::new("datasets/test001/meta/info.json")),
+            "meta/info.json should exist"
+        );
+
+        let info_content = {
+            let mut buf = Vec::new();
+            mock_storage
+                .reader(Path::new("datasets/test001/meta/info.json"))
+                .unwrap()
+                .read_to_end(&mut buf)
+                .unwrap();
+            String::from_utf8(buf).unwrap()
+        };
+        let info: serde_json::Value = serde_json::from_str(&info_content).unwrap();
+        assert_eq!(info["total_episodes"], 1);
+        assert_eq!(info["total_frames"], 100);
+        assert_eq!(info["fps"], 30);
+        assert_eq!(info["name"], "test_dataset");
+        assert_eq!(info["robot_type"], "so100");
+
+        // Verify meta/episodes.jsonl was written
+        assert!(
+            mock_storage.exists(Path::new("datasets/test001/meta/episodes.jsonl")),
+            "meta/episodes.jsonl should exist"
+        );
+
+        let episodes_content = {
+            let mut buf = Vec::new();
+            mock_storage
+                .reader(Path::new("datasets/test001/meta/episodes.jsonl"))
+                .unwrap()
+                .read_to_end(&mut buf)
+                .unwrap();
+            String::from_utf8(buf).unwrap()
+        };
+        let lines: Vec<&str> = episodes_content.lines().collect();
+        assert_eq!(lines.len(), 1);
+
+        let ep: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(ep["episode_index"], 0);
+        assert_eq!(ep["length"], 100);
+    }
+
+    #[tokio::test]
+    async fn test_write_metadata_multiple_episodes() {
+        use roboflow_storage::mock::MockStorage;
+
+        let mock_storage = Arc::new(MockStorage::new());
+        let executor = ParquetMergeExecutor::new(
+            Arc::clone(&mock_storage) as Arc<dyn Storage>,
+            "s3://bucket/datasets/test002".to_string(),
+            std::env::temp_dir(),
+        );
+
+        let df = build_test_dataframe(&[(0, 50), (1, 75), (2, 25)]);
+        let config = test_lerobot_config();
+
+        executor.write_metadata(&df, &config).await.unwrap();
+
+        let info_content = {
+            let mut buf = Vec::new();
+            mock_storage
+                .reader(Path::new("datasets/test002/meta/info.json"))
+                .unwrap()
+                .read_to_end(&mut buf)
+                .unwrap();
+            String::from_utf8(buf).unwrap()
+        };
+        let info: serde_json::Value = serde_json::from_str(&info_content).unwrap();
+        assert_eq!(info["total_episodes"], 3);
+        assert_eq!(info["total_frames"], 150);
+
+        let episodes_content = {
+            let mut buf = Vec::new();
+            mock_storage
+                .reader(Path::new("datasets/test002/meta/episodes.jsonl"))
+                .unwrap()
+                .read_to_end(&mut buf)
+                .unwrap();
+            String::from_utf8(buf).unwrap()
+        };
+        let lines: Vec<&str> = episodes_content.lines().collect();
+        assert_eq!(lines.len(), 3);
+
+        // Episodes should be sorted by index
+        let ep0: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        let ep1: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        let ep2: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
+        assert_eq!(ep0["episode_index"], 0);
+        assert_eq!(ep0["length"], 50);
+        assert_eq!(ep1["episode_index"], 1);
+        assert_eq!(ep1["length"], 75);
+        assert_eq!(ep2["episode_index"], 2);
+        assert_eq!(ep2["length"], 25);
+    }
+
+    #[tokio::test]
+    async fn test_write_metadata_with_video_path_columns() {
+        use roboflow_storage::mock::MockStorage;
+
+        let mock_storage = Arc::new(MockStorage::new());
+        let executor = ParquetMergeExecutor::new(
+            Arc::clone(&mock_storage) as Arc<dyn Storage>,
+            "s3://bucket/datasets/test003".to_string(),
+            std::env::temp_dir(),
+        );
+
+        // Build a DataFrame with video path columns
+        let df = DataFrame::new::<Series>(vec![
+            Series::new("episode_index".into(), &[0i64, 0, 1, 1]),
+            Series::new("frame_index".into(), &[0i64, 1, 0, 1]),
+            Series::new("timestamp".into(), &[0.0f64, 0.033, 0.0, 0.033]),
+            Series::new(
+                "observation.images.cam_left_path".into(),
+                &[
+                    "videos/chunk-000/observation.images.cam_left/episode_000000.mp4",
+                    "videos/chunk-000/observation.images.cam_left/episode_000000.mp4",
+                    "videos/chunk-000/observation.images.cam_left/episode_000001.mp4",
+                    "videos/chunk-000/observation.images.cam_left/episode_000001.mp4",
+                ],
+            ),
+            Series::new(
+                "observation.images.cam_right_path".into(),
+                &[
+                    "videos/chunk-000/observation.images.cam_right/episode_000000.mp4",
+                    "videos/chunk-000/observation.images.cam_right/episode_000000.mp4",
+                    "videos/chunk-000/observation.images.cam_right/episode_000001.mp4",
+                    "videos/chunk-000/observation.images.cam_right/episode_000001.mp4",
+                ],
+            ),
+        ])
+        .unwrap();
+
+        let config = test_lerobot_config();
+        executor.write_metadata(&df, &config).await.unwrap();
+
+        let info_content = {
+            let mut buf = Vec::new();
+            mock_storage
+                .reader(Path::new("datasets/test003/meta/info.json"))
+                .unwrap()
+                .read_to_end(&mut buf)
+                .unwrap();
+            String::from_utf8(buf).unwrap()
+        };
+        let info: serde_json::Value = serde_json::from_str(&info_content).unwrap();
+
+        // Should have detected both cameras as video features
+        let features = info["features"].as_object().unwrap();
+        assert!(
+            features.contains_key("observation.images.cam_left"),
+            "Should contain cam_left feature"
+        );
+        assert!(
+            features.contains_key("observation.images.cam_right"),
+            "Should contain cam_right feature"
+        );
+
+        // Check video feature structure
+        let cam_left = &features["observation.images.cam_left"];
+        assert_eq!(cam_left["dtype"], "video");
+        assert!(cam_left["shape"].is_array());
+    }
+
+    #[tokio::test]
+    async fn test_write_metadata_with_state_list_columns() {
+        use roboflow_storage::mock::MockStorage;
+
+        let mock_storage = Arc::new(MockStorage::new());
+        let executor = ParquetMergeExecutor::new(
+            Arc::clone(&mock_storage) as Arc<dyn Storage>,
+            "s3://bucket/datasets/test004".to_string(),
+            std::env::temp_dir(),
+        );
+
+        // Build a DataFrame with list columns for state
+        let state_values: Series = Series::new(
+            "observation.state".into(),
+            vec![
+                Series::new("".into(), &[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0]),
+                Series::new("".into(), &[1.1f32, 2.1, 3.1, 4.1, 5.1, 6.1]),
+            ],
+        );
+        let action_values: Series = Series::new(
+            "action".into(),
+            vec![
+                Series::new("".into(), &[0.5f32, 0.6, 0.7]),
+                Series::new("".into(), &[0.8f32, 0.9, 1.0]),
+            ],
+        );
+
+        let s1: Series = Series::new("episode_index".into(), &[0i64, 0]);
+        let s2: Series = Series::new("frame_index".into(), &[0i64, 1]);
+        let s3: Series = Series::new("timestamp".into(), &[0.0f64, 0.033]);
+        let df = DataFrame::new::<Series>(vec![s1, s2, s3, state_values, action_values]).unwrap();
+
+        let config = test_lerobot_config();
+        executor.write_metadata(&df, &config).await.unwrap();
+
+        let info_content = {
+            let mut buf = Vec::new();
+            mock_storage
+                .reader(Path::new("datasets/test004/meta/info.json"))
+                .unwrap()
+                .read_to_end(&mut buf)
+                .unwrap();
+            String::from_utf8(buf).unwrap()
+        };
+        let info: serde_json::Value = serde_json::from_str(&info_content).unwrap();
+
+        // Should have detected state features with correct dimensions
+        let features = info["features"].as_object().unwrap();
+        assert!(
+            features.contains_key("observation.state"),
+            "Should contain observation.state"
+        );
+        assert!(features.contains_key("action"), "Should contain action");
+
+        let obs_state = &features["observation.state"];
+        assert_eq!(obs_state["dtype"], "float32");
+        assert_eq!(obs_state["shape"], serde_json::json!([6]));
+
+        let action = &features["action"];
+        assert_eq!(action["dtype"], "float32");
+        assert_eq!(action["shape"], serde_json::json!([3]));
+    }
+
+    #[tokio::test]
+    async fn test_write_metadata_missing_episode_index_column() {
+        use roboflow_storage::mock::MockStorage;
+
+        let mock_storage = Arc::new(MockStorage::new());
+        let executor = ParquetMergeExecutor::new(
+            Arc::clone(&mock_storage) as Arc<dyn Storage>,
+            "s3://bucket/datasets/test005".to_string(),
+            std::env::temp_dir(),
+        );
+
+        // DataFrame without episode_index column
+        let s1: Series = Series::new("frame_index".into(), &[0i64, 1]);
+        let s2: Series = Series::new("timestamp".into(), &[0.0f64, 0.033]);
+        let df = DataFrame::new::<Series>(vec![s1, s2]).unwrap();
+
+        let config = test_lerobot_config();
+        let result = executor.write_metadata(&df, &config).await;
+
+        assert!(result.is_err(), "Should fail without episode_index column");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("episode_index"),
+            "Error should mention episode_index: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_write_metadata_to_mock_storage() {
+        use roboflow_storage::mock::MockStorage;
+
+        let mock_storage = Arc::new(MockStorage::new());
+        let executor = ParquetMergeExecutor::new(
+            Arc::clone(&mock_storage) as Arc<dyn Storage>,
+            "s3://bucket/datasets/my_dataset".to_string(),
+            std::env::temp_dir(),
+        );
+
+        let df = build_test_dataframe(&[(0, 30), (1, 45)]);
+        let config = test_lerobot_config();
+
+        executor.write_metadata(&df, &config).await.unwrap();
+
+        // Verify files were written to mock storage
+        assert!(
+            mock_storage.exists(Path::new("datasets/my_dataset/meta/info.json")),
+            "info.json should be written to storage"
+        );
+        assert!(
+            mock_storage.exists(Path::new("datasets/my_dataset/meta/episodes.jsonl")),
+            "episodes.jsonl should be written to storage"
+        );
     }
 }

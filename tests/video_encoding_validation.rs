@@ -18,17 +18,7 @@ use roboflow::{
     DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig as DatasetConfig,
     LerobotWriter, LerobotWriterTrait, VideoConfig,
 };
-use roboflow_dataset::{ImageData, common::AlignedFrame};
-
-/// Create test image data with a gradient pattern for uniqueness.
-fn create_test_image_with_pattern(width: u32, height: u32, pattern: u8) -> ImageData {
-    let mut data = vec![pattern; (width * height * 3) as usize];
-    // Add a gradient pattern for uniqueness (helps with video encoding verification)
-    for (i, byte) in data.iter_mut().enumerate() {
-        *byte = byte.wrapping_add((i % 256) as u8);
-    }
-    ImageData::new(width, height, data)
-}
+use roboflow_dataset::common::{AlignedFrame, ImageRef};
 
 /// Get ffprobe path (check if available).
 fn ffprobe_path() -> Option<&'static str> {
@@ -198,12 +188,10 @@ fn test_video_encoding_with_ffprobe_validation() {
 
     // Add frames with state/action data
     for i in 0..num_frames {
-        let img = create_test_image_with_pattern(width, height, (i % 256) as u8);
-
-        let mut images = HashMap::new();
-        images.insert(
+        let mut image_refs = HashMap::new();
+        image_refs.insert(
             "observation.images.camera_0".to_string(),
-            std::sync::Arc::new(img),
+            ImageRef { width, height },
         );
 
         let mut states = HashMap::new();
@@ -221,7 +209,7 @@ fn test_video_encoding_with_ffprobe_validation() {
         let frame = AlignedFrame {
             frame_index: i,
             timestamp: (i as u64) * 33_333_333, // ~30 FPS
-            images,
+            image_refs,
             states,
             actions,
             timestamps: HashMap::new(),
@@ -308,26 +296,18 @@ fn test_multi_camera_video_encoding() {
 
     // Add frames with multiple cameras
     for i in 0..num_frames {
-        let mut images = HashMap::new();
+        let mut image_refs = HashMap::new();
 
         // Camera 0
-        images.insert(
+        image_refs.insert(
             "observation.images.camera_0".to_string(),
-            std::sync::Arc::new(create_test_image_with_pattern(
-                width,
-                height,
-                (i % 256) as u8,
-            )),
+            ImageRef { width, height },
         );
 
         // Camera 1
-        images.insert(
+        image_refs.insert(
             "observation.images.camera_1".to_string(),
-            std::sync::Arc::new(create_test_image_with_pattern(
-                width,
-                height,
-                ((i + 128) % 256) as u8,
-            )),
+            ImageRef { width, height },
         );
 
         let mut states = HashMap::new();
@@ -345,7 +325,7 @@ fn test_multi_camera_video_encoding() {
         let frame = AlignedFrame {
             frame_index: i,
             timestamp: (i as u64) * 33_333_333,
-            images,
+            image_refs,
             states,
             actions,
             timestamps: HashMap::new(),
@@ -450,12 +430,10 @@ fn test_various_video_resolutions() {
 
         // Add a few frames
         for i in 0..5 {
-            let img = create_test_image_with_pattern(width, height, (i % 256) as u8);
-
-            let mut images = HashMap::new();
-            images.insert(
+            let mut image_refs = HashMap::new();
+            image_refs.insert(
                 "observation.images.camera_0".to_string(),
-                std::sync::Arc::new(img),
+                ImageRef { width, height },
             );
 
             let mut states = HashMap::new();
@@ -473,7 +451,7 @@ fn test_various_video_resolutions() {
             let frame = AlignedFrame {
                 frame_index: i,
                 timestamp: (i as u64) * 33_333_333,
-                images,
+                image_refs,
                 states,
                 actions,
                 timestamps: HashMap::new(),
@@ -552,12 +530,13 @@ fn test_dimension_mismatch_handled_gracefully() {
 
     // Add frames with consistent dimensions first
     for i in 0..3 {
-        let img = create_test_image_with_pattern(320, 240, (i % 256) as u8);
-
-        let mut images = HashMap::new();
-        images.insert(
+        let mut image_refs = HashMap::new();
+        image_refs.insert(
             "observation.images.camera_0".to_string(),
-            std::sync::Arc::new(img),
+            ImageRef {
+                width: 320,
+                height: 240,
+            },
         );
 
         let mut states = HashMap::new();
@@ -575,7 +554,7 @@ fn test_dimension_mismatch_handled_gracefully() {
         let frame = AlignedFrame {
             frame_index: i,
             timestamp: (i as u64) * 33_333_333,
-            images,
+            image_refs,
             states,
             actions,
             timestamps: HashMap::new(),
@@ -587,12 +566,13 @@ fn test_dimension_mismatch_handled_gracefully() {
 
     // Add a frame with different dimensions - should be skipped
     {
-        let mismatched_img = create_test_image_with_pattern(640, 480, 99);
-
-        let mut images = HashMap::new();
-        images.insert(
+        let mut image_refs = HashMap::new();
+        image_refs.insert(
             "observation.images.camera_0".to_string(),
-            std::sync::Arc::new(mismatched_img),
+            ImageRef {
+                width: 640,
+                height: 480,
+            },
         );
 
         let mut states = HashMap::new();
@@ -610,7 +590,7 @@ fn test_dimension_mismatch_handled_gracefully() {
         let frame = AlignedFrame {
             frame_index: 4,
             timestamp: 4 * 33_333_333,
-            images,
+            image_refs,
             states,
             actions,
             timestamps: HashMap::new(),
@@ -666,12 +646,10 @@ fn test_high_frame_count_encoding() {
     let num_frames = 300; // 10 seconds at 30fps
 
     for i in 0..num_frames {
-        let img = create_test_image_with_pattern(width, height, (i % 256) as u8);
-
-        let mut images = HashMap::new();
-        images.insert(
+        let mut image_refs = HashMap::new();
+        image_refs.insert(
             "observation.images.camera_0".to_string(),
-            std::sync::Arc::new(img),
+            ImageRef { width, height },
         );
 
         let mut states = HashMap::new();
@@ -689,7 +667,7 @@ fn test_high_frame_count_encoding() {
         let frame = AlignedFrame {
             frame_index: i,
             timestamp: (i as u64) * 33_333_333,
-            images,
+            image_refs,
             states,
             actions,
             timestamps: HashMap::new(),

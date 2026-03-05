@@ -355,7 +355,7 @@ fn test_generate_test_frames() {
 
     for (i, frame) in frames.iter().enumerate() {
         assert_eq!(frame.frame_index, i);
-        assert!(frame.images.contains_key("observation.camera_0"));
+        assert!(frame.image_refs.contains_key("observation.camera_0"));
         assert!(frame.states.contains_key("observation.state"));
     }
 }

@@ -661,10 +661,40 @@ impl MergeCoordinator {
         let executor =
             ParquetMergeExecutor::new(storage, state.output_path.clone(), self.temp_dir.clone());
 
+        // Try to load LeRobot config from the batch's config_hash
+        let lerobot_config = self.load_lerobot_config(&state.job_id).await;
+
         executor
-            .execute(state)
+            .execute(state, lerobot_config.as_ref())
             .await
             .map_err(|e| TikvError::Other(format!("Merge execution failed: {}", e)))
+    }
+
+    /// Load LeRobot config from TiKV for metadata generation.
+    async fn load_lerobot_config(
+        &self,
+        job_id: &str,
+    ) -> Option<roboflow_dataset::formats::lerobot::config::LerobotConfig> {
+        use roboflow_dataset::formats::lerobot::config::LerobotConfig;
+
+        // Get the batch spec to find the config hash
+        let spec_key = crate::batch::BatchKeys::spec(job_id);
+        let spec_data = self.tikv.get(spec_key).await.ok()??;
+
+        let batch_spec: crate::batch::BatchSpec = bincode::deserialize(&spec_data).ok()?;
+
+        // The config field contains either "default" or a config hash
+        let config_hash = &batch_spec.spec.config;
+        if config_hash == "default" {
+            tracing::debug!("Batch uses default config, skipping metadata generation");
+            return None;
+        }
+
+        // Load the config from TiKV
+        let config_record = self.tikv.get_config(config_hash).await.ok()??;
+
+        // Parse the TOML config
+        LerobotConfig::from_toml(&config_record.content).ok()
     }
 
     /// Mark the merge as failed by transitioning batch status from Merging to Failed.

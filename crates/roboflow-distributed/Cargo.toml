@@ -10,6 +10,7 @@ description = "Distributed coordination for roboflow - TiKV backend"
 [dependencies]
 roboflow-core = { workspace = true }
 roboflow-storage = { workspace = true }
+roboflow-dataset = { workspace = true }
 
 # TiKV
 tikv-client = "0.3"

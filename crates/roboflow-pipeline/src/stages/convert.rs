@@ -7,12 +7,13 @@
 use std::path::PathBuf;
 
 use roboflow_core::Result;
+use roboflow_dataset::formats::common::config::MappingType;
 use roboflow_dataset::formats::lerobot::config::LerobotConfig;
 use roboflow_dataset::formats::lerobot::{LerobotWriterConfig, create_lerobot_writer};
 use roboflow_dataset::sources::{SourceConfig, create_source};
 use roboflow_executor::{PartitionId, Stage, StageId, Task, TaskContext, TaskResult};
 
-use crate::{DatasetPipelineConfig, DatasetPipelineExecutor};
+use crate::{DatasetPipelineConfig, DatasetPipelineExecutor, ImageFastPathConfig};
 
 /// Pipeline stage that converts bag/MCAP files to LeRobot format.
 ///
@@ -152,12 +153,26 @@ impl Task for ConvertTask {
             .map(|p| p.get())
             .unwrap_or(4);
 
-        let mut executor = DatasetPipelineExecutor::parallel(
-            writer,
-            DatasetPipelineConfig::with_fps(self.lerobot_config.dataset.fps)
-                .with_topic_mappings(topic_mappings),
-            num_threads,
-        );
+        // Build image fast-path config from image topic mappings
+        let image_topics: std::collections::HashSet<String> = self
+            .lerobot_config
+            .mappings
+            .iter()
+            .filter(|m| m.mapping_type == MappingType::Image)
+            .map(|m| m.feature.clone())
+            .collect();
+
+        let pipeline_config = DatasetPipelineConfig::with_fps(self.lerobot_config.dataset.fps)
+            .with_topic_mappings(topic_mappings)
+            .with_image_fast_path(ImageFastPathConfig {
+                enabled: !image_topics.is_empty(),
+                output_dir: episode_output.clone(),
+                chunk_index: 0,
+                episode_index: self.episode_index,
+                image_topics,
+            });
+
+        let mut executor = DatasetPipelineExecutor::parallel(writer, pipeline_config, num_threads);
 
         // Process messages
         let mut total_messages: u64 = 0;

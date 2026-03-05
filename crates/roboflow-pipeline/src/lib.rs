@@ -4,7 +4,7 @@ pub mod stages;
 
 pub use executor::{
     DatasetPipelineConfig, DatasetPipelineExecutor, DatasetPipelineStats, EpisodeStrategy,
-    ExecutionPolicy, ParallelPolicy, SequentialPolicy,
+    ExecutionPolicy, ImageFastPathConfig, ParallelPolicy, SequentialPolicy,
 };
 
 pub use processor::BagToLerobotProcessor;

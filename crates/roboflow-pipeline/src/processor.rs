@@ -27,7 +27,7 @@ use roboflow_distributed::{
 };
 use roboflow_storage::StorageFactory;
 
-use crate::{DatasetPipelineConfig, DatasetPipelineExecutor};
+use crate::{DatasetPipelineConfig, DatasetPipelineExecutor, ImageFastPathConfig};
 
 /// Work processor that converts bag/MCAP files to LeRobot v2.1 format.
 pub struct BagToLerobotProcessor {
@@ -252,6 +252,14 @@ impl WorkProcessor for BagToLerobotProcessor {
             .map(|m| (m.topic.clone(), m.feature.clone()))
             .collect();
 
+        // Build image fast-path config from image topic mappings (before lerobot_config is moved)
+        let image_topics: std::collections::HashSet<String> = lerobot_config
+            .mappings
+            .iter()
+            .filter(|m| m.mapping_type == MappingType::Image)
+            .map(|m| m.feature.clone())
+            .collect();
+
         let episode_output_dir =
             output_dir.join(format!("episode_{:06}", allocation.episode_index));
         std::fs::create_dir_all(&episode_output_dir)
@@ -270,11 +278,17 @@ impl WorkProcessor for BagToLerobotProcessor {
             .map(|p| p.get())
             .unwrap_or(4);
 
-        let mut executor = DatasetPipelineExecutor::parallel(
-            writer,
-            DatasetPipelineConfig::with_fps(30).with_topic_mappings(topic_mappings),
-            num_threads,
-        );
+        let pipeline_config = DatasetPipelineConfig::with_fps(30)
+            .with_topic_mappings(topic_mappings)
+            .with_image_fast_path(ImageFastPathConfig {
+                enabled: !image_topics.is_empty(),
+                output_dir: episode_output_dir.clone(),
+                chunk_index: 0,
+                episode_index: allocation.episode_index as usize,
+                image_topics,
+            });
+
+        let mut executor = DatasetPipelineExecutor::parallel(writer, pipeline_config, num_threads);
 
         tracing::info!(
             batch_id = %work_unit.batch_id,

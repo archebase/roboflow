@@ -13,18 +13,14 @@ use std::fs;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use crate::formats::common::{AlignedFrame, DatasetWriter, ImageData, WriterStats};
+use crate::formats::common::{AlignedFrame, DatasetWriter, ImageRef, WriterStats};
 use crate::formats::lerobot::config::LerobotConfig;
 use crate::formats::lerobot::metadata::MetadataCollector;
 use crate::formats::lerobot::trait_impl::{FromAlignedFrame, LerobotWriterTrait};
-use crate::formats::lerobot::video_profiles::resolve_video_config;
 use polars::prelude::{DataFrame, ParquetReader, ParquetWriter, SerReader};
 use roboflow_core::Result;
-use roboflow_media::video::{EncodeStats, encode_videos};
 
-use super::background_encoder::{BackgroundVideoEncoder, EncodeRequest};
 use super::frame::LerobotFrame;
 use super::stats;
 use super::{CameraExtrinsic, CameraIntrinsic, CameraParamsWriter};
@@ -50,9 +46,6 @@ pub struct LerobotWriter {
     /// Unique session ID for temp segment paths
     session_id: String,
 
-    /// Background video encoder (persistent encoder per camera, no segment merge)
-    background_encoder: Option<BackgroundVideoEncoder>,
-
     /// Pending parquet segment paths (streaming writes), merged on finalize.
     pending_parquet_segments: Vec<PathBuf>,
 
@@ -66,9 +59,6 @@ pub struct LerobotWriter {
 
     /// Frame data for current episode
     frame_data: Vec<LerobotFrame>,
-
-    /// Image buffers per camera
-    image_buffers: HashMap<String, Vec<ImageData>>,
 
     /// Metadata collector
     metadata: MetadataCollector,
@@ -85,12 +75,6 @@ pub struct LerobotWriter {
     /// Total frames at the start of the current episode (for per-episode counting)
     episode_start_frames: usize,
 
-    /// Total images encoded
-    images_encoded: usize,
-
-    /// Number of frames skipped due to dimension mismatches
-    skipped_frames: usize,
-
     /// Whether the writer has been initialized
     initialized: bool,
 
@@ -99,12 +83,6 @@ pub struct LerobotWriter {
 
     /// Output bytes written
     output_bytes: u64,
-
-    /// Number of videos that failed to encode
-    failed_encodings: usize,
-
-    /// Images added since last flush (for correct flush triggering)
-    images_since_flush: usize,
 }
 
 impl LerobotWriter {
@@ -175,24 +153,18 @@ impl LerobotWriter {
             episode_index: 0,
             segment_index: 0,
             session_id: uuid::Uuid::new_v4().to_string(),
-            background_encoder: None,
             pending_parquet_segments: Vec::new(),
             parquet_segment_index: 0,
             episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
-            image_buffers: HashMap::new(),
             metadata: MetadataCollector::new(),
             camera_intrinsics: HashMap::new(),
             camera_extrinsics: HashMap::new(),
             total_frames: 0,
             episode_start_frames: 0,
-            images_encoded: 0,
-            skipped_frames: 0,
             initialized: true, // new_local creates a fully initialized writer
             start_time: None,
             output_bytes: 0,
-            failed_encodings: 0,
-            images_since_flush: 0,
         })
     }
 
@@ -233,7 +205,7 @@ impl LerobotWriter {
                 The executor handles cloud uploads after local conversion."
     )]
     pub fn new(
-        _storage: Arc<dyn roboflow_storage::Storage>,
+        _storage: std::sync::Arc<dyn roboflow_storage::Storage>,
         _output_prefix: String,
         local_buffer: impl AsRef<Path>,
         config: LerobotConfig,
@@ -257,24 +229,18 @@ impl LerobotWriter {
             episode_index: 0,
             segment_index: 0,
             session_id: uuid::Uuid::new_v4().to_string(),
-            background_encoder: None,
             pending_parquet_segments: Vec::new(),
             parquet_segment_index: 0,
             episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
-            image_buffers: HashMap::new(),
             metadata: MetadataCollector::new(),
             camera_intrinsics: HashMap::new(),
             camera_extrinsics: HashMap::new(),
             total_frames: 0,
             episode_start_frames: 0,
-            images_encoded: 0,
-            skipped_frames: 0,
             initialized: true, // new() creates a fully initialized writer
             start_time: None,
             output_bytes: 0,
-            failed_encodings: 0,
-            images_since_flush: 0,
         })
     }
 
@@ -333,35 +299,16 @@ impl LerobotWriter {
         self.frame_data.push(frame);
     }
 
-    /// Add image data for a camera frame.
-    /// Note: This does NOT trigger incremental flushing to avoid mid-frame flushes.
-    /// The flush check is deferred until after all images for a frame are added.
-    pub fn add_image(&mut self, camera: String, data: ImageData) {
-        // Update shape metadata
-        self.metadata
-            .update_image_shape(camera.clone(), data.width as usize, data.height as usize);
-
-        // Buffer for video encoding
-        self.image_buffers.entry(camera).or_default().push(data);
-        self.images_since_flush += 1;
-    }
-
-    /// Add image data from Arc (zero-copy if already Arc-wrapped).
-    pub fn add_image_arc(&mut self, camera: String, data: Arc<ImageData>) {
-        // Update shape metadata
-        let inner = &*data;
+    /// Add an image reference to metadata tracking.
+    ///
+    /// Records the image dimensions for metadata without storing pixel data.
+    /// Pixel data is routed directly to the encoder by the executor.
+    pub fn add_image_ref(&mut self, camera: String, image_ref: ImageRef) {
         self.metadata.update_image_shape(
-            camera.clone(),
-            inner.width as usize,
-            inner.height as usize,
+            camera,
+            image_ref.width as usize,
+            image_ref.height as usize,
         );
-
-        // Buffer for video encoding - try to unwrap if uniquely owned
-        self.image_buffers
-            .entry(camera)
-            .or_default()
-            .push(Arc::try_unwrap(data).unwrap_or_else(|arc| (*arc).clone()));
-        self.images_since_flush += 1;
     }
 
     /// Start a new episode.
@@ -434,11 +381,7 @@ impl LerobotWriter {
     /// Finish the current episode and write its data.
     pub fn finish_episode(&mut self, task_index: Option<usize>) -> Result<()> {
         if self.config.flushing.incremental_video_encoding {
-            // Flush remaining buffered video/parquet data.
-            // Video segments are sent to background encoder (no merge needed).
-            if !self.image_buffers.values().all(|v| v.is_empty()) {
-                self.flush_video_segment()?;
-            }
+            // Flush remaining parquet data.
             if !self.frame_data.is_empty() {
                 self.flush_parquet_segment()?;
             }
@@ -451,10 +394,6 @@ impl LerobotWriter {
             self.metadata
                 .add_episode(self.episode_index, episode_frames, tasks);
 
-            for buffer in self.image_buffers.values_mut() {
-                buffer.clear();
-            }
-
             return Ok(());
         }
 
@@ -464,27 +403,8 @@ impl LerobotWriter {
 
         let tasks = task_index.map(|t| vec![t]).unwrap_or_default();
 
-        let start = std::time::Instant::now();
         // Write Parquet file
         let (_parquet_path, _) = self.write_episode_parquet()?;
-        let parquet_time = start.elapsed();
-
-        let start = std::time::Instant::now();
-        // Encode videos
-        let (_video_files, encode_stats) = self.encode_videos()?;
-        let video_time = start.elapsed();
-
-        // Update statistics
-        self.images_encoded += encode_stats.images_encoded;
-        self.skipped_frames += encode_stats.skipped_frames;
-        self.failed_encodings += encode_stats.failed_encodings;
-        self.output_bytes += encode_stats.output_bytes;
-
-        tracing::debug!(
-            parquet_ms = parquet_time.as_secs_f64() * 1000.0,
-            video_ms = video_time.as_secs_f64() * 1000.0,
-            "finish_episode timing"
-        );
 
         // Calculate and store episode stats
         self.calculate_episode_stats()?;
@@ -498,88 +418,9 @@ impl LerobotWriter {
 
         // Clear for next segment/episode
         self.frame_data.clear();
-        for buffer in self.image_buffers.values_mut() {
-            buffer.clear();
-        }
 
         // Increment segment index for next flush
-        // episode_index is NOT incremented here - it only changes when
-        // a new source file (bag/mcap) is started, which is handled
-        // by start_episode() method
         self.segment_index += 1;
-
-        Ok(())
-    }
-
-    /// Flush video buffers to the background encoder.
-    ///
-    /// This method is called when memory threshold is hit during processing.
-    /// It drains the current image buffers and sends them to the background
-    /// encoder thread, returning immediately without blocking.
-    fn flush_video_segment(&mut self) -> Result<()> {
-        // Skip if no cameras have any frames
-        if self.image_buffers.values().all(|v| v.is_empty()) {
-            return Ok(());
-        }
-
-        let total_images: usize = self.image_buffers.values().map(|v| v.len()).sum();
-        tracing::info!(
-            episode_index = self.episode_index,
-            segment_index = self.segment_index,
-            cameras = self.image_buffers.len(),
-            total_frames = total_images,
-            "Flushing video segment to background encoder"
-        );
-
-        // Ensure background encoder exists
-        self.ensure_background_encoder()?;
-
-        // Drain image buffers and send to background encoder (zero-copy move)
-        let camera_data: Vec<(String, Vec<ImageData>)> = self.image_buffers.drain().collect();
-
-        if let Some(ref encoder) = self.background_encoder {
-            for (camera, images) in camera_data {
-                if images.is_empty() {
-                    continue;
-                }
-                encoder.send(EncodeRequest { camera, images })?;
-            }
-        }
-
-        self.images_since_flush = 0;
-        self.segment_index += 1;
-
-        tracing::info!(
-            episode_index = self.episode_index,
-            segment_index = self.segment_index - 1,
-            total_frames = total_images,
-            "Video segment sent to background encoder"
-        );
-
-        Ok(())
-    }
-
-    /// Ensure the background encoder is initialized.
-    fn ensure_background_encoder(&mut self) -> Result<()> {
-        if self.background_encoder.is_some() {
-            return Ok(());
-        }
-
-        let resolved = resolve_video_config(&self.config.video);
-        let encoder_config = resolved.to_encoder_config(self.config.dataset.fps);
-
-        self.background_encoder = Some(BackgroundVideoEncoder::new(
-            encoder_config,
-            self.output_dir.clone(),
-            self.chunk_index(),
-            self.episode_index,
-        )?);
-
-        tracing::debug!(
-            episode_index = self.episode_index,
-            chunk_index = self.chunk_index(),
-            "Initialized background video encoder"
-        );
 
         Ok(())
     }
@@ -688,19 +529,8 @@ impl LerobotWriter {
 
     /// Estimate current memory usage in bytes.
     fn estimate_memory_bytes(&self) -> usize {
-        let mut total = 0usize;
-
-        // Frame data overhead
-        total += self.frame_data.len() * 512;
-
-        // Image data
-        for images in self.image_buffers.values() {
-            for img in images {
-                total += img.data.len();
-            }
-        }
-
-        total
+        // Frame data overhead only (image data is now routed to encoder directly)
+        self.frame_data.len() * 512
     }
 
     /// Write current episode to Parquet file.
@@ -720,50 +550,6 @@ impl LerobotWriter {
         Ok((parquet_path, size))
     }
 
-    /// Encode videos for all cameras.
-    fn encode_videos(&mut self) -> Result<(Vec<(PathBuf, String)>, EncodeStats)> {
-        if self.image_buffers.is_empty() {
-            tracing::debug!(
-                episode_index = self.episode_index,
-                "Video skip: image_buffers empty (no add_image calls for this episode)"
-            );
-            return Ok((Vec::new(), EncodeStats::default()));
-        }
-        let total_images: usize = self.image_buffers.values().map(|v| v.len()).sum();
-        tracing::debug!(
-            episode_index = self.episode_index,
-            chunk_index = self.chunk_index(),
-            cameras = self.image_buffers.len(),
-            total_frames = total_images,
-            "Encoding videos"
-        );
-
-        // Ensure videos chunk directory exists
-        fs::create_dir_all(self.videos_chunk_dir())?;
-
-        // Collect camera data for encoding
-        let camera_data: Vec<(String, Vec<ImageData>)> = self
-            .image_buffers
-            .iter()
-            .map(|(camera, images)| (camera.clone(), images.clone()))
-            .collect();
-
-        // Resolve the video configuration
-        let resolved = resolve_video_config(&self.config.video);
-
-        // Batch encoding with intermediate files
-        let (video_files, encode_stats) = encode_videos(
-            &camera_data,
-            self.episode_index,
-            &self.videos_chunk_dir(),
-            &resolved,
-            self.config.dataset.fps,
-            false, // local-only
-        )?;
-
-        Ok((video_files, encode_stats))
-    }
-
     /// Calculate episode statistics.
     fn calculate_episode_stats(&mut self) -> Result<()> {
         stats::calculate_episode_stats(&self.frame_data, self.episode_index, &mut self.metadata)
@@ -774,27 +560,6 @@ impl LerobotWriter {
         // Finish any remaining episode
         if !self.frame_data.is_empty() {
             self.finish_episode(None)?;
-        }
-
-        // Flush any remaining images to the background encoder
-        if !self.image_buffers.values().all(|v| v.is_empty()) {
-            self.flush_video_segment()?;
-        }
-
-        // Finish background encoder — joins thread, collects stats
-        if let Some(encoder) = self.background_encoder.take() {
-            let result = encoder.finish()?;
-            self.images_encoded += result.stats.images_encoded;
-            self.skipped_frames += result.stats.skipped_frames;
-            self.failed_encodings += result.stats.failed_encodings;
-            self.output_bytes += result.stats.output_bytes;
-
-            tracing::info!(
-                cameras = result.cameras_encoded.len(),
-                images_encoded = result.stats.images_encoded,
-                output_bytes = result.stats.output_bytes,
-                "Background video encoding completed"
-            );
         }
 
         if self.config.streaming.finalize_metadata_in_coordinator {
@@ -815,20 +580,10 @@ impl LerobotWriter {
             output_dir = %self.output_dir.display(),
             episodes = self.episode_index,
             frames = self.total_frames,
-            images_encoded = self.images_encoded,
-            skipped_frames = self.skipped_frames,
             output_bytes = self.output_bytes,
             duration_sec = duration,
-            "Finalized LeRobot v2.1 dataset"
+            "Finalized LeRobot v2.1 dataset (parquet only)"
         );
-
-        // Warn if there were any skipped frames or failed encodings
-        if self.skipped_frames > 0 {
-            tracing::warn!(
-                "{} frames were skipped due to dimension mismatches",
-                self.skipped_frames
-            );
-        }
 
         // Clean up temp directory (parquet segments, etc.)
         let temp_dir = self.output_dir.join("temp");
@@ -910,16 +665,6 @@ impl LerobotWriter {
         self.initialized
     }
 
-    /// Get the number of skipped frames.
-    pub fn skipped_frames(&self) -> usize {
-        self.skipped_frames
-    }
-
-    /// Get the number of failed video encodings.
-    pub fn failed_encodings(&self) -> usize {
-        self.failed_encodings
-    }
-
     /// Set camera intrinsic parameters.
     pub fn set_camera_intrinsics(&mut self, camera: String, intrinsic: CameraIntrinsic) {
         self.camera_intrinsics.insert(camera, intrinsic);
@@ -947,7 +692,7 @@ impl LerobotWriter {
 
     /// Internal constructor used by the builder.
     pub(super) fn new_internal(
-        _storage: Arc<dyn roboflow_storage::Storage>,
+        _storage: std::sync::Arc<dyn roboflow_storage::Storage>,
         _output_prefix: String,
         local_buffer: PathBuf,
         config: LerobotConfig,
@@ -970,24 +715,18 @@ impl LerobotWriter {
             episode_index: 0,
             segment_index: 0,
             session_id: uuid::Uuid::new_v4().to_string(),
-            background_encoder: None,
             pending_parquet_segments: Vec::new(),
             parquet_segment_index: 0,
             episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
-            image_buffers: HashMap::new(),
             metadata: MetadataCollector::new(),
             camera_intrinsics: HashMap::new(),
             camera_extrinsics: HashMap::new(),
             total_frames: 0,
             episode_start_frames: 0,
-            images_encoded: 0,
-            skipped_frames: 0,
             initialized: true,
             start_time: Some(std::time::Instant::now()),
             output_bytes: 0,
-            failed_encodings: 0,
-            images_since_flush: 0,
         })
     }
 }
@@ -1012,44 +751,15 @@ impl DatasetWriter for LerobotWriter {
         // Add the frame
         self.add_frame(lerobot_frame);
 
-        // Add all images for this frame BEFORE checking flush
-        // This prevents mid-frame flushes that would lose other cameras' data
-        for (camera, data) in &frame.images {
-            self.add_image_arc(camera.clone(), data.clone());
+        // Record image metadata for parquet path generation
+        for (camera, image_ref) in &frame.image_refs {
+            self.add_image_ref(camera.clone(), *image_ref);
         }
 
-        // Check if we should flush for memory management.
-        // We flush video segments (not full episodes) to temporary storage.
-        // The parquet file is written once on finalize with all accumulated frame data.
-        // IMPORTANT: Use images_since_flush (not frame_data.len()) to avoid triggering
-        // flush on every frame after the threshold is reached. frame_data is cumulative
-        // and never cleared, while images_since_flush is reset after each flush.
-        let memory_bytes = self.estimate_memory_bytes();
-        let should_flush_video = self
-            .config
-            .flushing
-            .should_flush(self.images_since_flush, memory_bytes);
-
-        if should_flush_video {
-            tracing::info!(
-                images_since_flush = self.images_since_flush,
-                total_frames = self.frame_data.len(),
-                memory_mb = memory_bytes / (1024 * 1024),
-                episode_index = self.episode_index,
-                segment_index = self.segment_index,
-                "Memory threshold reached, flushing video segment"
-            );
-            if let Err(e) = self.flush_video_segment() {
-                tracing::error!(
-                    error = %e,
-                    "Failed to flush video segment for memory management, continuing (memory may increase)"
-                );
-            }
-        }
-
-        // In streaming pipeline mode, flush parquet segments independently from
-        // video flush decisions so row buffering remains bounded.
+        // In streaming pipeline mode, flush parquet segments when row buffering
+        // reaches its limit.
         if self.config.flushing.incremental_video_encoding {
+            let memory_bytes = self.estimate_memory_bytes();
             let should_flush_parquet = (self.config.flushing.max_frames_per_chunk > 0
                 && self.frame_data.len() >= self.config.flushing.max_frames_per_chunk)
                 || (self.config.flushing.max_memory_bytes > 0
@@ -1065,24 +775,11 @@ impl DatasetWriter for LerobotWriter {
 
     fn finalize(&mut self) -> Result<WriterStats> {
         if self.config.flushing.incremental_video_encoding {
-            if !self.image_buffers.values().all(|v| v.is_empty()) {
-                self.flush_video_segment()?;
-            }
-
             if !self.frame_data.is_empty() {
                 self.flush_parquet_segment()?;
             }
 
             self.merge_pending_parquet_segments()?;
-
-            // Finish background encoder — joins thread, collects stats
-            if let Some(encoder) = self.background_encoder.take() {
-                let result = encoder.finish()?;
-                self.images_encoded += result.stats.images_encoded;
-                self.skipped_frames += result.stats.skipped_frames;
-                self.failed_encodings += result.stats.failed_encodings;
-                self.output_bytes += result.stats.output_bytes;
-            }
 
             self.write_camera_parameters()?;
 
@@ -1104,11 +801,9 @@ impl DatasetWriter for LerobotWriter {
                 output_dir = %self.output_dir.display(),
                 episodes = self.episode_index,
                 frames = self.total_frames,
-                images_encoded = self.images_encoded,
-                skipped_frames = self.skipped_frames,
                 output_bytes = self.output_bytes,
                 duration_sec = duration,
-                "Finalized LeRobot v2.1 dataset"
+                "Finalized LeRobot v2.1 dataset (parquet only)"
             );
 
             // Clean up temp directory (parquet segments, etc.)
@@ -1119,16 +814,11 @@ impl DatasetWriter for LerobotWriter {
 
             return Ok(WriterStats {
                 frames_written: self.total_frames,
-                images_encoded: self.images_encoded,
+                images_encoded: 0,
                 state_records: self.total_frames,
                 duration_sec: duration,
                 output_bytes: self.output_bytes,
             });
-        }
-
-        // Flush any remaining video buffers
-        if !self.image_buffers.values().all(|v| v.is_empty()) {
-            self.flush_video_segment()?;
         }
 
         // Write parquet file with ALL accumulated frame data
@@ -1141,15 +831,6 @@ impl DatasetWriter for LerobotWriter {
 
             // Calculate episode statistics for episodes_stats.jsonl
             self.calculate_episode_stats()?;
-        }
-
-        // Finish background encoder — joins thread, collects stats
-        if let Some(encoder) = self.background_encoder.take() {
-            let result = encoder.finish()?;
-            self.images_encoded += result.stats.images_encoded;
-            self.skipped_frames += result.stats.skipped_frames;
-            self.failed_encodings += result.stats.failed_encodings;
-            self.output_bytes += result.stats.output_bytes;
         }
 
         // Write camera parameters
@@ -1173,24 +854,14 @@ impl DatasetWriter for LerobotWriter {
             output_dir = %self.output_dir.display(),
             episodes = self.episode_index,
             frames = self.total_frames,
-            images_encoded = self.images_encoded,
-            skipped_frames = self.skipped_frames,
             output_bytes = self.output_bytes,
             duration_sec = duration,
-            "Finalized LeRobot v2.1 dataset"
+            "Finalized LeRobot v2.1 dataset (parquet only)"
         );
-
-        // Warn if there were any skipped frames or failed encodings
-        if self.skipped_frames > 0 {
-            tracing::warn!(
-                "{} frames were skipped due to dimension mismatches",
-                self.skipped_frames
-            );
-        }
 
         Ok(WriterStats {
             frames_written: self.total_frames,
-            images_encoded: self.images_encoded,
+            images_encoded: 0,
             state_records: self.total_frames * 2,
             output_bytes: self.output_bytes,
             duration_sec: duration,
@@ -1229,8 +900,8 @@ impl LerobotWriterTrait for LerobotWriter {
         <LerobotWriter as DatasetWriter>::write_frame(self, frame)
     }
 
-    fn add_image(&mut self, camera: String, data: ImageData) {
-        self.add_image(camera, data);
+    fn add_image_ref(&mut self, camera: String, image_ref: ImageRef) {
+        self.add_image_ref(camera, image_ref);
     }
 
     fn metadata(&self) -> &MetadataCollector {
@@ -1279,7 +950,7 @@ impl FromAlignedFrame for LerobotFrame {
 
         // Build image frame references
         let mut image_frames = HashMap::new();
-        for camera in frame.images.keys() {
+        for camera in frame.image_refs.keys() {
             let path = format!(
                 "videos/chunk-000/{}/episode_{:06}.mp4",
                 camera, episode_index
@@ -1303,7 +974,7 @@ impl FromAlignedFrame for LerobotFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::formats::common::{AlignedFrame, DatasetWriter, ImageData};
+    use crate::formats::common::{AlignedFrame, DatasetWriter, ImageRef};
     use crate::formats::lerobot::config::{
         DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig,
     };
@@ -1331,16 +1002,18 @@ mod tests {
         }
     }
 
-    /// Create a small test frame with a tiny image.
+    /// Create a small test frame with an image reference.
     fn make_frame(index: usize) -> AlignedFrame {
         let mut frame = AlignedFrame::new(index, (index as u64) * 33_333_333); // ~30fps
         frame.add_state("observation.state".to_string(), vec![index as f32; 6]);
         frame.add_action("action".to_string(), vec![index as f32; 6]);
-        // 64x48 RGB image — small enough for fast encoding
-        let pixels = 64 * 48 * 3;
-        frame.add_image(
+        // Image reference (dimensions only, pixel data routed to encoder separately)
+        frame.add_image_ref(
             "observation.images.cam".to_string(),
-            ImageData::new(64, 48, vec![128u8; pixels]),
+            ImageRef {
+                width: 64,
+                height: 48,
+            },
         );
         frame
     }
@@ -1401,9 +1074,9 @@ mod tests {
 
     #[test]
     fn test_video_segment_merge_on_finalize() {
-        // This test verifies that video segments are properly merged on finalize:
-        // - Memory flushes create temporary video segments
-        // - Finalize merges all segments into a single video file
+        // This test verifies that parquet segments are properly merged on finalize:
+        // - Memory flushes create temporary parquet segments
+        // - Finalize merges all segments into a single parquet file
         // - Temporary files are cleaned up
         let tmp = tempfile::tempdir().unwrap();
 
@@ -1442,15 +1115,6 @@ mod tests {
             !parquet_1.exists(),
             "episode_000001.parquet should NOT exist: {:?}",
             parquet_1
-        );
-
-        // Verify the merged video file exists
-        let video_dir = tmp.path().join("videos/chunk-000/observation.images.cam");
-        let video_0 = video_dir.join("episode_000000.mp4");
-        assert!(
-            video_0.exists(),
-            "Merged video file should exist: {:?}",
-            video_0
         );
 
         // Verify temp directory is cleaned up
@@ -1512,6 +1176,7 @@ mod tests {
     #[allow(deprecated)]
     #[test]
     fn test_deprecated_constructors_and_internal_constructor() {
+        use std::sync::Arc;
         let tmp = tempfile::tempdir().unwrap();
         let cfg = test_config(FlushingConfig::default());
 
@@ -1572,7 +1237,7 @@ mod tests {
     }
 
     #[test]
-    fn test_write_frame_requires_initialized_and_empty_helpers() {
+    fn test_write_frame_requires_initialized() {
         let tmp = tempfile::tempdir().unwrap();
         let mut writer =
             LerobotWriter::new_local(tmp.path(), test_config(FlushingConfig::default())).unwrap();
@@ -1581,13 +1246,7 @@ mod tests {
         assert!(writer.write_frame(&make_frame(0)).is_err());
 
         writer.initialized = true;
-        let (files, stats) = writer.encode_videos().unwrap();
-        assert!(files.is_empty());
-        assert_eq!(stats.images_encoded, 0);
-
-        writer.flush_video_segment().unwrap();
-        assert_eq!(writer.skipped_frames(), 0);
-        assert_eq!(writer.failed_encodings(), 0);
+        assert!(writer.write_frame(&make_frame(0)).is_ok());
     }
 
     #[test]
@@ -1651,9 +1310,12 @@ mod tests {
         let mut frame = AlignedFrame::new(3, 1_500_000_000);
         frame.add_state("robot_observation".to_string(), vec![1.0, 2.0]);
         frame.add_action("action".to_string(), vec![0.5, 0.2]);
-        frame.add_image(
+        frame.add_image_ref(
             "observation.images.front".to_string(),
-            ImageData::new(8, 8, vec![0; 8 * 8 * 3]),
+            ImageRef {
+                width: 8,
+                height: 8,
+            },
         );
 
         let converted = LerobotFrame::from_aligned_frame(&frame, 12);
@@ -1705,15 +1367,9 @@ mod tests {
             uploaded
         );
 
-        // Check that video file was uploaded
-        let video_uploaded = uploaded
-            .iter()
-            .any(|meta| meta.path.contains("episode_000000.mp4"));
-        assert!(
-            video_uploaded,
-            "Expected video file to be uploaded: {:?}",
-            uploaded
-        );
+        // Note: Video files are no longer produced by the writer — video encoding
+        // is handled by the executor's image fast-path. Only parquet and metadata
+        // files are uploaded here.
 
         // Verify metadata files were uploaded
         let info_uploaded = uploaded.iter().any(|meta| meta.path.contains("info.json"));

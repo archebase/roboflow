@@ -40,7 +40,7 @@ use std::sync::{
 
 use crate::core::stats::EpisodeStats;
 use crate::core::traits::FormatWriter;
-use crate::formats::common::{AlignedFrame, ImageData, WriterStats};
+use crate::formats::common::{AlignedFrame, ImageRef, WriterStats};
 use crate::sources::{Source, SourceConfig, SourceMetadata, SourceResult, TimestampedMessage};
 
 // ============================================================================
@@ -448,7 +448,7 @@ impl Default for MockStorage {
 pub struct FrameBuilder {
     frame_index: usize,
     timestamp: u64,
-    images: HashMap<String, Arc<ImageData>>,
+    image_refs: HashMap<String, ImageRef>,
     states: HashMap<String, Vec<f32>>,
     actions: HashMap<String, Vec<f32>>,
     timestamps: HashMap<String, u64>,
@@ -460,7 +460,7 @@ impl FrameBuilder {
         Self {
             frame_index,
             timestamp: frame_index as u64 * 33_333_333, // ~30fps
-            images: HashMap::new(),
+            image_refs: HashMap::new(),
             states: HashMap::new(),
             actions: HashMap::new(),
             timestamps: HashMap::new(),
@@ -473,23 +473,17 @@ impl FrameBuilder {
         self
     }
 
-    /// Add an image observation.
+    /// Add an image observation (stores only ImageRef metadata).
     pub fn add_image(mut self, name: &str, width: u32, height: u32) -> Self {
-        let data = vec![0u8; (width * height * 3) as usize];
-        self.images.insert(
-            name.to_string(),
-            Arc::new(ImageData::new(width, height, data)),
-        );
+        self.image_refs
+            .insert(name.to_string(), ImageRef { width, height });
         self
     }
 
-    /// Add an encoded image observation.
+    /// Add an encoded image observation (stores only ImageRef metadata).
     pub fn add_encoded_image(mut self, name: &str, width: u32, height: u32) -> Self {
-        let data = generate_test_jpeg(width, height, self.frame_index as u8);
-        self.images.insert(
-            name.to_string(),
-            Arc::new(ImageData::encoded(width, height, data)),
-        );
+        self.image_refs
+            .insert(name.to_string(), ImageRef { width, height });
         self
     }
 
@@ -516,7 +510,7 @@ impl FrameBuilder {
         AlignedFrame {
             frame_index: self.frame_index,
             timestamp: self.timestamp,
-            images: self.images,
+            image_refs: self.image_refs,
             states: self.states,
             actions: self.actions,
             timestamps: self.timestamps,
@@ -742,7 +736,7 @@ mod tests {
         assert_eq!(frame.timestamp, 1_000_000_000);
         assert!(frame.states.contains_key("observation.state"));
         assert!(frame.actions.contains_key("action"));
-        assert!(frame.images.contains_key("observation.camera_0"));
+        assert!(frame.image_refs.contains_key("observation.camera_0"));
     }
 
     #[test]

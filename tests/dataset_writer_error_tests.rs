@@ -18,7 +18,7 @@ use roboflow::{
     LerobotWriter, LerobotWriterTrait, VideoConfig,
 };
 
-use roboflow_dataset::{ImageData, common::AlignedFrame};
+use roboflow_dataset::common::{AlignedFrame, ImageRef};
 
 /// Create a test output directory.
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
@@ -46,19 +46,10 @@ fn test_config() -> LerobotConfig {
     }
 }
 
-/// Create test image data.
-fn create_test_image(width: u32, height: u32) -> ImageData {
-    let data = vec![128u8; (width * height * 3) as usize];
-    ImageData::new(width, height, data)
-}
-
 /// Create a test frame with state and action data.
-fn create_test_frame(frame_index: usize, image: ImageData) -> AlignedFrame {
-    let mut images = std::collections::HashMap::new();
-    images.insert(
-        "observation.images.camera_0".to_string(),
-        std::sync::Arc::new(image),
-    );
+fn create_test_frame(frame_index: usize, image_ref: ImageRef) -> AlignedFrame {
+    let mut image_refs = std::collections::HashMap::new();
+    image_refs.insert("observation.images.camera_0".to_string(), image_ref);
 
     // Add state observation (joint positions)
     let mut states = std::collections::HashMap::new();
@@ -77,7 +68,7 @@ fn create_test_frame(frame_index: usize, image: ImageData) -> AlignedFrame {
     AlignedFrame {
         frame_index,
         timestamp: (frame_index as u64) * 33_333_333,
-        images,
+        image_refs,
         states,
         actions,
         timestamps: std::collections::HashMap::new(),
@@ -123,9 +114,12 @@ fn test_lerobot_zero_fps() {
 
     // Should still allow writing with zero FPS (may result in NaN timestamps)
     let _ = writer.start_episode(Some(0));
-    writer.add_image(
+    writer.add_image_ref(
         "observation.images.camera_0".to_string(),
-        create_test_image(64, 48),
+        ImageRef {
+            width: 64,
+            height: 48,
+        },
     );
     let result = writer.finish_episode(Some(0));
 
@@ -172,8 +166,13 @@ fn test_lerobot_invalid_image_dimensions() {
     let _ = writer.start_episode(Some(0));
 
     // Add image with zero dimensions
-    let zero_img = ImageData::new(0, 0, vec![]);
-    writer.add_image("observation.images.empty".to_string(), zero_img);
+    writer.add_image_ref(
+        "observation.images.empty".to_string(),
+        ImageRef {
+            width: 0,
+            height: 0,
+        },
+    );
 
     // Don't test very large images due to memory constraints
 
@@ -191,13 +190,19 @@ fn test_lerobot_inconsistent_image_dimensions() {
     let _ = writer.start_episode(Some(0));
 
     // Add images with different dimensions for the same camera
-    writer.add_image(
+    writer.add_image_ref(
         "observation.images.camera_0".to_string(),
-        create_test_image(64, 48),
+        ImageRef {
+            width: 64,
+            height: 48,
+        },
     );
-    writer.add_image(
+    writer.add_image_ref(
         "observation.images.camera_0".to_string(),
-        create_test_image(128, 96), // Different dimensions
+        ImageRef {
+            width: 128,
+            height: 96,
+        }, // Different dimensions
     );
 
     let result = writer.finish_episode(Some(0));
@@ -214,9 +219,12 @@ fn test_lerobot_duplicate_camera_names() {
     let _ = writer.start_episode(Some(0));
 
     // Add same image twice to same camera
-    let img = create_test_image(64, 48);
-    writer.add_image("observation.images.camera_0".to_string(), img.clone());
-    writer.add_image("observation.images.camera_0".to_string(), img);
+    let img_ref = ImageRef {
+        width: 64,
+        height: 48,
+    };
+    writer.add_image_ref("observation.images.camera_0".to_string(), img_ref);
+    writer.add_image_ref("observation.images.camera_0".to_string(), img_ref);
 
     let result = writer.finish_episode(Some(0));
     // Should accumulate frames, not error
@@ -233,9 +241,12 @@ fn test_lerobot_many_cameras() {
 
     // Add images for many cameras (stress test)
     for i in 0..20 {
-        writer.add_image(
+        writer.add_image_ref(
             format!("observation.images.camera_{}", i),
-            create_test_image(32, 24),
+            ImageRef {
+                width: 32,
+                height: 24,
+            },
         );
     }
 
@@ -332,9 +343,12 @@ fn test_lerobot_multiple_episodes_same_task() {
     // Multiple episodes with same task index
     for _ in 0..3 {
         let _ = writer.start_episode(Some(0));
-        writer.add_image(
+        writer.add_image_ref(
             "observation.images.camera_0".to_string(),
-            create_test_image(64, 48),
+            ImageRef {
+                width: 64,
+                height: 48,
+            },
         );
         writer.finish_episode(Some(0)).unwrap();
     }
@@ -358,7 +372,13 @@ fn test_lerobot_empty_feature_names() {
 
     // Try to add image with empty feature name
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        writer.add_image("".to_string(), create_test_image(64, 48));
+        writer.add_image_ref(
+            "".to_string(),
+            ImageRef {
+                width: 64,
+                height: 48,
+            },
+        );
     }));
 
     // Should either handle gracefully or panic with clear message
@@ -382,7 +402,13 @@ fn test_lerobot_special_characters_in_feature_names() {
     ];
 
     for name in special_names {
-        writer.add_image(name.to_string(), create_test_image(32, 24));
+        writer.add_image_ref(
+            name.to_string(),
+            ImageRef {
+                width: 32,
+                height: 24,
+            },
+        );
     }
 
     let result = writer.finish_episode(Some(0));
@@ -402,11 +428,14 @@ fn test_lerobot_mismatched_image_data_size() {
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
     let _ = writer.start_episode(Some(0));
 
-    // Create image data that doesn't match claimed dimensions
-    let bad_data = vec![128u8; 100]; // Much smaller than expected
-    let bad_img = ImageData::new(64, 48, bad_data); // Claims 64x48x3 = 9216 bytes
-
-    writer.add_image("observation.images.bad".to_string(), bad_img);
+    // Create image ref with claimed dimensions (data mismatch no longer applies with ImageRef)
+    writer.add_image_ref(
+        "observation.images.bad".to_string(),
+        ImageRef {
+            width: 64,
+            height: 48,
+        },
+    );
 
     let result = writer.finish_episode(Some(0));
     // Should handle data size mismatch
@@ -422,8 +451,13 @@ fn test_lerobot_single_pixel_image() {
     let _ = writer.start_episode(Some(0));
 
     // 1x1 image
-    let tiny_img = ImageData::new(1, 1, vec![128, 128, 128]);
-    writer.add_image("observation.images.tiny".to_string(), tiny_img);
+    writer.add_image_ref(
+        "observation.images.tiny".to_string(),
+        ImageRef {
+            width: 1,
+            height: 1,
+        },
+    );
 
     let result = writer.finish_episode(Some(0));
     // Should handle tiny images
@@ -438,11 +472,14 @@ fn test_lerobot_non_rgb_image_data() {
     let mut writer = LerobotWriter::new_local(output_dir.path(), config.clone()).unwrap();
     let _ = writer.start_episode(Some(0));
 
-    // Image data with size not divisible by 3 (not RGB)
-    let non_rgb_data = vec![128u8; 100]; // 100 bytes, not divisible by 3
-    let non_rgb_img = ImageData::new(10, 10, non_rgb_data);
-
-    writer.add_image("observation.images.non_rgb".to_string(), non_rgb_img);
+    // Image ref (with ImageRef, pixel data is not stored, so non-RGB concept is moot)
+    writer.add_image_ref(
+        "observation.images.non_rgb".to_string(),
+        ImageRef {
+            width: 10,
+            height: 10,
+        },
+    );
 
     let result = writer.finish_episode(Some(0));
     // Should handle non-RGB data
@@ -490,9 +527,12 @@ fn test_lerobot_episode_count_in_metadata() {
         let _ = writer.start_episode(Some(i));
         if i == 1 {
             // Only episode 1 has images
-            writer.add_image(
+            writer.add_image_ref(
                 "observation.images.camera_0".to_string(),
-                create_test_image(64, 48),
+                ImageRef {
+                    width: 64,
+                    height: 48,
+                },
             );
         }
         writer.finish_episode(Some(i)).unwrap();
@@ -571,9 +611,12 @@ fn test_lerobot_writer_stats_accuracy() {
     let _ = writer.start_episode(Some(0));
 
     for _ in 0..expected_frames {
-        writer.add_image(
+        writer.add_image_ref(
             "observation.images.camera_0".to_string(),
-            create_test_image(64, 48),
+            ImageRef {
+                width: 64,
+                height: 48,
+            },
         );
     }
 
@@ -607,7 +650,13 @@ fn test_lerobot_frame_count_increment() {
 
     // After adding frames with state/action data
     for i in 0..3 {
-        let frame = create_test_frame(i, create_test_image(64, 48));
+        let frame = create_test_frame(
+            i,
+            ImageRef {
+                width: 64,
+                height: 48,
+            },
+        );
         writer.write_frame(&frame).unwrap();
     }
 

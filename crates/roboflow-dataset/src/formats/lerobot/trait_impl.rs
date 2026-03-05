@@ -7,7 +7,7 @@
 //! This module defines the [`LerobotWriterTrait`] which extends the common
 //! [`DatasetWriter`] trait with LeRobot-specific functionality.
 
-use crate::formats::common::{AlignedFrame, DatasetWriter, WriterStats};
+use crate::formats::common::{AlignedFrame, DatasetWriter, ImageRef, WriterStats};
 use crate::formats::lerobot::config::LerobotConfig;
 use roboflow_core::Result;
 
@@ -88,13 +88,13 @@ pub trait LerobotWriterTrait: DatasetWriter {
         self.write_frame(frame)
     }
 
-    /// Add image data for a camera frame.
+    /// Add image reference metadata for a camera frame.
     ///
     /// # Arguments
     ///
     /// * `camera` - Camera name (e.g., "cam_high")
-    /// * `data` - Image data
-    fn add_image(&mut self, camera: String, data: crate::formats::common::ImageData);
+    /// * `image_ref` - Image reference with dimensions
+    fn add_image_ref(&mut self, camera: String, image_ref: ImageRef);
 
     /// Finalize the dataset and write metadata files.
     ///
@@ -183,7 +183,7 @@ mod tests {
             self.metadata.register_task(task)
         }
 
-        fn add_image(&mut self, _camera: String, _data: crate::formats::common::ImageData) {}
+        fn add_image_ref(&mut self, _camera: String, _image_ref: ImageRef) {}
 
         fn metadata(&self) -> &crate::formats::lerobot::metadata::MetadataCollector {
             &self.metadata
