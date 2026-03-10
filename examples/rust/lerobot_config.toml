@@ -2,11 +2,13 @@
 #
 # This configuration maps ROS bag topics to LeRobot dataset features
 # for converting robotics data to LeRobot v2.1 format.
+# Multiple state sources are configured for robustness - if one topic
+# has no valid messages, the others will be used.
 
 [dataset]
 # Dataset name (used in metadata)
 name = "rubbish_sorting"
-# Frames per second for the dataset
+# Frames per second for the dataset (30 fps matches camera data rate)
 fps = 30
 # Robot type (optional, can be inferred from annotations)
 robot_type = "kuavo_p4"
@@ -34,10 +36,24 @@ topic = "/cam_r/color/image_raw/compressed"
 feature = "observation.images.cam_right"
 mapping_type = "image"
 
-# Robot arm trajectory (joint positions for observation)
+# Primary state: Robot arm trajectory (joint positions)
 [[mappings]]
 topic = "/kuavo_arm_traj"
 feature = "observation.state"
+mapping_type = "state"
+
+# Fallback state 1: Raw sensor data (kuavo_msgs/sensorsData)
+# Provides joint positions and sensor readings if arm_traj is unavailable
+[[mappings]]
+topic = "/sensors_data_raw"
+feature = "observation.state_sensors"
+mapping_type = "state"
+
+# Fallback state 2: Claw/gripper state (lejuClawState)
+# Provides gripper position as additional state information
+[[mappings]]
+topic = "/leju_claw_state"
+feature = "observation.gripper_state"
 mapping_type = "state"
 
 # Joint commands (target positions for action)
@@ -46,12 +62,6 @@ topic = "/joint_cmd"
 feature = "action"
 mapping_type = "action"
 
-# Optional: Gripper state
-# [[mappings]]
-# topic = "/leju_claw_state"
-# feature = "observation.gripper_state"
-# mapping_type = "state"
-
 [video]
 # Video codec (libx264 = H.264)
 codec = "libx264"
@@ -59,3 +69,11 @@ codec = "libx264"
 crf = 18
 # Encoder preset (ultrafast, superfast, veryfast, faster, fast, medium, slow)
 preset = "fast"
+
+[flushing]
+# Maximum frames per chunk before auto-flush
+max_frames_per_chunk = 1000
+# Maximum memory bytes per chunk before auto-flush (2GB)
+max_memory_bytes = 2147483648
+# Whether to encode videos incrementally (per-chunk)
+incremental_video_encoding = true

@@ -23,6 +23,7 @@ pub mod finalizer;
 pub mod heartbeat;
 pub mod merge;
 pub mod metadata;
+pub mod output_path;
 pub mod reaper;
 pub mod scanner;
 pub mod shutdown;
@@ -115,6 +116,9 @@ pub use metadata::{
     ValidationResult, ValidationSummary, ValidationWarning, VideoFeatureInfo, VideoInfo,
     extract_feature_shapes,
 };
+
+// Re-export output path resolution helper
+pub use output_path::{build_staging_path, resolve_batch_output_path};
 
 // =============================================================================
 // Coordinator Traits

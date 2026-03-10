@@ -5,6 +5,7 @@ pub mod mcap;
 pub mod metadata;
 pub mod registry;
 pub mod rrd;
+pub mod s3_env;
 pub mod s3_prefix;
 
 pub use bag::{BagSource, BagSourceBatched, BagSourceBlocking};
@@ -17,6 +18,10 @@ pub use registry::{
 };
 pub use roboflow_core::TimestampedMessage;
 pub use rrd::RrdSource;
+pub use s3_env::{
+    S3BridgeConfig, S3EnvConfig, apply_s3_env_from_config_file, init_s3_env_bridge,
+    maybe_apply_s3_env_for_url,
+};
 pub use s3_prefix::S3PrefixSource;
 
 use async_trait::async_trait;

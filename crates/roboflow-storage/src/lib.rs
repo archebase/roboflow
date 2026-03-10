@@ -39,6 +39,7 @@ mod traits;
 pub mod async_storage;
 pub mod cached;
 pub mod config_file;
+pub mod discovery;
 pub mod factory;
 pub mod local;
 pub mod mock;
@@ -48,6 +49,7 @@ pub mod retry;
 pub mod s3;
 pub mod streaming;
 pub mod streaming_upload;
+pub mod upload;
 pub mod url;
 
 // Re-export core types from error module
@@ -83,3 +85,12 @@ pub use streaming_upload::{
     CloudMultipartUpload, LocalMultipartUpload, MultipartUpload, StorageStreamingExt, UploadStats,
 };
 pub use url::StorageUrl;
+
+// Re-export discovery functionality
+pub use discovery::{DiscoveryExt, discover_files, is_glob_pattern, matches_pattern};
+
+// Re-export upload functionality
+pub use upload::{
+    DEFAULT_CONCURRENCY, UploadResult, upload_directory_recursive,
+    upload_directory_recursive_with_concurrency, upload_file, walk_directory,
+};

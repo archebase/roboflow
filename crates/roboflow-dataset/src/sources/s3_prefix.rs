@@ -14,6 +14,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use roboflow_storage::StorageFactory;
 
+use crate::sources::s3_env::maybe_apply_s3_env_for_url;
 use crate::sources::{
     Source, SourceConfig, SourceError, SourceMetadata, SourceResult, TimestampedMessage,
     create_source,
@@ -63,6 +64,8 @@ impl S3PrefixSource {
                 prefix_url
             )));
         }
+
+        maybe_apply_s3_env_for_url(&prefix_url);
 
         // Create storage backend
         let storage = StorageFactory::from_env()

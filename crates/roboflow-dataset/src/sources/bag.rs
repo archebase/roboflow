@@ -4,24 +4,117 @@
 
 //! ROS Bag source implementation.
 //!
-//! Supports both local files and S3/OSS URLs via robocodec's native streaming.
-//! Uses a background decoder thread with a bounded channel for backpressure.
+//! Uses robocodec's RoboReader for direct message decoding.
+//! Supports both local files and S3/OSS URLs (downloaded to temp first).
 
+use crate::sources::s3_env::maybe_apply_s3_env_for_url;
 use crate::sources::{
     Source, SourceConfig, SourceError, SourceMetadata, SourceResult, TopicMetadata,
 };
 use robocodec::io::traits::FormatReader;
 use roboflow_core::TimestampedMessage;
-use std::thread;
+use roboflow_storage::StorageFactory;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::path::PathBuf;
+
+/// RAII guard for removing temporary files on scope exit.
+struct TempFileGuard {
+    path: PathBuf,
+}
+
+impl TempFileGuard {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        if let Err(e) = std::fs::remove_file(&self.path) {
+            tracing::warn!(
+                path = %self.path.display(),
+                error = %e,
+                "Failed to remove temporary downloaded bag file"
+            );
+        }
+    }
+}
+
+/// Download a file from S3/OSS to a temporary local file (for legacy batched/blocking decoders).
+fn download_to_temp(url: &str) -> Result<PathBuf, String> {
+    let factory = StorageFactory::from_env();
+    let storage = factory
+        .create(url)
+        .map_err(|e| format!("Failed to create storage for {url}: {e}"))?;
+
+    let parsed_url: roboflow_storage::StorageUrl = url
+        .parse()
+        .map_err(|e| format!("Failed to parse URL {url}: {e}"))?;
+
+    let object_path = match &parsed_url {
+        roboflow_storage::StorageUrl::S3 { key, .. } => Path::new(key),
+        roboflow_storage::StorageUrl::Local { path } => path.as_path(),
+    };
+
+    let temp_filename = format!("roboflow_bag_{}.bag", uuid::Uuid::new_v4().simple());
+    let temp_path = std::env::temp_dir().join(&temp_filename);
+
+    let mut reader = storage
+        .reader(object_path)
+        .map_err(|e| format!("Failed to open reader for {url}: {e}"))?;
+
+    let mut temp_file = std::fs::File::create(&temp_path)
+        .map_err(|e| format!("Failed to create temp file {}: {e}", temp_path.display()))?;
+
+    // Use 64KB buffer for better throughput on large files
+    let mut buffer = vec![0u8; 65536];
+    let mut total_bytes = 0u64;
+
+    loop {
+        let bytes_read = reader
+            .read(&mut buffer)
+            .map_err(|e| format!("Failed to read from {url}: {e}"))?;
+
+        if bytes_read == 0 {
+            break;
+        }
+
+        temp_file
+            .write_all(&buffer[..bytes_read])
+            .map_err(|e| format!("Failed to write to temp file: {e}"))?;
+
+        total_bytes += bytes_read as u64;
+    }
+
+    temp_file
+        .flush()
+        .map_err(|e| format!("Failed to flush: {e}"))?;
+
+    #[cfg(not(windows))]
+    {
+        temp_file
+            .sync_all()
+            .map_err(|e| format!("Failed to sync: {e}"))?;
+    }
+
+    tracing::info!(url = %url, bytes = total_bytes, "Download complete");
+    Ok(temp_path)
+}
 
 /// ROS Bag source reader.
 ///
-/// Reads robotics data from ROS bag files. Supports local files and S3/OSS URLs.
+/// Reads robotics data from ROS bag files using robocodec's StreamingRoboReader.
+/// Supports local files and S3/OSS URLs via robocodec's built-in streaming.
 pub struct BagSource {
     path: String,
     metadata: Option<SourceMetadata>,
-    receiver: Option<tokio::sync::mpsc::Receiver<TimestampedMessage>>,
-    decoder_handle: Option<thread::JoinHandle<Result<usize, String>>>,
+    receiver: Option<tokio::sync::mpsc::Receiver<Vec<TimestampedMessage>>>,
+    decoder_handle: Option<tokio::task::JoinHandle<Result<usize, String>>>,
     finished: bool,
 }
 
@@ -53,17 +146,15 @@ impl BagSource {
         self.path.starts_with("s3://") || self.path.starts_with("oss://")
     }
 
-    fn check_decoder_result(&mut self) -> SourceResult<()> {
+    async fn check_decoder_result(&mut self) -> SourceResult<()> {
         if let Some(handle) = self.decoder_handle.take() {
-            match handle.join() {
+            match handle.await {
                 Ok(Ok(count)) => {
                     tracing::debug!(messages = count, "Bag decoder completed");
                     Ok(())
                 }
                 Ok(Err(e)) => Err(SourceError::ReadFailed(format!("Decoder error: {e}"))),
-                Err(_) => Err(SourceError::ReadFailed(
-                    "Decoder thread panicked".to_string(),
-                )),
+                Err(_) => Err(SourceError::ReadFailed("Decoder task panicked".to_string())),
             }
         } else {
             Ok(())
@@ -71,22 +162,63 @@ impl BagSource {
     }
 }
 
-/// Spawn a decoder thread for local file decoding.
+/// Spawn a decoder thread using robocodec's RoboReader for direct message decoding.
 fn spawn_local_decoder(
     path: String,
     meta_tx: tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
-    msg_tx: tokio::sync::mpsc::Sender<TimestampedMessage>,
+    msg_tx: tokio::sync::mpsc::Sender<Vec<TimestampedMessage>>,
     format_name: &'static str,
+    _image_topics: Vec<String>,
+    _state_topics: Vec<String>,
+    _fps: u32,
 ) -> Result<usize, String> {
-    let reader = match robocodec::RoboReader::open(&path) {
+    tracing::info!(
+        path = %path,
+        format = format_name,
+        "spawn_local_decoder: starting with RoboReader"
+    );
+
+    // Apply S3 environment variables for cloud streaming
+    maybe_apply_s3_env_for_url(&path);
+
+    // For S3/OSS URLs, download to temp file first to avoid backpressure stalls
+    let mut temp_file_guard = None;
+    let local_path = if path.starts_with("s3://") || path.starts_with("oss://") {
+        tracing::info!(path = %path, "Downloading cloud file to local temp");
+        match download_to_temp(&path) {
+            Ok(temp_path) => {
+                let guard = TempFileGuard::new(temp_path);
+                let path_string = guard.path().to_string_lossy().to_string();
+                temp_file_guard = Some(guard);
+                tracing::info!(local_path = %path_string, "Downloaded to temp file");
+                path_string
+            }
+            Err(e) => {
+                let err = SourceError::OpenFailed {
+                    path: std::path::PathBuf::from(&path),
+                    error: Box::new(std::io::Error::other(e.clone())),
+                };
+                let _ = meta_tx.send(Err(err));
+                return Err(format!(
+                    "Failed to download {format_name} file from {path}: {e}"
+                ));
+            }
+        }
+    } else {
+        path.clone()
+    };
+
+    let _temp_file_guard = temp_file_guard;
+
+    let reader = match robocodec::RoboReader::open(&local_path) {
         Ok(r) => r,
         Err(e) => {
             let err = SourceError::OpenFailed {
-                path: std::path::PathBuf::from(&path),
+                path: std::path::PathBuf::from(&local_path),
                 error: Box::new(e),
             };
             let _ = meta_tx.send(Err(err));
-            return Err(format!("Failed to open {format_name} file: {path}"));
+            return Err(format!("Failed to open {format_name} file: {local_path}"));
         }
     };
 
@@ -96,10 +228,17 @@ fn spawn_local_decoder(
         .values()
         .map(|ch| TopicMetadata::new(ch.topic.clone(), ch.message_type.clone()))
         .collect();
+    let topics_len = topics.len();
 
     let metadata = SourceMetadata::new(format_name.to_string(), path)
         .with_message_count(message_count)
         .with_topics(topics);
+
+    tracing::info!(
+        "Metadata extracted: {} topics, {} messages",
+        topics_len,
+        message_count
+    );
 
     if meta_tx.send(Ok(metadata)).is_err() {
         return Err("Metadata receiver dropped".to_string());
@@ -110,7 +249,10 @@ fn spawn_local_decoder(
         Err(e) => return Err(format!("Failed to get decoded iterator: {e}")),
     };
 
+    let batch_size = 100;
     let mut count = 0usize;
+    let mut batch = Vec::with_capacity(batch_size);
+
     for msg_result in iter {
         let msg = match msg_result {
             Ok(m) => m,
@@ -120,11 +262,14 @@ fn spawn_local_decoder(
             }
         };
 
-        let timestamped = TimestampedMessage::from(msg);
+        batch.push(TimestampedMessage::from(msg));
 
-        if msg_tx.blocking_send(timestamped).is_err() {
-            tracing::debug!(count, "Receiver dropped, stopping decoder");
-            break;
+        if batch.len() >= batch_size {
+            let batch_to_send = std::mem::replace(&mut batch, Vec::with_capacity(batch_size));
+            if msg_tx.blocking_send(batch_to_send).is_err() {
+                tracing::debug!(count, "Receiver dropped, stopping decoder");
+                break;
+            }
         }
 
         count += 1;
@@ -133,40 +278,44 @@ fn spawn_local_decoder(
         }
     }
 
-    tracing::debug!(messages = count, "Local {format_name} decode complete");
+    // Send remaining messages in partial batch
+    if !batch.is_empty() {
+        let _ = msg_tx.blocking_send(batch);
+    }
+
+    tracing::info!(messages = count, "Local {format_name} decode complete");
     Ok(count)
 }
 
-/// Initialize a threaded source with a decoder function.
+/// Initialize a threaded source with a decoder function using tokio::task::spawn_blocking.
+///
+/// Uses robocodec's StreamingRoboReader for frame-aligned decoding.
 async fn initialize_threaded_source(
     path: &str,
-    thread_name: &str,
+    _thread_name: &str,
     decoder_fn: impl FnOnce(
         String,
         tokio::sync::oneshot::Sender<SourceResult<SourceMetadata>>,
-        tokio::sync::mpsc::Sender<TimestampedMessage>,
+        tokio::sync::mpsc::Sender<Vec<TimestampedMessage>>,
     ) -> Result<usize, String>
     + Send
     + 'static,
 ) -> SourceResult<(
     SourceMetadata,
-    tokio::sync::mpsc::Receiver<TimestampedMessage>,
-    thread::JoinHandle<Result<usize, String>>,
+    tokio::sync::mpsc::Receiver<Vec<TimestampedMessage>>,
+    tokio::task::JoinHandle<Result<usize, String>>,
 )> {
-    let (tx, rx) = tokio::sync::mpsc::channel(8192);
+    let (tx, rx) = tokio::sync::mpsc::channel(1024);
     let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
 
     let path_owned = path.to_string();
-    let handle = thread::Builder::new()
-        .name(thread_name.to_string())
-        .spawn(move || decoder_fn(path_owned, meta_tx, tx))
-        .map_err(|e| SourceError::ReadFailed(format!("Failed to spawn decoder thread: {e}")))?;
+    let handle = tokio::task::spawn_blocking(move || decoder_fn(path_owned, meta_tx, tx));
 
     let metadata = match meta_rx.await {
         Ok(Ok(metadata)) => metadata,
         Ok(Err(e)) => return Err(e),
         Err(_) => {
-            match handle.join() {
+            match handle.await {
                 Ok(Err(e)) => {
                     return Err(SourceError::ReadFailed(format!(
                         "Source initialization failed: {e}"
@@ -174,13 +323,13 @@ async fn initialize_threaded_source(
                 }
                 Err(_) => {
                     return Err(SourceError::ReadFailed(
-                        "Decoder thread panicked during initialization".to_string(),
+                        "Decoder task panicked during initialization".to_string(),
                     ));
                 }
                 Ok(Ok(_)) => {}
             }
             return Err(SourceError::ReadFailed(
-                "Decoder thread exited before sending metadata".to_string(),
+                "Decoder task exited before sending metadata".to_string(),
             ));
         }
     };
@@ -196,9 +345,37 @@ impl Source for BagSource {
             self.path = path.clone();
         }
 
+        maybe_apply_s3_env_for_url(&self.path);
+
+        // Extract topics from config options
+        let image_topics: Vec<String> = config
+            .get_option::<Vec<String>>("image_topics")
+            .unwrap_or_default();
+        let state_topics: Vec<String> = config
+            .get_option::<Vec<String>>("state_topics")
+            .unwrap_or_default();
+        let fps: u32 = config.get_option::<u32>("fps").unwrap_or(30);
+
+        tracing::debug!(
+            path = %self.path,
+            image_topics = ?image_topics,
+            state_topics = ?state_topics,
+            fps = fps,
+            "Initializing bag source with configured topics"
+        );
+
         let (metadata, rx, handle) =
-            initialize_threaded_source(&self.path, "bag-decoder", |path, meta_tx, msg_tx| {
-                spawn_local_decoder(path, meta_tx, msg_tx, "bag")
+            // Always use local decoder - downloads S3/OSS files to temp first
+            initialize_threaded_source(&self.path, "bag-decoder", move |path, meta_tx, msg_tx| {
+                spawn_local_decoder(
+                    path,
+                    meta_tx,
+                    msg_tx,
+                    "bag",
+                    image_topics,
+                    state_topics,
+                    fps,
+                )
             })
             .await?;
 
@@ -207,10 +384,10 @@ impl Source for BagSource {
         self.decoder_handle = Some(handle);
 
         tracing::info!(
-            path = %self.path,
+            source = %self.path,
             topics = metadata.topics.len(),
             messages = ?metadata.message_count,
-            "Bag source initialized"
+            "Bag source initialized (decoding from local file)"
         );
 
         Ok(metadata)
@@ -230,18 +407,24 @@ impl Source for BagSource {
 
         let mut batch = Vec::with_capacity(batch_size.min(1024));
 
+        // Receive Vec<TimestampedMessage> directly from decoder
         match receiver.recv().await {
-            Some(msg) => batch.push(msg),
+            Some(messages) => {
+                batch.extend(messages);
+            }
             None => {
                 self.finished = true;
-                self.check_decoder_result()?;
+                self.check_decoder_result().await?;
                 return Ok(None);
             }
         }
 
+        // Try to fill the batch with more frames
         while batch.len() < batch_size {
             match receiver.try_recv() {
-                Ok(msg) => batch.push(msg),
+                Ok(messages) => {
+                    batch.extend(messages);
+                }
                 Err(_) => break,
             }
         }
@@ -272,7 +455,7 @@ pub struct BagSourceBatched {
     path: String,
     metadata: Option<SourceMetadata>,
     receiver: Option<tokio::sync::mpsc::Receiver<Vec<TimestampedMessage>>>,
-    decoder_handle: Option<thread::JoinHandle<Result<usize, String>>>,
+    decoder_handle: Option<tokio::task::JoinHandle<Result<usize, String>>>,
     finished: bool,
     current_batch: Vec<TimestampedMessage>,
     batch_size: usize,
@@ -308,17 +491,15 @@ impl BagSourceBatched {
         self.path.starts_with("s3://") || self.path.starts_with("oss://")
     }
 
-    fn check_decoder_result(&mut self) -> SourceResult<()> {
+    async fn check_decoder_result(&mut self) -> SourceResult<()> {
         if let Some(handle) = self.decoder_handle.take() {
-            match handle.join() {
+            match handle.await {
                 Ok(Ok(count)) => {
                     tracing::debug!(messages = count, "Bag decoder completed");
                     Ok(())
                 }
                 Ok(Err(e)) => Err(SourceError::ReadFailed(format!("Decoder error: {e}"))),
-                Err(_) => Err(SourceError::ReadFailed(
-                    "Decoder thread panicked".to_string(),
-                )),
+                Err(_) => Err(SourceError::ReadFailed("Decoder task panicked".to_string())),
             }
         } else {
             Ok(())
@@ -334,15 +515,44 @@ fn spawn_local_decoder_batched(
     batch_size: usize,
     format_name: &'static str,
 ) -> Result<usize, String> {
-    let reader = match robocodec::RoboReader::open(&path) {
+    // For S3/OSS URLs, download to temp file first
+    let mut temp_file_guard = None;
+    let local_path = if path.starts_with("s3://") || path.starts_with("oss://") {
+        match download_to_temp(&path) {
+            Ok(temp_path) => {
+                let guard = TempFileGuard::new(temp_path);
+                let path_string = guard.path().to_string_lossy().to_string();
+                temp_file_guard = Some(guard);
+                path_string
+            }
+            Err(e) => {
+                let err = SourceError::OpenFailed {
+                    path: std::path::PathBuf::from(&path),
+                    error: Box::new(std::io::Error::other(e.clone())),
+                };
+                let _ = meta_tx.send(Err(err));
+                return Err(format!(
+                    "Failed to download {format_name} file from {path}: {e}"
+                ));
+            }
+        }
+    } else {
+        path.clone()
+    };
+
+    let _temp_file_guard = temp_file_guard;
+
+    let reader_result = robocodec::RoboReader::open(&local_path);
+
+    let reader = match reader_result {
         Ok(r) => r,
         Err(e) => {
             let err = SourceError::OpenFailed {
-                path: std::path::PathBuf::from(&path),
+                path: std::path::PathBuf::from(&local_path),
                 error: Box::new(e),
             };
             let _ = meta_tx.send(Err(err));
-            return Err(format!("Failed to open {format_name} file: {path}"));
+            return Err(format!("Failed to open {format_name} file: {local_path}"));
         }
     };
 
@@ -406,10 +616,10 @@ fn spawn_local_decoder_batched(
     Ok(count)
 }
 
-/// Initialize a threaded source with batched output.
+/// Initialize a threaded source with batched output using tokio::task::spawn_blocking.
 async fn initialize_threaded_source_batched(
     path: &str,
-    thread_name: &str,
+    _thread_name: &str,
     batch_size: usize,
     decoder_fn: impl FnOnce(
         String,
@@ -422,22 +632,20 @@ async fn initialize_threaded_source_batched(
 ) -> SourceResult<(
     SourceMetadata,
     tokio::sync::mpsc::Receiver<Vec<TimestampedMessage>>,
-    thread::JoinHandle<Result<usize, String>>,
+    tokio::task::JoinHandle<Result<usize, String>>,
 )> {
     let (tx, rx) = tokio::sync::mpsc::channel(1024);
     let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
 
     let path_owned = path.to_string();
-    let handle = thread::Builder::new()
-        .name(thread_name.to_string())
-        .spawn(move || decoder_fn(path_owned, meta_tx, tx, batch_size))
-        .map_err(|e| SourceError::ReadFailed(format!("Failed to spawn decoder thread: {e}")))?;
+    let handle =
+        tokio::task::spawn_blocking(move || decoder_fn(path_owned, meta_tx, tx, batch_size));
 
     let metadata = match meta_rx.await {
         Ok(Ok(metadata)) => metadata,
         Ok(Err(e)) => return Err(e),
         Err(_) => {
-            match handle.join() {
+            match handle.await {
                 Ok(Err(e)) => {
                     return Err(SourceError::ReadFailed(format!(
                         "Source initialization failed: {e}"
@@ -445,13 +653,13 @@ async fn initialize_threaded_source_batched(
                 }
                 Err(_) => {
                     return Err(SourceError::ReadFailed(
-                        "Decoder thread panicked during initialization".to_string(),
+                        "Decoder task panicked during initialization".to_string(),
                     ));
                 }
                 Ok(Ok(_)) => {}
             }
             return Err(SourceError::ReadFailed(
-                "Decoder thread exited before sending metadata".to_string(),
+                "Decoder task exited before sending metadata".to_string(),
             ));
         }
     };
@@ -465,6 +673,8 @@ impl Source for BagSourceBatched {
         if let crate::SourceType::Bag { path } = &config.source_type {
             self.path = path.clone();
         }
+
+        maybe_apply_s3_env_for_url(&self.path);
 
         let batch_size = self.batch_size;
         let (metadata, rx, handle) = initialize_threaded_source_batched(
@@ -528,7 +738,7 @@ impl Source for BagSourceBatched {
             }
             None => {
                 self.finished = true;
-                self.check_decoder_result()?;
+                self.check_decoder_result().await?;
                 Ok(None)
             }
         }
@@ -560,7 +770,7 @@ pub struct BagSourceBlocking {
     path: String,
     metadata: Option<SourceMetadata>,
     receiver: Option<crossbeam_channel::Receiver<Vec<TimestampedMessage>>>,
-    decoder_handle: Option<thread::JoinHandle<Result<usize, String>>>,
+    decoder_handle: Option<tokio::task::JoinHandle<Result<usize, String>>>,
     finished: bool,
     current_batch: Vec<TimestampedMessage>,
     batch_size: usize,
@@ -596,17 +806,15 @@ impl BagSourceBlocking {
         self.path.starts_with("s3://") || self.path.starts_with("oss://")
     }
 
-    fn check_decoder_result(&mut self) -> SourceResult<()> {
+    async fn check_decoder_result(&mut self) -> SourceResult<()> {
         if let Some(handle) = self.decoder_handle.take() {
-            match handle.join() {
+            match handle.await {
                 Ok(Ok(count)) => {
                     tracing::debug!(messages = count, "Bag decoder completed");
                     Ok(())
                 }
                 Ok(Err(e)) => Err(SourceError::ReadFailed(format!("Decoder error: {e}"))),
-                Err(_) => Err(SourceError::ReadFailed(
-                    "Decoder thread panicked".to_string(),
-                )),
+                Err(_) => Err(SourceError::ReadFailed("Decoder task panicked".to_string())),
             }
         } else {
             Ok(())
@@ -622,15 +830,44 @@ fn spawn_local_decoder_blocking(
     batch_size: usize,
     format_name: &'static str,
 ) -> Result<usize, String> {
-    let reader = match robocodec::RoboReader::open(&path) {
+    // For S3/OSS URLs, download to temp file first
+    let mut temp_file_guard = None;
+    let local_path = if path.starts_with("s3://") || path.starts_with("oss://") {
+        match download_to_temp(&path) {
+            Ok(temp_path) => {
+                let guard = TempFileGuard::new(temp_path);
+                let path_string = guard.path().to_string_lossy().to_string();
+                temp_file_guard = Some(guard);
+                path_string
+            }
+            Err(e) => {
+                let err = SourceError::OpenFailed {
+                    path: std::path::PathBuf::from(&path),
+                    error: Box::new(std::io::Error::other(e.clone())),
+                };
+                let _ = meta_tx.send(Err(err));
+                return Err(format!(
+                    "Failed to download {format_name} file from {path}: {e}"
+                ));
+            }
+        }
+    } else {
+        path.clone()
+    };
+
+    let _temp_file_guard = temp_file_guard;
+
+    let reader_result = robocodec::RoboReader::open(&local_path);
+
+    let reader = match reader_result {
         Ok(r) => r,
         Err(e) => {
             let err = SourceError::OpenFailed {
-                path: std::path::PathBuf::from(&path),
+                path: std::path::PathBuf::from(&local_path),
                 error: Box::new(e),
             };
             let _ = meta_tx.send(Err(err));
-            return Err(format!("Failed to open {format_name} file: {path}"));
+            return Err(format!("Failed to open {format_name} file: {local_path}"));
         }
     };
 
@@ -700,21 +937,22 @@ impl Source for BagSourceBlocking {
             self.path = path.clone();
         }
 
+        maybe_apply_s3_env_for_url(&self.path);
+
         let batch_size = self.batch_size;
         let (tx, rx) = crossbeam_channel::bounded(16);
         let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
 
         let path_owned = self.path.clone();
-        let handle = thread::Builder::new()
-            .name("bag-decoder-blocking".to_string())
-            .spawn(move || spawn_local_decoder_blocking(path_owned, meta_tx, tx, batch_size, "bag"))
-            .map_err(|e| SourceError::ReadFailed(format!("Failed to spawn decoder thread: {e}")))?;
+        let handle = tokio::task::spawn_blocking(move || {
+            spawn_local_decoder_blocking(path_owned, meta_tx, tx, batch_size, "bag")
+        });
 
         let metadata = match meta_rx.await {
             Ok(Ok(metadata)) => metadata,
             Ok(Err(e)) => return Err(e),
             Err(_) => {
-                match handle.join() {
+                match handle.await {
                     Ok(Err(e)) => {
                         return Err(SourceError::ReadFailed(format!(
                             "Source initialization failed: {e}"
@@ -722,13 +960,13 @@ impl Source for BagSourceBlocking {
                     }
                     Err(_) => {
                         return Err(SourceError::ReadFailed(
-                            "Decoder thread panicked during initialization".to_string(),
+                            "Decoder task panicked during initialization".to_string(),
                         ));
                     }
                     Ok(Ok(_)) => {}
                 }
                 return Err(SourceError::ReadFailed(
-                    "Decoder thread exited before sending metadata".to_string(),
+                    "Decoder task exited before sending metadata".to_string(),
                 ));
             }
         };
@@ -784,7 +1022,7 @@ impl Source for BagSourceBlocking {
             }
             Err(_) => {
                 self.finished = true;
-                self.check_decoder_result()?;
+                self.check_decoder_result().await?;
                 Ok(None)
             }
         }

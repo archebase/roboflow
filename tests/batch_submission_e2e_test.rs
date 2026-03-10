@@ -366,7 +366,13 @@ async fn test_batch_submission_with_multiple_bag_files() {
         let unit_key = WorkUnitKeys::unit(&canonical_batch_id, &unit_id);
         let unit_data = bincode::serialize(&work_unit).unwrap();
 
-        tikv.put(unit_key, unit_data).await.unwrap();
+        // Create pending queue entry (required for claim_work_unit to find it)
+        let pending_key = WorkUnitKeys::pending(&canonical_batch_id, &unit_id);
+        let pending_data = canonical_batch_id.as_bytes().to_vec();
+
+        tikv.batch_put(vec![(unit_key, unit_data), (pending_key, pending_data)])
+            .await
+            .unwrap();
         println!("   ✓ Created work unit: {}", unit_id);
     }
 
@@ -438,6 +444,12 @@ async fn test_batch_submission_with_multiple_bag_files() {
     for i in 0..uploaded_urls.len() {
         let _ = tikv
             .delete(WorkUnitKeys::unit(
+                &canonical_batch_id,
+                &format!("unit-{}", i),
+            ))
+            .await;
+        let _ = tikv
+            .delete(WorkUnitKeys::pending(
                 &canonical_batch_id,
                 &format!("unit-{}", i),
             ))

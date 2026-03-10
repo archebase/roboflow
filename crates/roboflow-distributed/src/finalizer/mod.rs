@@ -12,6 +12,7 @@ pub mod config;
 use super::batch::{BatchController, BatchKeys, BatchPhase, BatchSpec, BatchStatus, BatchSummary};
 use super::merge::MergeCoordinator;
 use super::metadata::{DatasetMetadataRegistry, GlobalMetadataAssembler};
+use super::output_path::resolve_batch_output_path;
 use super::tikv::TikvClient;
 use crate::stats::StatsCollector;
 use crate::tikv::TikvError;
@@ -137,52 +138,80 @@ impl Finalizer {
     pub async fn run(&self, cancel: tokio_util::sync::CancellationToken) -> Result<(), TikvError> {
         info!(
             pod_id = %self.pod_id,
-            "Finalizer started"
+            poll_interval_secs = self.config.poll_interval.as_secs(),
+            "=== FINALIZER RUN START ==="
         );
 
+        let mut iteration_count = 0u64;
         while !cancel.is_cancelled() {
+            iteration_count += 1;
+            tracing::debug!(
+                pod_id = %self.pod_id,
+                iteration = iteration_count,
+                "=== FINALIZER ITERATION START ==="
+            );
             // Look for batches that are Running but all work units are complete
-            if let Some((batch, spec)) = self.find_batch_awaiting_finalization().await {
-                info!(
-                    pod_id = %self.pod_id,
-                    batch_id = %batch.id,
-                    "Found batch awaiting finalization"
-                );
+            match self.find_batch_awaiting_finalization().await {
+                Some((batch, spec)) => {
+                    info!(
+                        pod_id = %self.pod_id,
+                        batch_id = %batch.id,
+                        "Found batch awaiting finalization"
+                    );
 
-                match self.finalize_batch(&batch, &spec).await {
-                    Ok(true) => {
-                        info!(
-                            pod_id = %self.pod_id,
-                            batch_id = %batch.id,
-                            "Batch finalized successfully"
-                        );
-                    }
-                    Ok(false) => {
-                        // NotReady / NotClaimed / NotFound - will retry next poll
-                    }
-                    Err(e) => {
-                        error!(
-                            pod_id = %self.pod_id,
-                            batch_id = %batch.id,
-                            error = %e,
-                            "Failed to finalize batch"
-                        );
-
-                        // Mark batch as failed, log if that also fails
-                        if let Err(mark_err) = self
-                            .mark_batch_failed(&batch.id, format!("Finalization failed: {}", e))
-                            .await
-                        {
+                    match self.finalize_batch(&batch, &spec).await {
+                        Ok(true) => {
+                            info!(
+                                pod_id = %self.pod_id,
+                                batch_id = %batch.id,
+                                "Batch finalized successfully"
+                            );
+                        }
+                        Ok(false) => {
+                            // NotReady / NotClaimed / NotFound - will retry next poll
+                            tracing::debug!(
+                                pod_id = %self.pod_id,
+                                batch_id = %batch.id,
+                                "Batch not ready for finalization, will retry"
+                            );
+                        }
+                        Err(e) => {
                             error!(
                                 pod_id = %self.pod_id,
                                 batch_id = %batch.id,
-                                error = %mark_err,
-                                "CRITICAL: Failed to mark batch as failed - batch may be stuck in Running state"
+                                error = %e,
+                                "Failed to finalize batch"
                             );
+
+                            // Mark batch as failed, log if that also fails
+                            if let Err(mark_err) = self
+                                .mark_batch_failed(&batch.id, format!("Finalization failed: {}", e))
+                                .await
+                            {
+                                error!(
+                                    pod_id = %self.pod_id,
+                                    batch_id = %batch.id,
+                                    error = %mark_err,
+                                    "CRITICAL: Failed to mark batch as failed - batch may be stuck in Running state"
+                                );
+                            }
                         }
                     }
                 }
+                None => {
+                    tracing::debug!(
+                        pod_id = %self.pod_id,
+                        iteration = iteration_count,
+                        "No batches awaiting finalization"
+                    );
+                }
             }
+
+            tracing::debug!(
+                pod_id = %self.pod_id,
+                iteration = iteration_count,
+                "=== FINALIZER ITERATION END ==="
+            );
 
             // Sleep before next poll
             sleep(self.config.poll_interval).await;
@@ -190,7 +219,8 @@ impl Finalizer {
 
         info!(
             pod_id = %self.pod_id,
-            "Finalizer shutting down"
+            iterations = iteration_count,
+            "=== FINALIZER RUN END ==="
         );
 
         Ok(())
@@ -264,10 +294,11 @@ impl Finalizer {
             pod_id = %self.pod_id,
             batch_id = %batch.id,
             work_units = batch.files_total,
-            "Finalizing batch"
+            "=== FINALIZER BATCH START ==="
         );
 
-        let output_path = &spec.spec.output;
+        let resolved_output_path = resolve_batch_output_path(spec);
+        let output_path = &resolved_output_path;
 
         // Assemble and write LeRobot metadata files if storage is configured
         if let Some(storage) = &self.storage {
@@ -322,7 +353,7 @@ impl Finalizer {
             .try_claim_merge(&batch.id, 1, output_path.clone())
             .await?;
 
-        match merge_result {
+        let result = match merge_result {
             super::merge::MergeResult::Success {
                 output_path,
                 total_frames,
@@ -378,7 +409,16 @@ impl Finalizer {
             super::merge::MergeResult::Failed { error } => {
                 Err(TikvError::Other(format!("Merge failed: {}", error)))
             }
-        }
+        };
+
+        info!(
+            pod_id = %self.pod_id,
+            batch_id = %batch.id,
+            success = result.is_ok(),
+            "=== FINALIZER BATCH END ==="
+        );
+
+        result
     }
 
     /// Mark a batch as complete.

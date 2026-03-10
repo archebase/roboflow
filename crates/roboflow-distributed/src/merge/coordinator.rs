@@ -537,19 +537,26 @@ impl MergeCoordinator {
             expected_workers = state.expected_workers,
             completed_workers = state.completed_workers,
             total_frames = state.total_frames,
-            "Merge execution started"
+            "=== MERGE EXECUTION START ==="
         );
 
         // Execute merge
+        let merge_start = Instant::now();
         let actual_frames = match self.execute_merge(&state).await {
             Ok(frames) => frames,
             Err(e) => {
                 let _ = self.fail_merge_with_status(job_id, &e.to_string()).await;
+                tracing::error!(
+                    job_id = %job_id,
+                    error = %e,
+                    "=== MERGE EXECUTION FAILED ==="
+                );
                 return Ok(MergeResult::Failed {
                     error: e.to_string(),
                 });
             }
         };
+        let merge_duration = merge_start.elapsed();
 
         // Complete the merge
         match self
@@ -558,14 +565,28 @@ impl MergeCoordinator {
         {
             Ok(()) => {
                 self.semaphore.record_success();
+                info!(
+                    job_id = %job_id,
+                    total_frames = actual_frames,
+                    duration_secs = merge_duration.as_secs_f64(),
+                    "=== MERGE EXECUTION END (SUCCESS) ==="
+                );
                 Ok(MergeResult::Success {
                     output_path: state.output_path,
                     total_frames: actual_frames,
                 })
             }
-            Err(e) => Ok(MergeResult::Failed {
-                error: e.to_string(),
-            }),
+            Err(e) => {
+                tracing::error!(
+                    job_id = %job_id,
+                    error = %e,
+                    duration_secs = merge_duration.as_secs_f64(),
+                    "=== MERGE EXECUTION END (FAILED) ==="
+                );
+                Ok(MergeResult::Failed {
+                    error: e.to_string(),
+                })
+            }
         }
     }
 
@@ -640,10 +661,40 @@ impl MergeCoordinator {
         let executor =
             ParquetMergeExecutor::new(storage, state.output_path.clone(), self.temp_dir.clone());
 
+        // Try to load LeRobot config from the batch's config_hash
+        let lerobot_config = self.load_lerobot_config(&state.job_id).await;
+
         executor
-            .execute(state)
+            .execute(state, lerobot_config.as_ref())
             .await
             .map_err(|e| TikvError::Other(format!("Merge execution failed: {}", e)))
+    }
+
+    /// Load LeRobot config from TiKV for metadata generation.
+    async fn load_lerobot_config(
+        &self,
+        job_id: &str,
+    ) -> Option<roboflow_dataset::formats::lerobot::config::LerobotConfig> {
+        use roboflow_dataset::formats::lerobot::config::LerobotConfig;
+
+        // Get the batch spec to find the config hash
+        let spec_key = crate::batch::BatchKeys::spec(job_id);
+        let spec_data = self.tikv.get(spec_key).await.ok()??;
+
+        let batch_spec: crate::batch::BatchSpec = bincode::deserialize(&spec_data).ok()?;
+
+        // The config field contains either "default" or a config hash
+        let config_hash = &batch_spec.spec.config;
+        if config_hash == "default" {
+            tracing::debug!("Batch uses default config, skipping metadata generation");
+            return None;
+        }
+
+        // Load the config from TiKV
+        let config_record = self.tikv.get_config(config_hash).await.ok()??;
+
+        // Parse the TOML config
+        LerobotConfig::from_toml(&config_record.content).ok()
     }
 
     /// Mark the merge as failed by transitioning batch status from Merging to Failed.

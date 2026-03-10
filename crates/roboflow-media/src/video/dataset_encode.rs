@@ -251,7 +251,7 @@ pub fn build_frame_buffer_static(images: &[ImageData]) -> Result<(VideoFrameBuff
         let decoded: Vec<_> = images
             .par_iter()
             .map(|img| {
-                if img.width == 0 || img.height == 0 {
+                if !img.is_encoded && (img.width == 0 || img.height == 0) {
                     return Ok(None);
                 }
                 if img.is_encoded {
@@ -281,7 +281,7 @@ pub fn build_frame_buffer_static(images: &[ImageData]) -> Result<(VideoFrameBuff
         let mut buffer = VideoFrameBuffer::new();
         let mut skipped = 0usize;
         for img in images {
-            if img.width == 0 || img.height == 0 {
+            if !img.is_encoded && (img.width == 0 || img.height == 0) {
                 skipped += 1;
                 continue;
             }

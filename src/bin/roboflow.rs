@@ -41,6 +41,8 @@
 //! - `WORKER_CHECKPOINT_INTERVAL_FRAMES` - Checkpoint interval in frames (default: 100)
 //! - `WORKER_CHECKPOINT_INTERVAL_SECS` - Checkpoint interval in seconds (default: 10)
 //! - `WORKER_OUTPUT_PREFIX` - Fallback output prefix (default: output/) - only used if Batch output_path is empty
+//! - `SOURCE_INIT_TIMEOUT_SECS` - Source initialization timeout (default: 300)
+//! - `ROBOFLOW_PROGRESS_LOG_SECS` - Per-work-unit progress log interval in seconds (default: 2)
 //!
 //! ### Finalizer Configuration (ROLE=finalizer or unified)
 //! - `FINALIZER_POLL_INTERVAL_SECS` - Poll interval for completed batches (default: 30)
@@ -54,6 +56,7 @@ use roboflow_distributed::{
     BatchController, Finalizer, FinalizerConfig, MergeCoordinator, ReaperConfig, Scanner,
     ScannerConfig, Worker, WorkerConfig, ZombieReaper,
 };
+use roboflow_pipeline::BagToLerobotProcessor;
 use roboflow_storage::StorageFactory;
 use tokio_util::sync::CancellationToken;
 
@@ -438,184 +441,20 @@ async fn run_health_check() -> HealthCheckResult {
     }
 }
 
-struct CliWorkProcessor {
-    pod_id: String,
-    tikv: Arc<roboflow_distributed::TikvClient>,
-    config: WorkerConfig,
-}
-
-impl CliWorkProcessor {
-    fn new(
-        pod_id: String,
-        tikv: Arc<roboflow_distributed::TikvClient>,
-        config: WorkerConfig,
-    ) -> Self {
-        Self {
-            pod_id,
-            tikv,
-            config,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl roboflow_distributed::worker::WorkProcessor for CliWorkProcessor {
-    async fn process(
-        &self,
-        work_unit: &roboflow_distributed::WorkUnit,
-    ) -> Result<roboflow_distributed::ProcessingResult, roboflow_distributed::TikvError> {
-        use roboflow_dataset::formats::common::DatasetBaseConfig;
-        use roboflow_dataset::formats::lerobot::{
-            DatasetConfig, LerobotConfig, LerobotWriterConfig, VideoConfig, create_lerobot_writer,
-        };
-        use roboflow_dataset::sources::{SourceConfig, create_source};
-        use roboflow_distributed::EpisodeAllocator;
-        use roboflow_pipeline::{DatasetPipelineConfig, DatasetPipelineExecutor};
-
-        let input_file = work_unit
-            .files
-            .first()
-            .map(|f| f.url.clone())
-            .ok_or_else(|| roboflow_distributed::TikvError::Other("No input files".to_string()))?;
-
-        let output_dir = if self.config.output_prefix.starts_with("s3://")
-            || self.config.output_prefix.starts_with("oss://")
-        {
-            std::env::temp_dir().join(format!("roboflow_{}", self.pod_id))
-        } else {
-            std::path::PathBuf::from(&self.config.output_prefix)
-        };
-
-        let allocator = roboflow_distributed::TiKVEpisodeAllocator::new(
-            self.tikv.clone(),
-            work_unit.batch_id.clone(),
-            self.config.episodes_per_chunk,
-        );
-
-        let allocation = allocator.allocate().await.map_err(|e| {
-            roboflow_distributed::TikvError::Other(format!("Allocation failed: {e}"))
-        })?;
-
-        let source_config = if input_file.ends_with(".mcap") {
-            SourceConfig::mcap(&input_file)
-        } else if input_file.ends_with(".bag") {
-            SourceConfig::bag(&input_file)
-        } else {
-            return Err(roboflow_distributed::TikvError::Other(format!(
-                "Unsupported input source: {input_file}"
-            )));
-        };
-
-        let mut source = create_source(&source_config)
-            .map_err(|e| roboflow_distributed::TikvError::Other(format!("Source error: {e}")))?;
-
-        source
-            .initialize(&source_config)
-            .await
-            .map_err(|e| roboflow_distributed::TikvError::Other(format!("Init error: {e}")))?;
-
-        let mut lerobot_config = match self.tikv.get_config(&work_unit.config_hash).await {
-            Ok(Some(config_record)) => LerobotConfig::from_toml(&config_record.content)
-                .unwrap_or_else(|_| LerobotConfig {
-                    dataset: DatasetConfig {
-                        base: DatasetBaseConfig {
-                            name: format!("episode_{:06}", allocation.episode_index),
-                            fps: 30,
-                            robot_type: None,
-                        },
-                        env_type: None,
-                    },
-                    mappings: vec![],
-                    video: VideoConfig::default(),
-                    annotation_file: None,
-                    flushing: Default::default(),
-                    streaming: Default::default(),
-                }),
-            _ => LerobotConfig {
-                dataset: DatasetConfig {
-                    base: DatasetBaseConfig {
-                        name: format!("episode_{:06}", allocation.episode_index),
-                        fps: 30,
-                        robot_type: None,
-                    },
-                    env_type: None,
-                },
-                mappings: vec![],
-                video: VideoConfig::default(),
-                annotation_file: None,
-                flushing: Default::default(),
-                streaming: Default::default(),
-            },
-        };
-
-        lerobot_config.streaming.finalize_metadata_in_coordinator = true;
-
-        let episode_output_dir =
-            output_dir.join(format!("episode_{:06}", allocation.episode_index));
-        std::fs::create_dir_all(&episode_output_dir)
-            .map_err(|e| roboflow_distributed::TikvError::Other(format!("Mkdir error: {e}")))?;
-
-        let writer_config = LerobotWriterConfig::new(
-            episode_output_dir.to_string_lossy().to_string(),
-            lerobot_config,
-        );
-
-        let writer = create_lerobot_writer(&writer_config)
-            .map_err(|e| roboflow_distributed::TikvError::Other(format!("Writer error: {e}")))?
-            .writer;
-
-        let num_threads = std::thread::available_parallelism()
-            .map(|p| p.get())
-            .unwrap_or(4);
-        let mut executor = DatasetPipelineExecutor::parallel(
-            writer,
-            DatasetPipelineConfig::with_fps(30),
-            num_threads,
-        );
-
-        loop {
-            match source.read_batch(100).await {
-                Ok(Some(messages)) => {
-                    executor.process_messages(messages).map_err(|e| {
-                        roboflow_distributed::TikvError::Other(format!("Pipeline error: {e}"))
-                    })?;
-                }
-                Ok(None) => break,
-                Err(e) => {
-                    return Err(roboflow_distributed::TikvError::Other(format!(
-                        "Read error: {e}"
-                    )));
-                }
-            }
-        }
-
-        let pipeline_stats = executor
-            .finalize()
-            .map_err(|e| roboflow_distributed::TikvError::Other(format!("Finalize error: {e}")))?;
-
-        Ok(roboflow_distributed::ProcessingResult::Success {
-            episode_index: allocation.episode_index,
-            frame_count: pipeline_stats.frames_written as u64,
-            episode_stats: Some(roboflow_distributed::EpisodeStats {
-                episode_index: allocation.episode_index as usize,
-                frame_count: pipeline_stats.frames_written,
-                feature_stats: std::collections::HashMap::new(),
-                task_indices: Vec::new(),
-                recorded_at: Some(chrono::Utc::now().timestamp()),
-            }),
-        })
-    }
-}
-
 /// Run the worker role.
 async fn run_worker(
     pod_id: String,
     tikv: Arc<roboflow_distributed::TikvClient>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = WorkerConfig::new();
-    let processor: roboflow_distributed::worker::SharedWorkProcessor = Arc::new(
-        CliWorkProcessor::new(pod_id.clone(), tikv.clone(), config.clone()),
-    );
+    let merge_coordinator = Arc::new(MergeCoordinator::new(tikv.clone()));
+    let processor: roboflow_distributed::worker::SharedWorkProcessor =
+        Arc::new(BagToLerobotProcessor::new(
+            pod_id.clone(),
+            tikv.clone(),
+            merge_coordinator,
+            config.clone(),
+        ));
     let mut worker = Worker::with_processor(pod_id, tikv, config, processor)?;
 
     worker.run().await.map_err(|e| e.into())
@@ -654,9 +493,13 @@ async fn run_unified(
 
     // Create worker, finalizer, and reaper
     let worker_pod_id = format!("{}-worker", pod_id);
-    let worker_processor: roboflow_distributed::worker::SharedWorkProcessor = Arc::new(
-        CliWorkProcessor::new(worker_pod_id.clone(), tikv.clone(), worker_config.clone()),
-    );
+    let worker_processor: roboflow_distributed::worker::SharedWorkProcessor =
+        Arc::new(BagToLerobotProcessor::new(
+            worker_pod_id.clone(),
+            tikv.clone(),
+            merge_coordinator.clone(),
+            worker_config.clone(),
+        ));
     let mut worker =
         Worker::with_processor(worker_pod_id, tikv.clone(), worker_config, worker_processor)?;
 
@@ -840,6 +683,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             env::var("RUST_LOG").unwrap_or_else(|_| "roboflow=info,tikv_client=warn".to_string()),
         )
         .init();
+
+    // Initialize S3 environment bridge before any robocodec operations
+    // This reads RF_S3_* / AWS_* env vars and applies to AWS-standard names
+    if let Err(e) = roboflow_dataset::sources::init_s3_env_bridge() {
+        tracing::warn!(error = %e, "Failed to initialize S3 environment bridge");
+    }
 
     // Register all built-in source types (bag, mcap, rrd)
     roboflow_dataset::sources::register_builtin_sources();

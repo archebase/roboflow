@@ -39,6 +39,9 @@ crossbeam-channel = "0.5"
 # Datetime (cloud storage timestamps)
 chrono = { workspace = true }
 
+# Pattern matching for file discovery
+glob = "0.3"
+
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3.10"

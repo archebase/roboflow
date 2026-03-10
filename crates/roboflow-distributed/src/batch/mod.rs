@@ -66,7 +66,10 @@ pub use spec::{
     PartitionStrategy, SourceUrl, WorkUnitConfig,
 };
 pub use status::{BatchPhase, BatchStatus, DiscoveryStatus, FailedWorkUnit};
-pub use work_unit::{WorkFile, WorkUnit, WorkUnitError, WorkUnitStatus, WorkUnitSummary};
+pub use work_unit::{
+    WorkFile, WorkUnit, WorkUnitError, WorkUnitStatus, WorkUnitSummary,
+    deserialize_work_unit_compat,
+};
 
 /// Create a batch ID from a spec.
 ///

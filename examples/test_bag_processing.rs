@@ -13,7 +13,7 @@ use roboflow::{
     DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig, LerobotWriter,
     LerobotWriterTrait, VideoConfig,
 };
-use roboflow_dataset::{ImageData, common::AlignedFrame};
+use roboflow_dataset::common::AlignedFrame;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Path to the extracted MCAP file
@@ -103,11 +103,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for cam_idx in 0..num_cameras {
             let camera_name = format!("observation.images.camera_{}", cam_idx);
 
-            // Create a test image with unique pattern per frame/camera
-            let pattern = ((frame_idx * num_cameras + cam_idx) % 256) as u8;
-            let image = create_test_image(320, 240, pattern);
-
-            frame.images.insert(camera_name, std::sync::Arc::new(image));
+            // Add image ref with dimensions for this camera
+            frame.image_refs.insert(
+                camera_name,
+                roboflow_dataset::formats::common::ImageRef {
+                    width: 320,
+                    height: 240,
+                },
+            );
             total_images += 1;
         }
 
@@ -167,13 +170,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-fn create_test_image(width: u32, height: u32, pattern: u8) -> ImageData {
-    let mut data = vec![pattern; (width * height * 3) as usize];
-    // Add a gradient for uniqueness
-    for (i, byte) in data.iter_mut().enumerate() {
-        *byte = byte.wrapping_add((i % 256) as u8);
-    }
-    ImageData::new(width, height, data)
 }

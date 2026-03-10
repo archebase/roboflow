@@ -3986,7 +3986,7 @@ dependencies = [
 [[package]]
 name = "robocodec"
 version = "0.1.0"
-source = "git+https://github.com/archebase/robocodec?rev=b27acf0e5881c38f8cc7f09e25c15787a440ae13#b27acf0e5881c38f8cc7f09e25c15787a440ae13"
+source = "git+https://github.com/archebase/robocodec?rev=838fa3d464ae8f0c9eeb61e7fa617363a272cbc5#838fa3d464ae8f0c9eeb61e7fa617363a272cbc5"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -4152,6 +4152,7 @@ dependencies = [
  "polars",
  "pretty_assertions",
  "roboflow-core",
+ "roboflow-dataset",
  "roboflow-storage",
  "serde",
  "serde_json",
@@ -4209,12 +4210,19 @@ name = "roboflow-pipeline"
 version = "0.2.0"
 dependencies = [
  "async-trait",
+ "bincode",
+ "chrono",
  "robocodec",
  "roboflow-core",
  "roboflow-dataset",
+ "roboflow-distributed",
  "roboflow-executor",
  "roboflow-media",
+ "roboflow-storage",
+ "serde_json",
+ "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -4226,6 +4234,7 @@ dependencies = [
  "chrono",
  "crossbeam-channel",
  "futures",
+ "glob",
  "object_store",
  "pretty_assertions",
  "roboflow-core",

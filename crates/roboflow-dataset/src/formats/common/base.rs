@@ -24,7 +24,19 @@
 use roboflow_core::Result;
 use roboflow_media::{AudioData, CameraInfo, ImageData};
 use std::collections::HashMap;
-use std::sync::Arc;
+
+/// Lightweight image reference carrying only dimensions.
+///
+/// Used in [`AlignedFrame`] to record image metadata for parquet path
+/// generation without storing the full pixel data. The actual image
+/// data is routed directly to the video encoder via the fast-path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageRef {
+    /// Image width in pixels.
+    pub width: u32,
+    /// Image height in pixels.
+    pub height: u32,
+}
 
 /// Aligned frame data ready for writing to dataset formats.
 ///
@@ -56,9 +68,9 @@ pub struct AlignedFrame {
     /// Target timestamp for this frame (nanoseconds).
     pub timestamp: u64,
 
-    /// Image observations by feature name (e.g., "observation.camera_0").
-    /// Uses Arc for zero-copy sharing when the same image is referenced multiple times.
-    pub images: HashMap<String, Arc<ImageData>>,
+    /// Image references by feature name (e.g., "observation.camera_0").
+    /// Contains only dimensions — actual pixel data is routed directly to the encoder.
+    pub image_refs: HashMap<String, ImageRef>,
 
     /// State observations by feature name.
     pub states: HashMap<String, Vec<f32>>,
@@ -79,7 +91,7 @@ impl AlignedFrame {
         Self {
             frame_index,
             timestamp,
-            images: HashMap::new(),
+            image_refs: HashMap::new(),
             states: HashMap::new(),
             actions: HashMap::new(),
             timestamps: HashMap::new(),
@@ -87,14 +99,9 @@ impl AlignedFrame {
         }
     }
 
-    /// Add an image observation.
-    pub fn add_image(&mut self, feature: String, data: ImageData) {
-        self.images.insert(feature, Arc::new(data));
-    }
-
-    /// Add an image observation from Arc (zero-copy if already Arc-wrapped).
-    pub fn add_image_arc(&mut self, feature: String, data: Arc<ImageData>) {
-        self.images.insert(feature, data);
+    /// Add an image reference (dimensions only, pixel data routed to encoder separately).
+    pub fn add_image_ref(&mut self, feature: String, image_ref: ImageRef) {
+        self.image_refs.insert(feature, image_ref);
     }
 
     /// Add a state observation.
@@ -119,7 +126,7 @@ impl AlignedFrame {
 
     /// Check if the frame has any data.
     pub fn is_empty(&self) -> bool {
-        self.images.is_empty()
+        self.image_refs.is_empty()
             && self.states.is_empty()
             && self.actions.is_empty()
             && self.audio.is_empty()
@@ -473,7 +480,7 @@ mod tests {
         let frame = AlignedFrame::new(42, 1_000_000_000);
         assert_eq!(frame.frame_index, 42);
         assert_eq!(frame.timestamp, 1_000_000_000);
-        assert!(frame.images.is_empty());
+        assert!(frame.image_refs.is_empty());
         assert!(frame.states.is_empty());
         assert!(frame.actions.is_empty());
     }
@@ -512,22 +519,20 @@ mod tests {
     }
 
     #[test]
-    fn test_aligned_frame_add_image() {
+    fn test_aligned_frame_add_image_ref() {
         let mut frame = AlignedFrame::new(0, 0);
-        let img = ImageData::new(640, 480, vec![0u8; 640 * 480 * 3]);
-        frame.add_image("camera".to_string(), img);
+        frame.add_image_ref(
+            "camera".to_string(),
+            ImageRef {
+                width: 640,
+                height: 480,
+            },
+        );
 
-        assert!(frame.images.contains_key("camera"));
+        assert!(frame.image_refs.contains_key("camera"));
         assert!(!frame.is_empty());
-    }
-
-    #[test]
-    fn test_aligned_frame_add_image_arc() {
-        let mut frame = AlignedFrame::new(0, 0);
-        let img = Arc::new(ImageData::new(640, 480, vec![0u8; 640 * 480 * 3]));
-        frame.add_image_arc("camera".to_string(), img.clone());
-
-        assert!(frame.images.contains_key("camera"));
+        assert_eq!(frame.image_refs["camera"].width, 640);
+        assert_eq!(frame.image_refs["camera"].height, 480);
     }
 
     #[test]

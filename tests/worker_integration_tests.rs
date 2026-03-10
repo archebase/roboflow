@@ -12,7 +12,7 @@
 use std::fs;
 
 use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, VideoConfig};
-use roboflow_dataset::ImageData;
+use roboflow_dataset::common::ImageRef;
 
 /// Create a test output directory using system temp.
 /// Using tempfile::tempdir() directly avoids:
@@ -53,12 +53,15 @@ fn test_lerobot_writer_basic_flow() {
     // The writer is already initialized via new_local()
     let mut writer = LerobotWriter::new_local(output_path, lerobot_config.clone()).unwrap();
 
-    // Create test image data
-    let img_data = ImageData::new(64, 48, vec![128u8; 64 * 48 * 3]);
-
     // Write a test episode
     let _ = writer.start_episode(Some(0));
-    writer.add_image("observation.images.camera_0".to_string(), img_data);
+    writer.add_image_ref(
+        "observation.images.camera_0".to_string(),
+        ImageRef {
+            width: 64,
+            height: 48,
+        },
+    );
     writer.finish_episode(Some(0)).unwrap();
 
     // Finalize and get stats - use DatasetWriter trait method

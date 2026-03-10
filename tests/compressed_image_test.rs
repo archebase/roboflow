@@ -13,7 +13,10 @@ use roboflow::{
     DatasetBaseConfig, DatasetWriter, LerobotConfig, LerobotDatasetConfig as DatasetConfig,
     LerobotWriter, LerobotWriterTrait, VideoConfig,
 };
-use roboflow_dataset::{ImageData, common::AlignedFrame};
+use roboflow_dataset::{
+    ImageData,
+    common::{AlignedFrame, ImageRef},
+};
 use roboflow_pipeline::{DatasetPipelineConfig, DatasetPipelineExecutor, SequentialPolicy};
 
 /// Test that ImageData correctly handles compressed vs raw images.
@@ -100,7 +103,10 @@ fn test_video_encoding_accepts_compressed_images() {
     for _ in 0..10 {
         let compressed_img = ImageData::encoded(width, height, jpeg_data.clone());
         assert!(compressed_img.is_encoded, "Should be marked as encoded");
-        writer.add_image("observation.images.camera_0".to_string(), compressed_img);
+        writer.add_image_ref(
+            "observation.images.camera_0".to_string(),
+            ImageRef { width, height },
+        );
     }
 
     writer.finish_episode(Some(0)).ok();
@@ -146,17 +152,14 @@ fn test_video_encoding_raw_images() {
 
     let width = 64u32;
     let height = 48u32;
-    let rgb_data = vec![128u8; (width * height * 3) as usize];
 
     // Add frames with state/action data (required for LeRobot format)
     for i in 0..10 {
-        let raw_img = ImageData::new(width, height, rgb_data.clone());
-
-        // Create AlignedFrame with image, state, and action
-        let mut images = std::collections::HashMap::new();
-        images.insert(
+        // Create AlignedFrame with image ref, state, and action
+        let mut image_refs = std::collections::HashMap::new();
+        image_refs.insert(
             "observation.images.camera_0".to_string(),
-            std::sync::Arc::new(raw_img),
+            ImageRef { width, height },
         );
 
         let mut states = std::collections::HashMap::new();
@@ -174,7 +177,7 @@ fn test_video_encoding_raw_images() {
         let frame = AlignedFrame {
             frame_index: i,
             timestamp: (i as u64) * 33_333_333,
-            images,
+            image_refs,
             states,
             actions,
             timestamps: std::collections::HashMap::new(),
@@ -224,21 +227,12 @@ fn test_video_encoding_mixed_images() {
     let height = 48u32;
 
     // Add compressed JPEG images to camera_0
-    let jpeg_header: Vec<u8> = vec![
-        0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00,
-    ]
-    .into_iter()
-    .chain(std::iter::repeat_n(0, 20))
-    .collect();
-
     for i in 0..5 {
-        let compressed_img = ImageData::encoded(width, height, jpeg_header.clone());
-
         // Create AlignedFrame for compressed image
-        let mut images = std::collections::HashMap::new();
-        images.insert(
+        let mut image_refs = std::collections::HashMap::new();
+        image_refs.insert(
             "observation.images.camera_0".to_string(),
-            std::sync::Arc::new(compressed_img),
+            ImageRef { width, height },
         );
 
         let mut states = std::collections::HashMap::new();
@@ -256,7 +250,7 @@ fn test_video_encoding_mixed_images() {
         let frame = AlignedFrame {
             frame_index: i,
             timestamp: (i as u64) * 33_333_333,
-            images,
+            image_refs,
             states,
             actions,
             timestamps: std::collections::HashMap::new(),
@@ -267,15 +261,12 @@ fn test_video_encoding_mixed_images() {
     }
 
     // Add raw RGB images to camera_1
-    let rgb_data = vec![128u8; (width * height * 3) as usize];
     for i in 0..5 {
-        let raw_img = ImageData::new(width, height, rgb_data.clone());
-
         // Create AlignedFrame for raw image
-        let mut images = std::collections::HashMap::new();
-        images.insert(
+        let mut image_refs = std::collections::HashMap::new();
+        image_refs.insert(
             "observation.images.camera_1".to_string(),
-            std::sync::Arc::new(raw_img),
+            ImageRef { width, height },
         );
 
         let mut states = std::collections::HashMap::new();
@@ -293,7 +284,7 @@ fn test_video_encoding_mixed_images() {
         let frame = AlignedFrame {
             frame_index: i + 5,
             timestamp: ((i + 5) as u64) * 33_333_333,
-            images,
+            image_refs,
             states,
             actions,
             timestamps: std::collections::HashMap::new(),

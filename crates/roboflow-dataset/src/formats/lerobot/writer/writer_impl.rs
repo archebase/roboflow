@@ -10,18 +10,16 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::fs::File;
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use crate::formats::common::{AlignedFrame, DatasetWriter, ImageData, WriterStats};
+use crate::formats::common::{AlignedFrame, DatasetWriter, ImageRef, WriterStats};
 use crate::formats::lerobot::config::LerobotConfig;
 use crate::formats::lerobot::metadata::MetadataCollector;
 use crate::formats::lerobot::trait_impl::{FromAlignedFrame, LerobotWriterTrait};
-use crate::formats::lerobot::video_profiles::resolve_video_config;
+use polars::prelude::{DataFrame, ParquetReader, ParquetWriter, SerReader};
 use roboflow_core::Result;
-use roboflow_media::video::{
-    EncodeStats, RsmpegVideoComposer, VideoComposer, build_frame_buffer_static, encode_videos,
-};
 
 use super::frame::LerobotFrame;
 use super::stats;
@@ -33,12 +31,6 @@ pub const DEFAULT_EPISODES_PER_CHUNK: u32 = 500;
 
 /// LeRobot v2.1 dataset writer.
 pub struct LerobotWriter {
-    /// Output prefix within storage (empty for local filesystem root)
-    output_prefix: String,
-
-    /// Local buffer directory for temporary files (Parquet, video encoding)
-    _local_buffer: PathBuf,
-
     /// Output directory (deprecated, kept for backward compatibility)
     output_dir: PathBuf,
 
@@ -54,9 +46,11 @@ pub struct LerobotWriter {
     /// Unique session ID for temp segment paths
     session_id: String,
 
-    /// Pending segment paths per camera, to be merged on finalize
-    /// Maps camera_name -> list of segment paths in temp storage
-    pending_segments: HashMap<String, Vec<PathBuf>>,
+    /// Pending parquet segment paths (streaming writes), merged on finalize.
+    pending_parquet_segments: Vec<PathBuf>,
+
+    /// Parquet segment sequence counter.
+    parquet_segment_index: u32,
 
     /// Number of episodes per chunk for LeRobot v2.1 format.
     /// Episodes 0 to episodes_per_chunk-1 go to chunk-000,
@@ -65,9 +59,6 @@ pub struct LerobotWriter {
 
     /// Frame data for current episode
     frame_data: Vec<LerobotFrame>,
-
-    /// Image buffers per camera
-    image_buffers: HashMap<String, Vec<ImageData>>,
 
     /// Metadata collector
     metadata: MetadataCollector,
@@ -81,11 +72,8 @@ pub struct LerobotWriter {
     /// Total frames written
     total_frames: usize,
 
-    /// Total images encoded
-    images_encoded: usize,
-
-    /// Number of frames skipped due to dimension mismatches
-    skipped_frames: usize,
+    /// Total frames at the start of the current episode (for per-episode counting)
+    episode_start_frames: usize,
 
     /// Whether the writer has been initialized
     initialized: bool,
@@ -95,12 +83,6 @@ pub struct LerobotWriter {
 
     /// Output bytes written
     output_bytes: u64,
-
-    /// Number of videos that failed to encode
-    failed_encodings: usize,
-
-    /// Images added since last flush (for correct flush triggering)
-    images_since_flush: usize,
 }
 
 impl LerobotWriter {
@@ -165,41 +147,24 @@ impl LerobotWriter {
         fs::create_dir_all(&meta_dir)?;
         fs::create_dir_all(&params_dir)?;
 
-        let local_buffer = output_dir.to_path_buf();
-        let output_prefix = String::new();
-
-        let mut config = config;
-        if config.flushing.max_frames_per_chunk > 0 {
-            tracing::info!(
-                max_frames_per_chunk = config.flushing.max_frames_per_chunk,
-                "Disabling video segmentation for local storage"
-            );
-            config.flushing.max_frames_per_chunk = 0;
-        }
-
         Ok(Self {
-            output_prefix,
-            _local_buffer: local_buffer,
             output_dir: output_dir.to_path_buf(),
             config,
             episode_index: 0,
             segment_index: 0,
             session_id: uuid::Uuid::new_v4().to_string(),
-            pending_segments: HashMap::new(),
+            pending_parquet_segments: Vec::new(),
+            parquet_segment_index: 0,
             episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
-            image_buffers: HashMap::new(),
             metadata: MetadataCollector::new(),
             camera_intrinsics: HashMap::new(),
             camera_extrinsics: HashMap::new(),
             total_frames: 0,
-            images_encoded: 0,
-            skipped_frames: 0,
+            episode_start_frames: 0,
             initialized: true, // new_local creates a fully initialized writer
             start_time: None,
             output_bytes: 0,
-            failed_encodings: 0,
-            images_since_flush: 0,
         })
     }
 
@@ -240,8 +205,8 @@ impl LerobotWriter {
                 The executor handles cloud uploads after local conversion."
     )]
     pub fn new(
-        _storage: Arc<dyn roboflow_storage::Storage>,
-        output_prefix: String,
+        _storage: std::sync::Arc<dyn roboflow_storage::Storage>,
+        _output_prefix: String,
         local_buffer: impl AsRef<Path>,
         config: LerobotConfig,
     ) -> Result<Self> {
@@ -259,28 +224,23 @@ impl LerobotWriter {
         fs::create_dir_all(&params_dir)?;
 
         Ok(Self {
-            output_prefix,
-            _local_buffer: local_buffer.to_path_buf(),
             output_dir: local_buffer.to_path_buf(),
             config,
             episode_index: 0,
             segment_index: 0,
             session_id: uuid::Uuid::new_v4().to_string(),
-            pending_segments: HashMap::new(),
+            pending_parquet_segments: Vec::new(),
+            parquet_segment_index: 0,
             episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
-            image_buffers: HashMap::new(),
             metadata: MetadataCollector::new(),
             camera_intrinsics: HashMap::new(),
             camera_extrinsics: HashMap::new(),
             total_frames: 0,
-            images_encoded: 0,
-            skipped_frames: 0,
+            episode_start_frames: 0,
             initialized: true, // new() creates a fully initialized writer
             start_time: None,
             output_bytes: 0,
-            failed_encodings: 0,
-            images_since_flush: 0,
         })
     }
 
@@ -339,35 +299,16 @@ impl LerobotWriter {
         self.frame_data.push(frame);
     }
 
-    /// Add image data for a camera frame.
-    /// Note: This does NOT trigger incremental flushing to avoid mid-frame flushes.
-    /// The flush check is deferred until after all images for a frame are added.
-    pub fn add_image(&mut self, camera: String, data: ImageData) {
-        // Update shape metadata
-        self.metadata
-            .update_image_shape(camera.clone(), data.width as usize, data.height as usize);
-
-        // Buffer for video encoding
-        self.image_buffers.entry(camera).or_default().push(data);
-        self.images_since_flush += 1;
-    }
-
-    /// Add image data from Arc (zero-copy if already Arc-wrapped).
-    pub fn add_image_arc(&mut self, camera: String, data: Arc<ImageData>) {
-        // Update shape metadata
-        let inner = &*data;
+    /// Add an image reference to metadata tracking.
+    ///
+    /// Records the image dimensions for metadata without storing pixel data.
+    /// Pixel data is routed directly to the encoder by the executor.
+    pub fn add_image_ref(&mut self, camera: String, image_ref: ImageRef) {
         self.metadata.update_image_shape(
-            camera.clone(),
-            inner.width as usize,
-            inner.height as usize,
+            camera,
+            image_ref.width as usize,
+            image_ref.height as usize,
         );
-
-        // Buffer for video encoding - try to unwrap if uniquely owned
-        self.image_buffers
-            .entry(camera)
-            .or_default()
-            .push(Arc::try_unwrap(data).unwrap_or_else(|arc| (*arc).clone()));
-        self.images_since_flush += 1;
     }
 
     /// Start a new episode.
@@ -378,6 +319,9 @@ impl LerobotWriter {
     pub fn start_episode(&mut self, _task_index: Option<usize>) -> Result<()> {
         // Ensure chunk directories exist for this episode
         self.ensure_chunk_dirs()?;
+
+        // Record frame count at episode start for per-episode counting
+        self.episode_start_frames = self.total_frames;
 
         // Reset episode state (frame_data is cleared in finish_episode)
         self.start_time = Some(std::time::Instant::now());
@@ -436,33 +380,31 @@ impl LerobotWriter {
 
     /// Finish the current episode and write its data.
     pub fn finish_episode(&mut self, task_index: Option<usize>) -> Result<()> {
+        if self.config.flushing.incremental_video_encoding {
+            // Flush remaining parquet data.
+            if !self.frame_data.is_empty() {
+                self.flush_parquet_segment()?;
+            }
+
+            self.merge_pending_parquet_segments()?;
+
+            // Per-episode frame count: total_frames accumulated since start_episode()
+            let episode_frames = self.total_frames - self.episode_start_frames;
+            let tasks = task_index.map(|t| vec![t]).unwrap_or_default();
+            self.metadata
+                .add_episode(self.episode_index, episode_frames, tasks);
+
+            return Ok(());
+        }
+
         if self.frame_data.is_empty() {
             return Ok(());
         }
 
         let tasks = task_index.map(|t| vec![t]).unwrap_or_default();
 
-        let start = std::time::Instant::now();
         // Write Parquet file
         let (_parquet_path, _) = self.write_episode_parquet()?;
-        let parquet_time = start.elapsed();
-
-        let start = std::time::Instant::now();
-        // Encode videos
-        let (_video_files, encode_stats) = self.encode_videos()?;
-        let video_time = start.elapsed();
-
-        // Update statistics
-        self.images_encoded += encode_stats.images_encoded;
-        self.skipped_frames += encode_stats.skipped_frames;
-        self.failed_encodings += encode_stats.failed_encodings;
-        self.output_bytes += encode_stats.output_bytes;
-
-        tracing::debug!(
-            parquet_ms = parquet_time.as_secs_f64() * 1000.0,
-            video_ms = video_time.as_secs_f64() * 1000.0,
-            "finish_episode timing"
-        );
 
         // Calculate and store episode stats
         self.calculate_episode_stats()?;
@@ -476,195 +418,119 @@ impl LerobotWriter {
 
         // Clear for next segment/episode
         self.frame_data.clear();
-        for buffer in self.image_buffers.values_mut() {
-            buffer.clear();
-        }
 
         // Increment segment index for next flush
-        // episode_index is NOT incremented here - it only changes when
-        // a new source file (bag/mcap) is started, which is handled
-        // by start_episode() method
         self.segment_index += 1;
 
         Ok(())
     }
 
-    /// Flush video buffers to temp segment files.
-    ///
-    /// This method is called when memory threshold is hit during processing.
-    /// It encodes the current video buffers to temporary segment files,
-    /// without writing parquet or clearing frame data.
-    ///
-    /// The parquet file is written once on finalize with all accumulated frame data.
-    fn flush_video_segment(&mut self) -> Result<()> {
-        // Skip if no cameras have any frames
-        if self.image_buffers.values().all(|v| v.is_empty()) {
+    /// Flush current frame buffer as a parquet segment to temporary storage.
+    fn flush_parquet_segment(&mut self) -> Result<()> {
+        if self.frame_data.is_empty() {
             return Ok(());
         }
 
-        let total_images: usize = self.image_buffers.values().map(|v| v.len()).sum();
-        tracing::info!(
-            episode_index = self.episode_index,
-            segment_index = self.segment_index,
-            cameras = self.image_buffers.len(),
-            total_frames = total_images,
-            "Flushing video segment to temporary storage"
-        );
-
-        // Collect camera data for encoding
-        let camera_data: Vec<(String, Vec<ImageData>)> = self
-            .image_buffers
-            .iter()
-            .map(|(camera, images)| (camera.clone(), images.clone()))
-            .collect();
-
-        // Resolve video configuration
-        let resolved = resolve_video_config(&self.config.video);
-        let encoder_config = resolved.to_encoder_config(self.config.dataset.fps);
-
-        // Create temp directory for segments
         let temp_base = self.output_dir.join("temp").join(&self.session_id);
-        let segment_dir = temp_base.join(format!("segment_{:04}", self.segment_index));
-        fs::create_dir_all(&segment_dir)?;
+        let parquet_segment_dir = temp_base.join("parquet_segments");
+        fs::create_dir_all(&parquet_segment_dir)?;
+        fs::create_dir_all(parquet_segment_dir.join("data").join(self.chunk_dir_name()))?;
 
-        // Encode each camera to a temp segment file
-        let mut encode_stats = EncodeStats::default();
-        let mut segment_paths: Vec<(PathBuf, String)> = Vec::new();
+        let segment_path =
+            parquet_segment_dir.join(format!("segment_{:06}.parquet", self.parquet_segment_index));
 
-        for (camera, images) in &camera_data {
-            if images.is_empty() {
-                continue;
-            }
+        let (tmp_path, _size) = super::parquet::write_episode_parquet_with_chunk(
+            &self.frame_data,
+            self.episode_index,
+            self.chunk_index(),
+            &parquet_segment_dir,
+        )?;
 
-            // Build frame buffer
-            let (buffer, skipped) = build_frame_buffer_static(images)?;
-            encode_stats.skipped_frames += skipped;
+        // Rename generated episode parquet to ordered segment path.
+        fs::rename(&tmp_path, &segment_path).map_err(|e| {
+            roboflow_core::RoboflowError::io(format!(
+                "Failed to rename parquet segment {} -> {}: {}",
+                tmp_path.display(),
+                segment_path.display(),
+                e
+            ))
+        })?;
 
-            if buffer.is_empty() {
-                continue;
-            }
+        self.pending_parquet_segments.push(segment_path);
+        self.total_frames += self.frame_data.len();
+        self.frame_data.clear();
+        self.parquet_segment_index += 1;
 
-            // Create temp segment path for this camera
-            let camera_dir = segment_dir.join(camera);
-            fs::create_dir_all(&camera_dir)?;
-            let segment_path = camera_dir.join("segment.mp4");
+        Ok(())
+    }
 
-            // Use unified VideoEncoder to create a valid MP4 file
-            use roboflow_media::video::{OutputConfig, VideoEncoder};
-
-            let output = OutputConfig::file(&segment_path);
-            match VideoEncoder::new(encoder_config.clone(), output) {
-                Ok(mut encoder) => {
-                    let mut encode_error = None;
-                    for frame in &buffer.frames {
-                        if let Err(e) =
-                            encoder.encode_frame(frame.data(), frame.width, frame.height)
-                        {
-                            encode_error = Some(e);
-                            break;
-                        }
-                    }
-
-                    if let Some(e) = encode_error {
-                        tracing::error!(
-                            camera = %camera,
-                            error = %e,
-                            "Failed to encode frame"
-                        );
-                        encode_stats.failed_encodings += 1;
-                    } else {
-                        match encoder.finalize() {
-                            Ok(result) => {
-                                encode_stats.images_encoded += buffer.len();
-                                encode_stats.output_bytes += result.bytes_written;
-
-                                segment_paths.push((segment_path.clone(), camera.clone()));
-
-                                tracing::debug!(
-                                    camera = %camera,
-                                    segment_index = self.segment_index,
-                                    frames = buffer.len(),
-                                    path = %segment_path.display(),
-                                    "Encoded video segment"
-                                );
-                            }
-                            Err(e) => {
-                                tracing::error!(
-                                    camera = %camera,
-                                    error = %e,
-                                    "Failed to finalize video encoder"
-                                );
-                                encode_stats.failed_encodings += 1;
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(
-                        camera = %camera,
-                        error = %e,
-                        "Failed to create video encoder"
-                    );
-                    encode_stats.failed_encodings += 1;
-                }
-            }
+    /// Merge all parquet segments into final episode parquet path.
+    fn merge_pending_parquet_segments(&mut self) -> Result<()> {
+        if self.pending_parquet_segments.is_empty() {
+            return Ok(());
         }
 
-        // Update statistics
-        self.images_encoded += encode_stats.images_encoded;
-        self.skipped_frames += encode_stats.skipped_frames;
-        self.failed_encodings += encode_stats.failed_encodings;
-        self.output_bytes += encode_stats.output_bytes;
+        fs::create_dir_all(self.data_chunk_dir())?;
+        let final_path = self
+            .data_chunk_dir()
+            .join(format!("episode_{:06}.parquet", self.episode_index));
 
-        // Track segment paths for later merging
-        for (segment_path, camera) in segment_paths {
-            self.pending_segments
-                .entry(camera.clone())
-                .or_default()
-                .push(segment_path.clone());
+        if self.pending_parquet_segments.len() == 1 {
+            let src = &self.pending_parquet_segments[0];
+            fs::copy(src, &final_path).map_err(|e| {
+                roboflow_core::RoboflowError::io(format!(
+                    "Failed to copy parquet segment {} -> {}: {}",
+                    src.display(),
+                    final_path.display(),
+                    e
+                ))
+            })?;
+        } else {
+            let mut dataframes = Vec::<DataFrame>::new();
+            for segment in &self.pending_parquet_segments {
+                let file = File::open(segment)?;
+                let df = ParquetReader::new(file).finish().map_err(|e| {
+                    roboflow_core::RoboflowError::parse(
+                        "Parquet",
+                        format!(
+                            "Failed to read parquet segment {}: {}",
+                            segment.display(),
+                            e
+                        ),
+                    )
+                })?;
+                dataframes.push(df);
+            }
 
-            tracing::debug!(
-                camera = %camera,
-                segment_index = self.segment_index,
-                segment_path = %segment_path.display(),
-                "Tracked video segment for later merging"
-            );
+            let mut merged = polars::functions::concat_df_diagonal(&dataframes).map_err(|e| {
+                roboflow_core::RoboflowError::parse(
+                    "Parquet",
+                    format!("Failed to concat parquet segments: {}", e),
+                )
+            })?;
+
+            let file = File::create(&final_path)?;
+            let mut writer = BufWriter::new(file);
+            ParquetWriter::new(&mut writer)
+                .finish(&mut merged)
+                .map_err(|e| {
+                    roboflow_core::RoboflowError::parse(
+                        "Parquet",
+                        format!("Failed to write merged parquet: {}", e),
+                    )
+                })?;
         }
 
-        // Clear only image buffers - keep frame_data for parquet write on finalize
-        for buffer in self.image_buffers.values_mut() {
-            buffer.clear();
-        }
-        self.images_since_flush = 0;
+        self.output_bytes += fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
 
-        // Increment segment index for next flush
-        self.segment_index += 1;
-
-        tracing::info!(
-            episode_index = self.episode_index,
-            segment_index = self.segment_index - 1,
-            images_encoded = encode_stats.images_encoded,
-            "Video segment flushed to temporary storage"
-        );
-
+        self.pending_parquet_segments.clear();
         Ok(())
     }
 
     /// Estimate current memory usage in bytes.
     fn estimate_memory_bytes(&self) -> usize {
-        let mut total = 0usize;
-
-        // Frame data overhead
-        total += self.frame_data.len() * 512;
-
-        // Image data
-        for images in self.image_buffers.values() {
-            for img in images {
-                total += img.data.len();
-            }
-        }
-
-        total
+        // Frame data overhead only (image data is now routed to encoder directly)
+        self.frame_data.len() * 512
     }
 
     /// Write current episode to Parquet file.
@@ -684,50 +550,6 @@ impl LerobotWriter {
         Ok((parquet_path, size))
     }
 
-    /// Encode videos for all cameras.
-    fn encode_videos(&mut self) -> Result<(Vec<(PathBuf, String)>, EncodeStats)> {
-        if self.image_buffers.is_empty() {
-            tracing::debug!(
-                episode_index = self.episode_index,
-                "Video skip: image_buffers empty (no add_image calls for this episode)"
-            );
-            return Ok((Vec::new(), EncodeStats::default()));
-        }
-        let total_images: usize = self.image_buffers.values().map(|v| v.len()).sum();
-        tracing::debug!(
-            episode_index = self.episode_index,
-            chunk_index = self.chunk_index(),
-            cameras = self.image_buffers.len(),
-            total_frames = total_images,
-            "Encoding videos"
-        );
-
-        // Ensure videos chunk directory exists
-        fs::create_dir_all(self.videos_chunk_dir())?;
-
-        // Collect camera data for encoding
-        let camera_data: Vec<(String, Vec<ImageData>)> = self
-            .image_buffers
-            .iter()
-            .map(|(camera, images)| (camera.clone(), images.clone()))
-            .collect();
-
-        // Resolve the video configuration
-        let resolved = resolve_video_config(&self.config.video);
-
-        // Batch encoding with intermediate files
-        let (video_files, encode_stats) = encode_videos(
-            &camera_data,
-            self.episode_index,
-            &self.videos_chunk_dir(),
-            &resolved,
-            self.config.dataset.fps,
-            false, // local-only
-        )?;
-
-        Ok((video_files, encode_stats))
-    }
-
     /// Calculate episode statistics.
     fn calculate_episode_stats(&mut self) -> Result<()> {
         stats::calculate_episode_stats(&self.frame_data, self.episode_index, &mut self.metadata)
@@ -739,9 +561,6 @@ impl LerobotWriter {
         if !self.frame_data.is_empty() {
             self.finish_episode(None)?;
         }
-
-        // Merge all pending segments into final episode files
-        self.merge_pending_segments()?;
 
         if self.config.streaming.finalize_metadata_in_coordinator {
             tracing::info!(
@@ -761,175 +580,69 @@ impl LerobotWriter {
             output_dir = %self.output_dir.display(),
             episodes = self.episode_index,
             frames = self.total_frames,
-            images_encoded = self.images_encoded,
-            skipped_frames = self.skipped_frames,
             output_bytes = self.output_bytes,
             duration_sec = duration,
-            "Finalized LeRobot v2.1 dataset"
+            "Finalized LeRobot v2.1 dataset (parquet only)"
         );
 
-        // Warn if there were any skipped frames or failed encodings
-        if self.skipped_frames > 0 {
-            tracing::warn!(
-                "{} frames were skipped due to dimension mismatches",
-                self.skipped_frames
-            );
+        // Clean up temp directory (parquet segments, etc.)
+        let temp_dir = self.output_dir.join("temp");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
         }
 
         Ok(self.total_frames)
     }
 
-    /// Merge all pending video segments into final episode files.
+    /// Finalize the dataset and upload all files to cloud storage.
     ///
-    /// This method is called during finalization to compose all temporary
-    /// segment files (created during memory-bounded processing) into the
-    /// final episode MP4 files in the LeRobot v2.1 directory structure.
-    fn merge_pending_segments(&mut self) -> Result<()> {
-        if self.pending_segments.is_empty() {
-            tracing::debug!("No pending segments to merge");
-            return Ok(());
-        }
+    /// This method:
+    /// 1. Calls `finalize()` to complete local processing
+    /// 2. Uploads all files from the local output directory to a cloud storage staging path
+    /// 3. Returns the total frames and the list of uploaded files
+    ///
+    /// # Arguments
+    ///
+    /// * `storage` - The storage backend to upload to
+    /// * `staging_prefix` - Destination prefix in storage for uploaded files
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (total_frames, uploaded_files_metadata)
+    pub fn finalize_with_upload<S>(
+        self,
+        storage: &S,
+        staging_prefix: &std::path::Path,
+    ) -> Result<(usize, Vec<roboflow_storage::ObjectMetadata>)>
+    where
+        S: roboflow_storage::Storage + Clone + Send + 'static,
+    {
+        // Get output_dir before finalize consumes self
+        let output_dir = self.output_dir.clone();
 
-        let chunk_index = self.chunk_index();
-        let episode_index = self.episode_index;
+        // Step 1: Call finalize() to complete local processing
+        let total_frames = self.finalize()?;
 
-        tracing::info!(
-            session_id = %self.session_id,
-            episode_index,
-            chunk_index,
-            cameras = self.pending_segments.len(),
-            "Merging video segments into final episode files"
-        );
-
-        // Track total merged files for logging
-        let mut total_merged = 0;
-        let mut total_segments = 0;
-
-        // For each camera, compose all segments into the final episode file
-        for (camera, segments) in &self.pending_segments {
-            if segments.is_empty() {
-                continue;
-            }
-
-            total_segments += segments.len();
-
-            // Construct final path following LeRobot v2.1 format:
-            // {output_prefix}/videos/chunk-{chunk:03}/{camera}/episode_{episode:06}.mp4
-            let final_path = if self.output_prefix.is_empty() {
-                PathBuf::from(format!(
-                    "videos/chunk-{:03}/{}/episode_{:06}.mp4",
-                    chunk_index, camera, episode_index
-                ))
-            } else {
-                PathBuf::from(format!(
-                    "{}/videos/chunk-{:03}/{}/episode_{:06}.mp4",
-                    self.output_prefix, chunk_index, camera, episode_index
-                ))
-            };
-
-            // Log the merge operation
-            tracing::debug!(
-                camera = %camera,
-                segment_count = segments.len(),
-                final_path = %final_path.display(),
-                "Composing segments into final video"
-            );
-
-            // Copy all segments to temp files for composition
-            let temp_dir = tempfile::tempdir().map_err(|e| {
-                roboflow_core::RoboflowError::io(format!("Failed to create temp dir: {}", e))
-            })?;
-            let mut temp_segments: Vec<PathBuf> = Vec::new();
-            for (i, segment) in segments.iter().enumerate() {
-                let temp_path = temp_dir.path().join(format!("segment_{}.mp4", i));
-                fs::copy(segment, &temp_path).map_err(|e| {
-                    roboflow_core::RoboflowError::io(format!(
-                        "Failed to copy segment {}: {}",
-                        segment.display(),
-                        e
-                    ))
-                })?;
-                temp_segments.push(temp_path);
-            }
-
-            // Compose segments locally
-            let composed_path = temp_dir.path().join("composed.mp4");
-            let source_refs: Vec<&Path> = temp_segments.iter().map(|p| p.as_path()).collect();
-            let composer = RsmpegVideoComposer::new();
-            composer
-                .compose(&source_refs, &composed_path)
-                .map_err(|e| {
-                    roboflow_core::RoboflowError::encode(
-                        "LerobotWriter",
-                        format!(
-                            "Failed to compose {} segments for camera {}: {}",
-                            segments.len(),
-                            camera,
-                            e
-                        ),
-                    )
-                })?;
-
-            // Copy the composed file to final destination (local file operation)
-            let final_full_path = self.output_dir.join(&final_path);
-            if let Some(parent) = final_full_path.parent() {
-                fs::create_dir_all(parent).map_err(|e| {
-                    roboflow_core::RoboflowError::io(format!(
-                        "Failed to create video directory {}: {}",
-                        parent.display(),
-                        e
-                    ))
-                })?;
-            }
-            fs::copy(&composed_path, &final_full_path).map_err(|e| {
-                roboflow_core::RoboflowError::io(format!(
-                    "Failed to copy composed video to {}: {}",
-                    final_full_path.display(),
-                    e
-                ))
-            })?;
-
-            total_merged += 1;
-
-            tracing::info!(
-                camera = %camera,
-                segments_merged = segments.len(),
-                final_path = %final_path.display(),
-                "Merged video segments into final episode file"
-            );
-        }
-
-        // Clean up temp directory for this session (local file operation)
-        let temp_dir = self.output_dir.join("temp").join(&self.session_id);
-        if temp_dir.exists() {
-            match fs::remove_dir_all(&temp_dir) {
-                Ok(()) => {
-                    tracing::debug!(
-                        temp_dir = %temp_dir.display(),
-                        "Cleaned up temporary segment files"
-                    );
-                }
-                Err(e) => {
-                    // Log warning but don't fail - temp files can be cleaned up later
-                    tracing::warn!(
-                        temp_dir = %temp_dir.display(),
-                        error = %e,
-                        "Failed to clean up temporary segment files (non-critical)"
-                    );
-                }
-            }
-        }
+        // Step 2: Upload all files from the local output directory
+        // Use Arc to wrap the storage reference for trait object compatibility
+        let storage_arc = std::sync::Arc::new(storage.clone());
+        let uploaded = roboflow_storage::upload::upload_directory_recursive(
+            storage_arc,
+            &output_dir,
+            staging_prefix,
+        )
+        .map_err(|e| roboflow_core::RoboflowError::storage("upload", e.to_string(), false))?;
 
         tracing::info!(
-            total_merged,
-            total_segments,
-            "Completed merging all video segments"
+            output_dir = %output_dir.display(),
+            staging_prefix = %staging_prefix.display(),
+            file_count = uploaded.len(),
+            total_frames,
+            "Uploaded dataset to cloud storage"
         );
 
-        // Clear pending segments since they're now merged
-        self.pending_segments.clear();
-
-        Ok(())
+        // Step 3: Return the frame count and upload metadata
+        Ok((total_frames, uploaded))
     }
 
     /// Get total frames written so far.
@@ -950,16 +663,6 @@ impl LerobotWriter {
     /// Check if the writer has been initialized.
     pub fn is_initialized(&self) -> bool {
         self.initialized
-    }
-
-    /// Get the number of skipped frames.
-    pub fn skipped_frames(&self) -> usize {
-        self.skipped_frames
-    }
-
-    /// Get the number of failed video encodings.
-    pub fn failed_encodings(&self) -> usize {
-        self.failed_encodings
     }
 
     /// Set camera intrinsic parameters.
@@ -989,14 +692,12 @@ impl LerobotWriter {
 
     /// Internal constructor used by the builder.
     pub(super) fn new_internal(
-        _storage: Arc<dyn roboflow_storage::Storage>,
-        output_prefix: String,
+        _storage: std::sync::Arc<dyn roboflow_storage::Storage>,
+        _output_prefix: String,
         local_buffer: PathBuf,
         config: LerobotConfig,
         _use_cloud_storage: bool,
     ) -> Result<Self> {
-        let local_buffer_path = local_buffer.clone();
-
         // Create local buffer directory structure
         let data_dir = local_buffer.join("data/chunk-000");
         let videos_dir = local_buffer.join("videos/chunk-000");
@@ -1009,28 +710,23 @@ impl LerobotWriter {
         fs::create_dir_all(&params_dir)?;
 
         Ok(Self {
-            output_prefix,
-            _local_buffer: local_buffer_path,
             output_dir: local_buffer,
             config,
             episode_index: 0,
             segment_index: 0,
             session_id: uuid::Uuid::new_v4().to_string(),
-            pending_segments: HashMap::new(),
+            pending_parquet_segments: Vec::new(),
+            parquet_segment_index: 0,
             episodes_per_chunk: DEFAULT_EPISODES_PER_CHUNK,
             frame_data: Vec::new(),
-            image_buffers: HashMap::new(),
             metadata: MetadataCollector::new(),
             camera_intrinsics: HashMap::new(),
             camera_extrinsics: HashMap::new(),
             total_frames: 0,
-            images_encoded: 0,
-            skipped_frames: 0,
+            episode_start_frames: 0,
             initialized: true,
             start_time: Some(std::time::Instant::now()),
             output_bytes: 0,
-            failed_encodings: 0,
-            images_since_flush: 0,
         })
     }
 }
@@ -1055,37 +751,22 @@ impl DatasetWriter for LerobotWriter {
         // Add the frame
         self.add_frame(lerobot_frame);
 
-        // Add all images for this frame BEFORE checking flush
-        // This prevents mid-frame flushes that would lose other cameras' data
-        for (camera, data) in &frame.images {
-            self.add_image_arc(camera.clone(), data.clone());
+        // Record image metadata for parquet path generation
+        for (camera, image_ref) in &frame.image_refs {
+            self.add_image_ref(camera.clone(), *image_ref);
         }
 
-        // Check if we should flush for memory management.
-        // We flush video segments (not full episodes) to temporary storage.
-        // The parquet file is written once on finalize with all accumulated frame data.
-        // IMPORTANT: Use images_since_flush (not frame_data.len()) to avoid triggering
-        // flush on every frame after the threshold is reached. frame_data is cumulative
-        // and never cleared, while images_since_flush is reset after each flush.
-        let memory_bytes = self.estimate_memory_bytes();
-        if self
-            .config
-            .flushing
-            .should_flush(self.images_since_flush, memory_bytes)
-        {
-            tracing::info!(
-                images_since_flush = self.images_since_flush,
-                total_frames = self.frame_data.len(),
-                memory_mb = memory_bytes / (1024 * 1024),
-                episode_index = self.episode_index,
-                segment_index = self.segment_index,
-                "Memory threshold reached, flushing video segment"
-            );
-            if let Err(e) = self.flush_video_segment() {
-                tracing::error!(
-                    error = %e,
-                    "Failed to flush video segment for memory management, continuing (memory may increase)"
-                );
+        // In streaming pipeline mode, flush parquet segments when row buffering
+        // reaches its limit.
+        if self.config.flushing.incremental_video_encoding {
+            let memory_bytes = self.estimate_memory_bytes();
+            let should_flush_parquet = (self.config.flushing.max_frames_per_chunk > 0
+                && self.frame_data.len() >= self.config.flushing.max_frames_per_chunk)
+                || (self.config.flushing.max_memory_bytes > 0
+                    && memory_bytes >= self.config.flushing.max_memory_bytes);
+
+            if should_flush_parquet {
+                self.flush_parquet_segment()?;
             }
         }
 
@@ -1093,9 +774,51 @@ impl DatasetWriter for LerobotWriter {
     }
 
     fn finalize(&mut self) -> Result<WriterStats> {
-        // Flush any remaining video buffers
-        if !self.image_buffers.values().all(|v| v.is_empty()) {
-            self.flush_video_segment()?;
+        if self.config.flushing.incremental_video_encoding {
+            if !self.frame_data.is_empty() {
+                self.flush_parquet_segment()?;
+            }
+
+            self.merge_pending_parquet_segments()?;
+
+            self.write_camera_parameters()?;
+
+            if self.config.streaming.finalize_metadata_in_coordinator {
+                tracing::info!(
+                    output_dir = %self.output_dir.display(),
+                    "Skipping local metadata write; coordinator finalizes metadata"
+                );
+            } else {
+                self.metadata.write_all(&self.output_dir, &self.config)?;
+            }
+
+            let duration = self
+                .start_time
+                .map(|t| t.elapsed().as_secs_f64())
+                .unwrap_or(0.0);
+
+            tracing::info!(
+                output_dir = %self.output_dir.display(),
+                episodes = self.episode_index,
+                frames = self.total_frames,
+                output_bytes = self.output_bytes,
+                duration_sec = duration,
+                "Finalized LeRobot v2.1 dataset (parquet only)"
+            );
+
+            // Clean up temp directory (parquet segments, etc.)
+            let temp_dir = self.output_dir.join("temp");
+            if temp_dir.exists() {
+                let _ = fs::remove_dir_all(&temp_dir);
+            }
+
+            return Ok(WriterStats {
+                frames_written: self.total_frames,
+                images_encoded: 0,
+                state_records: self.total_frames,
+                duration_sec: duration,
+                output_bytes: self.output_bytes,
+            });
         }
 
         // Write parquet file with ALL accumulated frame data
@@ -1109,9 +832,6 @@ impl DatasetWriter for LerobotWriter {
             // Calculate episode statistics for episodes_stats.jsonl
             self.calculate_episode_stats()?;
         }
-
-        // Merge all video segments into final episode files
-        self.merge_pending_segments()?;
 
         // Write camera parameters
         self.write_camera_parameters()?;
@@ -1134,24 +854,14 @@ impl DatasetWriter for LerobotWriter {
             output_dir = %self.output_dir.display(),
             episodes = self.episode_index,
             frames = self.total_frames,
-            images_encoded = self.images_encoded,
-            skipped_frames = self.skipped_frames,
             output_bytes = self.output_bytes,
             duration_sec = duration,
-            "Finalized LeRobot v2.1 dataset"
+            "Finalized LeRobot v2.1 dataset (parquet only)"
         );
-
-        // Warn if there were any skipped frames or failed encodings
-        if self.skipped_frames > 0 {
-            tracing::warn!(
-                "{} frames were skipped due to dimension mismatches",
-                self.skipped_frames
-            );
-        }
 
         Ok(WriterStats {
             frames_written: self.total_frames,
-            images_encoded: self.images_encoded,
+            images_encoded: 0,
             state_records: self.total_frames * 2,
             output_bytes: self.output_bytes,
             duration_sec: duration,
@@ -1190,8 +900,8 @@ impl LerobotWriterTrait for LerobotWriter {
         <LerobotWriter as DatasetWriter>::write_frame(self, frame)
     }
 
-    fn add_image(&mut self, camera: String, data: ImageData) {
-        self.add_image(camera, data);
+    fn add_image_ref(&mut self, camera: String, image_ref: ImageRef) {
+        self.add_image_ref(camera, image_ref);
     }
 
     fn metadata(&self) -> &MetadataCollector {
@@ -1240,7 +950,7 @@ impl FromAlignedFrame for LerobotFrame {
 
         // Build image frame references
         let mut image_frames = HashMap::new();
-        for camera in frame.images.keys() {
+        for camera in frame.image_refs.keys() {
             let path = format!(
                 "videos/chunk-000/{}/episode_{:06}.mp4",
                 camera, episode_index
@@ -1264,7 +974,7 @@ impl FromAlignedFrame for LerobotFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::formats::common::{AlignedFrame, DatasetWriter, ImageData};
+    use crate::formats::common::{AlignedFrame, DatasetWriter, ImageRef};
     use crate::formats::lerobot::config::{
         DatasetConfig, FlushingConfig, LerobotConfig, StreamingConfig, VideoConfig,
     };
@@ -1292,16 +1002,18 @@ mod tests {
         }
     }
 
-    /// Create a small test frame with a tiny image.
+    /// Create a small test frame with an image reference.
     fn make_frame(index: usize) -> AlignedFrame {
         let mut frame = AlignedFrame::new(index, (index as u64) * 33_333_333); // ~30fps
         frame.add_state("observation.state".to_string(), vec![index as f32; 6]);
         frame.add_action("action".to_string(), vec![index as f32; 6]);
-        // 64x48 RGB image — small enough for fast encoding
-        let pixels = 64 * 48 * 3;
-        frame.add_image(
+        // Image reference (dimensions only, pixel data routed to encoder separately)
+        frame.add_image_ref(
             "observation.images.cam".to_string(),
-            ImageData::new(64, 48, vec![128u8; pixels]),
+            ImageRef {
+                width: 64,
+                height: 48,
+            },
         );
         frame
     }
@@ -1362,9 +1074,9 @@ mod tests {
 
     #[test]
     fn test_video_segment_merge_on_finalize() {
-        // This test verifies that video segments are properly merged on finalize:
-        // - Memory flushes create temporary video segments
-        // - Finalize merges all segments into a single video file
+        // This test verifies that parquet segments are properly merged on finalize:
+        // - Memory flushes create temporary parquet segments
+        // - Finalize merges all segments into a single parquet file
         // - Temporary files are cleaned up
         let tmp = tempfile::tempdir().unwrap();
 
@@ -1405,15 +1117,6 @@ mod tests {
             parquet_1
         );
 
-        // Verify the merged video file exists
-        let video_dir = tmp.path().join("videos/chunk-000/observation.images.cam");
-        let video_0 = video_dir.join("episode_000000.mp4");
-        assert!(
-            video_0.exists(),
-            "Merged video file should exist: {:?}",
-            video_0
-        );
-
         // Verify temp directory is cleaned up
         let temp_dir = tmp.path().join("temp");
         assert!(
@@ -1425,6 +1128,39 @@ mod tests {
             "Temp directory should be cleaned up after merge: {:?}",
             temp_dir
         );
+    }
+
+    #[test]
+    fn test_streaming_mode_flushes_parquet_segments_during_processing() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let flushing = FlushingConfig {
+            max_frames_per_chunk: 0,
+            max_memory_bytes: 1,
+            incremental_video_encoding: true,
+        };
+        let mut config = test_config(flushing);
+        config.streaming.finalize_metadata_in_coordinator = true;
+
+        let mut writer = LerobotWriter::new_local(tmp.path(), config).unwrap();
+
+        for i in 0..12 {
+            writer.write_frame(&make_frame(i)).unwrap();
+        }
+
+        // In streaming mode, flush should keep frame_data bounded and persisted as segments.
+        assert_eq!(writer.frame_data.len(), 0);
+        assert!(!writer.pending_parquet_segments.is_empty());
+
+        let stats = <LerobotWriter as DatasetWriter>::finalize(&mut writer).unwrap();
+        assert_eq!(stats.frames_written, 12);
+
+        let parquet = tmp.path().join("data/chunk-000/episode_000000.parquet");
+        assert!(parquet.exists(), "final merged parquet should exist");
+
+        let file = std::fs::File::open(&parquet).unwrap();
+        let df = ParquetReader::new(file).finish().unwrap();
+        assert_eq!(df.height(), 12);
     }
 
     #[test]
@@ -1440,6 +1176,7 @@ mod tests {
     #[allow(deprecated)]
     #[test]
     fn test_deprecated_constructors_and_internal_constructor() {
+        use std::sync::Arc;
         let tmp = tempfile::tempdir().unwrap();
         let cfg = test_config(FlushingConfig::default());
 
@@ -1500,7 +1237,7 @@ mod tests {
     }
 
     #[test]
-    fn test_write_frame_requires_initialized_and_empty_helpers() {
+    fn test_write_frame_requires_initialized() {
         let tmp = tempfile::tempdir().unwrap();
         let mut writer =
             LerobotWriter::new_local(tmp.path(), test_config(FlushingConfig::default())).unwrap();
@@ -1509,13 +1246,7 @@ mod tests {
         assert!(writer.write_frame(&make_frame(0)).is_err());
 
         writer.initialized = true;
-        let (files, stats) = writer.encode_videos().unwrap();
-        assert!(files.is_empty());
-        assert_eq!(stats.images_encoded, 0);
-
-        writer.flush_video_segment().unwrap();
-        assert_eq!(writer.skipped_frames(), 0);
-        assert_eq!(writer.failed_encodings(), 0);
+        assert!(writer.write_frame(&make_frame(0)).is_ok());
     }
 
     #[test]
@@ -1579,9 +1310,12 @@ mod tests {
         let mut frame = AlignedFrame::new(3, 1_500_000_000);
         frame.add_state("robot_observation".to_string(), vec![1.0, 2.0]);
         frame.add_action("action".to_string(), vec![0.5, 0.2]);
-        frame.add_image(
+        frame.add_image_ref(
             "observation.images.front".to_string(),
-            ImageData::new(8, 8, vec![0; 8 * 8 * 3]),
+            ImageRef {
+                width: 8,
+                height: 8,
+            },
         );
 
         let converted = LerobotFrame::from_aligned_frame(&frame, 12);
@@ -1594,5 +1328,64 @@ mod tests {
                 .image_frames
                 .contains_key("observation.images.front")
         );
+    }
+
+    #[test]
+    fn test_finalize_with_upload() {
+        use roboflow_storage::mock::MockStorage;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = MockStorage::new();
+
+        let mut writer =
+            LerobotWriter::new_local(tmp.path(), test_config(FlushingConfig::default())).unwrap();
+
+        // Write 3 frames
+        for i in 0..3 {
+            writer.write_frame(&make_frame(i)).unwrap();
+        }
+
+        // Finalize with upload
+        let staging_prefix = std::path::Path::new("datasets/test_episode");
+        let (total_frames, uploaded) = writer
+            .finalize_with_upload(&storage, staging_prefix)
+            .unwrap();
+
+        // Verify frame count
+        assert_eq!(total_frames, 3, "Expected 3 total frames");
+
+        // Verify files were uploaded
+        assert!(!uploaded.is_empty(), "Expected uploaded files");
+
+        // Check that parquet file was uploaded
+        let parquet_uploaded = uploaded
+            .iter()
+            .any(|meta| meta.path.contains("episode_000000.parquet"));
+        assert!(
+            parquet_uploaded,
+            "Expected parquet file to be uploaded: {:?}",
+            uploaded
+        );
+
+        // Note: Video files are no longer produced by the writer — video encoding
+        // is handled by the executor's image fast-path. Only parquet and metadata
+        // files are uploaded here.
+
+        // Verify metadata files were uploaded
+        let info_uploaded = uploaded.iter().any(|meta| meta.path.contains("info.json"));
+        assert!(
+            info_uploaded,
+            "Expected info.json to be uploaded: {:?}",
+            uploaded
+        );
+
+        // Verify all uploaded paths contain the staging prefix
+        for meta in &uploaded {
+            assert!(
+                meta.path.starts_with("datasets/test_episode"),
+                "Uploaded path should start with staging prefix: {}",
+                meta.path
+            );
+        }
     }
 }

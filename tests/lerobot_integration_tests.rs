@@ -15,7 +15,7 @@ use std::fs;
 
 use roboflow::LerobotDatasetConfig as DatasetConfig;
 use roboflow::{DatasetBaseConfig, LerobotConfig, LerobotWriter, LerobotWriterTrait, VideoConfig};
-use roboflow_dataset::ImageData;
+use roboflow_dataset::common::ImageRef;
 
 /// Create a test output directory.
 fn test_output_dir(_test_name: &str) -> tempfile::TempDir {
@@ -45,12 +45,6 @@ fn test_config() -> LerobotConfig {
     }
 }
 
-/// Create test image data.
-fn create_test_image(width: u32, height: u32) -> ImageData {
-    let data = vec![128u8; (width * height * 3) as usize];
-    ImageData::new(width, height, data)
-}
-
 // =============================================================================
 // Test: End-to-end conversion
 // =============================================================================
@@ -66,9 +60,12 @@ fn test_lerobot_end_to_end_conversion() {
     let _ = writer.start_episode(Some(0));
 
     // Add some images
-    writer.add_image(
+    writer.add_image_ref(
         "observation.images.camera_0".to_string(),
-        create_test_image(64, 48),
+        ImageRef {
+            width: 64,
+            height: 48,
+        },
     );
 
     writer.finish_episode(Some(0)).unwrap();
@@ -130,17 +127,26 @@ fn test_lerobot_multi_camera() {
     let _ = writer.start_episode(Some(0));
 
     // Add images for multiple cameras
-    writer.add_image(
+    writer.add_image_ref(
         "observation.images.camera_0".to_string(),
-        create_test_image(64, 48),
+        ImageRef {
+            width: 64,
+            height: 48,
+        },
     );
-    writer.add_image(
+    writer.add_image_ref(
         "observation.images.camera_1".to_string(),
-        create_test_image(32, 24),
+        ImageRef {
+            width: 32,
+            height: 24,
+        },
     );
-    writer.add_image(
+    writer.add_image_ref(
         "observation.images.camera_2".to_string(),
-        create_test_image(128, 96),
+        ImageRef {
+            width: 128,
+            height: 96,
+        },
     );
 
     writer.finish_episode(Some(0)).unwrap();
@@ -226,13 +232,19 @@ fn test_lerobot_image_buffer() {
     let _ = writer.start_episode(Some(0));
 
     // Add images for different cameras
-    writer.add_image(
+    writer.add_image_ref(
         "observation.images.camera_0".to_string(),
-        create_test_image(64, 48),
+        ImageRef {
+            width: 64,
+            height: 48,
+        },
     );
-    writer.add_image(
+    writer.add_image_ref(
         "observation.images.camera_1".to_string(),
-        create_test_image(64, 48),
+        ImageRef {
+            width: 64,
+            height: 48,
+        },
     );
 
     writer.finish_episode(Some(0)).unwrap();
@@ -258,9 +270,12 @@ fn test_lerobot_metadata() {
     let _ = writer.start_episode(Some(0));
 
     // Add some images
-    writer.add_image(
+    writer.add_image_ref(
         "observation.images.high_res".to_string(),
-        create_test_image(320, 240),
+        ImageRef {
+            width: 320,
+            height: 240,
+        },
     );
 
     writer.finish_episode(Some(0)).unwrap();
@@ -288,9 +303,12 @@ fn test_lerobot_video_codec_config() {
 
     let _ = writer.start_episode(Some(0));
 
-    writer.add_image(
+    writer.add_image_ref(
         "observation.images.camera_0".to_string(),
-        create_test_image(64, 48),
+        ImageRef {
+            width: 64,
+            height: 48,
+        },
     );
 
     writer.finish_episode(Some(0)).unwrap();
@@ -314,9 +332,12 @@ fn test_lerobot_ffmpeg_missing_graceful() {
 
     // Add images
     for _ in 0..3 {
-        writer.add_image(
+        writer.add_image_ref(
             "observation.images.camera_0".to_string(),
-            create_test_image(64, 48),
+            ImageRef {
+                width: 64,
+                height: 48,
+            },
         );
     }
 
@@ -350,13 +371,19 @@ fn test_lerobot_timestamps() {
     let _ = writer.start_episode(Some(0));
 
     // Add images with different timestamps
-    writer.add_image(
+    writer.add_image_ref(
         "observation.images.camera_0".to_string(),
-        create_test_image(64, 48),
+        ImageRef {
+            width: 64,
+            height: 48,
+        },
     );
-    writer.add_image(
+    writer.add_image_ref(
         "observation.images.camera_1".to_string(),
-        create_test_image(32, 24),
+        ImageRef {
+            width: 32,
+            height: 24,
+        },
     );
 
     writer.finish_episode(Some(0)).unwrap();

@@ -28,13 +28,12 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
 
 use bytes::Bytes;
 
 use roboflow_dataset::{
     ConcurrentEncoderConfig, ConcurrentVideoEncoder, ImageData,
-    common::{AlignedFrame, LeRobotVideoPathScheme, VideoPathScheme},
+    common::{AlignedFrame, ImageRef, LeRobotVideoPathScheme, VideoPathScheme},
 };
 use roboflow_storage::{
     AsyncStorage,
@@ -192,11 +191,8 @@ fn create_test_frame(
     width: u32,
     height: u32,
 ) -> AlignedFrame {
-    let mut images = HashMap::new();
-    images.insert(
-        camera_name.to_string(),
-        Arc::new(create_test_image(width, height, (frame_index % 256) as u8)),
-    );
+    let mut image_refs = HashMap::new();
+    image_refs.insert(camera_name.to_string(), ImageRef { width, height });
 
     let mut states = HashMap::new();
     states.insert(
@@ -213,7 +209,7 @@ fn create_test_frame(
     AlignedFrame {
         frame_index,
         timestamp: (frame_index as u64) * 33_333_333,
-        images,
+        image_refs,
         states,
         actions,
         timestamps: HashMap::new(),

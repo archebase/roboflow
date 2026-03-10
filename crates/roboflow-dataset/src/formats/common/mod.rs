@@ -26,7 +26,9 @@ pub mod progress;
 pub mod ring_buffer;
 
 // Re-export core types (shared across all formats)
-pub use base::{AlignedFrame, DatasetFrame, DatasetWriter, DatasetWriterError, WriterStats};
+pub use base::{
+    AlignedFrame, DatasetFrame, DatasetWriter, DatasetWriterError, ImageRef, WriterStats,
+};
 
 // Re-export frame types from roboflow_media (they were moved from roboflow_core)
 pub use roboflow_media::{AudioData, CameraInfo, ImageData, ImageDataError};

@@ -197,8 +197,8 @@ fn test_frame_builder_with_image() {
         .add_image("observation.camera_0", 640, 480)
         .build();
 
-    assert!(frame.images.contains_key("observation.camera_0"));
-    let image = frame.images.get("observation.camera_0").unwrap();
+    assert!(frame.image_refs.contains_key("observation.camera_0"));
+    let image = frame.image_refs.get("observation.camera_0").unwrap();
     assert_eq!(image.width, 640);
     assert_eq!(image.height, 480);
 }
@@ -209,8 +209,9 @@ fn test_frame_builder_with_encoded_image() {
         .add_encoded_image("observation.camera_0", 640, 480)
         .build();
 
-    let image = frame.images.get("observation.camera_0").unwrap();
-    assert!(image.is_encoded);
+    let image = frame.image_refs.get("observation.camera_0").unwrap();
+    assert_eq!(image.width, 640);
+    assert_eq!(image.height, 480);
 }
 
 #[test]
@@ -227,7 +228,7 @@ fn test_frame_builder_chain() {
     assert_eq!(frame.timestamp, 1_000_000_000);
     assert_eq!(frame.states.len(), 1);
     assert_eq!(frame.actions.len(), 1);
-    assert_eq!(frame.images.len(), 2);
+    assert_eq!(frame.image_refs.len(), 2);
 }
 
 // ============================================================================

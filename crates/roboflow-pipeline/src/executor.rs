@@ -38,16 +38,19 @@
 //! ```
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use robocodec::CodecValue;
 use roboflow_core::{Result, TimestampedMessage};
+use roboflow_media::image::ImageFormat;
 use tracing::{debug, info, trace, warn};
 
 use roboflow_dataset::core::traits::{AlignedFrame, FormatWriter};
 use roboflow_dataset::formats::alignment::config::StreamingConfig;
-use roboflow_dataset::formats::common::{ImageData, extract_image_bytes, extract_u32};
+use roboflow_dataset::formats::common::{ImageData, ImageRef, extract_image_bytes, extract_u32};
+use roboflow_dataset::formats::lerobot::writer::{BackgroundVideoEncoder, EncodeRequest};
 
 /// Re-export execution policy types from roboflow_executor.
 pub use roboflow_executor::{ExecutionPolicy, ParallelPolicy, SequentialPolicy};
@@ -67,6 +70,38 @@ pub struct DatasetPipelineStats {
     pub fps: f64,
     /// Name of the execution policy used
     pub policy_name: &'static str,
+    /// State/action feature dimensions (feature_name -> dim)
+    pub state_dims: HashMap<String, usize>,
+    /// Image feature shapes (feature_name -> (height, width))
+    pub image_shapes: HashMap<String, (usize, usize)>,
+    /// Per-feature statistics (serialized JSON values for cross-crate compatibility)
+    pub feature_stats: HashMap<String, serde_json::Value>,
+    /// Total images encoded via fast-path
+    pub images_encoded: usize,
+    /// Frames skipped during encoding
+    pub skipped_frames: usize,
+    /// Total output bytes from video encoding
+    pub encode_output_bytes: u64,
+}
+
+/// Configuration for the image fast-path.
+///
+/// When enabled, image messages are routed directly from message processing
+/// to the `BackgroundVideoEncoder`, bypassing the frame alignment buffer and
+/// writer. Only lightweight `ImageRef` (width/height) passes through alignment
+/// for parquet path column generation.
+#[derive(Debug, Clone)]
+pub struct ImageFastPathConfig {
+    /// Whether the fast-path is enabled.
+    pub enabled: bool,
+    /// Output directory for video files.
+    pub output_dir: PathBuf,
+    /// Chunk index for LeRobot v2.1 path scheme.
+    pub chunk_index: u32,
+    /// Episode index for file naming.
+    pub episode_index: usize,
+    /// Topics classified as image topics (MappingType::Image).
+    pub image_topics: HashSet<String>,
 }
 
 /// Episode management strategy.
@@ -98,6 +133,8 @@ pub struct DatasetPipelineConfig {
     pub episode_strategy: EpisodeStrategy,
     /// Topic to feature mappings
     pub topic_mappings: HashMap<String, String>,
+    /// Image fast-path configuration (None = images go through writer)
+    pub image_fast_path: Option<ImageFastPathConfig>,
 }
 
 impl DatasetPipelineConfig {
@@ -108,6 +145,7 @@ impl DatasetPipelineConfig {
             max_frames: None,
             episode_strategy: EpisodeStrategy::default(),
             topic_mappings: HashMap::new(),
+            image_fast_path: None,
         }
     }
 
@@ -139,6 +177,12 @@ impl DatasetPipelineConfig {
         self
     }
 
+    /// Set image fast-path configuration.
+    pub fn with_image_fast_path(mut self, config: ImageFastPathConfig) -> Self {
+        self.image_fast_path = Some(config);
+        self
+    }
+
     /// Get the feature name for a topic.
     pub fn get_feature_name<'a>(&'a self, topic: &'a str) -> Cow<'a, str> {
         if let Some(mapped) = self.topic_mappings.get(topic) {
@@ -156,6 +200,65 @@ impl DatasetPipelineConfig {
 impl Default for DatasetPipelineConfig {
     fn default() -> Self {
         Self::with_fps(30)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageEncodingHint {
+    Encoded,
+    Raw,
+    Unknown,
+}
+
+fn extract_bool(value: &CodecValue) -> Option<bool> {
+    match value {
+        CodecValue::Bool(v) => Some(*v),
+        _ => None,
+    }
+}
+
+fn detect_image_encoding_hint(
+    map: &HashMap<String, CodecValue>,
+    image_bytes: &[u8],
+) -> ImageEncodingHint {
+    if let Some(is_encoded) = map.get("is_encoded").and_then(extract_bool) {
+        return if is_encoded {
+            ImageEncodingHint::Encoded
+        } else {
+            ImageEncodingHint::Raw
+        };
+    }
+
+    if let Some(CodecValue::String(format_str)) = map.get("format") {
+        let format = ImageFormat::from_ros_format(format_str);
+        if format.is_encoded() {
+            return ImageEncodingHint::Encoded;
+        }
+        if format != ImageFormat::Unknown {
+            return ImageEncodingHint::Raw;
+        }
+    }
+
+    if ImageFormat::from_magic_bytes(image_bytes).is_encoded() {
+        return ImageEncodingHint::Encoded;
+    }
+
+    ImageEncodingHint::Unknown
+}
+
+fn resolve_encoded_dimensions(
+    width: Option<u32>,
+    height: Option<u32>,
+    image_bytes: &[u8],
+) -> (u32, u32) {
+    match (width, height) {
+        (Some(w), Some(h)) if w > 0 && h > 0 => (w, h),
+        _ => {
+            let detected_format = ImageFormat::from_magic_bytes(image_bytes);
+            detected_format
+                .extract_dimensions(image_bytes)
+                .unwrap_or((0, 0))
+        }
     }
 }
 
@@ -222,6 +325,8 @@ pub struct DatasetPipelineExecutor<W: FormatWriter, P: ExecutionPolicy> {
     stats: DatasetPipelineStats,
     /// Internal state
     state: ExecutorState,
+    /// Background video encoder for image fast-path
+    background_encoder: Option<BackgroundVideoEncoder>,
 }
 
 impl<W: FormatWriter> DatasetPipelineExecutor<W, SequentialPolicy> {
@@ -247,12 +352,45 @@ impl<W: FormatWriter, P: ExecutionPolicy> DatasetPipelineExecutor<W, P> {
     /// * `config` - Executor configuration
     /// * `policy` - Execution policy (sequential or parallel)
     pub fn new(writer: W, config: DatasetPipelineConfig, policy: P) -> Self {
+        // Create background encoder if image fast-path is configured
+        let background_encoder = config
+            .image_fast_path
+            .as_ref()
+            .filter(|fp| fp.enabled)
+            .and_then(|fp| {
+                use roboflow_media::video::VideoEncoderConfig;
+
+                let video_config = VideoEncoderConfig::default();
+                match BackgroundVideoEncoder::new(
+                    video_config,
+                    fp.output_dir.clone(),
+                    fp.chunk_index,
+                    fp.episode_index,
+                ) {
+                    Ok(encoder) => {
+                        info!(
+                            output_dir = %fp.output_dir.display(),
+                            chunk_index = fp.chunk_index,
+                            episode_index = fp.episode_index,
+                            image_topics = fp.image_topics.len(),
+                            "Image fast-path encoder initialized"
+                        );
+                        Some(encoder)
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to create background encoder, falling back to writer path");
+                        None
+                    }
+                }
+            });
+
         Self {
             writer,
             config,
             policy,
             stats: DatasetPipelineStats::default(),
             state: ExecutorState::new(),
+            background_encoder,
         }
     }
 
@@ -461,49 +599,68 @@ impl<W: FormatWriter, P: ExecutionPolicy> DatasetPipelineExecutor<W, P> {
                     return Ok(());
                 }
 
-                // Check for ROS CompressedImage
-                if let (Some(_format), Some(image_bytes)) = (
-                    map.get("format").and_then(|v| {
-                        if let CodecValue::String(s) = v {
-                            Some(s.as_str())
-                        } else {
-                            None
+                if let Some(image_bytes) = extract_image_bytes(map) {
+                    let width = map.get("width").and_then(extract_u32);
+                    let height = map.get("height").and_then(extract_u32);
+
+                    match detect_image_encoding_hint(map, &image_bytes) {
+                        ImageEncodingHint::Encoded => {
+                            let (resolved_width, resolved_height) =
+                                resolve_encoded_dimensions(width, height, &image_bytes);
+                            let image_data =
+                                ImageData::encoded(resolved_width, resolved_height, image_bytes);
+
+                            // Fast-path: send to background encoder, add only ImageRef to frame
+                            if let Some(ref encoder) = self.background_encoder {
+                                frame.add_image_ref(
+                                    feature_name.clone(),
+                                    ImageRef {
+                                        width: resolved_width,
+                                        height: resolved_height,
+                                    },
+                                );
+                                encoder.send(EncodeRequest {
+                                    camera: feature_name,
+                                    images: vec![image_data],
+                                })?;
+                            } else {
+                                frame.add_image_ref(
+                                    feature_name,
+                                    ImageRef {
+                                        width: resolved_width,
+                                        height: resolved_height,
+                                    },
+                                );
+                            }
+                            return Ok(());
                         }
-                    }),
-                    extract_image_bytes(map),
-                ) {
-                    let detected_format =
-                        roboflow_media::image::ImageFormat::from_magic_bytes(&image_bytes);
-                    let (width, height) = detected_format
-                        .extract_dimensions(&image_bytes)
-                        .unwrap_or((0, 0));
+                        ImageEncodingHint::Raw | ImageEncodingHint::Unknown => {
+                            if let (Some(width), Some(height)) = (width, height) {
+                                let image_data = ImageData::new_rgb(width, height, image_bytes)
+                                    .map_err(|e| {
+                                        roboflow_core::RoboflowError::other(format!(
+                                            "Invalid image data: {}",
+                                            e
+                                        ))
+                                    })?;
 
-                    let image_data = ImageData::encoded(width, height, image_bytes);
-                    frame.add_image(feature_name.clone(), image_data);
-                    return Ok(());
-                }
-
-                // Check for regular image data
-                if let (Some(width), Some(height), Some(image_bytes)) = (
-                    map.get("width").and_then(extract_u32),
-                    map.get("height").and_then(extract_u32),
-                    extract_image_bytes(map),
-                ) {
-                    let expected_rgb_size = (width as usize) * (height as usize) * 3;
-                    let is_compressed = image_bytes.len() < expected_rgb_size;
-
-                    let image_data = if is_compressed {
-                        ImageData::encoded(width, height, image_bytes)
-                    } else {
-                        ImageData::new_rgb(width, height, image_bytes).map_err(|e| {
-                            roboflow_core::RoboflowError::other(format!(
-                                "Invalid image data: {}",
-                                e
-                            ))
-                        })?
-                    };
-                    frame.add_image(feature_name, image_data);
-                    return Ok(());
+                                // Fast-path: send to background encoder, add only ImageRef to frame
+                                if let Some(ref encoder) = self.background_encoder {
+                                    frame.add_image_ref(
+                                        feature_name.clone(),
+                                        ImageRef { width, height },
+                                    );
+                                    encoder.send(EncodeRequest {
+                                        camera: feature_name,
+                                        images: vec![image_data],
+                                    })?;
+                                } else {
+                                    frame.add_image_ref(feature_name, ImageRef { width, height });
+                                }
+                                return Ok(());
+                            }
+                        }
+                    }
                 }
 
                 // Check for state data in struct
@@ -541,7 +698,7 @@ impl<W: FormatWriter, P: ExecutionPolicy> DatasetPipelineExecutor<W, P> {
         debug!(
             frame_index = frame.frame_index,
             timestamp = frame.timestamp,
-            images = frame.images.len(),
+            images = frame.image_refs.len(),
             states = frame.states.len(),
             actions = frame.actions.len(),
             "Writing frame"
@@ -550,7 +707,7 @@ impl<W: FormatWriter, P: ExecutionPolicy> DatasetPipelineExecutor<W, P> {
         self.stats.frames_written += 1;
         self.state.frame_index += 1;
 
-        if !frame.images.is_empty() {
+        if !frame.image_refs.is_empty() {
             self.state.frames_in_episode += 1;
         }
 
@@ -619,6 +776,34 @@ impl<W: FormatWriter, P: ExecutionPolicy> DatasetPipelineExecutor<W, P> {
             self.finish_episode()?;
         }
 
+        // Extract metadata from writer before finalize (if it's a LerobotWriter)
+        if let Some(lerobot_writer) =
+            self.writer
+                .as_any()
+                .downcast_ref::<roboflow_dataset::formats::lerobot::writer::LerobotWriter>()
+        {
+            let metadata = lerobot_writer.metadata();
+            self.stats.state_dims = metadata.state_dims.clone();
+            self.stats.image_shapes = metadata.image_shapes.clone();
+
+            // Extract feature stats from the last episode (most recent stats)
+            if let Some(last_stats) = metadata.episode_stats.last()
+                && let Some(map) = last_stats.stats.as_object()
+            {
+                for (key, value) in map {
+                    self.stats.feature_stats.insert(key.clone(), value.clone());
+                }
+            }
+        }
+
+        // Finish background encoder (if fast-path was active)
+        if let Some(encoder) = self.background_encoder.take() {
+            let result = encoder.finish()?;
+            self.stats.images_encoded = result.stats.images_encoded;
+            self.stats.skipped_frames = result.stats.skipped_frames;
+            self.stats.encode_output_bytes = result.stats.output_bytes;
+        }
+
         // Finalize writer
         let writer_stats = self.writer.finalize()?;
         self.stats.frames_written = writer_stats.frames_written;
@@ -672,6 +857,7 @@ impl<W: FormatWriter, P: ExecutionPolicy> DatasetPipelineExecutor<W, P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use robocodec::CodecValue;
     use roboflow_dataset::core::stats::EpisodeStats;
     use roboflow_dataset::core::traits::WriterStats;
     use std::any::Any;
@@ -774,5 +960,95 @@ mod tests {
     fn test_episode_strategy_default() {
         let strategy = EpisodeStrategy::default();
         assert!(matches!(strategy, EpisodeStrategy::Single));
+    }
+
+    fn make_executor_for_tests() -> DatasetPipelineExecutor<MockWriter, SequentialPolicy> {
+        let writer = MockWriter::new();
+        let config = DatasetPipelineConfig::with_fps(30);
+        DatasetPipelineExecutor::sequential(writer, config)
+    }
+
+    #[test]
+    fn test_struct_image_is_encoded_authoritative_accepts_zero_dims() {
+        let executor = make_executor_for_tests();
+        let mut frame = AlignedFrame::new(0, 0);
+
+        let mut image_map = HashMap::new();
+        image_map.insert("width".to_string(), CodecValue::UInt32(0));
+        image_map.insert("height".to_string(), CodecValue::UInt32(0));
+        image_map.insert("is_encoded".to_string(), CodecValue::Bool(true));
+        image_map.insert(
+            "data".to_string(),
+            CodecValue::Bytes(vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]),
+        );
+
+        let msg = TimestampedMessage {
+            topic: "/camera/image".to_string(),
+            log_time: 0,
+            data: CodecValue::Struct(image_map),
+        };
+
+        executor
+            .process_message_for_frame(&mut frame, &msg)
+            .expect("encoded message should be accepted");
+
+        let _image_ref = frame
+            .image_refs
+            .get("camera.image")
+            .expect("expected image ref in frame");
+        // Previously asserted is_encoded; ImageRef only stores dimensions.
+        // The key assertion is that the image was accepted despite zero dims.
+    }
+
+    #[test]
+    fn test_struct_image_raw_rgb_size_mismatch_fails() {
+        let executor = make_executor_for_tests();
+        let mut frame = AlignedFrame::new(0, 0);
+
+        let mut image_map = HashMap::new();
+        image_map.insert("width".to_string(), CodecValue::UInt32(2));
+        image_map.insert("height".to_string(), CodecValue::UInt32(2));
+        image_map.insert("data".to_string(), CodecValue::Bytes(vec![42; 10]));
+
+        let msg = TimestampedMessage {
+            topic: "/camera/image".to_string(),
+            log_time: 0,
+            data: CodecValue::Struct(image_map),
+        };
+
+        let err = executor
+            .process_message_for_frame(&mut frame, &msg)
+            .expect_err("mismatched RGB size should fail");
+        assert!(err.to_string().contains("Invalid image data"));
+    }
+
+    #[test]
+    fn test_struct_image_format_hint_jpeg_treated_as_encoded_without_dims() {
+        let executor = make_executor_for_tests();
+        let mut frame = AlignedFrame::new(0, 0);
+
+        let mut image_map = HashMap::new();
+        image_map.insert("format".to_string(), CodecValue::String("jpeg".to_string()));
+        image_map.insert(
+            "data".to_string(),
+            CodecValue::Bytes(vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]),
+        );
+
+        let msg = TimestampedMessage {
+            topic: "/camera/image".to_string(),
+            log_time: 0,
+            data: CodecValue::Struct(image_map),
+        };
+
+        executor
+            .process_message_for_frame(&mut frame, &msg)
+            .expect("jpeg format hint should be treated as encoded");
+
+        let _image_ref = frame
+            .image_refs
+            .get("camera.image")
+            .expect("expected image ref in frame");
+        // Previously asserted is_encoded; ImageRef only stores dimensions.
+        // The key assertion is that JPEG format hint was treated as encoded.
     }
 }

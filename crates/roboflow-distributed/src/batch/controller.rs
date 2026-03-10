@@ -10,7 +10,7 @@
 use super::key::{BatchIndexKeys, BatchKeys, WorkUnitKeys};
 use super::spec::BatchSpec;
 use super::status::{BatchPhase, BatchStatus, DiscoveryStatus, FailedWorkUnit};
-use super::work_unit::{WorkUnit, WorkUnitStatus};
+use super::work_unit::{WorkUnit, WorkUnitStatus, deserialize_work_unit_compat};
 use crate::tikv::{TikvClient, TikvError};
 
 use std::sync::Arc;
@@ -228,7 +228,7 @@ impl BatchController {
 
         let old_phase = status.phase;
 
-        tracing::info!(
+        tracing::debug!(
             batch_id = %batch_id,
             phase = ?old_phase,
             work_units_total = status.work_units_total,
@@ -373,50 +373,52 @@ impl BatchController {
         let mut completed = 0u32;
         let mut failed = 0u32;
         let mut processing = 0u32;
+        let mut scan_total = 0u32;
         let mut failed_work_units = Vec::new();
 
         for (key, value) in work_units {
-            match bincode::deserialize::<WorkUnit>(&value) {
-                Ok(unit) => match unit.status {
-                    WorkUnitStatus::Complete => completed += 1,
-                    WorkUnitStatus::Failed | WorkUnitStatus::Dead => {
-                        failed += 1;
-                        // Collect error details from failed work units
-                        let error = unit
-                            .error
-                            .as_ref()
-                            .cloned()
-                            .unwrap_or_else(|| "Unknown error".to_string());
-                        let source_file = unit
-                            .files
-                            .first()
-                            .map(|f| f.url.clone())
-                            .unwrap_or_else(|| "unknown".to_string());
-                        failed_work_units.push(FailedWorkUnit {
-                            id: unit.id.clone(),
-                            source_file,
-                            error,
-                            retries: unit.attempts,
-                            failed_at: unit.updated_at,
-                        });
+            match deserialize_work_unit_compat(&value) {
+                Ok(unit) => {
+                    scan_total += 1; // Count all valid work units
+                    match unit.status {
+                        WorkUnitStatus::Complete => completed += 1,
+                        WorkUnitStatus::Failed | WorkUnitStatus::Dead => {
+                            failed += 1;
+                            // Collect error details from failed work units
+                            let error = unit
+                                .error
+                                .as_ref()
+                                .cloned()
+                                .unwrap_or_else(|| "Unknown error".to_string());
+                            let source_file = unit
+                                .files
+                                .first()
+                                .map(|f| f.url.clone())
+                                .unwrap_or_else(|| "unknown".to_string());
+                            failed_work_units.push(FailedWorkUnit {
+                                id: unit.id.clone(),
+                                source_file,
+                                error,
+                                retries: unit.attempts,
+                                failed_at: unit.updated_at,
+                            });
+                        }
+                        WorkUnitStatus::Processing => processing += 1,
+                        _ => {} // Pending or other states - count in scan_total but not in other categories
                     }
-                    WorkUnitStatus::Processing => processing += 1,
-                    _ => {}
-                },
+                }
                 Err(e) => {
                     // Log corrupted work units for investigation
                     tracing::error!(
                         error = %e,
                         key = %String::from_utf8_lossy(&key),
                         work_unit_id = %String::from_utf8_lossy(&key),
-                        "Failed to deserialize work unit, skipping. Batch completion counts may be incorrect."
+                        "Failed to deserialize work unit after compatibility decode; record may be legacy/corrupt. Skipping entry and continuing scan."
                     );
                 }
             }
         }
-
-        let scan_total = completed + failed + processing;
-        tracing::info!(
+        tracing::debug!(
             batch_id = %batch_id,
             work_units_total = status.work_units_total,
             scan_total = scan_total,
@@ -636,7 +638,7 @@ impl BatchController {
     ///
     /// Pending key format: `/roboflow/v1/batch/pending/{batch_id}/{unit_id}`
     pub async fn claim_work_unit(&self, worker_id: &str) -> Result<Option<WorkUnit>, TikvError> {
-        use bincode::{deserialize, serialize};
+        use bincode::serialize;
 
         // Scan for the first pending work unit key
         let pending_prefix_bytes = WorkUnitKeys::pending_prefix();
@@ -650,10 +652,15 @@ impl BatchController {
         tracing::debug!(results = pending.len(), "claim_work_unit: scan completed");
 
         if pending.is_empty() {
+            tracing::debug!("claim_work_unit: no pending work units found");
             return Ok(None);
         }
 
         let (pending_key, _batch_id_bytes) = &pending[0];
+        tracing::info!(
+            pending_key = %String::from_utf8_lossy(pending_key),
+            "claim_work_unit: found pending entry"
+        );
 
         // Parse batch_id and unit_id from the pending key.
         // Key format: /roboflow/v1/batch/pending/{batch_id}/{unit_id}
@@ -686,6 +693,29 @@ impl BatchController {
 
         let work_unit_key = WorkUnitKeys::unit(batch_id, unit_id);
 
+        // Pre-flight check: read work unit status before transaction
+        match self.client.get(work_unit_key.clone()).await? {
+            Some(data) => match deserialize_work_unit_compat(&data) {
+                Ok(unit) => {
+                    tracing::info!(
+                        batch_id = %batch_id,
+                        unit_id = %unit_id,
+                        status = ?unit.status,
+                        attempts = unit.attempts,
+                        max_attempts = unit.max_attempts,
+                        is_claimable = unit.is_claimable(),
+                        "claim_work_unit: pre-flight work unit check"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "claim_work_unit: failed to deserialize work unit in pre-flight")
+                }
+            },
+            None => {
+                tracing::warn!(batch_id = %batch_id, unit_id = %unit_id, "claim_work_unit: work unit not found in pre-flight")
+            }
+        }
+
         // Use transaction helper for atomic claim operation
         let result = self
             .client
@@ -698,7 +728,7 @@ impl BatchController {
                     Box<dyn std::error::Error + Send + Sync>,
                 > {
                     // Deserialize the work unit
-                    let mut unit: WorkUnit = deserialize(data)
+                    let mut unit = deserialize_work_unit_compat(data)
                         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
                     // Try to claim the work unit
@@ -716,18 +746,41 @@ impl BatchController {
             .await?;
 
         let Some(data) = result else {
+            tracing::warn!(
+                batch_id = %batch_id,
+                unit_id = %unit_id,
+                "claim_work_unit: transaction returned None - work unit may already be claimed"
+            );
             return Ok(None);
         };
 
-        // Deserialize the claimed work unit
-        let unit: WorkUnit = deserialize(&data)
-            .map_err(|e| TikvError::Deserialization(format!("work unit: {}", e)))?;
+        tracing::info!(
+            batch_id = %batch_id,
+            unit_id = %unit_id,
+            bytes = data.len(),
+            "claim_work_unit: transaction succeeded, deserializing work unit"
+        );
 
-        tracing::debug!(
+        // Deserialize the claimed work unit
+        let unit: WorkUnit = match deserialize_work_unit_compat(&data) {
+            Ok(u) => u,
+            Err(e) => {
+                tracing::error!(
+                    batch_id = %batch_id,
+                    unit_id = %unit_id,
+                    error = %e,
+                    "claim_work_unit: failed to deserialize work unit after claim"
+                );
+                return Err(TikvError::Deserialization(format!("work unit: {}", e)));
+            }
+        };
+
+        tracing::info!(
             unit_id = %unit.id,
             batch_id = %unit.batch_id,
             worker_id = %worker_id,
-            "Work unit claimed"
+            status = ?unit.status,
+            "=== WORK UNIT CLAIMED SUCCESSFULLY ==="
         );
 
         Ok(Some(unit))
@@ -744,11 +797,18 @@ impl BatchController {
 
         let data = match data {
             Some(d) => d,
-            None => return Ok(false),
+            None => {
+                tracing::warn!(
+                    batch_id = %batch_id,
+                    unit_id = %unit_id,
+                    "complete_work_unit: work unit key not found"
+                );
+                return Ok(false);
+            }
         };
 
-        let mut unit: WorkUnit =
-            bincode::deserialize(&data).map_err(|e| TikvError::Deserialization(e.to_string()))?;
+        let mut unit: WorkUnit = deserialize_work_unit_compat(&data)
+            .map_err(|e| TikvError::Deserialization(e.to_string()))?;
 
         unit.complete();
 
@@ -775,11 +835,18 @@ impl BatchController {
 
         let data = match data {
             Some(d) => d,
-            None => return Ok(false),
+            None => {
+                tracing::warn!(
+                    batch_id = %batch_id,
+                    unit_id = %unit_id,
+                    "fail_work_unit: work unit key not found"
+                );
+                return Ok(false);
+            }
         };
 
-        let mut unit: WorkUnit =
-            bincode::deserialize(&data).map_err(|e| TikvError::Deserialization(e.to_string()))?;
+        let mut unit: WorkUnit = deserialize_work_unit_compat(&data)
+            .map_err(|e| TikvError::Deserialization(e.to_string()))?;
 
         unit.fail(error);
 

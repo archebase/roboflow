@@ -258,8 +258,8 @@ mod tests {
 
         assert!(frame.states.contains_key("observation.state"));
         assert!(frame.actions.contains_key("action"));
-        assert!(frame.images.contains_key("observation.camera_0"));
-        assert!(frame.images.contains_key("observation.camera_1"));
+        assert!(frame.image_refs.contains_key("observation.camera_0"));
+        assert!(frame.image_refs.contains_key("observation.camera_1"));
         assert!(frame.timestamps.contains_key("timestamp.original"));
     }
 

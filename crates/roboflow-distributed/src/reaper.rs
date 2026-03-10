@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use super::batch::{WorkUnit, WorkUnitKeys, WorkUnitStatus};
+use super::batch::{WorkUnit, WorkUnitKeys, WorkUnitStatus, deserialize_work_unit_compat};
 use super::tikv::{TikvError, client::TikvClient, key::HeartbeatKeys, schema::HeartbeatRecord};
 use tokio::sync::broadcast;
 use tokio::time::sleep;
@@ -314,7 +314,7 @@ impl ZombieReaper {
         let mut orphaned_units = Vec::new();
 
         for (_key, value) in results {
-            if let Ok(unit) = bincode::deserialize::<WorkUnit>(&value) {
+            if let Ok(unit) = deserialize_work_unit_compat(&value) {
                 // Check if work unit is in Processing state and owned by a stale worker
                 if unit.status == WorkUnitStatus::Processing
                     && let Some(ref owner) = unit.owner
@@ -396,7 +396,7 @@ impl ZombieReaper {
                     Option<Vec<u8>>,
                     Box<dyn std::error::Error + Send + Sync>,
                 > {
-                    let mut unit: WorkUnit = bincode::deserialize(data)
+                    let mut unit: WorkUnit = deserialize_work_unit_compat(data)
                         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
                     // Verify still in Processing state

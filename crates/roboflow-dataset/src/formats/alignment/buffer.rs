@@ -5,7 +5,6 @@
 //! Frame alignment with bounded memory footprint.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::time::Instant;
 
 use robocodec::CodecValue;
@@ -164,14 +163,12 @@ impl FrameAlignmentBuffer {
         timestamped_msg: &TimestampedMessage,
         feature_name: &str,
     ) -> Vec<AlignedFrame> {
-        use roboflow_media::ImageData;
-
         // Update current timestamp
         self.current_timestamp = timestamped_msg.log_time;
         let msg = &timestamped_msg.message;
 
         // Step 1: Extract and decode image data (if any)
-        let (image_info, decoded_data, final_is_encoded) =
+        let (image_info, decoded_data, _final_is_encoded) =
             self.process_image_data(msg, feature_name);
 
         // Step 2: Extract state/action values (before mutable borrow)
@@ -184,18 +181,13 @@ impl FrameAlignmentBuffer {
         // Step 4: Add feature to the partial frame
         entry.add_feature(feature_name);
 
-        // Step 5: Add image data to the frame (if we extracted any)
-        if let Some(data) = decoded_data {
-            entry.frame.images.insert(
+        // Step 5: Add image ref to the frame (if we extracted any)
+        if let Some(_data) = decoded_data {
+            let width = image_info.as_ref().map(|i| i.width).unwrap_or(0);
+            let height = image_info.as_ref().map(|i| i.height).unwrap_or(0);
+            entry.frame.image_refs.insert(
                 feature_name.to_string(),
-                Arc::new(ImageData {
-                    width: image_info.as_ref().map(|i| i.width).unwrap_or(0),
-                    height: image_info.as_ref().map(|i| i.height).unwrap_or(0),
-                    data,
-                    original_timestamp: timestamped_msg.log_time,
-                    is_encoded: final_is_encoded,
-                    is_depth: false,
-                }),
+                crate::formats::common::ImageRef { width, height },
             );
         }
 
@@ -531,15 +523,10 @@ impl FrameAlignmentBuffer {
         let mut total = 0usize;
 
         for partial in &self.active_frames {
-            // Estimate image memory usage
-            for image in partial.frame.images.values() {
-                if image.is_encoded {
-                    // Compressed image - use actual data size
-                    total += image.data.len();
-                } else {
-                    // RGB decoded image - width * height * 3
-                    total += (image.width as usize) * (image.height as usize) * 3;
-                }
+            // Estimate image memory usage (approximate, since we only have refs)
+            for image_ref in partial.frame.image_refs.values() {
+                // Estimate as uncompressed RGB
+                total += (image_ref.width as usize) * (image_ref.height as usize) * 3;
             }
 
             // Estimate state/action memory (small contribution)
@@ -604,15 +591,28 @@ impl FrameAlignmentBuffer {
         let mut to_remove = Vec::new();
 
         for (idx, partial) in self.active_frames.iter().enumerate() {
-            // Check if frame is complete by criteria
-            let is_data_complete = self
-                .completion_criteria
-                .is_complete(&partial.received_features);
+            // Check if frame is complete by explicit feature requirements
+            // (not just min_completeness - that causes immediate completion)
+            let has_required_features = !self.completion_criteria.features.is_empty()
+                && self
+                    .completion_criteria
+                    .features
+                    .iter()
+                    .all(|(feature, count)| {
+                        partial
+                            .received_features
+                            .iter()
+                            .filter(|f| *f == feature)
+                            .count()
+                            >= *count
+                    });
 
             // Check if frame is complete by time window (eligible time has passed)
             let is_time_complete = self.current_timestamp >= partial.eligible_timestamp;
 
-            if is_data_complete || is_time_complete {
+            // Only complete if required features are present OR time window expired
+            // Don't complete just for min_completeness - that causes premature completion
+            if has_required_features || is_time_complete {
                 to_remove.push(idx);
             }
         }
